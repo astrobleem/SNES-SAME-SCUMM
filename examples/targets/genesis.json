@@ -1,0 +1,120 @@
+{
+  "same_target": 1,
+  "id": "genesis",
+  "name": "Sega Genesis / Mega Drive compatibility target",
+  "guest": {
+    "kind": "m68k_z80",
+    "program": "GENPROG",
+    "notes": "Superman-derived MC68000 core plus Black Tiger-derived Z80 core",
+    "buses": {
+      "m68k": {
+        "address_bits": 24,
+        "endianness": "big"
+      },
+      "z80": {
+        "address_bits": 16,
+        "endianness": "little"
+      }
+    }
+  },
+  "execution": [
+    {
+      "name": "guest.m68k",
+      "affinity": "SA1",
+      "phase": "GUEST",
+      "budget": 358000,
+      "priority": 10
+    },
+    {
+      "name": "guest.z80",
+      "affinity": "SA1",
+      "phase": "GUEST",
+      "budget": 64000,
+      "priority": 20
+    },
+    {
+      "name": "video.genesis_vdp",
+      "affinity": "SA1",
+      "phase": "TRANSLATE",
+      "budget": 96000,
+      "priority": 10
+    },
+    {
+      "name": "audio.genesis",
+      "affinity": "SCPU",
+      "phase": "AUDIO",
+      "budget": 12000,
+      "priority": 10
+    }
+  ],
+  "services": {
+    "video": {
+      "adapter": "genesis_vdp",
+      "mode": "translated",
+      "width": 256,
+      "height": 224
+    },
+    "audio": {
+      "backend": "tad",
+      "sources": [
+        "ym2612",
+        "sn76489"
+      ]
+    },
+    "input": {
+      "profile": "genesis_3button"
+    },
+    "storage": {
+      "backend": "msu1",
+      "package": "genesis.samepkg"
+    }
+  },
+  "memory_map": [
+    {
+      "bus": "m68k",
+      "name": "cartridge",
+      "start": "0x000000",
+      "size": "0x400000",
+      "kind": "rom",
+      "source": "GENPROG"
+    },
+    {
+      "bus": "m68k",
+      "name": "io",
+      "start": "0xA10000",
+      "size": "0x20",
+      "kind": "device",
+      "adapter": "genesis_io"
+    },
+    {
+      "bus": "m68k",
+      "name": "vdp",
+      "start": "0xC00000",
+      "size": "0x20",
+      "kind": "device",
+      "adapter": "genesis_vdp"
+    },
+    {
+      "bus": "m68k",
+      "name": "work_ram",
+      "start": "0xFF0000",
+      "size": "0x10000",
+      "kind": "ram"
+    },
+    {
+      "bus": "z80",
+      "name": "z80_ram",
+      "start": "0x0000",
+      "size": "0x2000",
+      "kind": "ram"
+    },
+    {
+      "bus": "z80",
+      "name": "z80_vdp",
+      "start": "0x7F00",
+      "size": "0x20",
+      "kind": "device",
+      "adapter": "genesis_vdp_z80"
+    }
+  ]
+}

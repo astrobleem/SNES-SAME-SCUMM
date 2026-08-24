@@ -1,0 +1,57 @@
+{
+  "same_engine_profile": 1,
+  "engine": "agi_v2",
+  "game": {
+    "id": "same-agi-conformance",
+    "title": "SAME AGI v2 Conformance",
+    "variant": "synthetic"
+  },
+  "timing": {
+    "tick_hz": 60,
+    "max_ops_per_tick": 128
+  },
+  "video": {
+    "width": 160,
+    "height": 168,
+    "mode": "indexed8",
+    "logical_width": 160,
+    "logical_height": 200
+  },
+  "input": {
+    "profile": "agi"
+  },
+  "capabilities": {
+    "required": [
+      "indexed8_surface",
+      "dirty_rects",
+      "palette_256",
+      "digital_input",
+      "text_input",
+      "random_access_resources"
+    ],
+    "optional": [
+      "pointer_input",
+      "tiled_video",
+      "sprite_oam",
+      "sa1_jobs"
+    ]
+  },
+  "resources": [
+    {
+      "key": "logic.0",
+      "path": "../resources/agi/logic0.bin",
+      "kind": "LOGC"
+    },
+    {
+      "key": "picture.0",
+      "path": "../resources/agi/picture0.agip",
+      "kind": "PICT"
+    }
+  ],
+  "options": {
+    "logic0": "logic.0",
+    "initial_room": 0,
+    "picture_key_template": "picture.{picture}"
+  },
+  "quirks": {}
+}

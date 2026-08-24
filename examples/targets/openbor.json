@@ -1,0 +1,22 @@
+{
+  "same_target": 1,
+  "id": "openbor",
+  "name": "Converted OpenBOR content target",
+  "guest": {
+    "kind": "openbor_vm",
+    "program": "BORVM",
+    "notes": "VM initially remains on S-CPU; SA-1 is available to scene composition"
+  },
+  "execution": [
+    {"name": "guest.openbor_vm", "affinity": "SCPU", "phase": "GUEST", "budget": 4096, "priority": 10},
+    {"name": "scene.openbor", "affinity": "SA1", "phase": "TRANSLATE", "budget": 180000, "priority": 10},
+    {"name": "stream.openbor", "affinity": "SCPU", "phase": "COMMIT", "budget": 24000, "priority": 10},
+    {"name": "audio.openbor", "affinity": "SCPU", "phase": "AUDIO", "budget": 12000, "priority": 10}
+  ],
+  "services": {
+    "video": {"adapter": "openbor_scene", "mode": "native_assets"},
+    "audio": {"backend": "tad", "sources": ["openbor_commands", "msu1"]},
+    "input": {"profile": "openbor"},
+    "storage": {"backend": "msu1", "package": "openbor.samepkg"}
+  }
+}

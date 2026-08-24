@@ -1,0 +1,256 @@
+SAME 0.2.0 project tree
+
+├── docs
+│   ├── ABI.md
+│   ├── AGI.md
+│   ├── ARCHITECTURE.md
+│   ├── AUDIO.md
+│   ├── BUILDING.md
+│   ├── DONOR_MAP.md
+│   ├── EMULATOR_GATE.md
+│   ├── ENGINE_ABI.md
+│   ├── GUESTS.md
+│   ├── INPUT.md
+│   ├── NEXT_GATES.md
+│   ├── PACKAGE.md
+│   ├── POPPY_NOTES.md
+│   ├── PORTING_ENGINE.md
+│   ├── SCUMM_V5.md
+│   └── SCUMMVM_COMPAT.md
+├── examples
+│   ├── audio
+│   │   └── sn76489-demo.jsonl
+│   ├── input
+│   │   └── genesis-demo.json
+│   ├── packages
+│   │   ├── adventure-demo-package.json
+│   │   ├── audio.bin
+│   │   ├── demo-package.json
+│   │   ├── guest.bin
+│   │   └── video.bin
+│   ├── profiles
+│   │   ├── agi_v2_conformance.json
+│   │   └── scumm_v5_conformance.json
+│   ├── resources
+│   │   ├── agi
+│   │   │   ├── logic0.bin
+│   │   │   └── picture0.agip
+│   │   └── scumm_v5
+│   │       ├── boot.scrp
+│   │       └── room0.sc5r
+│   └── targets
+│       ├── black_tiger.json
+│       ├── genesis.json
+│       ├── native_demo.json
+│       ├── openbor.json
+│       └── taito_x_superman.json
+├── labs
+│   └── vdp
+│       ├── cases
+│       │   ├── 01_solid_palette.vdptrace.jsonl
+│       │   ├── 02_single_tile.vdptrace.jsonl
+│       │   ├── 03_tile_flip.vdptrace.jsonl
+│       │   └── 04_plane_a.vdptrace.jsonl
+│       ├── docs
+│       │   └── ROADMAP.md
+│       ├── expected
+│       │   ├── 01_solid_palette.genesis.png
+│       │   ├── 01_solid_palette.snes.png
+│       │   ├── 02_single_tile.genesis.png
+│       │   ├── 02_single_tile.snes.png
+│       │   ├── 03_tile_flip.genesis.png
+│       │   ├── 03_tile_flip.snes.png
+│       │   ├── 04_plane_a.genesis.png
+│       │   └── 04_plane_a.snes.png
+│       ├── generated
+│       │   ├── 01_solid_palette
+│       │   │   ├── assets.inc.pasm
+│       │   │   ├── manifest.json
+│       │   │   ├── palette.cgram
+│       │   │   ├── tilemap.bin
+│       │   │   └── tiles.4bpp
+│       │   ├── 02_single_tile
+│       │   │   ├── assets.inc.pasm
+│       │   │   ├── manifest.json
+│       │   │   ├── palette.cgram
+│       │   │   ├── tilemap.bin
+│       │   │   └── tiles.4bpp
+│       │   ├── 03_tile_flip
+│       │   │   ├── assets.inc.pasm
+│       │   │   ├── manifest.json
+│       │   │   ├── palette.cgram
+│       │   │   ├── tilemap.bin
+│       │   │   └── tiles.4bpp
+│       │   └── 04_plane_a
+│       │       ├── assets.inc.pasm
+│       │       ├── manifest.json
+│       │       ├── palette.cgram
+│       │       ├── tilemap.bin
+│       │       └── tiles.4bpp
+│       ├── snes
+│       │   ├── generated
+│       │   │   ├── assets.inc.pasm
+│       │   │   ├── manifest.json
+│       │   │   ├── palette.cgram
+│       │   │   ├── tilemap.bin
+│       │   │   └── tiles.4bpp
+│       │   └── main.pasm
+│       ├── src
+│       │   └── same_vdp
+│       │       ├── __init__.py
+│       │       ├── cli.py
+│       │       ├── compare.py
+│       │       ├── render.py
+│       │       ├── testsynth.py
+│       │       ├── trace.py
+│       │       ├── translate.py
+│       │       └── vdp.py
+│       ├── tests
+│       │   ├── test_cases.py
+│       │   ├── test_translate.py
+│       │   └── test_vdp.py
+│       ├── tools
+│       │   ├── build_all_roms.sh
+│       │   ├── build_rom.sh
+│       │   └── check_poppy.py
+│       ├── .gitignore
+│       ├── AGENTS.md
+│       ├── golden.json
+│       ├── LICENSE
+│       ├── Makefile
+│       ├── poppy.json
+│       ├── pyproject.toml
+│       ├── README.md
+│       ├── SAME-VDP-preview.png
+│       ├── SAME_VDP_TRACE.md
+│       └── VALIDATION.md
+├── out
+│   ├── .gitkeep
+│   ├── adventure-demo.inc.pasm
+│   ├── adventure-demo.samepkg
+│   ├── agi-v2-frame.png
+│   ├── agi-v2-report.json
+│   ├── agi-v2-slot0.same-save
+│   ├── demo-package.inc.pasm
+│   ├── demo.samepkg
+│   ├── genesis-simulation.json
+│   ├── scumm-v5-frame.png
+│   ├── scumm-v5-report.json
+│   ├── scumm-v5-slot0.same-save
+│   └── sn76489-demo.wav
+├── runtime
+│   └── snes
+│       ├── engine
+│       │   └── host.pasm
+│       ├── engines
+│       │   ├── agi_v2.pasm
+│       │   ├── demo.pasm
+│       │   └── scumm_v5.pasm
+│       ├── generated
+│       │   ├── .gitkeep
+│       │   └── abi.inc.pasm
+│       ├── kernel
+│       │   ├── events.pasm
+│       │   ├── frame.pasm
+│       │   ├── hardware.pasm
+│       │   └── memory.pasm
+│       ├── services
+│       │   ├── audio.pasm
+│       │   ├── input.pasm
+│       │   ├── storage.pasm
+│       │   └── video.pasm
+│       ├── targets
+│       │   └── demo.pasm
+│       ├── main.pasm
+│       └── poppy.json
+├── src
+│   ├── same
+│   │   ├── engines
+│   │   │   ├── agi
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── engine.py
+│   │   │   ├── scumm_v5
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── engine.py
+│   │   │   └── __init__.py
+│   │   ├── __init__.py
+│   │   ├── abi.py
+│   │   ├── audio.py
+│   │   ├── bus.py
+│   │   ├── capabilities.py
+│   │   ├── cli.py
+│   │   ├── donors.py
+│   │   ├── engine.py
+│   │   ├── errors.py
+│   │   ├── events.py
+│   │   ├── guest.py
+│   │   ├── input.py
+│   │   ├── oracle.py
+│   │   ├── package.py
+│   │   ├── profile.py
+│   │   ├── resources.py
+│   │   ├── runtime.py
+│   │   ├── savegame.py
+│   │   ├── scheduler.py
+│   │   ├── services.py
+│   │   ├── target.py
+│   │   └── video.py
+│   └── same_vdp
+│       ├── __init__.py
+│       ├── cli.py
+│       ├── compare.py
+│       ├── render.py
+│       ├── testsynth.py
+│       ├── trace.py
+│       ├── translate.py
+│       └── vdp.py
+├── tests
+│   ├── vdp
+│   │   ├── __init__.py
+│   │   ├── test_cases.py
+│   │   ├── test_translate.py
+│   │   └── test_vdp.py
+│   ├── test_abi.py
+│   ├── test_agi_engine.py
+│   ├── test_audio.py
+│   ├── test_bus.py
+│   ├── test_donors.py
+│   ├── test_engine_cli.py
+│   ├── test_engine_host.py
+│   ├── test_events.py
+│   ├── test_input.py
+│   ├── test_oracle.py
+│   ├── test_package.py
+│   ├── test_poppy_source.py
+│   ├── test_profile.py
+│   ├── test_resources.py
+│   ├── test_runtime.py
+│   ├── test_savegame.py
+│   ├── test_scheduler.py
+│   ├── test_scumm_v5_engine.py
+│   ├── test_target.py
+│   └── test_video.py
+├── tools
+│   ├── audit_snes_rom.py
+│   ├── build_snes.ps1
+│   ├── build_snes.sh
+│   ├── check_poppy.py
+│   ├── generate_engine_fixtures.py
+│   ├── import_donors.py
+│   ├── lint_poppy.py
+│   └── validate.ps1
+├── vendor
+│   └── reference
+│       └── README.md
+├── .gitignore
+├── AGENTS.md
+├── CHANGELOG.md
+├── HANDOFF.md
+├── LICENSE
+├── Makefile
+├── PROJECT_TREE.txt
+├── pyproject.toml
+├── README.md
+├── SHA256SUMS
+├── STATUS.md
+└── VALIDATION.md

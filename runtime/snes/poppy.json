@@ -1,0 +1,17 @@
+{
+  "name": "same-engine-host",
+  "version": "0.2.0",
+  "platform": "snes",
+  "compiler": {
+    "target": "snes",
+    "options": {
+      "optimize": true,
+      "warnings": "all"
+    }
+  },
+  "metadata": {
+    "description": "Reusable SAME engine lifecycle, service ABI, input, event ring, and SCUMM/AGI adapter seams",
+    "author": "Chad Doebelin and contributors",
+    "tags": ["snes", "sa1", "same", "engine-host", "scumm", "agi"]
+  }
+}

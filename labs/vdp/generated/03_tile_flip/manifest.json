@@ -1,0 +1,42 @@
+{
+  "assets": {
+    "palette.cgram": {
+      "bytes": 128,
+      "sha256": "ef240e9248dd2674e6cc2ab055b153bbdb7ed9665fa7f787bf3808558b78aba5"
+    },
+    "tilemap.bin": {
+      "bytes": 2048,
+      "sha256": "95e91b7a17d3cc219e9b96e2417be49ed4e773c403ad335485eede9760d01ce3"
+    },
+    "tiles.4bpp": {
+      "bytes": 64,
+      "sha256": "bf6647b768188692401b76e94f406820b764ab09a3b1a2f4a37a4154bff08bad"
+    }
+  },
+  "case": "03_tile_flip",
+  "format": "same-vdp-snes-bundle",
+  "snes": {
+    "bg": 1,
+    "bg12nba": "0x00",
+    "bg1sc": "0x60",
+    "map_vram_word": "0x6000",
+    "mode": 1,
+    "source_tile_indices": [
+      0,
+      1
+    ],
+    "tile_count": 2,
+    "tile_vram_word": "0x0000"
+  },
+  "source": {
+    "backdrop_index": 0,
+    "height": 224,
+    "plane_a_base": "0xc000",
+    "plane_size": [
+      32,
+      32
+    ],
+    "width": 256
+  },
+  "version": 1
+}

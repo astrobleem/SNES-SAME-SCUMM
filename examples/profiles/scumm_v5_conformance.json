@@ -1,0 +1,58 @@
+{
+  "same_engine_profile": 1,
+  "engine": "scumm_v5",
+  "game": {
+    "id": "same-scumm-conformance",
+    "title": "SAME SCUMM v5 Conformance",
+    "variant": "synthetic"
+  },
+  "timing": {
+    "tick_hz": 60,
+    "max_ops_per_tick": 128
+  },
+  "video": {
+    "width": 256,
+    "height": 224,
+    "mode": "indexed8",
+    "logical_width": 320,
+    "logical_height": 200
+  },
+  "input": {
+    "profile": "scumm"
+  },
+  "capabilities": {
+    "required": [
+      "indexed8_surface",
+      "dirty_rects",
+      "palette_256",
+      "pointer_input",
+      "random_access_resources"
+    ],
+    "optional": [
+      "tiled_video",
+      "sprite_oam",
+      "z_mask",
+      "sa1_jobs",
+      "msu1_stream",
+      "audio_speech"
+    ]
+  },
+  "resources": [
+    {
+      "key": "script.boot",
+      "path": "../resources/scumm_v5/boot.scrp",
+      "kind": "SCRP"
+    },
+    {
+      "key": "room.0",
+      "path": "../resources/scumm_v5/room0.sc5r",
+      "kind": "ROOM"
+    }
+  ],
+  "options": {
+    "boot_script": "script.boot",
+    "initial_room": 0,
+    "room_key_template": "room.{room}"
+  },
+  "quirks": {}
+}

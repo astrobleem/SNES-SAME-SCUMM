@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+out/*
+!out/.gitkeep
+runtime/snes/generated/*
+!runtime/snes/generated/.gitkeep
+vendor/reference/*
+!vendor/reference/README.md
+labs/vdp/build/*

@@ -1,0 +1,17 @@
+{
+  "name": "same-vdp-lab",
+  "version": "0.1.0",
+  "platform": "snes",
+  "compiler": {
+    "target": "snes",
+    "options": {
+      "optimize": true,
+      "warnings": "all"
+    }
+  },
+  "metadata": {
+    "description": "Static Genesis VDP to SNES PPU translation test ROM",
+    "author": "astrobleem",
+    "tags": ["snes", "genesis", "vdp", "same", "sa-1"]
+  }
+}

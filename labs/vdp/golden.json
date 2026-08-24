@@ -1,0 +1,66 @@
+{
+  "cases": {
+    "01_solid_palette": {
+      "bundle": "generated/01_solid_palette",
+      "genesis_png": {
+        "path": "expected/01_solid_palette.genesis.png",
+        "sha256": "1191b1007565e675ab40aac4582adde2536cf90514024e120a2b33a0ca9c4ec2"
+      },
+      "snes_png": {
+        "path": "expected/01_solid_palette.snes.png",
+        "sha256": "1191b1007565e675ab40aac4582adde2536cf90514024e120a2b33a0ca9c4ec2"
+      },
+      "trace": {
+        "path": "cases/01_solid_palette.vdptrace.jsonl",
+        "sha256": "7188a8545b6c3ee960c89620addc1a1fa64a74a2b237b926aebc47ca4696de7d"
+      }
+    },
+    "02_single_tile": {
+      "bundle": "generated/02_single_tile",
+      "genesis_png": {
+        "path": "expected/02_single_tile.genesis.png",
+        "sha256": "b8d06e5e9528bde5d038cb5db32fae5df7c9d1b5fcb5f3187e6155783458a74e"
+      },
+      "snes_png": {
+        "path": "expected/02_single_tile.snes.png",
+        "sha256": "85e6c868a850da3176aa04849c1c61d2c30d984600010ca087b2f8ca4d477725"
+      },
+      "trace": {
+        "path": "cases/02_single_tile.vdptrace.jsonl",
+        "sha256": "aed06007c56ca51d6ff5c2fb366430e426c7bda914c40612ce08678d750932c5"
+      }
+    },
+    "03_tile_flip": {
+      "bundle": "generated/03_tile_flip",
+      "genesis_png": {
+        "path": "expected/03_tile_flip.genesis.png",
+        "sha256": "5b14d23bf8fece4f1ee01bb60f55152afffb44715f493d29a40861c55672789f"
+      },
+      "snes_png": {
+        "path": "expected/03_tile_flip.snes.png",
+        "sha256": "eec57129fddcab09805b27a2166d1d8217721e089c74dc08e691d6a94d6647df"
+      },
+      "trace": {
+        "path": "cases/03_tile_flip.vdptrace.jsonl",
+        "sha256": "b5d252df12329efa15b89bf1f68d1d75c70541b2ccfc2c770cc025025704e06c"
+      }
+    },
+    "04_plane_a": {
+      "bundle": "generated/04_plane_a",
+      "genesis_png": {
+        "path": "expected/04_plane_a.genesis.png",
+        "sha256": "2e60c6f3e3e6f1eb88036b56bf24d7eff8214704cf33ccd952691f3f7af92ccf"
+      },
+      "snes_png": {
+        "path": "expected/04_plane_a.snes.png",
+        "sha256": "26181af31a99affb623a54b5cc03c9694cbfe3bb0b95e182949acf9d6ca88446"
+      },
+      "trace": {
+        "path": "cases/04_plane_a.vdptrace.jsonl",
+        "sha256": "84effea1e8b5b98c8187d9ae5e28f3aeec9530e0edf2868cd52f888d4b2483f7"
+      }
+    }
+  },
+  "format": "same-vdp-golden-index",
+  "version": 1
+}

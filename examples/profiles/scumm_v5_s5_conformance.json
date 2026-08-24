@@ -1,0 +1,28 @@
+{
+  "same_engine_profile": 1,
+  "engine": "scumm_v5",
+  "game": {
+    "id": "scumm-v5-s5-conformance",
+    "title": "Copyright-free SCUMM v5 S5 active-binding fixture",
+    "variant": "semantic-service-agreement"
+  },
+  "timing": {"tick_hz": 60, "max_ops_per_tick": 32},
+  "video": {"width": 256, "height": 224, "mode": "indexed8"},
+  "input": {"profile": "scumm"},
+  "capabilities": {
+    "required": [
+      "indexed8_surface", "dirty_rects", "palette_256", "pointer_input",
+      "random_access_resources", "audio_music", "audio_sfx"
+    ],
+    "optional": []
+  },
+  "resources": [
+    {"key": "script.boot", "path": "../resources/scumm_v5/s5_binding.scrp", "kind": "SCRP"}
+  ],
+  "options": {
+    "boot_script": "script.boot",
+    "boot_script_number": 1,
+    "initial_room": 0
+  },
+  "quirks": {}
+}

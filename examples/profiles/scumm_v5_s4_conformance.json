@@ -1,0 +1,38 @@
+{
+  "same_engine_profile": 1,
+  "engine": "scumm_v5",
+  "game": {
+    "id": "scumm-v5-s4-conformance",
+    "title": "Copyright-free SCUMM v5 S4 audio/save fixture",
+    "variant": "score-intent-room-restore"
+  },
+  "timing": {"tick_hz": 60, "max_ops_per_tick": 64},
+  "video": {"width": 256, "height": 224, "mode": "indexed8"},
+  "input": {"profile": "scumm"},
+  "capabilities": {
+    "required": [
+      "indexed8_surface", "dirty_rects", "palette_256", "pointer_input",
+      "random_access_resources", "save_slots", "audio_music", "audio_sfx",
+      "audio_speech"
+    ],
+    "optional": ["chip_audio", "msu1_stream"]
+  },
+  "resources": [
+    {"key": "script.boot", "path": "../resources/scumm_v5/s4_boot.scrp", "kind": "SCRP"},
+    {"key": "room.0", "path": "../resources/scumm_v5/s4_room0.sc5r", "kind": "ROOM"},
+    {"key": "room.1", "path": "../resources/scumm_v5/s4_room1.sc5r", "kind": "ROOM"},
+    {"key": "audio.s4", "path": "../resources/scumm_v5/s4_audio.json", "kind": "AMNF"},
+    {"key": "score.s4", "path": "../resources/scumm_v5/s4_score.json", "kind": "SCOR"},
+    {"key": "sfx.s4", "path": "../resources/scumm_v5/s4_sfx.bin", "kind": "SFX_"},
+    {"key": "speech.s4", "path": "../resources/scumm_v5/s4_speech.bin", "kind": "PCM_", "streamable": true}
+  ],
+  "options": {
+    "boot_script": "script.boot",
+    "boot_script_number": 1,
+    "initial_room": 0,
+    "audio_manifest": "audio.s4",
+    "initial_speech": 5,
+    "audio_backend_order": ["chip_audio", "msu1_stream", "score_interpreter"]
+  },
+  "quirks": {}
+}

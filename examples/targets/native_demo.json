@@ -1,0 +1,17 @@
+{
+  "same_target": 1,
+  "id": "native_demo",
+  "name": "SAME native target lifecycle demonstration",
+  "guest": {"kind": "native"},
+  "execution": [
+    {"name": "target.native", "affinity": "SCPU", "phase": "GUEST", "budget": 1000, "priority": 10},
+    {"name": "video.native", "affinity": "SCPU", "phase": "TRANSLATE", "budget": 1000, "priority": 10},
+    {"name": "audio.native", "affinity": "SCPU", "phase": "AUDIO", "budget": 1000, "priority": 10}
+  ],
+  "services": {
+    "video": {"adapter": "native_snes", "mode": "native"},
+    "audio": {"backend": "none", "sources": []},
+    "input": {"profile": "snes"},
+    "storage": {"backend": "rom"}
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "same_package": 1,
+  "flags": 0,
+  "sections": [
+    {"name": "GENPROG", "kind": "CODE", "path": "guest.bin", "alignment": 256, "flags": ["executable", "read_only"]},
+    {"name": "VIDEO", "kind": "VDAT", "path": "video.bin", "alignment": 512, "flags": ["streamable", "read_only"]},
+    {"name": "AUDIO", "kind": "ADAT", "path": "audio.bin", "alignment": 256, "flags": ["streamable", "read_only"]}
+  ]
+}

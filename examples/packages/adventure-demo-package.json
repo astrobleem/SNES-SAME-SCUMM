@@ -1,0 +1,34 @@
+{
+  "same_package": 1,
+  "flags": 0,
+  "sections": [
+    {
+      "name": "scummvm",
+      "kind": "SCRP",
+      "path": "../resources/scumm_v5/boot.scrp",
+      "alignment": 16,
+      "flags": ["read_only"]
+    },
+    {
+      "name": "scummr0",
+      "kind": "ROOM",
+      "path": "../resources/scumm_v5/room0.sc5r",
+      "alignment": 256,
+      "flags": ["read_only", "streamable"]
+    },
+    {
+      "name": "agilog0",
+      "kind": "LOGC",
+      "path": "../resources/agi/logic0.bin",
+      "alignment": 16,
+      "flags": ["read_only"]
+    },
+    {
+      "name": "agipic0",
+      "kind": "PICT",
+      "path": "../resources/agi/picture0.agip",
+      "alignment": 256,
+      "flags": ["read_only", "streamable"]
+    }
+  ]
+}

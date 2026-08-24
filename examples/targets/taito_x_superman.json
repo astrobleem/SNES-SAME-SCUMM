@@ -1,0 +1,57 @@
+{
+  "same_target": 1,
+  "id": "taito_x_superman",
+  "name": "Taito X Superman arcade target",
+  "guest": {
+    "kind": "m68k",
+    "program": "SUP68K",
+    "buses": {
+      "m68k": {
+        "address_bits": 24,
+        "endianness": "big"
+      }
+    }
+  },
+  "execution": [
+    {
+      "name": "guest.m68k",
+      "affinity": "SA1",
+      "phase": "GUEST",
+      "budget": 358000,
+      "priority": 10
+    },
+    {
+      "name": "video.taito_x",
+      "affinity": "SA1",
+      "phase": "TRANSLATE",
+      "budget": 90000,
+      "priority": 10
+    },
+    {
+      "name": "audio.ym2610",
+      "affinity": "SCPU",
+      "phase": "AUDIO",
+      "budget": 12000,
+      "priority": 10
+    }
+  ],
+  "services": {
+    "video": {
+      "adapter": "taito_x",
+      "mode": "translated"
+    },
+    "audio": {
+      "backend": "tad",
+      "sources": [
+        "ym2610"
+      ]
+    },
+    "input": {
+      "profile": "arcade_2button"
+    },
+    "storage": {
+      "backend": "msu1",
+      "package": "superman.samepkg"
+    }
+  }
+}

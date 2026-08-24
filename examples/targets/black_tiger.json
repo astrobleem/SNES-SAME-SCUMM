@@ -1,0 +1,58 @@
+{
+  "same_target": 1,
+  "id": "black_tiger",
+  "name": "Capcom Black Tiger arcade target",
+  "guest": {
+    "kind": "z80",
+    "program": "BTZ80",
+    "buses": {
+      "z80": {
+        "address_bits": 16,
+        "endianness": "little"
+      }
+    }
+  },
+  "execution": [
+    {
+      "name": "guest.z80",
+      "affinity": "SA1",
+      "phase": "GUEST",
+      "budget": 180000,
+      "priority": 10
+    },
+    {
+      "name": "video.black_tiger",
+      "affinity": "SA1",
+      "phase": "TRANSLATE",
+      "budget": 90000,
+      "priority": 10
+    },
+    {
+      "name": "audio.black_tiger",
+      "affinity": "SCPU",
+      "phase": "AUDIO",
+      "budget": 12000,
+      "priority": 10
+    }
+  ],
+  "services": {
+    "video": {
+      "adapter": "black_tiger",
+      "mode": "translated"
+    },
+    "audio": {
+      "backend": "tad",
+      "sources": [
+        "ym2203",
+        "ay8910"
+      ]
+    },
+    "input": {
+      "profile": "arcade_2button"
+    },
+    "storage": {
+      "backend": "msu1",
+      "package": "blacktiger.samepkg"
+    }
+  }
+}

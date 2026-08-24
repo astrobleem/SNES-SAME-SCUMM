@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "same-runtime"
+version = "0.2.0"
+description = "SAME: a reusable engine, VM, and foreign-machine host for SNES/SA-1"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["Pillow>=10"]
+license = {text = "Unlicense"}
+authors = [{name = "Chad Doebelin and contributors"}]
+
+[project.scripts]
+same = "same.cli:main"
+same-vdp = "same_vdp.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

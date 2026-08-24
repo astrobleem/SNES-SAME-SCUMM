@@ -1,0 +1,80 @@
+{
+  "same_engine_profile": 1,
+  "engine": "scumm_v5",
+  "game": {
+    "id": "scumm-v5-s3-conformance",
+    "title": "Copyright-free SCUMM v5 S3 video fixture",
+    "variant": "synthetic-scene-font-actor"
+  },
+  "timing": {
+    "tick_hz": 60,
+    "max_ops_per_tick": 64
+  },
+  "video": {
+    "width": 256,
+    "height": 224,
+    "mode": "indexed8",
+    "logical_width": 320,
+    "logical_height": 200
+  },
+  "input": {
+    "profile": "scumm"
+  },
+  "capabilities": {
+    "required": [
+      "indexed8_surface",
+      "dirty_rects",
+      "palette_256",
+      "pointer_input",
+      "random_access_resources"
+    ],
+    "optional": [
+      "tiled_video",
+      "sprite_oam",
+      "z_mask",
+      "hdma",
+      "sa1_jobs"
+    ]
+  },
+  "resources": [
+    {"key": "game.index", "path": "../resources/scumm_v5/s2_index.000", "kind": "SCIX"},
+    {"key": "game.data", "path": "../resources/scumm_v5/s2_data.001", "kind": "SCDT", "streamable": true},
+    {"key": "speech.archive", "path": "../resources/scumm_v5/s2_speech.sou", "kind": "SOU_", "streamable": true},
+    {"key": "audio.sound_map", "path": "../resources/scumm_v5/s2_sound_map.bin", "kind": "SMAP"},
+    {"key": "audio.speech_index", "path": "../resources/scumm_v5/s2_voice_table.bin", "kind": "VIDX"},
+    {"key": "scene.s3", "path": "../resources/scumm_v5/s3_scene.scn3", "kind": "SCN3"},
+    {"key": "font.s3", "path": "../resources/scumm_v5/s3_font.char", "kind": "CHAR"},
+    {"key": "cursor.s3", "path": "../resources/scumm_v5/s3_cursor.scc3", "kind": "CURS"}
+  ],
+  "options": {
+    "policy_schema": "scumm_v5_game_policy_v1",
+    "boot_script_number": 1,
+    "initial_room": 0,
+    "initial_scene": "scene.s3",
+    "cursor_resource": "cursor.s3",
+    "resource_policy": {
+      "format": "lucasarts_scumm_v5",
+      "index_key": "game.index",
+      "data_key": "game.data",
+      "script_key_template": "script.{script}",
+      "room_key_template": "room.{room}",
+      "sound_key_template": "sound.{sound}",
+      "script_patch_manifest_key": null
+    },
+    "audio_policy": {
+      "sound_map_key": "audio.sound_map",
+      "speech_archive_key": "speech.archive",
+      "speech_index_key": "audio.speech_index",
+      "speech_track_base": 1000,
+      "stub_sound_policy": "not_running"
+    },
+    "coordinate_policy": {
+      "logical_width": 320,
+      "logical_height": 200,
+      "presentation": "host_viewport",
+      "cursor_policy": "engine_default"
+    },
+    "copy_protection_policy": {"mode": "preserve"}
+  },
+  "quirks": {}
+}
