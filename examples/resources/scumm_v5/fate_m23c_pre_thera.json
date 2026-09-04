@@ -1,0 +1,31 @@
+{
+  "schema": "same_scumm_v5_named_engine_state_v1",
+  "name": "fate-demo-pre-thera-room63-m23c",
+  "version": 1,
+  "profile_sha256": "d824c9b7aa06db8acbd383c07227d52aad16af23eaba6b1687686066b2551561",
+  "archive_sha256": "558cc436cebed658ad12bc64152efa19490e0327f89ec97acfb108e8d438d798",
+  "room_records": {
+    "49": "2904015371af15b616711013298b8e95874e55c5e9c45216fe09bf9a544a025f",
+    "63": "0eea0fac7d4feb7a9dd5060c731d96ccaf8c8c97e6803e01d01ebf63c9c55117"
+  },
+  "global_scripts": {
+    "151": "1c9518ce222115f2936acc40344317cd426d04100c71a1d71e33a9eac9e41b56"
+  },
+  "variables": {},
+  "bits_set": [425],
+  "strings": {
+    "30": {"length": 153, "fill": 100},
+    "31": {"length": 153, "fill": 100}
+  },
+  "object_classes": {
+    "595": [2, 7, 14]
+  },
+  "running_sounds": [82],
+  "inactive_scripts": [1],
+  "provenance": {
+    "base": "M23B accepted named pre-Thera state, unchanged for authentic room-49 execution.",
+    "object_classes.595": "The supplied Fate index DOBJ entry for object 595 has class mask 0x00002042, exactly classes 2, 7, and 14; class 18 is absent.",
+    "running_sounds.82": "The authoritative room-63 path queries ordinary logical sound ownership and takes its running branch before command 0x0110; this fixture represents that legitimate preceding-gameplay ownership without emitting a command after execution begins.",
+    "global_scripts.151": "Authentic global script 151 is extracted from the supplied data and starts with delay 7200, so it remains active across the room-entry flush."
+  }
+}

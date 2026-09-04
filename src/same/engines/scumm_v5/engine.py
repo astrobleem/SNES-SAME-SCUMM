@@ -10,6 +10,7 @@ for independent differential fixtures.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import hashlib
 import json
 from typing import Callable, Mapping
 
@@ -18,11 +19,15 @@ from ...engine import Engine, EngineContext, EngineDescriptor, FrameResult, Prob
 from ...errors import EngineExecutionError, ProfileValidationError, ResourceError, SaveFormatError
 from ...profile import EngineProfile
 from ...services import InputEvent
+from ...video import IndexedSurface, Rect
 from .audio import ScummV5AudioAdapter
+from .costume import ScummV5Costume
+from .cooked_room import CookedRoomRecord, CookedScriptSource, decode_cooked_room
+from .embedded_audio import ScummV5EmbeddedAudioAdapter
 from .input import ScummV5InputAdapter
 from .policy import ScummV5GamePolicy, parse_game_policy
 from .resources import LucasartsScummV5ResourceProvider
-from .room import ScummV5RoomAdapter, ScummV5RoomObject, decode_room
+from .room import ScummV5RoomAdapter, decode_room
 from .text import ScummTextGlyph, control_argument_count, decode_scumm_v5_text
 from .video import ScummV5Charset, ScummV5VideoAdapter
 
@@ -34,6 +39,8 @@ _RANDOM_SEED = 0xACE1
 _RESOURCE_KINDS = ("script", "sound", "costume", "room", "charset")
 _LOCKABLE_RESOURCE_KINDS = _RESOURCE_KINDS[:4]
 _MAX_ACTORS = 32
+_NUM_V5_ACTORS = 13
+_OWNER_ROOM = 0x0F
 _MAX_CLASS_OBJECTS = 512
 _MAX_VERBS = 256
 _MAX_SAVED_VERBS = 64
@@ -45,6 +52,16 @@ _MAX_SOUND_HISTORY = 32
 _MAX_LOCAL_OBJECTS = 200
 _MAX_OBJECT_STATES = 4096
 _MAX_PRINT_MESSAGES = 32
+_MAX_TALK_MESSAGE_BYTES = 32  # smallest power-of-two bound covering Fate's 26 bytes
+_VAR_HAVE_MSG = 3
+_VAR_TALK_ACTOR = 25
+_VAR_CHARINC = 37
+_TALK_BASE_DELAY = 60
+_SCUMM_V5_FRAME_JIFFIES = 4
+_MF_NEW_LEG = 0x01
+_MF_IN_LEG = 0x02
+_MF_TURN = 0x04
+_MF_LAST_LEG = 0x08
 
 
 @dataclass(slots=True)
@@ -63,6 +80,8 @@ class ScriptSlot:
     cutscene_override: int = 0
     did_exec: bool = False
     room: int | None = None
+    script_kind: str = "global"
+    source: CookedScriptSource | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -78,6 +97,8 @@ class ScriptSlot:
             "freeze_count": self.freeze_count,
             "cutscene_override": self.cutscene_override,
             "room": self.room,
+            "script_kind": self.script_kind,
+            "source_map": None if self.source is None else self.source.runtime_map(self.pc),
         }
 
 
@@ -153,6 +174,58 @@ class PrintMessageState:
 
 
 @dataclass(slots=True)
+class TalkEvent:
+    kind: str
+    actor: int
+    animation: int
+    frame: int
+    generation: int
+
+    def to_dict(self) -> dict[str, int | str]:
+        return {
+            "kind": self.kind,
+            "actor": self.actor,
+            "animation": self.animation,
+            "frame": self.frame,
+            "generation": self.generation,
+        }
+
+
+@dataclass(slots=True)
+class TalkState:
+    active: bool = False
+    have_msg: int = 0
+    actor: int = 0
+    delay: int = 0
+    generation: int = 0
+    raw: bytearray = field(default_factory=bytearray)
+    cursor: int = 0
+    segment_start: int = 0
+    segment_end: int = 0
+    segment_index: int = 0
+    started_frame: int | None = None
+    completed_frame: int | None = None
+    events: list[TalkEvent] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "active": self.active,
+            "have_msg": self.have_msg,
+            "actor": self.actor,
+            "delay": self.delay,
+            "generation": self.generation,
+            "raw": list(self.raw),
+            "cursor": self.cursor,
+            "segment_start": self.segment_start,
+            "segment_end": self.segment_end,
+            "segment_index": self.segment_index,
+            "started_frame": self.started_frame,
+            "completed_frame": self.completed_frame,
+            "events": [event.to_dict() for event in self.events],
+        }
+
+
+@dataclass(slots=True)
 class RoomObjectState:
     object_id: int
     x: int
@@ -162,9 +235,14 @@ class RoomObjectState:
     walk_x: int
     walk_y: int
     state: int = 0
+    local_index: int = 1
+    parent: int = 0
+    parent_state: int = 0
 
     @classmethod
-    def from_resource(cls, item: ScummV5RoomObject, state: int) -> "RoomObjectState":
+    def from_resource(
+        cls, item: ScummV5RoomObject, state: int, local_index: int
+    ) -> "RoomObjectState":
         return cls(
             item.object_id,
             item.x,
@@ -174,6 +252,9 @@ class RoomObjectState:
             item.walk_x,
             item.walk_y,
             state,
+            local_index,
+            item.parent,
+            1 if item.flags == 0x80 else item.flags & 0x0F,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -182,6 +263,9 @@ class RoomObjectState:
             "size": [self.width, self.height],
             "walk": [self.walk_x, self.walk_y],
             "state": self.state,
+            "local_index": self.local_index,
+            "parent": self.parent,
+            "parent_state": self.parent_state,
         }
 
 
@@ -237,6 +321,23 @@ class ActorState:
     animation_speed: int = 0
     shadow: int = 0
     animation: int = 0
+    facing: int = 180
+    costume_frame: int | None = None
+    costume_step: int = 0
+    animation_progress: int = 0
+    room: int = 0
+    visible: bool = False
+    position: tuple[int, int] = (0, 0)
+    walkbox: int = 0
+    moving: int = 0
+    walk_destination: tuple[int, int] = (0, 0)
+    walk_destination_box: int = 0xFF
+    walk_current_box: int = 0xFF
+    walk_leg_origin: tuple[int, int] = (0, 0)
+    walk_leg_target: tuple[int, int] = (0, 0)
+    walk_fraction: tuple[int, int] = (0, 0)
+    walk_delta: tuple[int, int] = (0, 0)
+    hitbox: tuple[int, int, int, int] = (0, 0, 0, 0)
 
     def reset_defaults(self) -> None:
         """Mirror Actor::initActor(0), retaining costume, palette, and name."""
@@ -256,6 +357,10 @@ class ActorState:
         self.animation_speed = 0
         self.shadow = 0
         self.animation = 0
+        self.costume_frame = None
+        self.costume_step = 0
+        self.animation_progress = 0
+        self.moving = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -275,6 +380,23 @@ class ActorState:
             "animation_speed": self.animation_speed,
             "shadow": self.shadow,
             "animation": self.animation,
+            "facing": self.facing,
+            "costume_frame": self.costume_frame,
+            "costume_step": self.costume_step,
+            "animation_progress": self.animation_progress,
+            "room": self.room,
+            "visible": self.visible,
+            "position": list(self.position),
+            "walkbox": self.walkbox,
+            "moving": self.moving,
+            "walk_destination": list(self.walk_destination),
+            "walk_destination_box": self.walk_destination_box,
+            "walk_current_box": self.walk_current_box,
+            "walk_leg_origin": list(self.walk_leg_origin),
+            "walk_leg_target": list(self.walk_leg_target),
+            "walk_fraction": list(self.walk_fraction),
+            "walk_delta": list(self.walk_delta),
+            "hitbox": list(self.hitbox),
         }
 
 
@@ -338,7 +460,20 @@ class ScummState:
     current_room: int = 0
     camera_x: int = 0
     camera_y: int = 0
+    camera_destination_x: int = 0
+    camera_destination_y: int = 0
+    camera_last_x: int = 0
+    camera_last_y: int = 0
+    camera_mode: int = 0
     camera_follow_actor: int | None = None
+    camera_moving_to_actor: bool = False
+    screen_start_strip: int = 0
+    screen_end_strip: int = 39
+    virtual_screen_xstart: int = 0
+    camera_immediate_count: int = 0
+    camera_publish_count: int = 0
+    camera_scroll_script_count: int = 0
+    camera_update_pending: bool = False
     cursor_x: int = 128
     cursor_y: int = 112
     cursor_visible: bool = True
@@ -368,10 +503,12 @@ class ScummState:
     sound_queue: list[list[int]] = field(default_factory=list)
     sound_history: list[list[int]] = field(default_factory=list)
     sound_result: int = 0
+    imuse_queue_clear_count: int = 0
     print_slots: list[PrintSlotState] = field(
         default_factory=lambda: [PrintSlotState() for _ in range(4)]
     )
     print_messages: list[PrintMessageState] = field(default_factory=list)
+    talk: TalkState = field(default_factory=TalkState)
     operations: int = 0
     frames: int = 0
     last_opcode: int = 0
@@ -406,7 +543,7 @@ class ScummV5Engine(Engine):
             | EngineCapability.MSU1_STREAM
             | EngineCapability.DEBUG_ORACLE
         ),
-        save_schema=2,
+        save_schema=6,
     )
 
     def __init__(self) -> None:
@@ -415,8 +552,20 @@ class ScummV5Engine(Engine):
         self._policy: ScummV5GamePolicy | None = None
         self._input: ScummV5InputAdapter | None = None
         self._video: ScummV5VideoAdapter | ScummV5RoomAdapter | None = None
-        self._audio: ScummV5AudioAdapter | None = None
+        self._actors_dirty = False
+        self._presentation_dirty = False
+        self._presentation_rebuild = False
+        self._background_needs_redraw = False
+        self._num_global_objects = _MAX_OBJECT_STATES
+        self._num_global_scripts = 200
+        self._object_owners = bytes(_MAX_OBJECT_STATES)
+        self._audio: ScummV5AudioAdapter | ScummV5EmbeddedAudioAdapter | None = None
         self._room_scripts: dict[int, bytes] = {}
+        self._room_script_descriptors: dict[int, CookedScriptSource] = {}
+        self._room_entry: CookedScriptSource | None = None
+        self._room_exit: CookedScriptSource | None = None
+        self._room_record: CookedRoomRecord | None = None
+        self._room_lifecycle: list[dict[str, object]] = []
         self._handlers: dict[int, Callable[[ScriptSlot, EngineContext], bool]] = {}
         self._install_handlers()
         self._tick_operations = 0
@@ -501,8 +650,11 @@ class ScummV5Engine(Engine):
             self._handlers[opcode] = self._comparison(operation)
         self._handlers[0x2E] = self._op_delay
         self._handlers[0x2B] = self._op_delay_variable
+        self._handlers[0x30] = self._op_matrix_ops
         for opcode in (0x72, 0xF2):
             self._handlers[opcode] = self._op_load_room
+        # Phase 6L-A parks loadRoomWithEgo until the authentic room-49
+        # deferred sound-82 lifecycle reaches the $02DE boundary.
         for opcode in (0x02, 0x82):
             self._handlers[opcode] = self._op_start_music
         self._handlers[0x20] = self._op_stop_music
@@ -510,9 +662,13 @@ class ScummV5Engine(Engine):
             self._handlers[opcode] = self._op_start_sound
         for opcode in (0x3C, 0xBC):
             self._handlers[opcode] = self._op_stop_sound
+        for opcode in (0x7C, 0xFC):
+            self._handlers[opcode] = self._op_is_sound_running
         self._handlers[0x4C] = self._op_sound_kludge
         for opcode in (0x32, 0xB2):
             self._handlers[opcode] = self._op_set_camera
+        for opcode in (0x12, 0x92):
+            self._handlers[opcode] = self._op_pan_camera
         for opcode in (0x0A, 0x2A, 0x4A, 0x6A, 0x8A, 0xAA, 0xCA, 0xEA):
             self._handlers[opcode] = self._op_start_script
         for opcode in (0x62, 0xE2):
@@ -536,10 +692,48 @@ class ScummV5Engine(Engine):
             self._handlers[opcode] = self._op_actor_ops
         for opcode in (0x11, 0x51, 0x91, 0xD1):
             self._handlers[opcode] = self._op_animate_actor
+        for opcode in (0x15, 0x55, 0x95, 0xD5):
+            self._handlers[opcode] = self._op_actor_from_pos
+        for opcode in (0x7B, 0xFB):
+            self._handlers[opcode] = self._op_get_actor_walkbox
+        for opcode in (0x0B, 0x4B, 0x8B, 0xCB):
+            self._handlers[opcode] = self._op_get_verb_entrypoint
+        for opcode in (0x10, 0x90):
+            self._handlers[opcode] = self._op_get_object_owner
+        for opcode in (0x34, 0x74, 0xB4, 0xF4):
+            self._handlers[opcode] = self._op_get_dist
+        for opcode in (0x37, 0x77, 0xB7, 0xF7):
+            self._handlers[opcode] = self._op_start_object
+        for opcode in (0x03, 0x83):
+            self._handlers[opcode] = self._op_get_actor_room
+        for opcode in (0x06, 0x86):
+            self._handlers[opcode] = self._op_get_actor_elevation
+        for opcode in (0x0F, 0x8F):
+            self._handlers[opcode] = self._op_get_object_state
+        self._handlers[0xC3] = self._op_get_actor_x
+        self._handlers[0xA3] = self._op_get_actor_y
+        for opcode in (0x1E, 0x3E, 0x5E, 0x7E, 0x9E, 0xBE, 0xDE, 0xFE):
+            self._handlers[opcode] = self._op_walk_actor_to
+        for opcode in (0x36, 0x76, 0xB6, 0xF6):
+            self._handlers[opcode] = self._op_walk_actor_to_object
+        for opcode in (0x56, 0xD6):
+            self._handlers[opcode] = self._op_get_actor_moving
+        for opcode in (0x3B, 0xBB):
+            self._handlers[opcode] = self._op_wait_for_actor
+        for opcode in (0x2D, 0x6D, 0xAD, 0xED):
+            self._handlers[opcode] = self._op_put_actor_in_room
+        for opcode in (0x01, 0x21, 0x41, 0x61, 0x81, 0xA1, 0xC1, 0xE1):
+            self._handlers[opcode] = self._op_put_actor
+        for opcode in (0x0E, 0x4E, 0x8E, 0xCE):
+            self._handlers[opcode] = self._op_put_actor_at_object
+        for opcode in (0x35, 0x75, 0xB5, 0xF5):
+            self._handlers[opcode] = self._op_find_object
         for opcode in (0x52, 0xD2):
             self._handlers[opcode] = self._op_actor_follow_camera
         for opcode in (0x5D, 0xDD):
             self._handlers[opcode] = self._op_set_class
+        for opcode in (0x1D, 0x9D):
+            self._handlers[opcode] = self._op_if_class_of_is
         for opcode in (0x7A, 0xFA):
             self._handlers[opcode] = self._op_verb_ops
         self._handlers[0xAB] = self._op_save_restore_verbs
@@ -551,9 +745,24 @@ class ScummV5Engine(Engine):
             self._handlers[opcode] = self._op_do_sentence
         for opcode in (0x05, 0x85):
             self._handlers[opcode] = self._op_draw_object
+        # v5 pickupObject consumes a word object id and transfers the object
+        # out of the current room.  Inventory ownership is represented by the
+        # existing object-state map; no title-specific inventory is needed.
+        self._handlers[0x25] = self._op_pickup_object
+        for opcode in (0x07, 0x47, 0x87, 0xC7):
+            self._handlers[opcode] = self._op_set_state
+        for opcode in (0x63, 0xE3):
+            self._handlers[opcode] = self._op_get_actor_facing
+        # o5_faceActor has the same flagged actor/word operands in both
+        # opcode banks.  Keep this on the host oracle as a real opcode (the
+        # SNES implementation already consumes the operands), rather than
+        # letting a valid sentence die before its authored wait/movement path.
+        for opcode in (0x49, 0xC9):
+            self._handlers[opcode] = self._op_face_actor
         for opcode in (0x14, 0x94):
             self._handlers[opcode] = self._op_print
         self._handlers[0xD8] = self._op_print_ego
+        self._handlers[0xAE] = self._op_wait
         self._handlers[0x27] = self._op_string_ops
         self._handlers[0x2C] = self._op_cursor_command
 
@@ -582,6 +791,13 @@ class ScummV5Engine(Engine):
         logical_height = context.profile.video.logical_height or context.profile.video.height
         self._input = ScummV5InputAdapter(logical_width, logical_height)
         self.state = ScummState(
+            camera_x=logical_width // 2,
+            camera_y=logical_height // 2,
+            camera_destination_x=logical_width // 2,
+            camera_destination_y=logical_height // 2,
+            camera_last_x=logical_width // 2,
+            camera_last_y=logical_height // 2,
+            screen_end_strip=logical_width // 8 - 1,
             cursor_x=self._input.state.cursor_x,
             cursor_y=self._input.state.cursor_y,
             room_ops=RoomOpsState(
@@ -591,18 +807,40 @@ class ScummV5Engine(Engine):
                 screen_bottom=logical_height,
             ),
         )
+        # VAR_HAVE_MSG and VAR_TALK_ACTOR begin clear through zero-filled
+        # engine variables. VAR_CHARINC is game initialization state (four in
+        # the hash-bound Fate pre-Thera state), not a universal VM default.
+        if isinstance(context.services.resources, LucasartsScummV5ResourceProvider):
+            globals_ = context.services.resources.global_objects
+            self._num_global_objects = len(globals_.states)
+            self._num_global_scripts = context.services.resources.global_script_count
+            self._object_owners = globals_.owners
+        else:
+            self._num_global_objects = _MAX_OBJECT_STATES
+            self._num_global_scripts = int(context.profile.options.get("num_global_scripts", 200))
+            self._object_owners = bytes(self._num_global_objects)
+        if not 0 <= self._num_global_scripts <= 256:
+            raise ResourceError("SCUMM global script count must be in 0..256")
         self._room_scripts = {}
+        self._room_script_descriptors = {}
+        self._room_entry = None
+        self._room_exit = None
+        self._room_record = None
+        self._room_lifecycle = []
         for print_slot in self.state.print_slots:
             print_slot.right = logical_width - 1
         if not 0 <= boot_number <= 255:
             raise ResourceError("SCUMM boot script number must be in 0..255")
         self.state.scripts.append(ScriptSlot(boot_key, program, number=boot_number))
         audio_manifest = context.profile.options.get("audio_manifest")
-        self._audio = (
-            None
-            if audio_manifest is None
-            else ScummV5AudioAdapter(context, str(audio_manifest))
-        )
+        if audio_manifest is not None:
+            self._audio = ScummV5AudioAdapter(context, str(audio_manifest))
+        elif self._policy is not None and self._policy.audio_source == "embedded":
+            self._audio = ScummV5EmbeddedAudioAdapter(
+                context, lambda sound: self._resource_key("sound", sound)
+            )
+        else:
+            self._audio = None
         initial_speech = context.profile.options.get("initial_speech")
         if initial_speech is not None:
             if self._audio is None:
@@ -623,6 +861,11 @@ class ScummV5Engine(Engine):
         context.services.video.show_cursor(True)
         initial_room = int(context.profile.options.get("initial_room", 0))
         self._load_room(context, initial_room, required=False)
+        # Initial actors do not exist until scripts run; retain the room's
+        # presentation as loaded instead of needlessly recomposing it on tick 1.
+        self._actors_dirty = False
+        self._presentation_dirty = False
+        self._presentation_rebuild = False
         context.services.debug.marker("scumm_v5.boot", initial_room)
 
     def _script_key(self, number: int) -> str:
@@ -670,11 +913,28 @@ class ScummV5Engine(Engine):
             self._video.move_cursor(logical.cursor_x, logical.cursor_y)
         if "skip" in logical.commands:
             self._abort_cutscene()
+        # Profiles may describe a title/game-start command that is consumed by
+        # the normal input seam.  This is deliberately data-driven: the
+        # interpreter does not know a title, room, or script number.  The
+        # transition is requested here (outside script execution) and is then
+        # committed by the ordinary room lifecycle on the next scheduler tick.
+        start = context.profile.options.get("title_start_action")
+        if isinstance(start, dict) and logical.commands:
+            action = str(start.get("action", "menu"))
+            source_room = start.get("from_room")
+            target_room = start.get("target_room")
+            if (
+                action in logical.commands
+                and (source_room is None or int(source_room) == self.state.current_room)
+                and target_room is not None
+            ):
+                self._load_room(context, int(target_room), required=True)
 
     def tick(self, context: EngineContext) -> FrameResult:
         if self._input is not None:
             self._input.begin_frame(context.services.clock.frame)
         self.state.frames += 1
+        self._advance_talk_frame_begin()
         self._tick_operations = 0
         self._tick_max_ops = context.profile.max_ops_per_tick
         self._in_tick = True
@@ -693,8 +953,24 @@ class ScummV5Engine(Engine):
             self._check_and_run_sentence_script(context)
         finally:
             self._in_tick = False
+        # Canonical v5 processes queued iMUSE commands at frame end.  An
+        # explicit soundKludge[-1] remains an immediate flush.
+        if (self.state.sound_queue
+                and bool(context.profile.options.get("imuse_frame_end_processing", False))):
+            self._flush_sound_commands(context)
         if self._audio is not None:
             self._audio.tick()
+        self._advance_actor_movement()
+        self._move_camera(context)
+        headless = bool(context.profile.options.get("headless_presentation", False))
+        if not headless:
+            self._compose_presentation(context)
+        self._actors_dirty = False
+        if not headless:
+            self._advance_actor_costumes(context)
+        self._advance_talk_frame_end()
+        self.state.camera_last_x = self.state.camera_x
+        self.state.camera_last_y = self.state.camera_y
         operations = self._tick_operations
         self.state.operations += operations
         self.state.halted = bool(self.state.scripts) and not any(
@@ -713,6 +989,219 @@ class ScummV5Engine(Engine):
                 "last_opcode": self.state.last_opcode,
             },
         )
+
+    def _compose_presentation(self, context: EngineContext) -> None:
+        """Rebuild SCUMM's logical frame, replay text, then project once."""
+        if self._video is None or self._video.logical_surface is None:
+            self._presentation_dirty = False
+            self._presentation_rebuild = False
+            return
+        rebuild = self._actors_dirty or self._presentation_rebuild
+        if rebuild and isinstance(self._video, ScummV5RoomAdapter):
+            if not context.profile.options.get("headless_actor_presentation", False):
+                self._video.render_actors(
+                    self.state.actors,
+                    current_room=self.state.current_room,
+                    costume_key=lambda costume: self._resource_key("costume", costume),
+                    object_classes=self.state.object_classes,
+                    project=False,
+                )
+        elif rebuild and not context.profile.options.get("headless_actor_presentation", False):
+            self._video.recompose()
+        if rebuild or self._presentation_dirty:
+            if self.state.print_messages:
+                target = self._video.prepare_composition()
+                for message in self.state.print_messages:
+                    self._present_print(context, message, target)
+                self._video.project_composition()
+            else:
+                self._video.project()
+            self.state.room_hash = context.services.video.surface.hash()
+        self._presentation_dirty = False
+        self._presentation_rebuild = False
+
+    def _advance_actor_movement(self) -> None:
+        if not isinstance(self._video, ScummV5RoomAdapter) or self._video.room is None:
+            return
+        room = self._video.room
+        for actor in self.state.actors.values():
+            if not actor.moving or actor.room != self.state.current_room:
+                continue
+            # Pre-C39 callers could retain arbitrary legacy moving bits without
+            # the route record that a real walkActorTo initializes.
+            if (
+                actor.moving & _MF_NEW_LEG
+                and actor.walkbox != 0xFF
+                and actor.walk_current_box == actor.walk_destination_box == 0xFF
+            ):
+                continue
+            before = (actor.position, actor.facing, actor.costume_frame, actor.walkbox)
+            if not actor.moving & _MF_NEW_LEG:
+                if actor.moving & _MF_IN_LEG and self._actor_walk_step(actor, room):
+                    self._actors_dirty |= before != (
+                        actor.position, actor.facing, actor.costume_frame, actor.walkbox
+                    )
+                    continue
+                if actor.moving & _MF_LAST_LEG:
+                    actor.moving = 0
+                    actor.walkbox = actor.walk_destination_box
+                    actor.costume_frame = actor.stand_frame
+                    actor.costume_step = 0
+                    actor.animation_progress = 0
+                    self._actors_dirty = True
+                    continue
+                if actor.moving & _MF_TURN:
+                    actor.moving = 0
+                    continue
+                actor.walkbox = actor.walk_current_box
+                actor.moving &= _MF_IN_LEG
+
+            actor.moving &= ~_MF_NEW_LEG
+            while True:
+                if actor.walkbox == 0xFF:
+                    actor.walkbox = actor.walk_destination_box
+                    actor.walk_current_box = actor.walk_destination_box
+                    break
+                if actor.walkbox == actor.walk_destination_box:
+                    break
+                next_box = room.next_box(actor.walkbox, actor.walk_destination_box)
+                if next_box is None:
+                    actor.walk_destination_box = actor.walkbox
+                    actor.moving |= _MF_LAST_LEG
+                    break
+                actor.walk_current_box = next_box
+                direct, gate = room.route_gate(
+                    actor.walkbox,
+                    next_box,
+                    actor.walk_destination_box,
+                    actor.position,
+                    actor.walk_destination,
+                )
+                if direct:
+                    break
+                if gate is None:
+                    actor.walk_destination_box = actor.walkbox
+                    actor.moving |= _MF_LAST_LEG
+                    break
+                if self._calc_movement_factor(actor, gate):
+                    break
+                actor.walkbox = actor.walk_current_box
+            else:  # pragma: no cover - the loop always exits explicitly
+                pass
+            if not actor.moving & _MF_IN_LEG and not actor.moving & _MF_LAST_LEG:
+                actor.moving |= _MF_LAST_LEG
+                self._calc_movement_factor(actor, actor.walk_destination)
+            self._actors_dirty |= before != (
+                actor.position, actor.facing, actor.costume_frame, actor.walkbox
+            )
+
+    def _calc_movement_factor(self, actor: ActorState, target: tuple[int, int]) -> bool:
+        if actor.position == target:
+            return False
+        diff_x = target[0] - actor.position[0]
+        diff_y = target[1] - actor.position[1]
+        delta_y = actor.walk_speed[1] << 16
+        if diff_y < 0:
+            delta_y = -delta_y
+        delta_x = delta_y * diff_x
+        if diff_y:
+            delta_x = self._trunc_div(delta_x, diff_y)
+        else:
+            delta_y = 0
+        if abs(self._trunc_div(delta_x, 0x10000)) > actor.walk_speed[0]:
+            delta_x = actor.walk_speed[0] << 16
+            if diff_x < 0:
+                delta_x = -delta_x
+            delta_y = self._trunc_div(delta_x * diff_y, diff_x) if diff_x else 0
+        actor.walk_fraction = (0, 0)
+        actor.walk_leg_origin = actor.position
+        actor.walk_leg_target = target
+        actor.walk_delta = (delta_x, delta_y)
+        next_facing = (
+            (180 if delta_y > 0 else 0)
+            if abs(diff_y) * 3 > abs(diff_x)
+            else (90 if delta_x > 0 else 270)
+        )
+        if actor.costume_frame != actor.walk_frame or actor.facing != next_facing:
+            actor.costume_frame = actor.walk_frame
+            actor.costume_step = 0
+            actor.animation_progress = 0
+        actor.facing = next_facing
+        return self._actor_walk_step(actor, self._video.room if isinstance(self._video, ScummV5RoomAdapter) else None)
+
+    @staticmethod
+    def _trunc_div(numerator: int, denominator: int) -> int:
+        quotient = abs(numerator) // abs(denominator)
+        return -quotient if (numerator < 0) != (denominator < 0) else quotient
+
+    def _actor_walk_step(self, actor: ActorState, room: object) -> bool:
+        actor.costume_frame = actor.walk_frame
+        actor.moving |= _MF_IN_LEG
+        if (
+            actor.walkbox != actor.walk_current_box
+            and hasattr(room, "walkboxes")
+            and 0 <= actor.walk_current_box < len(room.walkboxes)
+            and room.walkboxes[actor.walk_current_box].contains(*actor.position)
+        ):
+            actor.walkbox = actor.walk_current_box
+        distance_x = abs(actor.walk_leg_target[0] - actor.walk_leg_origin[0])
+        distance_y = abs(actor.walk_leg_target[1] - actor.walk_leg_origin[1])
+        if (
+            abs(actor.position[0] - actor.walk_leg_origin[0]) >= distance_x
+            and abs(actor.position[1] - actor.walk_leg_origin[1]) >= distance_y
+        ):
+            actor.moving &= ~_MF_IN_LEG
+            return False
+        x_value = (
+            actor.position[0] * 0x10000
+            + actor.walk_fraction[0]
+            + (actor.walk_delta[0] >> 8) * actor.scale[0]
+        )
+        y_value = (
+            actor.position[1] * 0x10000
+            + actor.walk_fraction[1]
+            + (actor.walk_delta[1] >> 8) * actor.scale[1]
+        )
+        actor.walk_fraction = (x_value & 0xFFFF, y_value & 0xFFFF)
+        actor.position = (x_value >> 16, y_value >> 16)
+        if abs(actor.position[0] - actor.walk_leg_origin[0]) > distance_x:
+            actor.position = (actor.walk_leg_target[0], actor.position[1])
+        if abs(actor.position[1] - actor.walk_leg_origin[1]) > distance_y:
+            actor.position = (actor.position[0], actor.walk_leg_target[1])
+        if actor.position == actor.walk_leg_target:
+            actor.moving &= ~_MF_IN_LEG
+            return False
+        return True
+
+    def _advance_actor_costumes(self, context: EngineContext) -> None:
+        """Advance visible classic costumes after drawing the current pose."""
+        if self._context is not None and self._context.profile.options.get("headless_actor_presentation", False):
+            return
+        if not isinstance(self._video, ScummV5RoomAdapter):
+            return
+        for actor in self.state.actors.values():
+            if (
+                not actor.visible
+                or actor.room != self.state.current_room
+                or actor.costume == 0
+                or actor.costume_frame is None
+            ):
+                continue
+            actor.animation_progress += 1
+            if actor.animation_progress < actor.animation_speed:
+                continue
+            actor.animation_progress = 0
+            key = self._resource_key("costume", actor.costume)
+            costume = ScummV5Costume(context.services.resource_read(key), key=key)
+            before = costume.decode_pose(
+                actor.costume_frame, facing=actor.facing, step=actor.costume_step
+            )
+            actor.costume_step += 1
+            after = costume.decode_pose(
+                actor.costume_frame, facing=actor.facing, step=actor.costume_step
+            )
+            if before.commands != after.commands:
+                self._actors_dirty = True
 
     def _execute_slot(self, slot: ScriptSlot, context: EngineContext) -> None:
         slot.did_exec = True
@@ -764,6 +1253,12 @@ class ScummV5Engine(Engine):
         return value - 0x10000 if value & 0x8000 else value
 
     def _result_var(self, slot: ScriptSlot) -> int:
+        reference = self._variable_reference(slot)
+        self._check_var(slot, reference)
+        return reference
+
+    def _variable_reference(self, slot: ScriptSlot) -> int:
+        """Consume one canonical v5 variable reference, including indexing."""
         reference = self._u16(slot)
         if reference & 0x2000:
             index_reference = self._u16(slot)
@@ -774,8 +1269,10 @@ class ScummV5Engine(Engine):
                 else index_reference & 0x0FFF
             )
             reference = (reference & 0xC000) | (base + index)
-        self._check_var(slot, reference)
         return reference
+
+    def _read_var_operand(self, slot: ScriptSlot) -> int:
+        return self._read_var(slot, self._variable_reference(slot))
 
     def _check_var(self, slot: ScriptSlot, reference: int) -> None:
         if reference & 0x8000:
@@ -815,22 +1312,28 @@ class ScummV5Engine(Engine):
 
     def _var_or_direct_byte(self, slot: ScriptSlot, mask: int) -> int:
         if self.state.last_opcode & mask:
-            return self._read_var(slot, self._u16(slot)) & 0xFF
+            return self._read_var_operand(slot) & 0xFF
         return self._u8(slot)
 
     def _byte_for_flags(self, slot: ScriptSlot, flags: int, mask: int) -> int:
         if flags & mask:
-            return self._read_var(slot, self._u16(slot)) & 0xFF
+            return self._read_var_operand(slot) & 0xFF
         return self._u8(slot)
 
     def _word_for_flags(self, slot: ScriptSlot, flags: int, mask: int) -> int:
         if flags & mask:
-            return self._read_var(slot, self._u16(slot))
+            return self._read_var_operand(slot)
         return self._s16(slot)
+
+    def _byte_operand_for_flags(self, slot: ScriptSlot, flags: int, mask: int) -> int:
+        """Decode a direct byte or the complete signed value of a variable."""
+        if flags & mask:
+            return self._read_var_operand(slot)
+        return self._u8(slot)
 
     def _var_or_direct_word(self, slot: ScriptSlot, mask: int) -> int:
         if self.state.last_opcode & mask:
-            return self._read_var(slot, self._u16(slot))
+            return self._read_var_operand(slot)
         return self._s16(slot)
 
     def _jump_condition(self, slot: ScriptSlot, condition: bool) -> None:
@@ -940,18 +1443,18 @@ class ScummV5Engine(Engine):
 
     def _op_equal_zero(self, slot: ScriptSlot, context: EngineContext) -> bool:
         del context
-        self._jump_condition(slot, self._read_var(slot, self._u16(slot)) == 0)
+        self._jump_condition(slot, self._read_var_operand(slot) == 0)
         return False
 
     def _op_not_equal_zero(self, slot: ScriptSlot, context: EngineContext) -> bool:
         del context
-        self._jump_condition(slot, self._read_var(slot, self._u16(slot)) != 0)
+        self._jump_condition(slot, self._read_var_operand(slot) != 0)
         return False
 
     def _comparison(self, operation: str) -> Callable[[ScriptSlot, EngineContext], bool]:
         def handler(slot: ScriptSlot, context: EngineContext) -> bool:
             del context
-            lhs = self._read_var(slot, self._u16(slot))
+            lhs = self._read_var_operand(slot)
             rhs = self._var_or_direct_word(slot, 0x80)
             conditions = {
                 "eq": lhs == rhs,
@@ -975,15 +1478,80 @@ class ScummV5Engine(Engine):
 
     def _op_delay_variable(self, slot: ScriptSlot, context: EngineContext) -> bool:
         del context
-        slot.delay = max(0, self._read_var(slot, self._u16(slot)))
+        slot.delay = max(0, self._read_var_operand(slot))
         slot.yielded = True
         return True
+
+    def _op_matrix_ops(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 matrixOps sub-op 1: mutate one room box's raw flags."""
+        del context
+        subopcode = self._u8(slot)
+        if subopcode & 0x1F != 0x01:
+            raise EngineExecutionError(
+                f"SCUMM v5 matrixOps subopcode ${subopcode:02X} is not implemented "
+                f"(script {slot.resource_key}, offset ${slot.pc - 1:04X})"
+            )
+        box = self._byte_for_flags(slot, subopcode, 0x80)
+        flags = self._byte_for_flags(slot, subopcode, 0x40)
+        if not isinstance(self._video, ScummV5RoomAdapter) or self._video.room is None:
+            return False
+        # getBoxBaseAddr() treats the classic invalid box sentinel as absent.
+        if box == 0xFF:
+            return False
+        if not 0 <= box < len(self._video.room.walkboxes):
+            raise EngineExecutionError(
+                f"SCUMM walkbox {box} is outside room {self.state.current_room} "
+                f"box count {len(self._video.room.walkboxes)}"
+            )
+        self._video.room.walkboxes[box].flags = flags
+        return False
 
     def _op_load_room(self, slot: ScriptSlot, context: EngineContext) -> bool:
         room = self._var_or_direct_byte(slot, 0x80)
         if room & 0x80:
             room = self.state.resource_mapper[room & 0x7F]
         self._load_room(context, room, required=True)
+        return False
+
+    def _op_load_room_with_ego(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 room transition with source-owned ego placement."""
+        flags = self.state.last_opcode
+        # Decode the complete instruction before any scene or actor mutation.
+        object_id = self._word_for_flags(slot, flags, 0x80) & 0xFFFF
+        room = self._byte_operand_for_flags(slot, flags, 0x40)
+        x, y = self._s16(slot), self._s16(slot)
+        ego_id = self._read_var(slot, 1) & 0xFFFF
+        actor = self._actor(ego_id)
+
+        # Preflight the complete target and entry object before startScene
+        # retires the calling room-local slot.
+        key = self._room_key(room)
+        _raw, decoded, _record = self._prepare_room(context, room, key)
+        entry = next((item for item in decoded.objects if item.object_id == object_id), None)
+        if entry is None:
+            raise ResourceError(
+                f"SCUMM entry object {object_id} is absent from target room {room}"
+            )
+
+        actor.room = room
+        actor.moving = 0
+        self.state.variables[38] = object_id  # canonical v5 VAR_WALKTO_OBJ binding
+        self._load_room(context, room, required=True)
+        self.state.variables[38] = 0
+
+        # v5 ENCD may already have positioned ego.  The object walk point is
+        # the canonical fallback and is also the initial scene placement.
+        if actor.position == (0, 0) or actor.room != room:
+            actor.room = room
+            actor.position = (entry.walk_x, entry.walk_y)
+            actor.moving = 0
+        self.state.camera_x = self.state.camera_destination_x = actor.position[0]
+        self.state.camera_follow_actor = ego_id
+        self.state.camera_mode = 1
+        self.state.camera_moving_to_actor = False
+        self.state.camera_update_pending = True
+        if x != -1:
+            self._start_actor_walk(actor, (x, y))
         return False
 
     def _op_print(self, slot: ScriptSlot, context: EngineContext) -> bool:
@@ -1039,16 +1607,30 @@ class ScummV5Engine(Engine):
                 )
             elif subop == 15:  # SO_TEXTSTRING
                 raw = self._read_encoded_string(slot)
-                message = PrintMessageState(actor, text_slot, style, raw)
+                if len(raw) > _MAX_TALK_MESSAGE_BYTES:
+                    raise EngineExecutionError(
+                        f"SCUMM actor-talk message exceeds {_MAX_TALK_MESSAGE_BYTES} encoded bytes"
+                    )
+                if text_slot == 0:
+                    visible = self._begin_actor_talk(actor, raw)
+                else:
+                    visible = raw
+                message = PrintMessageState(actor, text_slot, style, visible)
                 if len(self.state.print_messages) >= _MAX_PRINT_MESSAGES:
                     self.state.print_messages.pop(0)
                 self.state.print_messages.append(message)
-                self._present_print(context, message)
+                if not bool(context.profile.options.get("headless_presentation", False)):
+                    self._presentation_dirty = True
                 return
             else:
                 raise EngineExecutionError(f"SCUMM print sub-op {subop} is not implemented")
 
-    def _present_print(self, context: EngineContext, message: PrintMessageState) -> None:
+    def _present_print(
+        self,
+        context: EngineContext,
+        message: PrintMessageState,
+        target: IndexedSurface,
+    ) -> None:
         key = self._resource_key("charset", message.style.charset)
         if not context.services.resources.contains(key):
             # Some retail DCHR directories leave entry zero empty while the
@@ -1070,11 +1652,11 @@ class ScummV5Engine(Engine):
         pen_x = message.style.x - text_width // 2 if message.style.center else message.style.x
         logical_width = context.profile.video.logical_width or context.profile.video.width
         logical_height = context.profile.video.logical_height or context.profile.video.height
-        target = context.services.video.surface
-        source_x = max(0, (logical_width - target.width) // 2)
-        source_y = max(0, (logical_height - target.height) // 2)
-        destination_x = max(0, (target.width - logical_width) // 2)
-        destination_y = max(0, (target.height - logical_height) // 2)
+        physical = context.services.video.surface
+        source_x = max(0, (logical_width - physical.width) // 2)
+        source_y = max(0, (logical_height - physical.height) // 2)
+        destination_x = max(0, (physical.width - logical_width) // 2)
+        destination_y = max(0, (physical.height - logical_height) // 2)
         for glyph in advances:
             if glyph is None:
                 pen_x += 4
@@ -1082,17 +1664,194 @@ class ScummV5Engine(Engine):
             for glyph_y in range(glyph.height):
                 logical_y = message.style.y + glyph.y_offset + glyph_y
                 physical_y = destination_y + logical_y - source_y
-                if not 0 <= physical_y < target.height:
+                if not 0 <= physical_y < physical.height:
                     continue
                 for glyph_x in range(glyph.width):
                     if not glyph.pixels[glyph_y * glyph.width + glyph_x]:
                         continue
                     logical_x = pen_x + glyph.x_offset + glyph_x
                     physical_x = destination_x + logical_x - source_x
-                    if logical_x <= message.style.right and 0 <= physical_x < target.width:
+                    if logical_x <= message.style.right and 0 <= physical_x < physical.width:
                         target.set_pixel(physical_x, physical_y, message.style.color)
             pen_x += glyph.advance
-        self.state.room_hash = target.hash()
+
+    @staticmethod
+    def _talk_glyph_count(raw: bytearray) -> int:
+        """Count v5 printable character codes, excluding encoded controls."""
+        count = 0
+        index = 0
+        while index < len(raw):
+            value = raw[index]
+            index += 1
+            if value == 0:
+                return count
+            if value != 0xFF:
+                count += 1
+                continue
+            if index >= len(raw):
+                raise EngineExecutionError("SCUMM actor-talk control is truncated")
+            control = raw[index]
+            index += 1
+            arguments = control_argument_count(control)
+            if index + arguments > len(raw):
+                raise EngineExecutionError("SCUMM actor-talk control arguments are truncated")
+            index += arguments
+        raise EngineExecutionError("SCUMM actor-talk message has no terminator")
+
+    @staticmethod
+    def _talk_segment(raw: bytearray, start: int) -> tuple[bytearray, int, bool]:
+        """Return one printable segment, its continuation cursor, and finality.
+
+        SCUMM v5 control ``FF 03`` is an embedded talk wait: it terminates the
+        current display pass while ownership of the retained encoded string
+        continues.  It is deliberately not exposed to the text rasterizer.
+        """
+        segment = bytearray()
+        index = start
+        while index < len(raw):
+            value = raw[index]
+            index += 1
+            if value == 0:
+                segment.append(0)
+                return segment, index, True
+            if value != 0xFF:
+                segment.append(value)
+                continue
+            if index >= len(raw):
+                raise EngineExecutionError("SCUMM actor-talk control is truncated")
+            control = raw[index]
+            index += 1
+            arguments = control_argument_count(control)
+            if index + arguments > len(raw):
+                raise EngineExecutionError("SCUMM actor-talk control arguments are truncated")
+            if control != 3:
+                raise EngineExecutionError(
+                    f"SCUMM actor-talk control {control} is unsupported"
+                )
+            index += arguments
+            segment.append(0)
+            return segment, index, False
+        raise EngineExecutionError("SCUMM actor-talk message has no terminator")
+
+    def _record_talk_event(self, kind: str, actor: int, animation: int) -> None:
+        self.state.talk.events.append(TalkEvent(
+            kind, actor, animation, self.state.frames, self.state.talk.generation
+        ))
+
+    def _stop_actor_talk(self) -> None:
+        talk = self.state.talk
+        if not talk.active:
+            return
+        actor = self._actor(talk.actor)
+        self._record_talk_event("stop", talk.actor, actor.talk_frames[1])
+        talk.active = False
+        talk.have_msg = 0
+        talk.delay = 0
+        talk.completed_frame = self.state.frames
+        talk.actor = 0xFF
+        self.state.variables[_VAR_TALK_ACTOR] = 0xFF
+        self.state.print_messages = [
+            message for message in self.state.print_messages if message.slot != 0
+        ]
+        self._presentation_rebuild = True
+
+    def _begin_actor_talk(self, actor_id: int, raw: bytearray) -> bytearray:
+        if actor_id >= _MAX_ACTORS:
+            raise EngineExecutionError(f"SCUMM actor {actor_id} is outside 0..{_MAX_ACTORS - 1}")
+        if not raw or raw[-1] != 0:
+            raise EngineExecutionError("SCUMM actor-talk message has no terminator")
+        # Validate and compute everything before replacing current ownership.
+        self._talk_glyph_count(raw)
+        segment, cursor, final = self._talk_segment(raw, 0)
+        glyph_count = len(segment) - 1
+        char_increment = self.state.variables[_VAR_CHARINC]
+        if char_increment < 0:
+            raise EngineExecutionError("SCUMM VAR_CHARINC must not be negative")
+        delay = _TALK_BASE_DELAY + glyph_count * char_increment
+        if delay > 0x7FFF:
+            raise EngineExecutionError("SCUMM actor-talk delay exceeds s16")
+        if self.state.talk.active:
+            self._stop_actor_talk()
+        actor = self._actor(actor_id)
+        talk = self.state.talk
+        talk.generation = (talk.generation + 1) & 0xFFFF
+        talk.active = True
+        talk.have_msg = 1 if final else 0xFF
+        talk.actor = actor_id
+        talk.delay = delay
+        talk.raw = bytearray(raw)
+        talk.cursor = cursor
+        talk.segment_start = 0
+        talk.segment_end = cursor - (1 if final else 2)
+        talk.segment_index = 0
+        talk.started_frame = self.state.frames
+        talk.completed_frame = None
+        self.state.variables[_VAR_HAVE_MSG] = 0xFF
+        self.state.variables[_VAR_TALK_ACTOR] = actor_id
+        self._record_talk_event("start", actor_id, actor.talk_frames[0])
+        return segment
+
+    def _continue_actor_talk(self) -> None:
+        talk = self.state.talk
+        segment, cursor, final = self._talk_segment(talk.raw, talk.cursor)
+        glyph_count = len(segment) - 1
+        delay = _TALK_BASE_DELAY + glyph_count * self.state.variables[_VAR_CHARINC]
+        if delay > 0x7FFF:
+            raise EngineExecutionError("SCUMM actor-talk delay exceeds s16")
+        start = talk.cursor
+        talk.cursor = cursor
+        talk.segment_start = start
+        talk.segment_end = cursor - (1 if final else 2)
+        talk.segment_index += 1
+        talk.have_msg = 1 if final else 0xFF
+        talk.delay = delay
+        for message in self.state.print_messages:
+            if message.slot == 0:
+                message.raw = segment
+                break
+        self._presentation_rebuild = True
+
+    def _advance_talk_frame_begin(self) -> None:
+        talk = self.state.talk
+        if talk.active and talk.delay:
+            talk.delay = max(0, talk.delay - _SCUMM_V5_FRAME_JIFFIES)
+        # ScummVM publishes _haveMsg before runAllScripts.  A stop performed
+        # later in displayDialog is therefore visible to scripts next frame.
+        # Do not claim ownership of a profile's variable slot until actor-talk
+        # has actually been used. Once begun, the lifecycle owns publication.
+        if talk.generation:
+            self.state.variables[_VAR_HAVE_MSG] = talk.have_msg
+
+    def _advance_talk_frame_end(self) -> None:
+        talk = self.state.talk
+        if not talk.active or talk.delay != 0:
+            return
+        if talk.have_msg == 0xFF:
+            self._continue_actor_talk()
+        elif talk.have_msg == 1:
+            self._stop_actor_talk()
+
+    def _op_wait(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        del context
+        instruction = slot.pc - 1
+        subopcode = self._u8(slot)
+        operation = subopcode & 0x1F
+        if operation == 1:
+            actor = self._actor(self._byte_for_flags(slot, subopcode, 0x80))
+            if actor.moving:
+                slot.pc = instruction
+                slot.yielded = True
+                return True
+            return False
+        if operation != 2:
+            raise EngineExecutionError(
+                f"SCUMM wait sub-op {operation} is not implemented"
+            )
+        if self.state.variables[_VAR_HAVE_MSG]:
+            slot.pc = instruction
+            slot.yielded = True
+            return True
+        return False
 
     def _op_start_music(self, slot: ScriptSlot, context: EngineContext) -> bool:
         music = self._var_or_direct_byte(slot, 0x80)
@@ -1126,6 +1885,21 @@ class ScummV5Engine(Engine):
             self._audio.stop_sfx(sound)
         return False
 
+    def _op_is_sound_running(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        del context
+        result = self._result_var(slot)
+        sound = self._var_or_direct_byte(slot, 0x80)
+        if not sound:
+            running = 0
+        elif self._audio is not None:
+            running = int(self._audio.is_running(sound))
+        elif self._policy is not None and self._policy.stub_sound_policy == "virtual_running":
+            running = 1
+        else:
+            running = 0
+        self._write_var(slot, result, running)
+        return False
+
     def _op_sound_kludge(self, slot: ScriptSlot, context: EngineContext) -> bool:
         arguments = self._word_varargs(slot)
         if not arguments:
@@ -1154,6 +1928,72 @@ class ScummV5Engine(Engine):
         encoded = arguments[0] & 0xFFFF
         command = encoded & 0xFF
         parameter = encoded >> 8
+        if parameter == 1 and command in (1, 6):
+            if (len(arguments) != 3 or not 0 <= arguments[1] <= 0xffff
+                    or not 0 <= arguments[2] <= 255):
+                raise EngineExecutionError("SCUMM iMUSE priority/speed operands are invalid")
+            operation = "set_priority" if command == 1 else "set_speed"
+            accepted = self._audio is not None and getattr(self._audio, operation)(
+                arguments[1], arguments[2]
+            )
+            self.state.sound_result = 0 if accepted else -1
+            return
+        if parameter == 1 and command == 13:
+            if (len(arguments) != 4 or not 0 <= arguments[1] <= 0xffff
+                    or not 0 <= arguments[2] <= 127 or not 0 <= arguments[3] <= 0xffff):
+                raise EngineExecutionError("SCUMM iMUSE fade operands are invalid")
+            self.state.sound_result = 0 if self._audio is not None and self._audio.fade_sound(
+                arguments[1], arguments[2], arguments[3]
+            ) else -1
+            return
+        if parameter == 1 and command == 14:
+            if (len(arguments) != 3 or not 0 <= arguments[1] <= 0xffff
+                    or not 0 <= arguments[2] <= 255):
+                raise EngineExecutionError("SCUMM iMUSE trigger operands are invalid")
+            self.state.sound_result = 0 if self._audio is not None and self._audio.install_trigger(
+                arguments[1], arguments[2]
+            ) else -1
+            return
+        if parameter == 1 and command == 15:
+            if len(arguments) < 2:
+                raise EngineExecutionError("SCUMM iMUSE deferred command is empty")
+            self.state.sound_result = 0 if self._audio is not None and self._audio.enqueue_deferred(
+                arguments[1:]
+            ) else -1
+            return
+        if parameter == 1 and command in (12, 20):
+            # Fate's class-0 jump-hook form has no part/channel operand.  The
+            # fifth word belongs only to channel-scoped hook classes.
+            if (len(arguments) not in (4, 5)
+                    or not 0 <= arguments[1] <= 0xFFFF
+                    or not 0 <= arguments[2] <= 5
+                    or not 0 <= arguments[3] <= 0xFF
+                    or (arguments[2] == 0 and len(arguments) != 4)
+                    or (arguments[2] != 0 and (
+                        len(arguments) != 5 or not 0 <= arguments[4] <= 16
+                    ))):
+                raise EngineExecutionError("SCUMM soundKludge hook operands are invalid")
+            channel = 0 if len(arguments) == 4 else arguments[4]
+            self.state.sound_result = (
+                0 if self._audio is not None and self._audio.set_hook(
+                    arguments[1], arguments[2], arguments[3], channel
+                ) else -1
+            )
+            return
+        if parameter == 1 and command == 16:
+            if len(arguments) != 1:
+                raise EngineExecutionError(
+                    "SCUMM soundKludge clear-queue operands are invalid"
+                )
+            # Canonical iMUSE $0110 clears its deferred/trigger command queue.
+            # SAME has no enqueue-trigger command yet, so that represented
+            # queue is empty; retain explicit execution evidence rather than
+            # silently treating the command as an unknown no-op.
+            self.state.imuse_queue_clear_count += 1
+            if self._audio is not None:
+                self._audio.clear_deferred()
+            self.state.sound_result = 0
+            return
         if parameter != 0:
             raise EngineExecutionError(
                 f"SCUMM soundKludge command ${encoded:04X} is not implemented"
@@ -1190,18 +2030,24 @@ class ScummV5Engine(Engine):
             else:
                 self._audio.stop_sfx(arguments[1])
             self.state.sound_result = 0
+        elif command in (2, 3):
+            # iMUSE compatibility commands 2 and 3 are accepted no-ops in
+            # the canonical v5 desktop driver.  They carry the command word
+            # only; there is no independent SNES audio operation to emit.
+            if len(arguments) != 1:
+                raise EngineExecutionError(
+                    "SCUMM soundKludge compatibility operands are invalid"
+                )
+            self.state.sound_result = 0
         elif command in (10, 11):
             if len(arguments) != 1:
                 raise EngineExecutionError("SCUMM soundKludge stop-all operands are invalid")
             if self._audio is not None:
-                self._audio.music_id = None
-                self._audio.music_position = 0
-                self._audio.active_sfx.clear()
-                self._audio.speech_id = None
-                self._audio.speech_position = 0
-            context.services.audio.stop_music()
-            context.services.audio.stop_sfx()
-            context.services.audio.stop_speech()
+                self._audio.stop_all()
+            else:
+                context.services.audio.stop_music()
+                context.services.audio.stop_sfx()
+                context.services.audio.stop_speech()
             self.state.sound_result = 0
         else:
             raise EngineExecutionError(
@@ -1209,9 +2055,97 @@ class ScummV5Engine(Engine):
             )
 
     def _op_set_camera(self, slot: ScriptSlot, context: EngineContext) -> bool:
-        del context
-        self.state.camera_x = self._var_or_direct_word(slot, 0x80)
+        requested = self._var_or_direct_word(slot, 0x80)
+        self._set_camera_at_ex(requested, context)
         return False
+
+    def _op_pan_camera(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Apply canonical v5 panCameraTo by changing only the destination."""
+        del context
+        requested = self._var_or_direct_word(slot, 0x80)
+        self.state.camera_mode = 0
+        self.state.camera_destination_x = requested
+        self.state.camera_update_pending = True
+        return False
+
+    def _set_camera_at_ex(self, requested: int, context: EngineContext) -> None:
+        """Apply the immediate, non-publishing v5 setCameraAt transition."""
+        state = self.state
+        state.camera_mode = 0
+        state.camera_x = requested
+        # kNormalCameraMode always takes the assignment in setCameraAt().
+        state.camera_destination_x = requested
+        state.camera_x = min(
+            state.room_ops.scroll_max_x,
+            max(state.room_ops.scroll_min_x, state.camera_x),
+        )
+        state.camera_moving_to_actor = False
+        state.camera_immediate_count += 1
+        state.camera_update_pending = True
+        scroll_script = state.variables[27] & 0xFF
+        if scroll_script:
+            state.variables[2] = state.camera_x
+            child = self._allocate_script_slot(
+                context,
+                scroll_script,
+                [],
+                freeze_resistant=False,
+                recursive=False,
+            )
+            state.camera_scroll_script_count += 1
+            if self._in_tick:
+                self._execute_slot(child, context)
+        if state.camera_x != state.camera_last_x and state.print_messages:
+            self._stop_actor_talk()
+
+    def _move_camera(self, context: EngineContext) -> None:
+        """Run the bounded v5 normal-camera phase and publish strip state."""
+        state = self.state
+        if state.current_room == 0:
+            return
+        logical_width = context.profile.video.logical_width or context.profile.video.width
+        strip_count = logical_width // 8
+        previous = state.camera_x
+        state.camera_x &= 0xFFF8
+        minimum = state.room_ops.scroll_min_x
+        maximum = state.room_ops.scroll_max_x
+        # Phase 6F implements the canonical normal path. Existing follow intent
+        # remains stored but does not acquire new actor-follow/panning behavior.
+        state.camera_destination_x = min(maximum, max(minimum, state.camera_destination_x))
+        if state.camera_mode == 0:
+            if state.variables[26]:
+                state.camera_x = state.camera_destination_x
+            elif state.camera_x < state.camera_destination_x:
+                state.camera_x += 8
+            elif state.camera_x > state.camera_destination_x:
+                state.camera_x -= 8
+        half = logical_width // 2
+        state.camera_x = min(
+            max(half, state.room_ops.room_width - half),
+            max(half, state.camera_x),
+        )
+        state.screen_start_strip = state.camera_x // 8 - strip_count // 2
+        state.screen_end_strip = state.screen_start_strip + strip_count - 1
+        state.virtual_screen_xstart = state.screen_start_strip * 8
+        published = state.camera_update_pending or state.camera_x != previous
+        if published:
+            state.camera_publish_count += 1
+            if isinstance(self._video, ScummV5RoomAdapter):
+                self._presentation_dirty |= self._video.publish_camera_viewport(
+                    state.virtual_screen_xstart
+                )
+        if state.camera_x != previous and state.variables[27]:
+            state.variables[2] = state.camera_x
+            child = self._allocate_script_slot(
+                context,
+                state.variables[27] & 0xFF,
+                [],
+                freeze_resistant=False,
+                recursive=False,
+            )
+            state.camera_scroll_script_count += 1
+            self._execute_slot(child, context)
+        state.camera_update_pending = False
 
     def _op_actor_follow_camera(self, slot: ScriptSlot, context: EngineContext) -> bool:
         """Select the v5 follow-actor camera intent without backend policy."""
@@ -1222,6 +2156,8 @@ class ScummV5Engine(Engine):
                 f"SCUMM actorFollowCamera actor {actor_id} is outside 0..{_MAX_ACTORS - 1}"
             )
         self.state.camera_follow_actor = actor_id
+        self.state.camera_mode = 1
+        self.state.camera_moving_to_actor = False
         return False
 
     def _op_set_class(self, slot: ScriptSlot, context: EngineContext) -> bool:
@@ -1255,6 +2191,29 @@ class ScummV5Engine(Engine):
                 classes.discard(class_id)
                 if not classes:
                     del self.state.object_classes[object_id]
+
+    def _op_if_class_of_is(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Apply canonical v5 class-list matching and false relative branch."""
+        del context
+        object_id = self._var_or_direct_word(slot, 0x80) & 0xFFFF
+        condition = True
+        while True:
+            selector = self._u8(slot)
+            if selector == 0xFF:
+                break
+            raw_class = self._word_for_flags(slot, selector, 0x80) & 0xFFFF
+            class_id = raw_class & 0x7F
+            if not 1 <= class_id <= 32:
+                raise EngineExecutionError(
+                    f"SCUMM ifClassOfIs class {class_id} is outside 1..32"
+                )
+            present = class_id in self.state.object_classes.get(object_id, set())
+            # Bit 7 is the required-present form; an unflagged selector
+            # requires that the class be absent.
+            if bool(raw_class & 0x80) != present:
+                condition = False
+        self._jump_condition(slot, condition)
+        return False
 
     def _op_verb_ops(self, slot: ScriptSlot, context: EngineContext) -> bool:
         """Apply canonical v5 verb-slot configuration without presentation policy."""
@@ -1639,6 +2598,92 @@ class ScummV5Engine(Engine):
         self.state.object_states[object_id] = state
         return False
 
+    def _op_pickup_object(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical pickupObject: remove an object from room visibility."""
+        del context
+        object_id = self._var_or_direct_word(slot, 0x80) & 0xFFFF
+        if not 0 <= object_id < self._num_global_objects:
+            raise EngineExecutionError(
+                f"SCUMM pickup object {object_id} is outside global range"
+            )
+        self.state.object_states[object_id] = 0
+        self.state.room_objects.pop(object_id, None)
+        self.state.object_draw_queue = [
+            value for value in self.state.object_draw_queue if value != object_id
+        ]
+        self._actors_dirty = True
+        return False
+
+    def _op_set_state(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 setState: global mutation plus local redraw invalidation."""
+        object_id = self._var_or_direct_word(slot, 0x80) & 0xFFFF
+        state = self._var_or_direct_byte(slot, 0x40) & 0xFF
+        if not 0 <= object_id < self._num_global_objects:
+            raise EngineExecutionError(
+                f"SCUMM object {object_id} is outside global range "
+                f"0..{self._num_global_objects - 1}"
+            )
+        self.state.object_states[object_id] = state
+        target = self.state.room_objects.get(object_id)
+        if target is not None:
+            target.state = state
+            if target.width:
+                context.services.video.mark_dirty(
+                    Rect(target.x, target.y, target.width, target.height)
+                )
+            self._background_needs_redraw = True
+        if self._background_needs_redraw:
+            self.state.object_draw_queue.clear()
+        return False
+
+    @staticmethod
+    def _new_dir_to_old_dir(direction: int) -> int:
+        """Convert one canonical internal actor angle to a v5 direction."""
+        if 71 <= direction <= 109:
+            return 1
+        if 109 <= direction <= 251:
+            return 2
+        if 251 <= direction <= 289:
+            return 0
+        return 3
+
+    def _op_get_actor_facing(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 read-only actor-facing query ($63/$E3)."""
+        del context
+        result = self._result_var(slot)
+        actor = self._actor(self._var_or_direct_byte(slot, 0x80))
+        self._write_var(slot, result, self._new_dir_to_old_dir(actor.facing))
+        return False
+
+    def _op_face_actor(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 faceActor: decode actor and object/actor operands.
+
+        ScummVM's ``Actor::faceToObject`` is presentation state.  The
+        resource-backed runtime may not expose a drawable target for every
+        object, so operand consumption is unconditional and facing is updated
+        only when the target has a usable position.  This preserves the
+        script PC contract for both direct and variable operands.
+        """
+        del context
+        actor_id = self._var_or_direct_byte(slot, 0x80)
+        target_id = self._var_or_direct_word(slot, 0x40) & 0xFFFF
+        actor = self._actor(actor_id)
+        if target_id < _MAX_ACTORS:
+            target = self._actor(target_id)
+            target_position = target.position
+        else:
+            item = self._room_resource_object(target_id)
+            target_position = None if item is None else (item.walk_x, item.walk_y)
+        if target_position is not None:
+            dx = target_position[0] - actor.position[0]
+            dy = target_position[1] - actor.position[1]
+            if dx or dy:
+                # Actor angles use the same cardinal convention as animate.
+                actor.facing = 90 if abs(dx) >= abs(dy) and dx > 0 else \
+                    270 if abs(dx) >= abs(dy) else 180 if dy > 0 else 0
+                self._actors_dirty = True
+        return False
+
     def _check_and_run_sentence_script(self, context: EngineContext) -> None:
         number = self.state.variables[33] & 0xFF
         if number and any(
@@ -1663,6 +2708,14 @@ class ScummV5Engine(Engine):
                 freeze_resistant=False,
                 recursive=False,
             )
+
+    def queue_sentence(self, verb: int, object_a: int, object_b: int = 0) -> None:
+        """Submit one already-decoded semantic action at SCUMM's sentence boundary."""
+        if not all(0 <= value <= 0xFFFF for value in (verb, object_a, object_b)):
+            raise EngineExecutionError("SCUMM semantic sentence operands must fit u16")
+        if len(self.state.sentences) >= _MAX_SENTENCES:
+            raise EngineExecutionError("SCUMM sentence queue overflow")
+        self.state.sentences.append(SentenceState(verb, object_a, object_b))
 
     def _stop_script_number(self, number: int) -> None:
         if number == 0:
@@ -1693,20 +2746,25 @@ class ScummV5Engine(Engine):
     ) -> ScriptSlot:
         if not recursive:
             self._stop_script_number(number)
+        is_global = number < self._num_global_scripts
         key = self._script_key(number)
         room: int | None = None
-        if context.services.resources.contains(key):
+        source: CookedScriptSource | None = None
+        if is_global and context.services.resources.contains(key):
             program = context.services.resource_read(key)
-        else:
+        elif not is_global:
             program = self._room_scripts.get(number, b"")
             if program:
                 room = self.state.current_room
                 key = self._local_script_key(room, number)
+                source = self._room_script_descriptors.get(number)
             else:
                 raise ResourceError(
-                    f"SCUMM script {number} has no resource binding "
-                    "(global or current-room local)"
+                    f"SCUMM current room has no local script {number} "
+                    f"(local index {number - self._num_global_scripts})"
                 )
+        else:
+            raise ResourceError(f"SCUMM global script {number} has no resource binding")
         if not program:
             raise ResourceError(f"SCUMM script resource {key!r} is empty")
         locals_values = [0] * _LOCAL_VARIABLE_COUNT
@@ -1720,6 +2778,8 @@ class ScummV5Engine(Engine):
             freeze_resistant=freeze_resistant,
             recursive=recursive,
             room=room,
+            script_kind="LSCR" if room is not None else "global",
+            source=source,
         )
         if replacement is not None:
             index = self.state.scripts.index(replacement)
@@ -1983,6 +3043,9 @@ class ScummV5Engine(Engine):
                 byte1()
             elif subop == 1:
                 actor.costume = byte1()
+                actor.costume_frame = None
+                actor.costume_step = 0
+                actor.animation_progress = 0
             elif subop == 2:
                 actor.walk_speed = (byte1(), byte2())
             elif subop == 3:
@@ -2037,7 +3100,471 @@ class ScummV5Engine(Engine):
         """Request one canonical v5 animation on a live actor."""
         del context
         actor = self._actor(self._var_or_direct_byte(slot, 0x80))
-        actor.animation = self._var_or_direct_byte(slot, 0x40)
+        request = self._var_or_direct_byte(slot, 0x40)
+        actor.animation = request
+        chore = 0x3F - (request >> 2) + 2
+        facing = (270, 90, 180, 0)[request & 3]
+        if chore == 2:  # Stand and stop.
+            if actor.room == self.state.current_room:
+                actor.costume_frame = actor.stand_frame
+                actor.costume_step = 0
+                actor.animation_progress = 0
+                actor.moving = 0
+        elif chore in (3, 4):  # Immediate/turn direction; walking is deferred.
+            actor.facing = facing
+        elif actor.room == self.state.current_room and actor.costume != 0:
+            actor.costume_frame = request
+            actor.costume_step = 0
+            actor.animation_progress = 0
+        self._actors_dirty = True
+        return False
+
+    def _op_actor_from_pos(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Return the first touchable rendered actor covering a logical point."""
+        del context
+        result = self._result_var(slot)
+        x = self._word_for_flags(slot, self.state.last_opcode, 0x80)
+        y = self._word_for_flags(slot, self.state.last_opcode, 0x40)
+        found = 0
+        for actor_id in range(1, _MAX_ACTORS):
+            actor = self.state.actors.get(actor_id)
+            if (
+                actor is None
+                or not actor.visible
+                or actor.room != self.state.current_room
+                or 32 in self.state.object_classes.get(actor_id, set())
+            ):
+                continue
+            left, top, right, bottom = actor.hitbox
+            if left <= x <= right and top <= y <= bottom:
+                found = actor_id
+                break
+        self._write_var(slot, result, found)
+        return False
+
+    def _op_get_actor_walkbox(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 pure query of the actor's currently stored walkbox."""
+        del context
+        result = self._result_var(slot)
+        actor = self._actor(self._var_or_direct_byte(slot, 0x80))
+        self._write_var(slot, result, actor.walkbox)
+        return False
+
+    def _room_resource_object(self, object_id: int) -> ScummV5RoomObject | None:
+        if not isinstance(self._video, ScummV5RoomAdapter) or self._video.room is None:
+            return None
+        return next(
+            (item for item in self._video.room.objects if item.object_id == object_id), None
+        )
+
+    def _op_get_verb_entrypoint(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical read-only v5 OBCD VERB lookup ($0B variants)."""
+        del context
+        result = self._result_var(slot)
+        object_id = self._var_or_direct_word(slot, 0x80) & 0xFFFF
+        verb = self._var_or_direct_word(slot, 0x40) & 0xFFFF
+        item = self._room_resource_object(object_id)
+        self._write_var(slot, result, 0 if item is None else item.verb_entrypoint(verb))
+        return False
+
+    def _allocate_object_script_slot(
+        self,
+        object_id: int,
+        entry: int,
+        arguments: list[int],
+        *,
+        freeze_resistant: bool,
+        recursive: bool,
+    ) -> ScriptSlot | None:
+        """Canonical v5 ``runObjectScript`` for a current-room OBCD."""
+        if object_id == 0:
+            return None
+        if not recursive:
+            for candidate in self.state.scripts:
+                if (
+                    candidate.active
+                    and candidate.script_kind == "OBCD"
+                    and candidate.number == object_id
+                ):
+                    candidate.active = False
+                    candidate.yielded = False
+                    candidate.number = 0
+        item = self._room_resource_object(object_id)
+        if item is None or not item.obcd:
+            return None
+        entrypoint = item.verb_entrypoint(entry)
+        if entrypoint == 0:
+            return None
+        if not 0 <= entrypoint < len(item.obcd):
+            raise ResourceError(
+                f"SCUMM object {object_id} verb {entry} entry ${entrypoint:04X} "
+                "lies outside OBCD"
+            )
+        locals_values = [0] * _LOCAL_VARIABLE_COUNT
+        locals_values[: len(arguments)] = arguments
+        fresh = ScriptSlot(
+            f"room.{self.state.current_room}/object.{object_id}/OBCD",
+            item.obcd,
+            number=object_id,
+            pc=entrypoint,
+            locals=locals_values,
+            freeze_resistant=freeze_resistant,
+            recursive=recursive,
+            room=self.state.current_room,
+            script_kind="OBCD",
+        )
+        replacement = next((candidate for candidate in self.state.scripts[1:] if not candidate.active), None)
+        if replacement is not None:
+            self.state.scripts[self.state.scripts.index(replacement)] = fresh
+        elif len(self.state.scripts) < _MAX_SCRIPT_SLOTS:
+            self.state.scripts.append(fresh)
+        else:
+            raise EngineExecutionError(
+                f"SCUMM script-slot capacity exhausted ({_MAX_SCRIPT_SLOTS} slots)"
+            )
+        return fresh
+
+    def _op_start_object(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        object_id = self._var_or_direct_word(slot, 0x80) & 0xFFFF
+        entry = self._var_or_direct_byte(slot, 0x40)
+        arguments = self._word_varargs(slot)
+        child = self._allocate_object_script_slot(
+            object_id,
+            entry,
+            arguments,
+            freeze_resistant=False,
+            recursive=False,
+        )
+        if child is not None and self._in_tick:
+            self._execute_slot(child, context)
+        return False
+
+    def _op_get_object_owner(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical read-only global object-owner query ($10/$90)."""
+        del context
+        result = self._result_var(slot)
+        object_id = self._var_or_direct_word(slot, 0x80) & 0xFFFF
+        if not 0 <= object_id < len(self._object_owners):
+            raise EngineExecutionError(
+                f"SCUMM object {object_id} is outside owner table 0..{len(self._object_owners) - 1}"
+            )
+        self._write_var(slot, result, self._object_owners[object_id])
+        return False
+
+    def _object_or_actor_position(
+        self, object_id: int
+    ) -> tuple[tuple[int, int], ActorState | None] | None:
+        """Resolve canonical v5 ``getObjectOrActorXY`` state without mutation."""
+        if 0 <= object_id < _NUM_V5_ACTORS:
+            actor = self.state.actors.get(object_id)
+            if actor is None or actor.room != self.state.current_room:
+                return None
+            return actor.position, actor
+        if not 0 <= object_id < len(self._object_owners):
+            return None
+        owner = self._object_owners[object_id]
+        if owner == _OWNER_ROOM:
+            item = self.state.room_objects.get(object_id)
+            return None if item is None else ((item.walk_x, item.walk_y), None)
+        if owner < _NUM_V5_ACTORS:
+            actor = self.state.actors.get(owner)
+            if actor is not None and actor.room == self.state.current_room:
+                return actor.position, None
+        return None
+
+    def _object_actor_distance(self, first_id: int, second_id: int) -> int:
+        """Mirror canonical v5 ``getObjActToObjActDist`` operand ordering."""
+        first_actor = (
+            self.state.actors.get(first_id) if 0 <= first_id < _NUM_V5_ACTORS else None
+        )
+        second_actor = (
+            self.state.actors.get(second_id) if 0 <= second_id < _NUM_V5_ACTORS else None
+        )
+        if (
+            first_actor is not None
+            and second_actor is not None
+            and first_actor.room == second_actor.room
+            and first_actor.room != 0
+            and first_actor.room != self.state.current_room
+        ):
+            return 0
+        first = self._object_or_actor_position(first_id)
+        second = self._object_or_actor_position(second_id)
+        if first is None or second is None:
+            return 0xFF
+        (x1, y1), resolved_first_actor = first
+        (x2, y2), _ = second
+        if resolved_first_actor is not None and not 0 <= second_id < _NUM_V5_ACTORS:
+            if (
+                not resolved_first_actor.ignore_boxes
+                and isinstance(self._video, ScummV5RoomAdapter)
+                and self._video.room is not None
+            ):
+                (x2, y2), _box = self._video.room.adjust_actor_point_v5(x2, y2)
+        return max(abs(x1 - x2), abs(y1 - y2))
+
+    def _op_get_dist(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 $34/$74/$B4/$F4 object-or-actor distance query."""
+        del context
+        result = self._result_var(slot)
+        first = self._var_or_direct_word(slot, 0x80)
+        second = self._var_or_direct_word(slot, 0x40)
+        self._write_var(slot, result, self._object_actor_distance(first, second))
+        return False
+
+    def _start_actor_walk(self, actor: ActorState, requested: tuple[int, int]) -> None:
+        destination, destination_box = requested, 0xFF
+        if not actor.ignore_boxes and isinstance(self._video, ScummV5RoomAdapter):
+            if self._video.room is not None:
+                destination, destination_box = self._video.room.adjust_actor_point_v5(
+                    *requested
+                )
+        if actor.room != self.state.current_room:
+            actor.position = destination
+            actor.walkbox = destination_box
+            actor.moving = 0
+            self._actors_dirty = True
+            return
+        if actor.position == destination:
+            actor.moving = 0
+            return
+        if actor.ignore_boxes:
+            actor.walkbox = 0xFF
+        elif isinstance(self._video, ScummV5RoomAdapter):
+            box = self._video.walkbox_at(*actor.position)
+            actor.walkbox = 0xFF if box is None else box.index
+        actor.walk_destination = destination
+        actor.walk_destination_box = destination_box
+        actor.walk_current_box = actor.walkbox
+        actor.moving = (actor.moving & _MF_IN_LEG) | _MF_NEW_LEG
+        self._actors_dirty = True
+
+    def _op_walk_actor_to(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Start canonical v5 box-routed actor movement ($1E variants)."""
+        del context
+        flags = self.state.last_opcode
+        actor = self._actor(self._byte_operand_for_flags(slot, flags, 0x80))
+        requested = (
+            self._word_for_flags(slot, flags, 0x40),
+            self._word_for_flags(slot, flags, 0x20),
+        )
+        self._start_actor_walk(actor, requested)
+        return False
+
+    def _op_walk_actor_to_object(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 walkActorToObject ($36 variants), using room OBCD state."""
+        del context
+        actor = self._actor(self._var_or_direct_byte(slot, 0x80))
+        object_id = self._var_or_direct_word(slot, 0x40) & 0xFFFF
+        item = self._room_resource_object(object_id)
+        if item is not None:
+            self._start_actor_walk(actor, (item.walk_x, item.walk_y))
+        return False
+
+    def _op_get_actor_moving(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        del context
+        result = self._result_var(slot)
+        actor = self._actor(self._var_or_direct_byte(slot, 0x80))
+        self._write_var(slot, result, actor.moving)
+        return False
+
+    def _op_get_object_state(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 getObjectState ($0F/$8F)."""
+        del context
+        result = self._result_var(slot)
+        object_id = self._var_or_direct_word(slot, 0x80) & 0xFFFF
+        if object_id >= self._num_global_objects:
+            raise EngineExecutionError(
+                f"SCUMM object {object_id} is outside global range "
+                f"0..{self._num_global_objects - 1}"
+            )
+        self._write_var(slot, result, self.state.object_states.get(object_id, 0))
+        return False
+
+    def _op_get_actor_room(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Return the canonical v5 actor room, or zero for an invalid actor id."""
+        del context
+        result = self._result_var(slot)
+        actor_id = self._var_or_direct_byte(slot, 0x80)
+        room = self.state.actors.get(actor_id, ActorState()).room if actor_id < _MAX_ACTORS else 0
+        self._write_var(slot, result, room)
+        return False
+
+    def _op_get_actor_elevation(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Return the canonical v5 actor elevation."""
+        del context
+        result = self._result_var(slot)
+        actor_id = self._var_or_direct_byte(slot, 0x80)
+        elevation = self._actor(actor_id).elevation if actor_id < _MAX_ACTORS else 0
+        self._write_var(slot, result, elevation)
+        return False
+
+    def _op_get_actor_x(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 getObjX query (the opcode retains its actor name)."""
+        del context
+        result = self._result_var(slot)
+        object_id = self._var_or_direct_word(slot, 0x80) & 0xFFFF
+        if object_id < 1:
+            value = 0
+        elif object_id < _MAX_ACTORS:
+            value = self._actor(object_id).position[0]
+        else:
+            item = self._room_resource_object(object_id)
+            value = -1 if item is None else item.walk_x
+        self._write_var(slot, result, value)
+        return False
+
+    def _op_get_actor_y(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 getObjY query (the opcode retains its actor name)."""
+        del context
+        result = self._result_var(slot)
+        object_id = self._var_or_direct_word(slot, 0x80) & 0xFFFF
+        if object_id < 1:
+            value = 0
+        elif object_id < _MAX_ACTORS:
+            value = self._actor(object_id).position[1]
+        else:
+            item = self._room_resource_object(object_id)
+            value = -1 if item is None else item.walk_y
+        self._write_var(slot, result, value)
+        return False
+
+    def _op_wait_for_actor(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        del context
+        instruction = slot.pc - 1
+        actor = self._actor(self._var_or_direct_byte(slot, 0x80))
+        if actor.moving:
+            slot.pc = instruction
+            slot.yielded = True
+            return True
+        return False
+
+    def _op_put_actor_in_room(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Assign an actor room; room zero canonically removes its placement."""
+        del context
+        actor = self._actor(self._var_or_direct_byte(slot, 0x80))
+        room = self._var_or_direct_byte(slot, 0x40)
+        actor.room = room
+        if room == 0:
+            actor.position = (0, 0)
+            actor.moving = 0
+            actor.visible = False
+        self._actors_dirty = True
+        return False
+
+    def _actor_scale_for_box(self, actor: ActorState, box: int, x: int, y: int) -> None:
+        if not isinstance(self._video, ScummV5RoomAdapter) or self._video.room is None:
+            return
+        if not 0 <= box < len(self._video.room.walkboxes) or actor.ignore_boxes:
+            return
+        raw_scale = self._video.room.walkboxes[box].scale
+        actor.box_scale = raw_scale
+        scale = raw_scale
+        if raw_scale & 0x8000:
+            slot = raw_scale & 0x7FFF
+            values = self.state.room_ops.scale_slots.get(slot)
+            if values is None:
+                return
+            first_scale, first_y, second_scale, second_y = values
+            if first_y == second_y:
+                return
+            scale = first_scale + self._trunc_div(
+                (second_scale - first_scale) * (max(0, y) - first_y),
+                second_y - first_y,
+            )
+        scale = min(255, max(1, scale))
+        actor.scale = (scale, scale)
+
+    def _op_put_actor(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Canonical v5 Actor::putActor(x, y, actor.room) placement state."""
+        del context
+        actor = self._actor(self._var_or_direct_byte(slot, 0x80))
+        x = self._word_for_flags(slot, self.state.last_opcode, 0x40)
+        y = self._word_for_flags(slot, self.state.last_opcode, 0x20)
+        actor.position = (x, y)
+
+        if actor.visible and actor.room != self.state.current_room:
+            if actor.moving:
+                actor.moving = 0
+                actor.costume_frame = actor.stand_frame
+                actor.costume_step = 0
+                actor.animation_progress = 0
+            actor.visible = False
+        elif actor.room == self.state.current_room and self.state.current_room != 0:
+            if isinstance(self._video, ScummV5RoomAdapter) and self._video.room is not None:
+                actor.position, actor.walkbox = self._video.room.adjust_actor_point_v5(
+                    x, y, ignore_boxes=actor.ignore_boxes
+                )
+                actor.walk_destination_box = actor.walkbox
+                self._actor_scale_for_box(actor, actor.walkbox, *actor.position)
+            elif actor.ignore_boxes:
+                actor.walkbox = 0xFF
+                actor.walk_destination_box = 0xFF
+            actor.walk_destination = (-1, actor.walk_destination[1])
+            actor.moving = 0
+            if not actor.visible and actor.costume_frame is None:
+                actor.costume_frame = actor.init_frame
+                actor.costume_step = 0
+                actor.animation_progress = 0
+            actor.visible = True
+        self._actors_dirty = True
+        return False
+
+    def _op_put_actor_at_object(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Place an actor at a room object's walk point or the v5 fallback."""
+        del context
+        actor = self._actor(self._var_or_direct_byte(slot, 0x80))
+        object_id = self._word_for_flags(slot, self.state.last_opcode, 0x40)
+        target = self.state.room_objects.get(object_id)
+        actor.position = (target.walk_x, target.walk_y) if target is not None else (240, 120)
+
+        # Actor::putActor shows actors already assigned to the current nonzero
+        # room, and hides visible actors assigned elsewhere. Raw-room walkbox
+        # geometry is not decoded yet, so the exact walk point is retained.
+        if actor.room == self.state.current_room and self.state.current_room != 0:
+            actor.moving = 0
+            if not actor.visible:
+                actor.costume_frame = actor.init_frame
+                actor.costume_step = 0
+                actor.animation_progress = 0
+            actor.visible = True
+        elif actor.visible:
+            actor.moving = 0
+            actor.visible = False
+        self._actors_dirty = True
+        return False
+
+    def _op_find_object(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Return the first touchable visible room object covering a point."""
+        del context
+        result = self._result_var(slot)
+        x = self._byte_operand_for_flags(slot, self.state.last_opcode, 0x80)
+        y = self._byte_operand_for_flags(slot, self.state.last_opcode, 0x40)
+        by_index = {item.local_index: item for item in self.state.room_objects.values()}
+        found = 0
+        for item in sorted(self.state.room_objects.values(), key=lambda entry: entry.local_index):
+            if 32 in self.state.object_classes.get(item.object_id, set()):
+                continue
+            current = item
+            visited: set[int] = set()
+            while current.parent:
+                if current.local_index in visited:
+                    break
+                visited.add(current.local_index)
+                parent = by_index.get(current.parent)
+                if parent is None or (parent.state & 0x0F) != current.parent_state:
+                    break
+                current = parent
+            else:
+                if (
+                    item.x <= x < item.x + item.width
+                    and item.y <= y < item.y + item.height
+                ):
+                    found = item.object_id
+                    break
+                continue
+            continue
+        self._write_var(slot, result, found)
         return False
 
     def _room_filename(self, slot: ScriptSlot) -> str:
@@ -2110,7 +3637,7 @@ class ScummV5Engine(Engine):
                 for name, value in (("red", red), ("green", green), ("blue", blue))
             )
             state.palette_overrides[index] = rgb  # type: ignore[assignment]
-            context.services.video.surface.set_palette(index, (rgb,))
+            context.services.video.set_palette(index, (rgb,))
         elif subop == 5:  # SO_ROOM_SHAKE_ON
             state.shake_enabled = True
         elif subop == 6:  # SO_ROOM_SHAKE_OFF
@@ -2258,6 +3785,88 @@ class ScummV5Engine(Engine):
     def _local_script_key(self, room: int, number: int) -> str:
         return f"{self._room_key(room)}/LSCR.{number}"
 
+    def _room_lifecycle_event(self, phase: str, room: int, **details: object) -> None:
+        self._room_lifecycle.append({"phase": phase, "room": room, **details})
+        if len(self._room_lifecycle) > 256:
+            del self._room_lifecycle[:-256]
+
+    def _cooked_room_expectations(self, context: EngineContext) -> dict[str, str]:
+        key = str(context.profile.options.get(
+            "cooked_room_manifest", "cooked.rooms.manifest"
+        ))
+        if not context.services.resources.contains(key):
+            raise ResourceError(
+                f"cooked room resource requires source-binding manifest {key!r}"
+            )
+        try:
+            manifest = json.loads(context.services.resource_read(key).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ResourceError("cooked room manifest is malformed") from exc
+        if not isinstance(manifest, dict) or manifest.get("schema") != "same_scumm_v5_cooked_rooms_v1":
+            raise ResourceError("cooked room manifest schema differs")
+        if isinstance(context.services.resources, LucasartsScummV5ResourceProvider):
+            if manifest.get("num_global_scripts") != context.services.resources.global_script_count:
+                raise ResourceError("cooked room manifest global-script count differs")
+        profile = manifest.get("profile")
+        source = manifest.get("source")
+        if not isinstance(profile, dict) or not isinstance(source, dict):
+            raise ResourceError("cooked room manifest identity records are malformed")
+        expected_profile = hashlib.sha256(context.profile.path.read_bytes()).hexdigest()
+        expected_game = hashlib.sha256(
+            f"{context.profile.engine_id}\0{context.profile.game_id}\0{context.profile.variant}".encode()
+        ).hexdigest()
+        if profile.get("sha256") != expected_profile or profile.get("identity_sha256") != expected_game:
+            raise ResourceError("cooked room manifest profile or game identity differs")
+        expectations = {
+            "profile": expected_profile,
+            "game": expected_game,
+            "archive": str(source.get("archive_sha256", "")),
+            "index": str(source.get("index_sha256", "")),
+            "data": str(source.get("data_sha256", "")),
+        }
+        if any(len(value) != 64 for value in expectations.values()):
+            raise ResourceError("cooked room manifest source identity is malformed")
+        if isinstance(context.services.resources, LucasartsScummV5ResourceProvider):
+            backing = context.services.resources.backing
+            for resource_key, identity_key in (("game.index", "index"), ("game.data", "data")):
+                observed = hashlib.sha256(backing.read(resource_key)).hexdigest()
+                if observed != expectations[identity_key]:
+                    raise ResourceError(f"cooked room manifest {resource_key} identity differs")
+        return expectations
+
+    def _prepare_room(
+        self, context: EngineContext, room: int, key: str
+    ) -> tuple[bytes, object, CookedRoomRecord | None]:
+        cooked_key = str(context.profile.options.get(
+            "cooked_room_key_template", "cooked.room.{room}"
+        )).format(room=room)
+        if context.services.resources.contains(cooked_key):
+            expectations = self._cooked_room_expectations(context)
+            record = decode_cooked_room(
+                context.services.resource_read(cooked_key),
+                expected_room=room,
+                expected_profile_sha256=expectations["profile"],
+                expected_game_identity_sha256=expectations["game"],
+                expected_archive_sha256=expectations["archive"],
+                expected_index_sha256=expectations["index"],
+                expected_data_sha256=expectations["data"],
+            )
+            decoded = decode_room(record.room_payload, key=key)
+            expected_programs = {
+                "ENCD": decoded.entry_script,
+                "EXCD": decoded.exit_script,
+                **{f"LSCR.{number}": program for number, program in decoded.local_scripts},
+            }
+            for script in record.scripts:
+                label = script.kind if script.kind != "LSCR" else f"LSCR.{script.number}"
+                if expected_programs.get(label) != script.program:
+                    raise ResourceError(
+                        f"cooked room script {script.identity!r} differs from complete ROOM decode"
+                    )
+            return record.room_payload, decoded, record
+        raw = context.services.resource_read(key)
+        return raw, decode_room(raw, key=key), None
+
     def _room_script_programs(self, context: EngineContext, room: int) -> dict[int, bytes]:
         key = self._room_key(room)
         if not context.services.resources.contains(key):
@@ -2273,20 +3882,6 @@ class ScummV5Engine(Engine):
         required: bool,
         preserve_local_scripts: bool = False,
     ) -> None:
-        if not preserve_local_scripts:
-            for script in self.state.scripts:
-                if script.active and script.room is not None:
-                    if script.cutscene_override:
-                        raise EngineExecutionError(
-                            f"SCUMM local script {script.resource_key!r} changed room with active "
-                            f"cutscene/override depth {script.cutscene_override}"
-                        )
-                    script.active = False
-                    script.yielded = False
-                    script.number = 0
-                    script.freeze_resistant = False
-                    script.recursive = False
-                    script.freeze_count = 0
         key = self._room_key(room)
         if not context.services.resources.contains(key):
             # Room zero is SCUMM's resource-less null scene.  startScene(0)
@@ -2307,9 +3902,13 @@ class ScummV5Engine(Engine):
                 self.state.object_draw_queue.clear()
                 self.state.current_room = 0
                 self._room_scripts = {}
+                self._room_script_descriptors = {}
+                self._room_entry = None
+                self._room_exit = None
+                self._room_record = None
                 surface = context.services.video.surface
-                surface.set_palette(0, ((0, 0, 0),) * 256)
-                surface.fill(0)
+                context.services.video.set_palette(0, ((0, 0, 0),) * 256)
+                context.services.video.fill(0)
                 self.state.room_hash = surface.hash()
                 self._video = None
                 context.services.debug.marker("scumm_v5.room", 0)
@@ -2317,21 +3916,110 @@ class ScummV5Engine(Engine):
             if required:
                 raise ResourceError(f"SCUMM room {room} has no resource binding {key!r}")
             return
-        raw = context.services.resource_read(key)
+        # Transactional preflight: acquire, validate, and fully decode the new
+        # resource before any exit script or active-room state can change.
+        raw, decoded, record = self._prepare_room(context, room, key)
+        self._room_lifecycle_event("room_change_requested", room)
+        self._room_lifecycle_event(
+            "new_room_validated", room,
+            resource=key,
+            cooked=record is not None,
+            record_sha256=None if record is None else record.record_sha256,
+        )
+        old_room = self.state.current_room
+        if not preserve_local_scripts and self._room_exit is not None:
+            exit_slot = ScriptSlot(
+                self._room_exit.identity, self._room_exit.program,
+                number=0, room=old_room, script_kind="EXCD", source=self._room_exit,
+            )
+            self.state.scripts.append(exit_slot)
+            self._room_lifecycle_event(
+                "old_exit_scheduled", old_room, script=self._room_exit.identity
+            )
+            if self._in_tick:
+                self._execute_slot(exit_slot, context)
+                self._room_lifecycle_event(
+                    "old_exit_completed", old_room, script=self._room_exit.identity
+                )
+        if not preserve_local_scripts:
+            for script in self.state.scripts:
+                if script.active and script.room is not None:
+                    if script.cutscene_override:
+                        if context.profile.options.get("allow_cutscene_abort_on_room_change", False):
+                            script.cutscene_override = 0
+                        else:
+                            raise EngineExecutionError(
+                                f"SCUMM local script {script.resource_key!r} changed room with active "
+                                f"cutscene/override depth {script.cutscene_override}"
+                            )
+                    script.active = False
+                    script.yielded = False
+                    script.number = 0
+                    script.freeze_resistant = False
+                    script.recursive = False
+                    script.freeze_count = 0
+            self._room_lifecycle_event("old_room_scripts_retired", old_room)
         adapter = ScummV5RoomAdapter(context)
-        adapter.render(key)
+        adapter.render(key, room_data=raw)
         self._video = adapter
-        self._room_scripts = dict(adapter.room.local_scripts)
+        self._room_record = record
+        if record is None:
+            self._room_script_descriptors = {}
+            self._room_entry = None
+            self._room_exit = None
+            self._room_scripts = dict(adapter.room.local_scripts)
+        else:
+            self._room_script_descriptors = {
+                item.number: item for item in record.locals
+            }
+            self._room_scripts = {
+                number: item.program
+                for number, item in self._room_script_descriptors.items()
+            }
+            self._room_entry = record.entry
+            self._room_exit = record.exit
         self.state.room_objects = {
             item.object_id: RoomObjectState.from_resource(
-                item, self.state.object_states.get(item.object_id, 0)
+                item, self.state.object_states.get(item.object_id, 0), local_index
             )
-            for item in adapter.room.objects
+            for local_index, item in enumerate(adapter.room.objects, 1)
         }
         self.state.object_draw_queue.clear()
         self.state.current_room = room
+        self._room_lifecycle_event("new_room_activated", room)
         self.state.room_ops.room_width = adapter.room.width
         self.state.room_hash = context.services.video.surface.hash()
+        self._actors_dirty = True
+        for item in self._room_script_descriptors.values():
+            self._room_lifecycle_event(
+                "local_script_registered", room, script=item.identity,
+                source_map=item.runtime_map(0),
+            )
+        if self._room_exit is not None:
+            self._room_lifecycle_event(
+                "exit_script_registered", room, script=self._room_exit.identity,
+                source_map=self._room_exit.runtime_map(0),
+            )
+        if self._room_entry is not None:
+            entry_slot = ScriptSlot(
+                self._room_entry.identity, self._room_entry.program,
+                number=0, room=room, script_kind="ENCD", source=self._room_entry,
+            )
+            # A registration-only authentic record is deliberately observable
+            # after scheduling but before its first instruction dispatch.
+            entry_slot.did_exec = bool(record and record.registration_only and self._in_tick)
+            self.state.scripts.append(entry_slot)
+            self._room_lifecycle_event(
+                "entry_script_scheduled", room, script=self._room_entry.identity,
+                source_map=self._room_entry.runtime_map(0),
+                registration_only=bool(record and record.registration_only),
+            )
+            if self._in_tick and not entry_slot.did_exec:
+                self._room_lifecycle_event(
+                    "entry_first_instruction", room, script=self._room_entry.identity,
+                    source_map=self._room_entry.runtime_map(0),
+                )
+                self._execute_slot(entry_slot, context)
         context.services.debug.marker("scumm_v5.room", room)
 
     def save_state(self, context: EngineContext) -> bytes:
@@ -2343,6 +4031,18 @@ class ScummV5Engine(Engine):
             "scripts": [slot.to_dict() for slot in self.state.scripts],
             "current_room": self.state.current_room,
             "camera": [self.state.camera_x, self.state.camera_y],
+            "camera_state": {
+                "destination": [self.state.camera_destination_x, self.state.camera_destination_y],
+                "last": [self.state.camera_last_x, self.state.camera_last_y],
+                "mode": self.state.camera_mode,
+                "moving_to_actor": self.state.camera_moving_to_actor,
+                "screen_strips": [self.state.screen_start_strip, self.state.screen_end_strip],
+                "virtual_screen_xstart": self.state.virtual_screen_xstart,
+                "immediate_count": self.state.camera_immediate_count,
+                "publish_count": self.state.camera_publish_count,
+                "scroll_script_count": self.state.camera_scroll_script_count,
+                "update_pending": self.state.camera_update_pending,
+            },
             "camera_follow_actor": self.state.camera_follow_actor,
             "cursor": [
                 self.state.cursor_x,
@@ -2438,6 +4138,7 @@ class ScummV5Engine(Engine):
                 "queue": self.state.sound_queue,
                 "history": self.state.sound_history,
                 "result": self.state.sound_result,
+                "imuse_queue_clear_count": self.state.imuse_queue_clear_count,
             },
             "print": {
                 "slots": [print_slot.to_dict() for print_slot in self.state.print_slots],
@@ -2610,6 +4311,9 @@ class ScummV5Engine(Engine):
         sound_result = int(sound_raw.get("result", -0x10000))
         if not -0x8000 <= sound_result <= 0x7FFF:
             raise SaveFormatError("SCUMM save soundKludge result must fit s16")
+        imuse_queue_clear_count = int(sound_raw.get("imuse_queue_clear_count", 0))
+        if not 0 <= imuse_queue_clear_count <= 0x7FFFFFFF:
+            raise SaveFormatError("SCUMM save iMUSE queue-clear count is invalid")
 
         def parse_print_style(raw: object) -> PrintSlotState:
             if not isinstance(raw, dict):
@@ -2778,11 +4482,23 @@ class ScummV5Engine(Engine):
         )
 
         camera = data.get("camera")
+        camera_state_raw = data.get("camera_state", {})
         camera_follow_raw = data.get("camera_follow_actor")
         cursor = data.get("cursor")
         cursor_command = data.get("cursor_command", {})
         if not isinstance(camera, list) or len(camera) != 2:
             raise SaveFormatError("SCUMM save camera must contain two coordinates")
+        if not isinstance(camera_state_raw, dict):
+            raise SaveFormatError("SCUMM save camera state must be an object")
+        destination = camera_state_raw.get("destination", camera)
+        last_camera = camera_state_raw.get("last", camera)
+        screen_strips = camera_state_raw.get("screen_strips", [0, 0])
+        if (
+            not isinstance(destination, list) or len(destination) != 2
+            or not isinstance(last_camera, list) or len(last_camera) != 2
+            or not isinstance(screen_strips, list) or len(screen_strips) != 2
+        ):
+            raise SaveFormatError("SCUMM save camera lifecycle coordinates are invalid")
         if camera_follow_raw is None:
             camera_follow_actor = None
         elif isinstance(camera_follow_raw, int) and not isinstance(camera_follow_raw, bool) and 0 <= camera_follow_raw < _MAX_ACTORS:
@@ -2902,15 +4618,37 @@ class ScummV5Engine(Engine):
             size = object_pair("size")
             walk = object_pair("walk")
             state = int(raw.get("state", -1))
+            local_index = int(raw.get("local_index", -1))
+            parent = int(raw.get("parent", -1))
+            parent_state = int(raw.get("parent_state", -1))
             if any(value < -0x8000 or value > 0x7FFF for value in (*position, *walk)):
                 raise SaveFormatError("SCUMM save room-object coordinate must fit s16")
             if any(value < 0 or value > 0xFFFF for value in size) or not 0 <= state <= 255:
                 raise SaveFormatError("SCUMM save room-object size/state is invalid")
+            if (
+                not 1 <= local_index <= len(room_objects_raw)
+                or not 0 <= parent <= len(room_objects_raw)
+                or not 0 <= parent_state <= 0x0F
+            ):
+                raise SaveFormatError("SCUMM save room-object hierarchy is invalid")
             if state != object_states.get(object_id, 0):
                 raise SaveFormatError("SCUMM save room-object state is noncanonical")
             room_objects[object_id] = RoomObjectState(
-                object_id, *position, *size, *walk, state
+                object_id, *position, *size, *walk, state,
+                local_index, parent, parent_state,
             )
+        local_indices = {item.local_index for item in room_objects.values()}
+        if local_indices != set(range(1, len(room_objects) + 1)):
+            raise SaveFormatError("SCUMM save room-object local indexes are noncanonical")
+        by_local_index = {item.local_index: item for item in room_objects.values()}
+        for item in room_objects.values():
+            seen: set[int] = set()
+            current = item
+            while current.parent:
+                if current.local_index in seen or current.parent == current.local_index:
+                    raise SaveFormatError("SCUMM save room-object hierarchy contains a cycle")
+                seen.add(current.local_index)
+                current = by_local_index[current.parent]
         draw_queue_raw = data.get("object_draw_queue", [])
         if not isinstance(draw_queue_raw, list) or len(draw_queue_raw) > _MAX_LOCAL_OBJECTS:
             raise SaveFormatError("SCUMM save draw-object queue is invalid")
@@ -3028,6 +4766,27 @@ class ScummV5Engine(Engine):
                 if any(item < 0 or item > 255 for item in result):
                     raise SaveFormatError(f"SCUMM save actor {name} must contain u8 values")
                 return result
+            def signed_pair(name: str, bits: int = 16) -> tuple[int, int]:
+                value = raw.get(name)
+                if not isinstance(value, list) or len(value) != 2:
+                    raise SaveFormatError(f"SCUMM save actor {name} is invalid")
+                result = (int(value[0]), int(value[1]))
+                limit = 1 << (bits - 1)
+                if any(item < -limit or item >= limit for item in result):
+                    raise SaveFormatError(
+                        f"SCUMM save actor {name} must contain s{bits} values"
+                    )
+                return result
+            def unsigned_pair(name: str, bits: int) -> tuple[int, int]:
+                value = raw.get(name)
+                if not isinstance(value, list) or len(value) != 2:
+                    raise SaveFormatError(f"SCUMM save actor {name} is invalid")
+                result = (int(value[0]), int(value[1]))
+                if any(item < 0 or item >= 1 << bits for item in result):
+                    raise SaveFormatError(
+                        f"SCUMM save actor {name} must contain u{bits} values"
+                    )
+                return result
             frames_raw = raw.get("frames")
             if not isinstance(frames_raw, list) or len(frames_raw) != 5:
                 raise SaveFormatError("SCUMM save actor frames are invalid")
@@ -3054,28 +4813,83 @@ class ScummV5Engine(Engine):
             except ResourceError as exc:
                 raise SaveFormatError(f"SCUMM save actor name is invalid: {exc}") from exc
             scalar_names = (
-                "costume", "sound", "talk_color", "width", "box_scale",
-                "force_clip", "animation_speed", "shadow", "animation",
+                "costume", "sound", "talk_color", "width",
+                "force_clip", "animation_speed", "shadow", "animation", "walkbox",
+                "walk_destination_box", "walk_current_box",
             )
             scalars = {name: int(raw.get(name, -1)) for name in scalar_names}
             if any(value < 0 or value > 255 for value in scalars.values()):
                 raise SaveFormatError("SCUMM save actor scalar must fit u8")
+            box_scale = int(raw.get("box_scale", -1))
+            if not 0 <= box_scale <= 0xFFFF:
+                raise SaveFormatError("SCUMM save actor box scale must fit u16")
+            facing = int(raw.get("facing", -1))
+            if facing not in (0, 90, 180, 270):
+                raise SaveFormatError("SCUMM save actor facing must be cardinal")
+            costume_frame_raw = raw.get("costume_frame")
+            if costume_frame_raw is None:
+                costume_frame = None
+            else:
+                costume_frame = int(costume_frame_raw)
+                if not 0 <= costume_frame <= 255:
+                    raise SaveFormatError("SCUMM save actor costume frame must fit u8")
+            costume_step = int(raw.get("costume_step", -1))
+            if not 0 <= costume_step <= 0xFFFFFFFF:
+                raise SaveFormatError("SCUMM save actor costume step must fit u32")
+            animation_progress = int(raw.get("animation_progress", -1))
+            if not 0 <= animation_progress <= 255:
+                raise SaveFormatError("SCUMM save actor animation progress must fit u8")
             elevation = int(raw.get("elevation", -0x10000))
             if not -0x8000 <= elevation <= 0x7FFF:
                 raise SaveFormatError("SCUMM save actor elevation must fit s16")
             ignore_boxes = raw.get("ignore_boxes")
             if not isinstance(ignore_boxes, bool):
                 raise SaveFormatError("SCUMM save actor ignore-boxes flag is invalid")
+            visible = raw.get("visible")
+            if not isinstance(visible, bool):
+                raise SaveFormatError("SCUMM save actor visible flag is invalid")
+            actor_room = int(raw.get("room", -1))
+            if not 0 <= actor_room <= 255:
+                raise SaveFormatError("SCUMM save actor room must fit u8")
+            position_raw = raw.get("position")
+            if not isinstance(position_raw, list) or len(position_raw) != 2:
+                raise SaveFormatError("SCUMM save actor position is invalid")
+            position = tuple(int(value) for value in position_raw)
+            if any(value < -0x8000 or value > 0x7FFF for value in position):
+                raise SaveFormatError("SCUMM save actor position must contain s16 values")
+            moving = int(raw.get("moving", -1))
+            if not 0 <= moving <= 255:
+                raise SaveFormatError("SCUMM save actor moving flags must fit u8")
+            walk_fraction = unsigned_pair("walk_fraction", 16)
+            hitbox_raw = raw.get("hitbox")
+            if not isinstance(hitbox_raw, list) or len(hitbox_raw) != 4:
+                raise SaveFormatError("SCUMM save actor hitbox is invalid")
+            hitbox = tuple(int(value) for value in hitbox_raw)
+            if any(value < -0x8000 or value > 0x7FFF for value in hitbox):
+                raise SaveFormatError("SCUMM save actor hitbox must contain s16 values")
+            if hitbox[0] > hitbox[2] or hitbox[1] > hitbox[3]:
+                raise SaveFormatError("SCUMM save actor hitbox is reversed")
             actors[actor_id] = ActorState(
                 costume=scalars["costume"], walk_speed=pair("walk_speed"),
                 sound=scalars["sound"], init_frame=actor_frames[0], walk_frame=actor_frames[1],
                 stand_frame=actor_frames[2], talk_frames=(actor_frames[3], actor_frames[4]),
                 elevation=elevation, palette=palette, talk_color=scalars["talk_color"],
                 name=name, width=scalars["width"], scale=pair("scale"),
-                box_scale=scalars["box_scale"], force_clip=scalars["force_clip"],
+                box_scale=box_scale, force_clip=scalars["force_clip"],
                 ignore_boxes=ignore_boxes,
                 animation_speed=scalars["animation_speed"], shadow=scalars["shadow"],
                 animation=scalars["animation"],
+                facing=facing, costume_frame=costume_frame, costume_step=costume_step,
+                animation_progress=animation_progress,
+                room=actor_room, visible=visible, position=position,
+                walkbox=scalars["walkbox"], moving=moving, hitbox=hitbox,
+                walk_destination=signed_pair("walk_destination"),
+                walk_destination_box=scalars["walk_destination_box"],
+                walk_current_box=scalars["walk_current_box"],
+                walk_leg_origin=signed_pair("walk_leg_origin"),
+                walk_leg_target=signed_pair("walk_leg_target"),
+                walk_fraction=walk_fraction,
+                walk_delta=signed_pair("walk_delta", 32),
             )
         last_opcode = int(data.get("last_opcode", 0))
         if not 0 <= last_opcode <= 255:
@@ -3109,11 +4923,22 @@ class ScummV5Engine(Engine):
         self.state.sound_queue = sound_queue
         self.state.sound_history = sound_history
         self.state.sound_result = sound_result
+        self.state.imuse_queue_clear_count = imuse_queue_clear_count
         self.state.print_slots = print_slots
         self.state.print_messages = print_messages
         self.state.scripts = scripts
         self.state.current_room = room
         self.state.camera_x, self.state.camera_y = map(int, camera)
+        self.state.camera_destination_x, self.state.camera_destination_y = map(int, destination)
+        self.state.camera_last_x, self.state.camera_last_y = map(int, last_camera)
+        self.state.camera_mode = int(camera_state_raw.get("mode", 0))
+        self.state.camera_moving_to_actor = bool(camera_state_raw.get("moving_to_actor", False))
+        self.state.screen_start_strip, self.state.screen_end_strip = map(int, screen_strips)
+        self.state.virtual_screen_xstart = int(camera_state_raw.get("virtual_screen_xstart", 0))
+        self.state.camera_immediate_count = int(camera_state_raw.get("immediate_count", 0))
+        self.state.camera_publish_count = int(camera_state_raw.get("publish_count", 0))
+        self.state.camera_scroll_script_count = int(camera_state_raw.get("scroll_script_count", 0))
+        self.state.camera_update_pending = bool(camera_state_raw.get("update_pending", False))
         self.state.camera_follow_actor = camera_follow_actor
         self.state.cursor_x = cursor_x
         self.state.cursor_y = cursor_y
@@ -3157,10 +4982,17 @@ class ScummV5Engine(Engine):
             raise SaveFormatError("SCUMM save room-object table does not match the room resource")
         self.state.room_objects = room_objects
         self.state.object_draw_queue = object_draw_queue
-        for message in self.state.print_messages:
-            self._present_print(context, message)
+        headless = bool(context.profile.options.get("headless_presentation", False))
+        if not headless and self.state.print_messages and self._video is not None:
+            target = self._video.prepare_composition()
+            for message in self.state.print_messages:
+                self._present_print(context, message, target)
+            self._video.project_composition()
+            self.state.room_hash = context.services.video.surface.hash()
+        self._presentation_dirty = False
+        self._presentation_rebuild = False
         for index, rgb in self.state.room_ops.palette_overrides.items():
-            context.services.video.surface.set_palette(index, (rgb,))
+            context.services.video.set_palette(index, (rgb,))
         if self._video is None:
             context.services.video.move_cursor(self.state.cursor_x, self.state.cursor_y)
         else:
@@ -3168,6 +5000,10 @@ class ScummV5Engine(Engine):
         context.services.video.show_cursor(self.state.cursor_visible)
         if self._audio is not None:
             self._audio.load_state(audio_state)
+
+    def inspect_room_lifecycle(self) -> tuple[Mapping[str, object], ...]:
+        """Return bounded diagnostic lifecycle evidence; it is not save state."""
+        return tuple(dict(item) for item in self._room_lifecycle)
 
     def inspect_state(self) -> Mapping[str, object]:
         strings: dict[str, object] = {}
@@ -3180,7 +5016,39 @@ class ScummV5Engine(Engine):
             strings[str(string_id)] = entry
         return {
             "room": self.state.current_room,
+            "room_resource": {
+                "cooked": self._room_record is not None,
+                "record_sha256": (
+                    None if self._room_record is None else self._room_record.record_sha256
+                ),
+                "registration_only": bool(
+                    self._room_record and self._room_record.registration_only
+                ),
+                "scripts": [] if self._room_record is None else [
+                    {
+                        "identity": item.identity,
+                        "kind": item.kind,
+                        "number": item.number,
+                        "length": len(item.program),
+                        "sha256": item.sha256,
+                        "source_map": item.runtime_map(0),
+                    }
+                    for item in self._room_record.scripts
+                ],
+            },
             "camera": [self.state.camera_x, self.state.camera_y],
+            "camera_state": {
+                "destination": [self.state.camera_destination_x, self.state.camera_destination_y],
+                "last": [self.state.camera_last_x, self.state.camera_last_y],
+                "mode": self.state.camera_mode,
+                "moving_to_actor": self.state.camera_moving_to_actor,
+                "screen_strips": [self.state.screen_start_strip, self.state.screen_end_strip],
+                "virtual_screen_xstart": self.state.virtual_screen_xstart,
+                "immediate_count": self.state.camera_immediate_count,
+                "publish_count": self.state.camera_publish_count,
+                "scroll_script_count": self.state.camera_scroll_script_count,
+                "update_pending": self.state.camera_update_pending,
+            },
             "camera_follow_actor": self.state.camera_follow_actor,
             "cursor": [self.state.cursor_x, self.state.cursor_y],
             "cursor_command": {
@@ -3286,11 +5154,15 @@ class ScummV5Engine(Engine):
                 "queue": [list(command) for command in self.state.sound_queue],
                 "history": [list(command) for command in self.state.sound_history],
                 "result": self.state.sound_result,
+                "imuse_queue_clear_count": self.state.imuse_queue_clear_count,
             },
             "print": {
                 "slots": [print_slot.to_dict() for print_slot in self.state.print_slots],
                 "messages": [message.to_dict() for message in self.state.print_messages],
             },
+            # Logical actor-talk is intentionally outside the historical
+            # print/save payload: this milestone does not extend cold saves.
+            "talk": self.state.talk.to_dict(),
             "variables": {
                 str(index): value
                 for index, value in enumerate(self.state.variables)

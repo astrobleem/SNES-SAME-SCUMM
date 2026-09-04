@@ -2,10 +2,18 @@
 
 from .engine import ScummV5Engine
 from .audio import SameScore, ScummV5AudioAdapter
+from .costume import CostumeCel, CostumePose, ScummV5Costume
+from .cooked_room import (
+    CookedRoomRecord, CookedScriptSource, ScriptChunkInput, decode_cooked_room,
+    encode_cooked_room,
+)
+from .embedded_audio import ScummV5EmbeddedAudioAdapter, ScummV5EmbeddedSound
 from .input import ScummV5InputAdapter, ScummV5InputState
 from .policy import POLICY_SCHEMA, ScummV5GamePolicy, parse_game_policy
 from .resources import LucasartsScummV5ResourceProvider
-from .room import ScummV5Room, ScummV5RoomAdapter, ScummV5RoomObject, decode_room
+from .room import (
+    ScummV5Room, ScummV5RoomAdapter, ScummV5RoomObject, ScummV5Walkbox, decode_room,
+)
 from .text import ScummTextControl, ScummTextGlyph, decode_scumm_v5_text
 from .video import ScummV5Charset, ScummV5VideoAdapter, decode_cursor, decode_scene
 
@@ -20,14 +28,25 @@ __all__ = [
     "ScummV5Room",
     "ScummV5RoomAdapter",
     "ScummV5RoomObject",
+    "ScummV5Walkbox",
     "ScummV5Charset",
     "ScummV5AudioAdapter",
+    "ScummV5EmbeddedAudioAdapter",
+    "ScummV5EmbeddedSound",
+    "ScummV5Costume",
+    "CookedRoomRecord",
+    "CookedScriptSource",
+    "ScriptChunkInput",
     "ScummV5VideoAdapter",
     "ScummTextControl",
     "ScummTextGlyph",
+    "CostumeCel",
+    "CostumePose",
     "decode_cursor",
+    "decode_cooked_room",
     "decode_room",
     "decode_scene",
     "decode_scumm_v5_text",
+    "encode_cooked_room",
     "parse_game_policy",
 ]

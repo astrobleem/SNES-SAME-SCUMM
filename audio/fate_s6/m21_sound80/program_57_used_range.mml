@@ -1,0 +1,14 @@
+#Title Fate sound 80 program 57 used-range audition
+#Game Indiana Jones and the Fate of Atlantis interactive demo
+#Author SAME M21 isolated instrument gate
+#Timer 64
+#ZenLen 192
+
+@0 mt32_p88_cycle
+@1 mt32_p88_cycle_x2
+@2 mt32_p74_cycle
+@3 mt32_p74_cycle_x2
+@4 mt32_p74_cycle_x4
+@5 ph_bass
+
+A q0 @2 V64 o3 c+%48 r%16 @2 V64 o3 g%48 r%16 @2 V64 o4 c%48 r%16 @2 V64 o4 d+%48 r%16 @3 V64 o4 e%48 r%16 @3 V64 o5 c%48 r%16 @3 V64 o5 g+%48 r%16 @2 V64 o3 c+%112 r%32 @3 V64 o5 g+%112 r%32 r%96

@@ -1,0 +1,34 @@
+{
+  "same_engine_profile": 1,
+  "engine": "demo",
+  "game": {
+    "id": "same-qtma-mov-conformance",
+    "title": "SAME QTMA MOV Runtime Conformance",
+    "variant": "repository-owned-m13"
+  },
+  "timing": {"tick_hz": 60, "max_ops_per_tick": 128},
+  "video": {"width": 256, "height": 224, "mode": "indexed8"},
+  "input": {"profile": "scumm"},
+  "capabilities": {
+    "required": ["indexed8_surface", "chip_audio"],
+    "optional": []
+  },
+  "resources": [
+    {
+      "key": "music.catalog",
+      "path": "../resources/music/qtma_m13_compiled.json",
+      "kind": "MCAT"
+    },
+    {
+      "key": "music.build_graph",
+      "path": "../resources/music/qtma_m13_build_graph.json",
+      "kind": "MBGR"
+    }
+  ],
+  "options": {
+    "compiled_music_catalog": "music.catalog",
+    "music_build_graph": "music.build_graph",
+    "snes_personality": "qtma_conformance"
+  },
+  "quirks": {}
+}

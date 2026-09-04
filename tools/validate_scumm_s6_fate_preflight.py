@@ -9,12 +9,16 @@ import json
 from pathlib import Path
 import zipfile
 
+from same.audio import write_wav
+from same.capabilities import DEFAULT_HOST_CAPABILITIES, EngineCapability
 from same.engine import EngineHost
 from same.engines import default_registry
 from same.engines.scumm_v5 import (
-    LucasartsScummV5ResourceProvider, ScummV5Charset, decode_room, parse_game_policy,
+    LucasartsScummV5ResourceProvider, ScummV5Charset, ScummV5RoomAdapter,
+    decode_room, parse_game_policy,
 )
-from same.engines.scumm_v5.engine import ScriptSlot
+from same.engines.scumm_v5.engine import ActorState, ScriptSlot
+from same.engines.scumm_v5.embedded_audio import ScummV5EmbeddedSound
 from same.errors import EngineExecutionError
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
@@ -48,15 +52,25 @@ def require(condition: bool, message: str) -> None:
 
 
 def mounted_host(profile, raw: dict[str, bytes]) -> EngineHost:
+    catalog = (ROOT / "examples/resources/music/fate_s6_compiled.json").read_bytes()
     resources = MemoryResourceProvider(
         {
             "game.index": raw["index"],
             "game.data": raw["data"],
             "distribution.notice": raw["notice"],
+            "music.catalog": catalog,
         },
-        kinds={"game.index": "SCIX", "game.data": "SCDT", "distribution.notice": "TEXT"},
+        kinds={
+            "game.index": "SCIX", "game.data": "SCDT",
+            "distribution.notice": "TEXT", "music.catalog": "MCAT",
+        },
     )
-    services = HostServices.create(profile, resources=resources)
+    # This preflight remains the source-device PCM oracle. M6 exercises the
+    # profile's compiled catalog independently with CHIP_AUDIO enabled.
+    services = HostServices.create(
+        profile, resources=resources,
+        capabilities=DEFAULT_HOST_CAPABILITIES & ~EngineCapability.CHIP_AUDIO,
+    )
     host = EngineHost(profile, default_registry(), services=services)
     host.boot()
     require(
@@ -92,7 +106,7 @@ def main() -> int:
         prefix: tuple(key for key in keys if key.startswith(prefix + "."))
         for prefix in ("room", "script", "sound", "costume", "charset")
     }
-    expected_counts = {"room": 10, "script": 74, "sound": 28, "costume": 25, "charset": 4}
+    expected_counts = {"room": 10, "script": 74, "sound": 27, "costume": 20, "charset": 3}
     observed_counts = {name: len(values) for name, values in families.items()}
     require(observed_counts == expected_counts, f"resource counts differ: {observed_counts}")
 
@@ -108,11 +122,37 @@ def main() -> int:
         "room.83": ((320, 200), [17, 18, 27, 28, 67, 68]),
         "room.98": ((8, 200), [34]),
     }
+    expected_zplane_counts = {
+        "room.42": 3, "room.48": 1, "room.49": 3, "room.63": 1,
+        "room.68": 0, "room.69": 2, "room.75": 0, "room.82": 0,
+        "room.83": 0, "room.98": 0,
+    }
+    expected_walkbox_counts = {
+        "room.42": 11, "room.48": 38, "room.49": 23, "room.63": 17,
+        "room.68": 2, "room.69": 11, "room.75": 2, "room.82": 17,
+        "room.83": 2, "room.98": 2,
+    }
     decoded_rooms = {}
     for key, (dimensions, codecs) in expected_rooms.items():
         decoded = decode_room(provider.read(key), key=key)
         observed = ((decoded.width, decoded.height), sorted(set(decoded.strip_codecs)))
         require(observed == (dimensions, codecs), f"{key} decode differs: {observed}")
+        require(
+            len(decoded.zplanes) == expected_zplane_counts[key],
+            f"{key} z-plane count differs: {len(decoded.zplanes)}",
+        )
+        require(
+            len(decoded.walkboxes) == expected_walkbox_counts[key],
+            f"{key} walkbox count differs: {len(decoded.walkboxes)}",
+        )
+        if key == "room.42":
+            require(
+                (
+                    decoded.next_box(1, 10), decoded.next_box(10, 1),
+                    decoded.next_box(1, 2), decoded.next_box(2, 1),
+                ) == (2, 7, 2, 1),
+                "room.42 BOXM route probes differ",
+            )
         decoded_rooms[key] = {
             "dimensions": list(dimensions),
             "strip_codecs": codecs,
@@ -121,6 +161,27 @@ def main() -> int:
             "exit_code": decoded.exit_script is not None,
             "local_scripts": [script_id for script_id, _ in decoded.local_scripts],
             "pixels_sha256": sha256(decoded.pixels),
+            "zplanes": [
+                {
+                    "sha256": sha256(plane),
+                    "masked_pixels": sum(mask.bit_count() for mask in plane),
+                }
+                for plane in decoded.zplanes
+            ],
+            "walkboxes": [
+                {
+                    "index": box.index, "upper_left": list(box.upper_left),
+                    "upper_right": list(box.upper_right),
+                    "lower_right": list(box.lower_right),
+                    "lower_left": list(box.lower_left),
+                    "mask": box.mask, "flags": box.flags, "scale": box.scale,
+                }
+                for box in decoded.walkboxes
+            ],
+            "box_routes": [
+                [-1 if destination is None else destination for destination in row]
+                for row in decoded.box_routes
+            ],
         }
 
     selected = {}
@@ -140,6 +201,123 @@ def main() -> int:
         (fate_three.width, fate_three.height, fate_three.x_offset, fate_three.y_offset)
         == (6, 8, 0, 0),
         "Fate digit-three glyph metrics differ",
+    )
+
+    decoded_sounds = {
+        key: ScummV5EmbeddedSound.decode(provider.read(key), key)
+        for key in families["sound"]
+    }
+    require(
+        len(decoded_sounds) == 27
+        and all(item.rendition == "ROL" for item in decoded_sounds.values()),
+        "Fate embedded sound rendition coverage differs",
+    )
+    imuse_inventory = {
+        str(command): sum(
+            event.command == command
+            for sound in decoded_sounds.values()
+            for track in sound.imuse_events for event in track
+        )
+        for command in (0, 2, 48, 50, 64)
+    }
+    multi_track_sounds = {
+        key: sound.track_count for key, sound in decoded_sounds.items()
+        if sound.track_count > 1
+    }
+    require(
+        imuse_inventory == {"0": 104, "2": 27, "48": 189, "50": 28, "64": 12},
+        f"Fate iMUSE command inventory differs: {imuse_inventory}",
+    )
+    require(
+        multi_track_sounds == {"sound.140": 7, "sound.157": 2, "sound.3": 3, "sound.80": 4},
+        f"Fate multi-track inventory differs: {multi_track_sounds}",
+    )
+    preview_sound = decoded_sounds["sound.172"]
+    preview_pcm = preview_sound.render_pcm(sample_rate=22_050)
+    preview_path = args.output.resolve().parent / "fate-sound-172.wav"
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    write_wav(preview_path, preview_pcm, 22_050)
+    require(
+        preview_sound.inspect() == {
+            "resource": "sound.172", "rendition": "ROL", "priority": 128,
+            "format": 2, "tracks": 1, "division": 480,
+            "duration_us": 553725, "events": 2,
+            "imuse": {"0": 1, "2": 1},
+            "sha256": "75d84e93b97ef5a2d0498a5b4859a7d4149a9ca5883ea83d18bbac53a8ba7af5",
+        }
+        and len(preview_pcm) == 24420
+        and sha256(preview_pcm) == "e328daeefaedacf1316e284286e56fbe177d94a19d2959898dc5f61b06573749",
+        "Fate sound 172 decode or PCM rendition differs",
+    )
+
+    playback_host = mounted_host(profile, raw)
+    playback_host.engine.state.scripts = [ScriptSlot(
+        "sound.172/C40-playback",
+        bytes((0x1C, 172, 0x7C, 0, 0, 172)) + b"\x80" * 34
+        + bytes((0x7C, 1, 0, 172, 0x00)),
+    )]
+    playback_host.tick()
+    playback_state = playback_host.engine.inspect_state()
+    require(
+        playback_state["variables"].get("0") == 1
+        and playback_state["audio"]["sfx"] == {172: 1},
+        f"Fate embedded sound did not become active: {playback_state['audio']}",
+    )
+    pcm_prefix = bytes(playback_host.services.audio.pcm_streams[172])
+    playback_host.engine.state.scripts = []
+    playback_saved = playback_host.save(0)
+    playback_host.engine._audio.stop_all()
+    playback_host.load(0)
+    require(
+        playback_host.engine.inspect_state()["audio"]["sfx"] == {172: 1},
+        "Fate embedded sound playhead did not restore",
+    )
+    for _ in range(33):
+        playback_host.tick()
+    playback_final = playback_host.engine.inspect_state()
+    resumed_pcm = pcm_prefix + bytes(playback_host.services.audio.pcm_streams[172])
+    require(
+        playback_final["audio"]["sfx"] == {}
+        and sha256(resumed_pcm) == sha256(preview_pcm),
+        f"Fate embedded sound completion differs: {playback_final['audio']}",
+    )
+
+    # Real format-2 branch proof: hook 15 at sound 80/tick 90 selects track 2,
+    # beat 5 before the unconditional track-0 continuation at tick 100.
+    branch_host = mounted_host(profile, raw)
+    assert branch_host.engine._audio is not None
+    branch_host.engine._audio.play_sfx(80)
+    hook = bytes((
+        0x4C,
+        0, 0x0C, 0x01, 0, 80, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0,
+        0xFF,
+        0x4C, 0, 0xFF, 0xFF, 0xFF,
+    )) + b"\x80" * 10
+    branch_host.engine.state.scripts = [ScriptSlot("sound.80/C41-hook", hook)]
+    for _ in range(10):
+        branch_host.tick()
+    branch_state = branch_host.engine.inspect_state()["audio"]
+    branch_player = branch_state["imuse"]["80"]
+    require(
+        branch_player["track"] == 2
+        and branch_player["hooks"] == [0, 0]
+        and branch_player["branches"] == [[0, 90, 2, 1920]],
+        f"Fate sound 80 hook branch differs: {branch_player}",
+    )
+    branch_host.engine.state.scripts = []
+    branch_saved = branch_host.save(1)
+    branch_prefix = len(branch_host.services.audio.pcm_streams[80])
+    for _ in range(3):
+        branch_host.tick()
+    branch_expected = bytes(branch_host.services.audio.pcm_streams[80])[branch_prefix:]
+    branch_host.load(1)
+    branch_host.engine.state.scripts = []
+    for _ in range(3):
+        branch_host.tick()
+    branch_resumed = bytes(branch_host.services.audio.pcm_streams[80])
+    require(
+        branch_resumed == branch_expected,
+        "Fate sound 80 branch state did not resume byte-identically",
     )
 
     # Pin the real room-75 ENCD frontier. Insert only scheduler yields between
@@ -230,8 +408,8 @@ def main() -> int:
         "Fate saved verbs remained in the active namespace",
     )
 
-    # C27/C28: resolve room 75's exact local script 200 and execute both of its
-    # canonical animateActor requests across their real breakHere boundaries.
+    # C27-C32: resolve room 75's exact local scripts, execute actor animation,
+    # cross local script 205's hit-query loop, and place actor 10 at object 1031.
     decoded_75 = decode_room(room_75, key="room.75")
     local_identities = [script_id for script_id, _ in decoded_75.local_scripts]
     require(local_identities == list(range(200, 209)), "Fate room 75 LSCR identities differ")
@@ -244,12 +422,7 @@ def main() -> int:
     local_host.engine.state.scripts = [
         ScriptSlot("room.75/ENCD", decoded_75.entry_script, number=0, room=75)
     ]
-    try:
-        local_host.tick()
-    except EngineExecutionError as exc:
-        local_next_error = str(exc)
-    else:
-        raise RuntimeError("Fate room 75 entry did not reach local script 205's frontier")
+    local_host.tick()
     local_first = local_host.engine.inspect_state()
     local_200 = [slot for slot in local_first["scripts"] if slot["number"] == 200]
     require(
@@ -263,10 +436,18 @@ def main() -> int:
         local_first["actors"]["10"]["animation"] == 250,
         "Fate local script 200 first animation differs",
     )
+    local_205 = [slot for slot in local_first["scripts"] if slot["number"] == 205]
     require(
-        "opcode $D5 is not implemented" in local_next_error
-        and "script room.75/LSCR.205, offset $0004" in local_next_error,
-        f"Fate next local-script frontier differs: {local_next_error}",
+        len(local_205) == 1
+        and local_205[0]["resource"] == "room.75/LSCR.205"
+        and local_205[0]["room"] == 75
+        and local_205[0]["pc"] == 0x25
+        and local_205[0]["locals"][0] == 0,
+        f"Fate actor/object hit-query loop differs: {local_205}",
+    )
+    require(
+        local_first["variables"].get("108", 0) == 0,
+        "Fate findObject no-hit result was not copied to variable 108",
     )
     local_host.engine.state.scripts = [
         slot for slot in local_host.engine.state.scripts if slot.number == 200
@@ -282,6 +463,172 @@ def main() -> int:
     require(
         local_second["actors"]["10"]["animation"] == 6,
         "Fate local script 200 second animation differs",
+    )
+    local_program_200 = dict(decoded_75.local_scripts)[200]
+    put_actor_room_bytes = local_program_200[0x82D:0x830]
+    require(
+        put_actor_room_bytes == bytes((0x2D, 10, 75)),
+        f"Fate putActorInRoom bytes differ: {put_actor_room_bytes.hex()}",
+    )
+    actor_10 = local_host.engine.state.actors[10]
+    actor_10.room, actor_10.visible = 0, False
+    actor_10.position, actor_10.moving = (0, 0), 0
+    local_host.engine.state.scripts = [
+        ScriptSlot(
+            "room.75/LSCR.200/putActorInRoom-frontier",
+            put_actor_room_bytes + bytes((0x80,)), number=200, room=75,
+        )
+    ]
+    local_host.engine.tick(local_host.context)
+    actor_room_state = local_host.engine.inspect_state()
+    require(
+        actor_room_state["actors"]["10"]["room"] == 75
+        and not actor_room_state["actors"]["10"]["visible"]
+        and actor_room_state["actors"]["10"]["position"] == [0, 0]
+        and actor_room_state["actors"]["10"]["moving"] == 0,
+        "Fate putActorInRoom actor lifecycle differs",
+    )
+    put_actor_object_bytes = local_program_200[0x830:0x834]
+    require(
+        put_actor_object_bytes == bytes((0x0E, 10, 0x07, 0x04)),
+        f"Fate putActorAtObject bytes differ: {put_actor_object_bytes.hex()}",
+    )
+    local_host.engine.state.scripts = [
+        ScriptSlot(
+            "room.75/LSCR.200/putActorAtObject-frontier",
+            put_actor_object_bytes + bytes((0x80,)), number=200, room=75,
+        )
+    ]
+    local_host.engine.tick(local_host.context)
+    actor_object_state = local_host.engine.inspect_state()
+    require(
+        actor_object_state["actors"]["10"]["room"] == 75
+        and actor_object_state["actors"]["10"]["visible"]
+        and actor_object_state["actors"]["10"]["position"] == [1164, 46]
+        and actor_object_state["actors"]["10"]["moving"] == 0,
+        "Fate putActorAtObject walk-point placement differs",
+    )
+    require(
+        actor_object_state["actors"]["10"]["hitbox"] == [1161, 43, 1167, 49],
+        "Fate rendered costume hitbox differs",
+    )
+    require(
+        actor_object_state["video"]["logical_sha256"]
+        == "7b1c33673fd48f822bbaca4d25a2877e63596bce3dfaa42d4275cae66bf91ee5"
+        and actor_object_state["video"]["actors"] == [{
+            "actor": 10, "costume": 58, "frame": 1, "step": 0, "facing": 180,
+            "scale": [255, 255], "walkbox": None,
+            "z_plane": 0, "occluded": 0,
+            "cels": 1, "pixels": 37, "bounds": [1161, 43, 1167, 49],
+        }],
+        f"Fate rendered costume presentation differs: {actor_object_state['video']}",
+    )
+    require(
+        actor_object_state["actors"]["10"]["costume_step"] == 1,
+        "Fate costume cursor did not advance after its initial draw",
+    )
+    local_host.engine.state.scripts = []
+    local_host.engine.tick(local_host.context)
+    actor_chore_state = local_host.engine.inspect_state()
+    require(
+        actor_chore_state["actors"]["10"]["costume_frame"] == 1
+        and actor_chore_state["actors"]["10"]["costume_step"] == 2
+        and actor_chore_state["actors"]["10"]["animation_progress"] == 0
+        and actor_chore_state["actors"]["10"]["hitbox"] == [1161, 43, 1167, 49],
+        "Fate costume cursor state differs after one advancement",
+    )
+    require(
+        actor_chore_state["video"]["logical_sha256"]
+        == "0e1972cf93f4fdce4d62abe54f4f2164417b50dfd971eee4be24c6aca041f104"
+        and actor_chore_state["video"]["actors"] == [{
+            "actor": 10, "costume": 58, "frame": 1, "step": 1, "facing": 180,
+            "scale": [255, 255], "walkbox": None,
+            "z_plane": 0, "occluded": 0,
+            "cels": 1, "pixels": 37, "bounds": [1161, 43, 1167, 49],
+        }],
+        f"Fate advanced costume presentation differs: {actor_chore_state['video']}",
+    )
+    actor_10.scale = (128, 192)
+    actor_10.costume_step = 0
+    local_host.engine._actors_dirty = True
+    local_host.engine.tick(local_host.context)
+    actor_scale_state = local_host.engine.inspect_state()
+    require(
+        actor_scale_state["actors"]["10"]["scale"] == [128, 192]
+        and actor_scale_state["actors"]["10"]["hitbox"] == [1162, 43, 1166, 48]
+        and actor_scale_state["video"]["logical_sha256"]
+        == "62db861295d986afacf38eb97e24ce29b99bdc2cb2e4eea3c0a79e29d94d33f2"
+        and actor_scale_state["video"]["actors"] == [{
+            "actor": 10, "costume": 58, "frame": 1, "step": 0, "facing": 180,
+            "scale": [128, 192], "walkbox": None,
+            "z_plane": 0, "occluded": 0,
+            "cels": 1, "pixels": 26,
+            "bounds": [1162, 43, 1166, 48],
+        }],
+        f"Fate scaled costume presentation differs: {actor_scale_state['video']}",
+    )
+
+    zmask_video = ScummV5RoomAdapter(local_host.context)
+    zmask_video.render("room.42")
+    zmask_actor = ActorState(
+        costume=58, room=42, visible=True, position=(193, 100),
+    )
+    zmask_video.render_actors(
+        {10: zmask_actor}, current_room=42,
+        costume_key=lambda costume: f"costume.{costume}",
+    )
+    fate_zmask_state = zmask_video.inspect()
+    require(
+        fate_zmask_state["logical_sha256"]
+        == "9d451e87313acc1a834ed29dbfbc23c1bd3596de0c9de348e3ecf95117a7cc55"
+        and fate_zmask_state["zplanes"] == 3
+        and fate_zmask_state["actors"] == [{
+            "actor": 10, "costume": 58, "frame": 1, "step": 0, "facing": 180,
+            "scale": [255, 255], "walkbox": 10,
+            "z_plane": 1, "occluded": 37,
+            "cels": 1, "pixels": 0, "bounds": None,
+        }]
+        and zmask_actor.hitbox == (0, 0, 0, 0),
+        f"Fate z-mask costume presentation differs: {fate_zmask_state}",
+    )
+
+    # Execute a real room-42 route through the generic $1E walker. The start
+    # point belongs to overlapping boxes 1 and 5; v5's reverse scan selects 5,
+    # then BOXM and shared-edge gates carry it through 6, 8, 7, and 10.
+    movement_host = mounted_host(profile, raw)
+    movement_video = ScummV5RoomAdapter(movement_host.context)
+    movement_video.render("room.42")
+    movement_host.engine._video = movement_video
+    movement_host.engine.state.current_room = 42
+    movement_host.engine.state.actors = {
+        10: ActorState(room=42, position=(44, 80), walkbox=1),
+    }
+    movement_host.engine.state.scripts = [
+        ScriptSlot(
+            "room.42/C39-walkActorTo",
+            bytes((0x1E, 10, 200, 110)) + b"\x80" * 50 + b"\x00",
+        )
+    ]
+    movement_checkpoints = {}
+    for frame in range(1, 28):
+        movement_host.tick()
+        if frame in (1, 5, 18, 23, 27):
+            actor = movement_host.engine.state.actors[10]
+            movement_checkpoints[str(frame)] = {
+                "position": list(actor.position),
+                "walkbox": actor.walkbox,
+                "moving": actor.moving,
+                "facing": actor.facing,
+            }
+    require(
+        movement_checkpoints == {
+            "1": {"position": [51, 78], "walkbox": 5, "moving": 2, "facing": 90},
+            "5": {"position": [80, 73], "walkbox": 6, "moving": 2, "facing": 90},
+            "18": {"position": [180, 92], "walkbox": 8, "moving": 2, "facing": 180},
+            "23": {"position": [184, 102], "walkbox": 7, "moving": 10, "facing": 180},
+            "27": {"position": [200, 110], "walkbox": 10, "moving": 0, "facing": 180},
+        },
+        f"Fate room-42 walkActorTo checkpoints differ: {movement_checkpoints}",
     )
 
     # SAME save states remain available even though this demo intentionally
@@ -345,7 +692,10 @@ def main() -> int:
     require(draw_state["object_draw_queue"] == [939], "Fate draw queue differs")
     require(
         draw_state["room_objects"].get("939")
-        == {"position": [24, 32], "size": [272, 144], "walk": [0, 0], "state": 1},
+        == {
+            "position": [24, 32], "size": [272, 144], "walk": [0, 0], "state": 1,
+            "local_index": 7, "parent": 0, "parent_state": 0,
+        },
         "Fate object 939 geometry/state differs",
     )
     require(next_frontier_state["room"] == 0, "Fate did not enter the null room")
@@ -381,9 +731,12 @@ def main() -> int:
             "logical_sha256": "b63a1147fe8a63eccbfe9da27667582df8b82d61f3653bfb29da4a038dff5a1e",
             "format": "raw-v5", "dimensions": [1280, 200],
             "strip_codecs": [14, 16, 26, 66],
+            "zplanes": 0,
+            "walkboxes": 2,
             "projection": [512, 0, 0, 12, 256, 200],
+            "actors": [],
         },
-        "Fate room 75 adapter state differs",
+        f"Fate room 75 adapter state differs: {boot_state['video']}",
     )
     require(
         boot_state["cutscenes"] == {
@@ -527,7 +880,7 @@ def main() -> int:
 
     report = {
         "gate": "S6",
-        "result": "incomplete",
+        "result": "in_progress",
         "s6_gate_passed": False,
         "preflight": "pass",
         "archive": str(archive),
@@ -690,12 +1043,134 @@ def main() -> int:
             "offsets": ["$0837", "$083B"],
             "animations": [250, 6],
         },
-        "next_opcode_frontier": {
+        "actor_from_pos": {
             "opcode": "$D5",
             "operation": "getActorFromPos",
             "room": 75,
             "script": 205,
             "offset": "$0004",
+            "bytes": "d5004014001500",
+            "result_local_0": local_205[0]["locals"][0],
+        },
+        "find_object": {
+            "opcode": "$F5",
+            "operation": "findObject",
+            "room": 75,
+            "script": 205,
+            "offset": "$0018",
+            "bytes": "f5004014001500",
+            "result_local_0": local_205[0]["locals"][0],
+            "copied_variable": 108,
+            "loop_yield_pc": "$0025",
+        },
+        "put_actor_in_room": {
+            "operation": "putActorInRoom",
+            "room": 75,
+            "script": 200,
+            "offset": "$082D",
+            "bytes": put_actor_room_bytes.hex(),
+            "actor": 10,
+            "assigned_room": actor_room_state["actors"]["10"]["room"],
+            "visible_without_placement": actor_room_state["actors"]["10"]["visible"],
+            "position": actor_room_state["actors"]["10"]["position"],
+            "moving": actor_room_state["actors"]["10"]["moving"],
+        },
+        "put_actor_at_object": {
+            "operation": "putActorAtObject",
+            "room": 75,
+            "script": 200,
+            "offset": "$0830",
+            "bytes": put_actor_object_bytes.hex(),
+            "actor": 10,
+            "object": 1031,
+            "object_walk_point": [1164, 46],
+            "visible": actor_object_state["actors"]["10"]["visible"],
+            "position": actor_object_state["actors"]["10"]["position"],
+            "moving": actor_object_state["actors"]["10"]["moving"],
+        },
+        "costume_rendering": {
+            "resource": "costume.58",
+            "format": "$58",
+            "initial_frame": 1,
+            "facing": 180,
+            "logical_sha256": actor_object_state["video"]["logical_sha256"],
+            "draws": actor_object_state["video"]["actors"],
+            "hitbox": actor_object_state["actors"]["10"]["hitbox"],
+        },
+        "costume_chore_advancement": {
+            "resource": "costume.58",
+            "frame": actor_chore_state["actors"]["10"]["costume_frame"],
+            "drawn_step": actor_chore_state["video"]["actors"][0]["step"],
+            "next_step": actor_chore_state["actors"]["10"]["costume_step"],
+            "animation_progress": actor_chore_state["actors"]["10"]["animation_progress"],
+            "logical_sha256": actor_chore_state["video"]["logical_sha256"],
+            "draws": actor_chore_state["video"]["actors"],
+            "hitbox": actor_chore_state["actors"]["10"]["hitbox"],
+        },
+        "costume_scaling": {
+            "resource": "costume.58",
+            "scale": actor_scale_state["actors"]["10"]["scale"],
+            "logical_sha256": actor_scale_state["video"]["logical_sha256"],
+            "draws": actor_scale_state["video"]["actors"],
+            "hitbox": actor_scale_state["actors"]["10"]["hitbox"],
+        },
+        "costume_zmask": {
+            "room": 42,
+            "resource": "costume.58",
+            "actor_position": [193, 100],
+            "walkbox": 10,
+            "force_clip": 0,
+            "logical_sha256": fate_zmask_state["logical_sha256"],
+            "draws": fate_zmask_state["actors"],
+            "hitbox": list(zmask_actor.hitbox),
+        },
+        "walkbox_routing": {
+            "room": 42,
+            "queries": {
+                "1->10": 2, "10->1": 7, "1->2": 2, "2->1": 1,
+            },
+            "get_actor_walkbox_opcode": "$7B/$FB",
+            "save_schema": saved.schema,
+        },
+        "actor_movement": {
+            "room": 42,
+            "opcode": "$1E",
+            "requested_destination": [200, 110],
+            "adjusted_destination": [200, 110],
+            "route": [5, 6, 8, 7, 10],
+            "checkpoints": movement_checkpoints,
+            "save_schema": saved.schema,
+        },
+        "embedded_audio": {
+            "resources": len(decoded_sounds),
+            "renditions": sorted({item.rendition for item in decoded_sounds.values()}),
+            "playback_opcode": "$1C",
+            "status_opcode": "$7C/$FC",
+            "sound": preview_sound.inspect(),
+            "pcm": {
+                "sample_rate": 22050,
+                "channels": 1,
+                "sample_width": 2,
+                "frames": len(preview_pcm) // 2,
+                "sha256": sha256(preview_pcm),
+                "wav": preview_path.name,
+            },
+            "active_before_save": True,
+            "save_schema": playback_saved.schema,
+            "resumed_pcm_sha256": sha256(resumed_pcm),
+            "stopped_at_end": True,
+            "imuse_inventory": imuse_inventory,
+            "multi_track_sounds": multi_track_sounds,
+            "interactive_branch": {
+                "sound": 80, "hook": 15, "source_track": 0,
+                "source_tick": 90, "target_track": 2, "target_tick": 1920,
+                "save_schema": branch_saved.schema,
+                "resumed_pcm_sha256": sha256(branch_resumed),
+            },
+        },
+        "next_frontier": {
+            "kind": "reviewed_fate_arrangement_coverage",
+            "operations": ["arrange remaining sounds", "musical review", "bounded emulator captures"],
         },
         "print_defaults": next_frontier_state["print"],
         "font": {
@@ -729,14 +1204,14 @@ def main() -> int:
             },
         },
         "set_var_range_127_140": observed_ranges,
-        "remaining_gate_proofs": ["actor behavior", "embedded audio playback"],
+        "remaining_gate_proofs": ["reviewed production arrangements for the remaining 26 Fate sounds"],
         "opcode_core_game_identity_branch": False,
         "opcode_core_sha256": sha256(core.read_bytes()),
     }
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print("S6 Fate demo preflight: PASS (S6 remains incomplete)")
+    print("S6 Fate demo: IN PROGRESS (host iMUSE passed; full reviewed TAD coverage pending)")
     print(output)
     print(sha256(output.read_bytes()))
     return 0

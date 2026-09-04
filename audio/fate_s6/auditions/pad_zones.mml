@@ -1,0 +1,13 @@
+#Title Fate audition 04 - atmospheric pad zones
+#Author SAME instrument audition
+#Timer 192
+#ZenLen 192
+
+@0 mt32_p88_cycle
+@1 mt32_p88_cycle_x2
+
+; Round 5: periodic low/high wavetables now use filter-reset BRR loops. Repeat
+; the exact first/second/third-note test, then expose the B4/C5 seam.
+A @0 o2 v4 c2 r8 o3 g2 r8 o4 b2 r8
+A @0 o4 b16 @1 o5 c16 @0 o4 b16 @1 o5 c16 @0 o4 b16 @1 o5 c16 r8
+A @1 o5 c2 r8 g2 r8 >c2 r4

@@ -2,7 +2,7 @@
 
 ## Verified in the packaging environment
 
-- **172/172 tests pass.**
+- **304/304 tests pass.**
 - Both bundled engine profiles validate and negotiate capabilities.
 - SCUMM v5 runs 120 ticks, increments variable 20 to 120, keeps music track 1
   active, produces a deterministic indexed framebuffer, and loses no packets.
@@ -18,8 +18,8 @@
 - AGI decoded logic resources and message offsets parse correctly.
 - The 16-byte service packet remains byte-compatible with 0.1 and now includes
   engine/save/job service numbers.
-- The SNES include closure passes the Poppy hazard checker: 18 files and 1,339
-  global labels for the demo selection (1,333 for SCUMM v5).
+- The SNES include closure passes the Poppy hazard checker: 20 files and 1,500
+  global labels for the demo selection (1,494 for SCUMM v5).
 - The adventure package contains four aligned, per-section-CRC resources.
 - The legacy machine-host tests, Genesis scheduler simulation, SN76489 renderer,
   package tests, oracle tests, and four SAME-VDP golden cases still pass.
@@ -59,7 +59,7 @@ On 2026-08-23, the configured Linux workstation assembled and audited:
 ```text
 build/same-engine-host.sfc
 32768 bytes
-SHA-256 026ef519d6ae1af761f76f5b902a5b1ab8e102b2ecc74e41207120bc7bb42f5c
+SHA-256 966caf1de4e38fddda4c156fb5b30491f4e322d147821fd4663b933a71189fb7
 reset=$8000 nmi=$8051 irq=$8073
 ```
 
@@ -80,8 +80,8 @@ H0 then passed from a fresh power-on in the MCP-enabled Nexen build on 2026-08-2
 - a 240-frame Left hold produced no repeated press edge or packet loss;
 - Start reached the audio service as `MUSIC_PLAY`, track 1.
 
-Latest evidence is in `build/h0-nexen-026ef519d6ae1af7/`; `report.json`
-SHA-256 is `6f838423a53840356e54e5511f4e6f71a7b4bbb1c43afd7999c85492601081b8`.
+Latest evidence is in `build/h0-nexen-966caf1de4e38fdd/`; `report.json`
+SHA-256 is `2b57d814fcc20d85a228a5231049bce6455194b656769c0bb7dd2663b8dda367`.
 No physical-hardware claim is made.
 
 K1 then passed from a fresh power-on for the rebuilt ROM:
@@ -89,7 +89,7 @@ K1 then passed from a fresh power-on for the rebuilt ROM:
 ```text
 build/same-engine-host.sfc
 32768 bytes
-SHA-256 5f4182758e6e9649e2de6b067d4cf156ac69d58290f70cec2b7917039f72cade
+SHA-256 966caf1de4e38fddda4c156fb5b30491f4e322d147821fd4663b933a71189fb7
 reset=$8000 nmi=$8051 irq=$8073
 ```
 
@@ -108,12 +108,12 @@ reset=$8000 nmi=$8051 irq=$8073
 - The complete H0 gate passed again on the same ROM, including its 240-frame
   held-input proof and exact video/audio/event behavior.
 
-K1 evidence is in `build/k1-nexen-5f4182758e6e9649/report.json`; report SHA-256
-is `e81b20190625842899f463b709dfbb395f16a820e92cf0d595c533a916629b88`.
-The final C26 demo ROM `026ef519d6ae1af761f76f5b902a5b1ab8e102b2ecc74e41207120bc7bb42f5c`
+K1 evidence is in `build/k1-nexen-966caf1de4e38fdd/report.json`; report SHA-256
+is `af41803f3e4f0bf004045a6e9517f6a30c53973d11f23e715c14613a5256a827`.
+The final C32 demo ROM `966caf1de4e38fddda4c156fb5b30491f4e322d147821fd4663b933a71189fb7`
 retained H0 and K1. Latest report SHA-256 values are
-`6f838423a53840356e54e5511f4e6f71a7b4bbb1c43afd7999c85492601081b8`
-and `815afc27cad4e3af14780bff1b4ea64fe51742d866f3cf8bf94c4fccf07ae87e`.
+`2b57d814fcc20d85a228a5231049bce6455194b656769c0bb7dd2663b8dda367`
+and `af41803f3e4f0bf004045a6e9517f6a30c53973d11f23e715c14613a5256a827`.
 No physical-hardware claim is made.
 
 ## Archived Monkey binary observation (not a gate)
@@ -582,8 +582,181 @@ The same ROM retained C26 and S5; their report SHA-256 values are
 `ede142686911e45bec037e0dd05746dc4fff770b1f54ed258d5fe62bcbce8946`
 and `b95d7d537391007f932259372963c5e9b18f8f2b9e4293c567cf5c0cb89f337a`.
 Fate room 75 independently executes exact animations 250 and 6 from local
-script 200 at `$0837/$083B`; `$D5 getActorFromPos` in local script 205 at
-`$0004` is the next pinned frontier.
+script 200 at `$0837/$083B`.
+
+C29 implements canonical v5 `$15/$55/$95/$D5 getActorFromPos` in both semantic
+engines. It reads independent direct/variable word coordinates, searches actor
+IDs 1 through 31 in ascending order, and returns the first visible actor in the
+current room whose inclusive renderer-published bounds contain the point and
+whose object-class mask does not include class 32 (untouchable). Neutral spatial
+state persists with strict save validation. The 34-byte copyright-free fixture
+proves first-match ordering, untouchable rejection, direct and fully-variable
+forms, no-match zero, exact halt, and debugger-injected actor state. SCUMM ROM
+SHA-256 is
+`095ada6faf3113a9b233342b57e0b4760e9ae6d31e723e88973bfff4f37cfd02`;
+evidence is `build/scumm-c29-nexen-095ada6faf3113a9/report.json`, SHA-256
+`2421543e2c10277b53556e691cde52aa73371f08ccedaca1ac25d0d18b203403`.
+The same ROM retained C28, C26, and S5; their report SHA-256 values are
+`b31a6eb70615a212cb201e5d2a0d5ac72b2f7b161a2bdb5a33c785868a721c04`,
+`adca354db6f298126ca7750a62bb2e1b3349651c501317a40fedc6c324692d26`,
+and `a4423b58041ab423b2fdf166df1d8f99c6bd22db795e14aaf5ab05922c8a5189`.
+Fate room 75 independently executes the exact `$D5` in local script 205 at
+`$0004` and stores zero for its empty actor-picking scene.
+
+C30 implements canonical v5 `$35/$75/$B5/$F5 findObject` in both semantic
+engines. It reads independently direct-byte or full-variable coordinates,
+searches room objects in local resource order, rejects class 32, walks the
+canonical parent-state hierarchy, and applies half-open right/bottom bounds.
+Raw CDHD flags map to the parent state by low nibble, with `$80` canonically
+mapping to 1; local indexes and hierarchy persist with strict save validation.
+The 30-byte fixture proves first-match ordering, untouchable rejection, visible
+and hidden parent chains, a variable coordinate above 255, boundary/no-match
+zero, exact halt, and debugger-injected room state. SCUMM ROM SHA-256 is
+`b1883a97bb8fbc742a62c1159b8d3e7a4304c57086e02020dec8e9270cb78d55`;
+evidence is `build/scumm-c30-nexen-b1883a97bb8fbc74/report.json`, SHA-256
+`731e025c51ece913dccdc80484d65a5649188971bc14004367f09687ecfe3447`.
+The same ROM retained C29, C28, C26, and S5; their report SHA-256 values are
+`4afb7389971df694de5c0b880aca4a7bbbc67f5655fe653ee733595ffec5fd04`,
+`972416c52f6cfcd088d9b7842f1d8d6819904e9b691355d09b190b5197dc0cd8`,
+`c0dfb01b22167d966cf97b4bcf12801c1c641401922a0e02717b8a0688ba54f5`,
+and `0a4bd02678077830038934edc140ee9fe463e8809350392ba8f9b529f4f34fca`.
+Fate room 75 independently executes the exact `$F5` in local script 205 at
+`$0018`, stores zero in local 0 and variable 108, and yields at PC `$0025`.
+
+C31 implements canonical v5 `$2D/$6D/$AD/$ED putActorInRoom` in both semantic
+engines. Actor and room are independent direct/variable byte operands. A
+nonzero room assignment preserves placement, movement, and visibility; room
+zero performs the canonical removal placement at `(0,0)`, stops movement, and
+hides the actor. Logical position and movement flags now persist with strict
+host save validation and occupy a bounded supplemental SNES actor-state block.
+The 25-byte fixture proves both operand forms, variable byte truncation,
+nonzero preservation, room-zero removal, exact yields/halt, save/load,
+malformed-state rejection, and debugger-injected spatial state. SCUMM ROM
+SHA-256 is
+`037756487486b48f54eef64cae52aa7270ad42e081cd168e7a322282bdf2c62a`;
+evidence is `build/scumm-c31-nexen-037756487486b48f/report.json`, SHA-256
+`2a8c22ba55c3f7b2bd5d6031be1ff180c657cc258155e381127de64f2e5452dc`.
+The same ROM retained C30, C29, C28, C26, and S5; their report SHA-256 values
+are `7d4b53d68d041c4de4a1a140b838c05b92b030f29716c6745bfcca77156cd113`,
+`f6411aea3423e1bd0b444aba6a9f47f504aca6f520102eb555d3e939ddbee274`,
+`0a43c63e13637aa396ea1bbc895b598f696ab57e6597d63befa6ee440c9d896f`,
+`674d645b27fbf2a9c2d57ad006192b4a95bd18a5d0d0383acf4953edf6eb656a`,
+and `5d4c98567c55a5fedca6a3b2cdd99afd0fa11f8446bb1cd4f5a13446221d5363`.
+Fate room 75 independently executes exact `$2D 0A 4B` in local script 200 at
+`$082D`: actor 10 joins room 75 but remains hidden at `(0,0)` pending the next
+canonical `$0E putActorAtObject` at `$0830`.
+
+C32 implements canonical v5 `$0E/$4E/$8E/$CE putActorAtObject` in both
+semantic engines. It resolves the selected room object's decoded walk point,
+uses the canonical `(240,120)` fallback when that object is unavailable, and
+applies `putActor` visibility/movement lifecycle: actors in the current nonzero
+room are shown and stopped, visible actors elsewhere are hidden and stopped,
+and already-hidden actors elsewhere retain movement state. Raw-room walkbox
+snapping is explicitly deferred. The 27-byte fixture proves direct and
+variable operand forms, two walk points, fallback placement, all three
+lifecycle branches, exact yields/halt, save/load, invalid actors, and truncated
+operands. SCUMM ROM SHA-256 is
+`9600d1e035cd86e0aeecac5a75dd2a1595a9a1ac22cedc27ef90338d8f3687da`;
+evidence is `build/scumm-c32-nexen-9600d1e035cd86e0/report.json`, SHA-256
+`47ec45e5fdd2aed1425614a1adee6f96f101ca7bb8511788f678191086e7963a`.
+Fate room 75 independently executes exact `$0E 0A 07 04` in local script 200
+at `$0830`, placing actor 10 at object 1031's decoded walk point `(1164,46)`,
+showing it, and leaving movement stopped.
+
+C33 adds a generic classic v5 costume decoder and raw-room actor compositor in
+the host presentation adapter. It strictly decodes stripped format `$58/$59`
+headers, 16/32-color palettes, animation/data/frame offset tables, initial limb
+sequences, signed cel geometry, and BYLE RLE. Visible current-room actors are
+drawn in vertical order with costume palette overrides; their exact rendered
+bounds become the hitbox consumed by C29. Copyright-free `$58/$59` resources
+prove decoding, composition, palette mapping, hitbox publication, absent poses,
+and corrupt format/table/RLE rejection. Fate costume 58 independently decodes
+its initial 180-degree frame to one 7x7 cel: 37 opaque pixels at
+`(1161,43)..(1167,49)` around C32's actor-10 placement, producing logical room
+SHA-256 `7b1c33673fd48f822bbaca4d25a2877e63596bce3dfaa42d4275cae66bf91ee5`.
+Evidence remains in `build/scumm-s6-fate-preflight/report.json`, SHA-256
+`6c6a69620e5fab6020491ca2733b2a4223da970d3c5a70bc62033c7e0a7eacb6`.
+SNES-side raw costume delivery remains owned by K2, so the C32 ROMs are
+byte-identical.
+
+C34 makes classic costume chores persistent in the host oracle. Each actor now
+owns a cardinal facing, active frame, step cursor, and speed progress which all
+round-trip through strict save validation under the bumped schema 3. The
+decoder advances all limb sequences with loop/one-shot behavior and canonical
+`$7C/$78` skip handling;
+the engine draws before advancing and only recomposes when visible commands
+change. Synthetic two-cel resources prove looping, one-shot holding, speed
+gating, draw order, save/load, and corrupt cursor rejection. Fate costume 58
+independently advances frame 1 from command 0 to command 1: its second logical
+pose retains 37 opaque pixels and the exact hitbox but changes the room SHA-256
+to `0e1972cf93f4fdce4d62abe54f4f2164417b50dfd971eee4be24c6aca041f104`.
+
+C35 implements the classic 256-phase costume scale table in the raw-room actor
+compositor. It scales signed cel offsets around the actor's foot anchor, applies
+independent x/y actor scales, retains the original draw-direction phase, and
+uses canonical column-major BYLE traversal. Copyright-free asymmetric 4x4 cels
+prove horizontal overwrite, vertical suppression, nonuniform `(128,192)`
+scaling, exact anchors, mirrored phase behavior, hitboxes, and final pixel
+counts. Fate costume 58 at `(128,192)` scales from 37 to 26 opaque pixels with
+bounds `(1162,43)..(1166,48)` and exact logical-room SHA-256
+`62db861295d986afacf38eb97e24ce29b99bdc2cb2e4eea3c0a79e29d94d33f2`.
+
+C36 decodes classic raw-room `ZP01..ZP04` occlusion planes declared by `RMIH`.
+It validates each little-endian strip-offset table, accepts canonical zero
+offsets as blank strips, expands literal/repeat mask RLE (including zero count
+as 256), and retains one MSB-first mask byte per eight-pixel strip row. The
+actor compositor applies the explicit v5 `forceClip` plane, clamps it to the
+room's available planes, counts occluded writes, and derives hitboxes only from
+visible pixels. Synthetic rooms prove plane layout, blank strips, both RLE
+forms, exact pixel occlusion, and malformed-data rejection. Fate room 42
+independently exposes three planes; plane 1 hides all 37 opaque pixels of real
+costume 58 at `(10,55)`, producing no hitbox and exact base-room logical
+SHA-256 `9d451e87313acc1a834ed29dbfbc23c1bd3596de0c9de348e3ecf95117a7cc55`.
+Automatic walkbox-driven plane selection remains coupled to the future walkbox
+adapter; explicit `forceClip` occlusion is complete.
+
+C37 decodes canonical v5 `BOXD` walkboxes as a little-endian count followed by
+20-byte records containing four signed corners, z-mask selector, flags, and
+scale. Point containment follows the classic oriented-edge test, including the
+v5 near-line case, and selects overlapping usable boxes from highest index
+down. With no explicit `forceClip`, actor feet now inherit their walkbox mask;
+ignore-box actors and class 20 bypass clipping, while positive `forceClip`
+retains precedence. Synthetic trapezoids prove geometry, record validation,
+automatic occlusion, class bypass, and explicit override. All ten Fate rooms
+decode their exact walkbox counts. In room 42, actor position `(193,100)` lands
+in walkbox 10, whose mask 1 automatically hides all 37 costume-58 pixels and
+leaves an empty hitbox. `BOXM` route decoding and actor motion remain separate.
+
+C38 strictly decodes `BOXM` into one `$FF`-terminated route row per walkbox.
+Each ordered three-byte range maps destination boxes to the next itinerary box;
+invalid, overlapping, out-of-range, truncated, or trailing records fail closed,
+with the canonical single alignment byte accepted. The generic room exposes
+bounded next-box queries. Canonical `$7B/$FB getActorWalkBox` now resolves the
+actor's current raw-room foot box for direct or variable actor operands and
+returns `$FF` outside the current room. Actor walkbox state persists under the
+bumped save schema 4. Synthetic routes prove compressed ranges, opcode forms,
+and save/load. Fate room 42 independently pins routes `1->10` via 2 and `10->1`
+via 7 across its real 11-row matrix. `$1E walkActorTo` gate traversal remains
+the next movement slice.
+
+C39 implements canonical v5 actor movement in the host oracle. All eight `$1E`
+operand forms snap destinations into usable boxes, select decoded `BOXM` routes,
+cross exact shared-edge gates, and step scaled 16.16 deltas while updating
+walkboxes, cardinal facing, and walk/stand chores. `$56/$D6 getActorMoving` and
+`$3B/$BB waitForActor` observe the live flags. Save schema 5 strictly persists
+the complete route and fractional leg state. The synthetic proof resumes a
+three-box walk mid-leg; Fate room 42 independently crosses boxes `5→6→8→7→10`
+from `(44,80)` to `(200,110)` in 27 frames.
+
+C40 adds generic embedded audio playback to the S6 second-profile work.
+The adapter validates `SOU ` containers, selects `ROL `/`ADL `/`SPK ` by tag,
+parses `MDhd` plus the initial Standard MIDI track, and synthesizes deterministic
+signed-16 PCM into SAME's host streaming service. `$7C/$FC isSoundRunning`
+reports the live adapter state, and save schema 6 restores embedded playheads.
+All 27 readable Fate sound resources decode; stale full-game directory entries
+are no longer advertised. Real sound 172 renders 12,210 frames at 22.05 kHz with PCM
+SHA-256 `e328daeefaedacf1316e284286e56fbe177d94a19d2959898dc5f61b06573749`.
+Its frame-1 save resumes to byte-identical output and stops at the decoded end.
 
 The S6 raw-room slice adds a generic v5 decoder and presentation adapter behind
 the engine/resource boundary. It strictly parses `RMHD`, `TRNS`, `CLUT`,
@@ -603,13 +776,14 @@ S6 preflight now uses the user-supplied Fate of Atlantis interactive demo. Its
 included `READ.ME` explicitly permits free copying/distribution when copyright
 and trademark notices remain intact. The exact archive SHA-256 is
 `558cc436cebed658ad12bc64152efa19490e0327f89ec97acfb108e8d438d798`.
-The new profile models embedded audio, costumes, four accessible CHAR resources,
+The new profile models embedded audio, costumes, three accessible CHAR resources,
 320x200 logical coordinates, preserved copy-protection behavior, and the demo's
 disabled game save menu. The generic adapter exposes only bytes actually present:
-10 rooms, 74 scripts, 28 sounds, 25 costumes, and four charsets. Logical pointer
-input reaches the engine and SAME save schema 2 round-trips the boot state.
+10 rooms, 74 scripts, 27 readable sounds, 20 costumes, and three charsets.
+Logical pointer input reaches the engine and SAME save schema 6 round-trips the
+boot state.
 
-This is deliberately recorded as incomplete, not a gate pass. The exact real
+This remains a deliberately incomplete S6 gate. The exact real
 boot now crosses the C8 string workload, both C9 range initializations, and its
 first C10 `loadString(31, "iq-points")` without altering the destination when
 the auxiliary file is absent. C11 then executes the real script-75 random call:
@@ -647,12 +821,849 @@ The exact four `$AB` records in script 19 at `$0117` also save verb ranges
 all 29 records from the active namespace.
 The C27 adapter then decodes room 75's nine local scripts `200..208`; its exact
 entry code resolves `LSCR.200`. C28 executes that script's exact `$11`
-actor-10 animation requests 250 and 6 at local offsets `$0837/$083B`. The next
-canonical frontier is `$D5 getActorFromPos` in `LSCR.205` at `$0004`.
-Actor behavior and embedded-audio playback remain. Evidence is
+actor-10 animation requests 250 and 6 at local offsets `$0837/$083B`. C29 then
+executes the exact `$D5` in `LSCR.205` at `$0004`, stores the no-hit result zero
+in local 0, and takes the canonical branch. C30 executes the exact `$F5` at
+`$0018`, stores zero in local 0 and variable 108, and reaches its yield at PC
+`$0025`. C31 executes exact `$2D 0A 4B` in `LSCR.200` at `$082D`, assigning
+actor 10 to room 75 without prematurely showing it. C32 executes exact
+`$0E 0A 07 04` at `$0830`, placing and showing actor 10 at object 1031's
+decoded walk point `(1164,46)`. C33 decodes costume 58's initial 7x7 cel,
+draws 37 opaque pixels, and publishes hitbox `(1161,43)..(1167,49)`.
+C34 then advances costume 58 from step 0 to step 1 with exact second-pose SHA-256
+`0e1972cf93f4fdce4d62abe54f4f2164417b50dfd971eee4be24c6aca041f104`.
+C35 scales its initial pose to `(128,192)`, producing 26 pixels, bounds
+`(1162,43)..(1166,48)`, and logical SHA-256
+`62db861295d986afacf38eb97e24ce29b99bdc2cb2e4eea3c0a79e29d94d33f2`.
+C36 decodes room 42's three raw z-planes. C37 then selects plane 1 automatically
+from walkbox 10 at `(193,100)`: all 37 costume-58 pixels are hidden and its
+hitbox is empty. C38 decodes the complete `BOXM` routing matrix and pins real
+Fate route probes. C39 implements canonical `$1E` movement, `$56` queries, and
+`$3B` waits, with complete route persistence. C40 decodes every readable Fate
+sound, streams deterministic PCM, implements `$7C/$FC`, and resumes active
+audio under save schema 6. C41 decodes every MIDI track and the complete
+observed Fate iMUSE SysEx surface: 104 setup, 27 start, 189 hook-jump, 28
+part-gate, and 12 marker commands. Real sound 80 consumes hook 15 by jumping
+from track 0 tick 90 to track 2 tick 1920, and its branch state resumes
+byte-identically after save/load.
+
+C41 also adds the first production SNES audio path. The 64 KiB SCUMM ROM boots
+Terrific Audio Driver protocol v20 through its loader, transfers common/song
+data, and maps normalized SAME play/stop requests. A reviewed sound-172 MML uses
+a repository-generated additive waveform. Fresh Nexen evidence captures real
+S-SMP/DSP output above the blank-song baseline for exactly 120 video frames,
+with zero queue rejections and an equal SAME frame-counter delta. The same ROM
+retains C1 through an atomic engine-frame inspection guard. S6 remains in
+progress: after C54 sound 153, production arrangements for 9 readable sounds
+remain.
+Evidence is
 `build/scumm-s6-fate-preflight/report.json`, SHA-256
-`ee1c5d7cb50c9db308f6c21e16b5d33865846ea49ae2f76516b2732f1bddefe5`.
+`8334ae6cc371d9f9e23b51b8bdb3bf2a247744d22668f2cac3a0c3c92335f95b`.
 No Fate-specific branch was added to the opcode core.
+
+C42 adds the first listener-reviewable Fate instrument bank. The authorized MI
+library supplies low/main sample pairs for organ, marimba, flute, atmospheric
+pad, and a soft-bass source plus kick/snare percussion. Six short TAD audition
+songs expose sustained tone, scale range, exact zone seams, a deliberately
+strained bass octave, velocity steps, and a simple beat in isolation. The TAD
+layout is now generated from compiler output and can span two LoROM banks; the
+current 128 KiB ROM is
+`f8d06bd49fe6a81581c1bd27a1f19fcc91deb3ab28ea7045746a41470c53d9c4`.
+Its Nexen capture suite passes nonzero DSP output, exact 2,400-frame advancement,
+and unclipped-tail checks for all six songs. Report SHA-256 is
+`3946eaa6809b198be533bb07c9f8697d85719c1f99377937cc3ed3df9a583587`.
+Timbre and octave transitions are intentionally pending listener verdicts; a
+mechanically valid capture is not treated as an approved instrument.
+
+The first listener pass accepts and locks soft bass and kick/snare percussion.
+It rejects the organ main loop/seam, low marimba, high flute, and low pad. That
+verdict is preserved in `audio/fate_s6/auditions/REVIEW_ROUND1.md`. Round two
+removes the rejected zones, uses exact reviewed MI boundaries, and captures four
+focused repairs from ROM
+`f9c1dd17c051c5c1afcf7d2b24a7a1b7bc8d6b8fc2c89199e1423f7779666c02`.
+Its report SHA-256 is
+`15341d532925ca1259c2f7837fe861769f43359e04d802aab6b9c2362f2be0d7`;
+the second listening pass remains open.
+
+Round two accepts and locks marimba, rejects the remaining organ seam and flute
+upper sources, and accepts the pad only below its highest notes. Round three
+uses a single organ source and derives flute 2x/4x and pad 2x zones offline from
+their accepted low PCM, closing each derived loop on its own waveform at a BRR
+boundary. Current ROM SHA-256 is
+`018b78b08fdcf27b4bf44ea5bb8e31c2f7278df0cdd89e6806cb1913bbf14430`;
+three-capture report SHA-256 is
+`6c7ff5cad1e505af60fce81da475a38512eec2bf0b083fd5e7e0fc6742943caf`.
+The third listening pass remains open.
+
+Round three instead hard-rejects all three repairs: organ exposes its underlying
+long-loop period, flute becomes grating at the 2x zone, and pad progresses from
+an audible seam to severe clicking. Round four discards those long-loop sources
+and builds exact-period phase-averaged wavetables in TAD's loop-safe mode. Current
+ROM SHA-256 is
+`5d097a9489ae83bc91bba8c9b6cff3b4db50d59918aee058149113b5bc7f4eae`;
+three-capture report SHA-256 is
+`8a2e9b325b03e79fdca554a04670082e85c4bc35748df5e1a1552a7a5a2695e4`.
+The fourth pass's perceived interval concern triggered objective measurement.
+The first octave-low conclusion was invalid because the analysis mapped TAD
+octaves incorrectly; TAD uses C4 as middle C. Round five uses the canonical map,
+accounts for Nexen's configured 32,040 Hz SPC clock, and gates every sustain to
+±3 cents. All 16 notes pass within 0.65 cents. It also replaces duplicated-block
+loops with filter-reset loops. Current ROM SHA-256 is
+`01a9d2c5da64286298e9ddde8aa1b48c19f7ea34f2b9a21e538e4bd8df3d03a0`;
+three-capture report SHA-256 is
+`4c3510572edc65e918d091002fc99ab0f9600457b7585a6eac331452d228dd68`.
+Round five passes as usable sounds. The listener explicitly notes that the
+periodic organ, flute, and pad have little texture; this is accepted as a clean
+foundation, with expression deferred to complete arrangements. The verdict is
+preserved in `audio/fate_s6/auditions/REVIEW_ROUND5.md`.
+
+C43 adds the first complete production cue after sound 172. A bounded reusable
+ROL-to-zoned-MML converter pairs note lifetimes, retains dynamics, allocates
+polyphony across at most eight voices, and selects reviewed pad/flute zones by
+MIDI note. Unsupported programs and interactive multi-track resources fail
+closed. Fate sound 17 converts all 23 notes and its complete 13.380-second
+timeline. The SNES mapper now separates logical sound IDs from compiled TAD song
+IDs (`172→1`, `17→8`). Fresh Nexen evidence advances exactly 900 video/SAME
+frames, enters at 4.742 seconds, ends at 13.658 seconds, and records zero rejected
+requests. Production ROM SHA-256 is
+`e18efcb6b9cf019fbc8d47c0074d858f6a9bc0a99215bfe47b74b83984b3f107`;
+sound-17 report SHA-256 is
+`9f60623d3bf6c077de0cc7b5ddcefbca86d48c0f071ff9842d6ee3c352097139`.
+Sound 172 and C1 independently remain green.
+
+C44 adds the first cue-specific register policy and the third production cue.
+Fate sound 154 converts all 28 source notes across the exact eight-voice peak.
+Programs 32/36 retain the accepted bass through B3 and explicitly cross to pad
+above its reviewed range; programs 50/92 use pad and program 97 uses zoned
+flute. Out-of-policy notes fail closed. Logical sound 154 maps to compiled TAD
+song 9. Fresh real-DSP evidence advances exactly 840 video/SAME frames, enters
+at 3.163 seconds, ends at 12.614 seconds, and reports no rejected requests.
+Production ROM SHA-256 is
+`6b5ee39f2e38d0bb19f99fcf47634e0961a094d63e2a5537e9d676443d322ec5`;
+sound-154 report SHA-256 is
+`7b4c78744812b107b1ca6b5975fc3348ad1db02d8a8dcbf5d74feede522c7488`.
+Sounds 17/172 and C1 independently remain green.
+
+C45 adds opt-in deterministic reduction for source cues above eight voices.
+The policy preserves stronger notes, breaks exact-strength ties toward the lower
+register, and audits every omission in generated MML. Sound 83 accounts for all
+30 notes: 29 remain, while its sole 9-voice collision omits only a
+velocity-1/CC7-47 G6 double of the retained G5 layer. Logical sound 83 maps to
+TAD song 10. Fresh real-DSP evidence advances exactly 840 frames, enters at
+3.140 seconds, ends at 12.534 seconds, and reports no rejected requests.
+Production ROM SHA-256 is
+`264f68839b56a9486a9e2557842c994f619fbfadd7b6ec849baebcb391fcfcaf`;
+sound-83 report SHA-256 is
+`6436c96170ac8effe8486d0a21d841783eb843a29905fc4661f33f822d43ccc7`.
+Sounds 17/154/172 and C1 independently remain green.
+
+C46 adds interval-based voice virtualization for dense cues. Sound 18 retains
+all 25 source notes despite an eleven-voice peak: identical mapped pad pitches
+merge into the stronger foreground note, while the quiet program-50 chord ducks
+only during over-capacity intervals and resumes afterward. All nine merge/duck
+decisions are audited in generated MML. Logical sound 18 maps to TAD song 11.
+Fresh real-DSP evidence advances exactly 780 frames, enters at 2.493 seconds,
+ends at 11.425 seconds, and reports no rejected requests. The listener accepted
+the capture as sounding alright. Production ROM SHA-256 is
+`e6718d46726bdb2d2193767d1138b553f0b01cb90a78bdd12acc7658d2c764e4`;
+sound-18 report SHA-256 is
+`6bd551ab280850d8387582c406b35a04070f7b08b09520d8febffa6a3a51537f`.
+Sounds 17/83/154/172 and C1 independently remain green.
+
+C47 adds the accepted marimba as an explicit program-0 attack role. Fate sound
+185 retains all seven notes of its D2–A4 chord on seven physical voices with no
+reduction. Logical sound 185 maps to TAD song 12. Fresh real-DSP evidence
+advances exactly 120 frames, enters at 0.512 seconds, ends at 1.599 seconds, and
+reports no rejected requests. Production ROM SHA-256 is
+`50bb3b2d7be8407103f6685512b01c9c04234b8763c6ec4a484e145b50b27730`;
+sound-185 report SHA-256 is
+`2b99221a25dc72ac12238d557edbe70b686e14b4f8f14d5004ae6f9a371ee4a5`.
+Sounds 17/18/83/154/172 and C1 independently remain green.
+
+C48 adds a shared split-register program-0 impact policy. Sounds 190 and 192
+retain all three and four source notes respectively: C1..B1 uses accepted bass,
+while C2..B5 uses the accepted marimba attack. Logical sounds 190/192 map to TAD
+songs 13/14. Fresh real-DSP evidence advances exactly 90 frames per cue. Sound
+190 enters at 0.328 seconds and ends at 1.192 seconds; sound 192 enters at 0.393
+seconds and ends at 1.050 seconds. Both report zero rejected requests. Production
+ROM SHA-256 is
+`f1fab4cb1b5f6dd080a2a918edcac12f9f66b1368df792127fc658c868fb3038`;
+report SHA-256 values are
+`839704a7ee7aa7c5fa8a45e24960a3c02ea72d0b13015f60d7058930b296bd61`
+and `d269901f68701ccea9568a894350f5be18cab648cdf2df51761d3ed03e4e311c`.
+Sounds 17/18/83/154/172/185 and C1 independently remain green.
+
+C49 corrects the marimba policy ceiling from the accidental B4 numeric bound to
+the reviewed/project-declared B5 bound. Sounds 141, 201, 202, and 207 each retain
+both source notes without reduction; the overlapping attacks in 201/202 remain
+independent. Logical sounds map to TAD songs 15–18. Fresh real-DSP evidence pins
+audible windows `2.963–7.134`, `0.319–5.576`, `0.318–5.576`, and
+`0.319–1.788` seconds respectively, with exact frame pacing and zero rejection.
+Production ROM SHA-256 is
+`88c0264e7ea2a05b38a03c1dc4b5754376efda4134063ad4ea770a16c304af3d`;
+report SHA-256 values are
+`d2d681cfc9527f1563a170e3db58902b45807c924e55e5f19405111bacf4cea2`,
+`5ef5816cab45976a6efc9677c0fb94736f7c9947a5c5aeb09617b28a65f058f0`,
+`0fc600f4b3d7c44faa068de0f959631bbc711625144a02a6c8e78ca9ae0bfff7`,
+and `d5acf98e07d2d932e313406f64454a32493a759ba71a5896173246f51c95ac3f`.
+All eight earlier production cues and C1 independently remain green.
+
+C50 adds chord-aware same-instrument virtualization. Sound 183 represents all
+110 source attacks despite a twelve-voice peak by protecting outer pitches and
+new attacks, then selecting the strongest interior tones. Its 14 audited duck
+intervals include 10 restores and four already-attacked sustains that yield
+through note end. A cue-specific two-tick grid encodes TAD's minimum key-off
+duration; excessive simultaneous protected attacks fail closed. Logical sound
+183 maps to TAD song 19. Fresh real-DSP evidence advances exactly 1,140 frames,
+enters at 0.365 seconds, ends at 17.822 seconds, and reports no rejection.
+Production ROM SHA-256 is
+`39e7bcc4957ea241057dda10433c01686fe7bbdc838f34b9e374347af8dedf2e`;
+sound-183 report SHA-256 is
+`41e40471c943070ad4cbce716266c08cf1ef5474881397ea7023402cf299780f`.
+All twelve earlier production cues and C1 independently remain green.
+
+C51 adds a reviewed wide-register effect family for the shared sound-91/117
+ascending gesture. Both cues use accepted bass for E2..B2 and the existing
+production Fate tone for C3..G7 on a two-tick timing grid. Sound 91 represents
+all 34 source attacks on one voice; sound 117 represents all 37 attacks on four
+voices, including its sustained harmony. Neither cue needs omission, merging,
+or voice reduction. Logical sounds 91/117 map to TAD songs 20/21. Fresh
+real-DSP captures advance exactly 240/360 frames and pin audible windows of
+2.294–3.011 and 2.295–3.974 seconds with no rejection. Production ROM SHA-256
+is `787c8bf5da4674e98304c6376c98ec1923da1b7273927edbdf415bce077fa544`;
+report SHA-256 values are
+`8a49bb0b1bbd13fc57f78cf04dc2a025272609b7696874c834f1463a217a5df1`
+and `125108f998790bba08804027633b8c3aef4821f2fd6a5273cec4b1dedfe3426c`.
+All thirteen earlier production cues and C1 independently remain green.
+
+C52 adds the first complete long-form production arrangement. Sound 78 maps
+program 73's C5..G7 lead to the reviewed zoned flute and programs 82/91's
+C2..G4 layers to the accepted pad. All 91 source notes and their dynamics remain
+represented across the exact 84.000-second timeline; its six-voice peak needs no
+reduction or virtualization. Logical sound 78 maps to TAD song 22. The extended
+real-DSP harness advances exactly 5,280 video and SAME frames and pins audible
+output from 6.333 through 82.957 seconds with no rejected request. Production
+ROM SHA-256 is
+`0c2f732bca9345130503788cb3ba4d43c30e189232fdd57bb494ce81fefcebaa`;
+sound-78 report SHA-256 is
+`c0cea87666cf1ea3429b174e41046a6e04af28b46e754c26380326f2455d5a9f`.
+All fifteen earlier production cues and C1 independently remain green.
+
+C53 adds capacity-triggered identical-pitch sharing and complete sound 81. Its
+113 source notes use marimba for program 0, split bass/pad registers for program
+32, and pad for programs 82/90/92. Only the exact 7.968–8.024-second nine-voice
+interval requires sharing: a velocity-1 program-92 G4 temporarily merges into
+the stronger program-90 G4. All 113 source attacks remain represented; no
+unrelated pitch is reduced or ducked. Logical sound 81 maps to TAD song 23.
+Fresh real-DSP evidence advances exactly 1,500 frames, remains audible from
+2.777 through 22.320 seconds, and records no rejection. Production ROM SHA-256
+is `6dd844df83205f2e2501c93c109bbbef4cdeed90249b6c9fddf29e7753855e5a`;
+sound-81 report SHA-256 is
+`4d551f72664a029d57d896ae26fee3ea9b12c1f6ba34d41e58dce861c051da0b`.
+All sixteen earlier production cues and C1 independently remain green.
+
+C54 adds attack-preserving orchestral virtualization and complete sound 153.
+Its 55 source notes use existing marimba, split bass/pad, pad, zoned flute, and
+Fate-tone roles across a twelve-voice peak. At capacity, only already-sounding
+identical pitches may merge; all new attacks and the outer register remain
+protected before the strongest interiors are selected. All 55 attacks survive.
+The 42 audited decisions comprise 31 merges, eight duck/restores, and three
+sustains yielding through note end. A two-tick grid explicitly satisfies TAD's
+minimum key-off duration. Logical sound 153 maps to song 24. Fresh real-DSP
+evidence advances exactly 1,920 frames, remains audible from 3.156 through
+28.388 seconds, and records no rejection. Production ROM SHA-256 is
+`fa4a10c07121757e8dc717814ccee46434f17edc7345128de7471b5d236a73a6`;
+sound-153 report SHA-256 is
+`5f5f7909bfbbb0a8f61a931ae822ce16fa8157e8a0b7ecf800d26e02baf43429`.
+All seventeen earlier production cues and C1 independently remain green.
+
+C55 remains under listener review after its original rejection. The converter
+now carries CC7 changes through held source notes, timing quantization, and
+voice virtualization, then emits TAD fine-volume changes with `w` waits so the
+sample is not retriggered. Sound 150 retains its logical 94.963-second lifecycle
+and all 23 attacks, while its terminal static loops slur into a 256-tick fade
+ending at 18.680 seconds; audible DSP ends at 22.197 seconds. Re-auditing all 19
+production cues found active-note automation only in sounds 18, 83, 150, 154,
+and 192. All five have been regenerated; the other 14 require no envelope
+change. Candidate ROM SHA-256 is
+`0d7c7641dc54478e6e7dad01e82bec1df202c38f76255e70d4fa697202b58805`.
+Fresh exact-ROM S6-TAD reports for sounds 18/83/150/154/192 have SHA-256 values
+`84e4f3afa199e4c84be30f421178d914eb16b902464e49009da67f61b8233a33`,
+`9ae7601e28b2e41478c4e0b859fa8d9d67c3e3b6b6bf7abe568e3c2e659c592f`,
+`6dcd613ace471406525e21fef965027df7755fea0c0dc996cfb97ac47adf42aa`,
+`884629edb14d7d6dc64a9fc30b07e3463da38978bac5eb2506d14cb17ac0e8db`,
+and `0f8a11a54d6ba67177fa6378fd8e0064a6c1d0308ef7ad2964ed7c5ac195cdb6`.
+
+The generic embedded-audio decoder now also preserves complete iMUSE `$10`
+AdLib instruments: channel plus all 30 decoded bytes, including both optional
+modulation envelopes. Fate sound 154 contains six such definitions. An isolated
+ScummVM iMUSE/Nuked-OPL capture additionally proves that its unconditional
+`$30` jump at 148,806 microseconds skips the apparent linear-SMF setup silence.
+The 10.643696-second reference WAV SHA-256 is
+`b35f72d3153ce5fef282d62cc1204346f71079a143cb6dd9fcf23c289b0e44f3`;
+exact inputs and the oracle harness are recorded in
+`audio/fate_s6/ADLIB_ORACLE.md`.
+All mechanical gates pass; focused listener acceptance remains required before
+the affected cues regain production-audio status.
+
+The next sound-154 timbre gate is now concrete. A local extractor emits all six
+commercial-demo `$10` definitions without committing them, and an audition-only
+ScummVM harness plays C2 through C6 through Nuked OPL. The deterministic capture
+has raw PCM-container SHA-256
+`9c63b135ce9d3e0a26c3db1cd894024950427bd357ed578b98b702f8d64822fb`;
+six isolated listener WAVs, exact PCM hashes, and a checklist are under
+`build/fate-sound154-adlib-auditions/`. Channels 1/2/4/5/6 are active score
+layers; channel 9 is retained as the sixth source definition. BRR zoning and
+production TAD replacement remain intentionally gated on this isolated review.
+The first verdict correctly identifies channel 9 as an unused percussion/noise
+definition rather than a melodic candidate. It also caught a listener-file
+defect: channel 6 had been cut directly into its first attack. That WAV is now
+recut with 255 ms of near-silent pre-roll; its low octave remains pending
+re-listening before any BRR zone is selected.
+
+The corrected sound-154 candidate is now integrated. Five independently reset
+Nuked captures produce seven BRR-aligned multi-cycle octave zones; channel 9 is
+not promoted. A dedicated canonical-ADL converter follows the unconditional
+`$30` jump, retains all 26 post-jump attacks, five melodic timbres, active-note
+CC7, and an exact eight-voice peak. The old 2.857-second linear setup delay is
+gone. Its volume path now reproduces the SCUMM AdLib driver's patch-dependent
+nonlinear operator attenuation instead of multiplying velocity by CC7. That
+restores channel 5's intentional velocity-1 G5/G6 finale, formerly reduced to
+TAD `V1`. ROM SHA-256 is
+`67daeb570fefb30b6db540ef0618fdf7daf35ebe74939e94ce93c57ed8a63514`;
+the passing 840-frame real-DSP report SHA-256 is
+`5572df06217405668033297e5d1fe4a363f07c1087cc9322f4109eeb1afeeb20`.
+
+The cue now proves the first QuickTime-inspired reusable SAME music-device
+slice. A backend-neutral `SequenceIR` separates parts, stable note lifetimes,
+controllers, source timing, and provenance from physical voices. A shared
+SCUMM-v5 AdLib device implements the original nonlinear, patch-dependent
+operator response, while a schema-validated bank resolves complete patch
+fingerprints and pitches to SHA-pinned, listener-approved octave zones. Sound
+154 consumes all three layers and regenerates the accepted MML with unchanged
+SHA-256
+`45110f50f2b4d4ff31a922f8eb2c43d886dbba5940dea8dae5ea0b3f035a5a18`.
+The rebuilt SCUMM ROM remains byte-identical at
+`67daeb570fefb30b6db540ef0618fdf7daf35ebe74939e94ce93c57ed8a63514`;
+its fresh 840-frame real-DSP gate passes. This is the reusable semantic and bank
+foundation, not yet a QTMA decoder or runtime OPL synthesizer.
+Audio begins at 0.496 seconds, ends at 9.939 seconds, and records no rejection.
+Its 12,324 PCM peak closely matches the 12,055 Nuked oracle peak, with zero
+clipped samples.
+Focused A/B listening against the Nuked oracle is the remaining acceptance gate.
+The first candidate failed that gate with repeated hard attack clipping. Adding
+a 256-sample phase-correct fade-in and retaining BRR predictor history reduced
+its worst adjacent PCM jump from 2,260 to 846 at the final oracle-matched level,
+versus 657 in the reference;
+the corrected candidate remains pending listener acceptance.
+
+M2 removes cue identity from the shared conversion path. A generic linear
+SCUMM/iMUSE importer owns selected-path timing and provenance; a generic AdLib
+realizer verifies part/patch identity, applies the source-device response, and
+resolves fingerprinted octave zones. An independently authored two-note SCUMM
+AdLib cue proves a second consumer including active-note CC7. No other Fate cue
+is treated as covered: the demo-wide fingerprint/range survey found none whose
+complete patch set lies inside the seven approved sound-154 zones.
+
+A strict raw QTMA importer now targets the same `SequenceIR`. Its copyright-free
+232-byte fixture contains two Note Requests, melodic and percussion parts,
+Volume/Pan/Sustain, a chord, crossing-rest percussion, a melody note, and End at
+tick 600. It peaks at three notes and emits a committed exact 13-record trace.
+Fixture SHA-256 is
+`1a595217e6ef5e05e3f15c193a92d364243db7c308c179ff48109e1456e2b0c0`.
+Malformed General framing, truncation, unknown parts, unsupported event types,
+and trailing data fail with typed source word/byte offsets. Fate sound 154 still
+regenerates byte-identically at MML SHA-256
+`45110f50f2b4d4ff31a922f8eb2c43d886dbba5940dea8dae5ea0b3f035a5a18`.
+MOV `musi` extraction remains a later, separate adapter gate.
+
+M3 adds a source-neutral deterministic playback session. It uses absolute
+rational tick-to-sample mapping, lowest-free stable voice handles, part-local
+sustain deferral, and explicit completion/stop cleanup. Bounded allocation
+failure reports the exact tick, requested note, and active-note set. The
+integer-only reference synthesizer renders the copyright-free QTMA fixture to
+exactly 24,000 mono signed-16 frames at 24 kHz with zero clipped samples. PCM
+SHA-256 is
+`0b5d2002c7a3f72069ddc373f6000ef90c29ff8b71de37909bb57eafd7a933a7`;
+canonical WAV SHA-256 is
+`5555b38dc9c89f9cd6572003ad1cfef3b39d81b0037cb5c5cbb91d77a9fad811`.
+MOV parsing and TAD policy remain outside the scheduler/backend contract. The
+next music target is a real cue from the user-supplied Monkey Island v5 data,
+with commercial bytes kept outside the repository and uncovered timbres still
+failing closed.
+
+M4 completes that real cross-title proof. The validator mounts the supplied
+Ultimate Talkie ZIP in memory and accounts for all 138 sound resources as 97
+decodable AdLib cues, 35 silent stubs, and six SBL-only effects, with no game
+bytes committed. Room-78 church sound 154 traverses the generic decoder,
+importer, AdLib device model, fingerprinted bank, realizer, scheduler, and
+integer backend: 197 attacks, MIDI 36..91, an explicit whole-cue loop, and an
+eight-voice peak. Its one patch maps only to the exact reviewed MI p13 low/main
+samples at the established MIDI-58 boundary. IR/action/resolved-note SHA-256
+values are `ae9efce8ebe913269a0f8d9878a7db20aac855c43ce9456a6fc0e65edc1030eb`,
+`65d97b64607cddb0e9e72bf33e20d75d3738587b6473e5f5295599265256ef63`,
+and `401ca8eafd2c85d18d91f51fefdb2c4d558afba3ae124cc816bdaea7b18e0b51`.
+The exact 459,072-frame reference WAV SHA-256 is
+`0f41ec1d04eb7dd0cbd7b867b81c2ec1aa8438db91504b91384ad96bbfce3361`
+with zero clipped samples. Existing Fate MML and both SNES ROM identities are
+unchanged. M5 is the generic resolved-note-to-TAD compiler.
+
+M5 now completes that compiler. `same.music.backends.tad_mml` is source-neutral
+and has independent copyright-free coverage for loops, stereo/mono pan,
+automation, zones, provenance, and bounded voice failure. Monkey church
+compiles all 197 attacks to eight voices with generated MML SHA-256
+`3781ebf57a3cacb4a8f9ffaa835642213b364f240d1595453f03fb75eda410de`
+and TAD binary SHA-256
+`ee4a65af794b92850a4ac79ef6a101674c217faacbd451751eb174938c0e7a8d`.
+The explicit TAD minimum-duration policy adds one leading tick and shortens two
+releases by one tick; no attack is removed or shifted relative to the loop.
+
+Special validation ROM
+`aa5524ce8b3d04eeaa9e4931ebfdd7af221f8112c25ee830bb3c223300c8e673`
+passes a fresh 3,900-frame real-DSP capture. Peak is 12,710 with no clipping;
+the in-capture loop repeats at 57.303875 seconds with 0.998933 correlation,
+matching the configured 32,040 Hz SPC clock. Generated commercial-derived MML
+stays under `build/`. The next music gate is M6's profile-driven compiled-song
+catalog, replacing the backend's hard-coded Fate mapping.
+
+M6 replaces that mapping with the profile-owned `same_compiled_music_catalog_v1`
+resource. Each entry binds one logical ID to an exact source resource/SHA-256,
+compiled song name/ID, time scale, duration, and optional loop. Schema damage,
+duplicate logical/source/compiled identities, stale source bytes, missing songs,
+and compiler renumbering all fail closed. Compiled play, stop, loop progress,
+and save/load retain the catalog and source identity without changing the audio
+packet ABI or engine core.
+
+The Fate catalog contains all 19 reviewed production mappings and has SHA-256
+`809a3346c1db8113033119315f5bc1beebb7cad9fafebd3be3760f6d70ab23fc`;
+the Monkey catalog contains the church cue and has SHA-256
+`0859072807c14312901d6b4e60733ffb8e6f15fec57a6b046b9f05be3b0e8792`.
+Both supplied archives validate against those identities and their exact TAD
+enum files. The M6 report SHA-256 is
+`1756320cb2ac4f428a451d07eb1f38d4fe3e0e18ad647cc4db5db17544c0495a`.
+The generated-table Fate ROM is
+`147c150c08468807e7acefb4c72f0164f2fd907e8adefdae5c6647b82a0ad04a`;
+C32 and sounds 172/154 pass. The Monkey ROM is
+`b6d39664487f700a93a6e13ceace0a37be7c8895cf52e15760f51c8d61cc1c43`.
+Its fresh 3,900-frame request uses logical sound 154, resolves song 26 through
+the generated one-entry catalog, remains unclipped, and repeats at 57.303875
+seconds with 0.998932 correlation. Report SHA-256 is
+`b039a969288a7281409a5bdc201f426bd86f88c3aa18b811700c42787997d55e`.
+
+M7 replaces the remaining per-cue assembly step with
+`same_music_build_graph_v1`. Each profile now owns a graph resource selecting
+the importer, source-device model, reviewed bank, target policy, output MML,
+compiled identity, and catalog entry. The source-neutral runner verifies source,
+bank, policy, expected MML, compiler, and every emitted artifact identity; it
+publishes MML, project, catalog, dependency manifest, TAD outputs, and report as
+one directory transaction. A failed render or compiler run leaves the prior
+complete output untouched.
+
+The Fate proof regenerates reviewed sounds 83 and 154 byte-for-byte; Monkey
+church regenerates all 197 attacks through the M5 generic sampled backend.
+Graph SHA-256 values are
+`8c5ba6bb3a81ea49f17bbe43b3426e7849180abea583c251fb81e40c5743609e`
+and `b216275ef992600f51b188fe69a584fc85f5e8431e0ee849f04abb4e7f969076`.
+The generated TAD binaries are
+`895dbaafb3479dac66d68a8125f7d57778333d7398439694993c36e9760bf44c`
+and `ee4a65af794b92850a4ac79ef6a101674c217faacbd451751eb174938c0e7a8d`.
+All commercial-derived MML and projects stay under `build/`.
+
+Both resulting ROMs are exactly the accepted M6 images: Fate
+`147c150c08468807e7acefb4c72f0164f2fd907e8adefdae5c6647b82a0ad04a`
+and Monkey
+`b6d39664487f700a93a6e13ceace0a37be7c8895cf52e15760f51c8d61cc1c43`.
+Fresh DSP reports pass Fate sounds 83/154 and Monkey's full loop with SHA-256
+`84aabd1980d77ec0b8a7ee4f064cfdc9fc3ec086f0a0ab67c7e5bb783a66c025`,
+`508517c781a5668b5f2d12cb042913af736d55db46d47c22a7564aed83869c34`,
+and `592034cbc941167d7470154b1dc2a29c3d7df13e0d0f53ec49aa8ebe46effd01`.
+
+M8 moves the complete 19-entry Fate production catalog under the declarative
+graph. A byte audit found five arrangements that today's converters reproduce
+exactly: ROL sounds 18, 83, 150, and 192 plus canonical AdLib sound 154. The
+other fourteen—including the hand-authored short sound 172 and legacy-dynamics
+sound 17—are explicit immutable reviewed inputs. Each is still bound to its
+exact raw source, bank, policy, output, and compiled identity; the graph will not
+silently replace listener-reviewed bytes with a newer mechanical conversion.
+
+Graph SHA-256 is
+`9843346be7ede3bdd0328ac955f58dbbdd00def7a0d9fd1b7578b18e54637fbe`.
+One transaction emits all 19 MML files and a complete local project. Repeated
+project, catalog, dependency-manifest, TAD-binary, and report SHA-256 values are
+`a9709545b166868c5250fe0e0d86c94027510b5af2d41794f46c2ab190d004f0`,
+`ea5c62c099c8289743b55aaf1eb5861c5b92f93e2b3eabd8e46c892c37e71094`,
+`e12a474f671bc6c03275ba07d65a27a239610ac31b323b9d8e10b51bea7d0e00`,
+`895dbaafb3479dac66d68a8125f7d57778333d7398439694993c36e9760bf44c`,
+and `d730cdd9ae396d02964c13d50474aebe021d2ff92fe9bccdf5667b1f54742862`.
+The M8 ROM remains exact M6/M7 ROM
+`147c150c08468807e7acefb4c72f0164f2fd907e8adefdae5c6647b82a0ad04a`.
+Fresh short/virtualized/dense/CC7 DSP report hashes for sounds 172, 18, 153,
+and 150 are
+`1ef3a1be1fe0672d1235ecd8c6f37b22ffe467e74449e0e4d9afd80ef25dd412`,
+`d41373084aff07111f9824a4e115796f53e7a44cf55304b19a39b924291376c8`,
+`e3cc49e63aced9f403bc1f0afd70750eb79f903808a9c30d729816e0a5d5e489`,
+and `d73d42f490e82ca9087f030c3c0c5e66e4a22278c641213cb12dda8c2f6b8a6e`.
+
+M9 makes the profile the single ROM-build authority. The profile resolves its
+`MBGR` resource; the handoff verifies that the graph names the same game ID,
+records the exact profile bytes into the music transaction, validates the
+catalog against the emitted TAD enums, and verifies every artifact before the
+SNES builder runs. The caller supplies a profile and external source archive,
+not a manually coordinated TAD directory/catalog pair. Verified cached bundles
+can be reused without reopening the commercial archive.
+
+Fate and Monkey profile/graph SHA-256 pairs are
+`d824c9b7aa06db8acbd383c07227d52aad16af23eaba6b1687686066b2551561` /
+`4eb320c36ef44e1eb1737405876845287422d4eb72a72d824a67e3c276a323a8`
+and
+`7cd28cc851b70cd25077561e21b7c6e19a674ab4a2632f2a6ae8957440fa563a` /
+`9bf3a52d952c3e4e1631697d7d18ea95a1055a1dfd2e651de2659cc1371470b8`.
+Their handoff-report SHA-256 values are
+`94e120d8d005dea40c476b7f864df6430b9b71c343b6c359d839951c6432e2f0`
+and `e3cbc75c2c9b98c1f950fa4905b81d063ae9de1287181a50c4eeb5bf1a22580c`.
+A deliberately crossed Fate-catalog/Monkey-TAD bundle fails before assembly and
+produces no ROM. Both ROMs remain exactly M8/M6, and fresh Fate-154 and Monkey
+DSP report SHA-256 values are
+`6c0c90f59d7776d78fe90d8838817349802120050df497a7eb8795385e445f0c`
+and `6b0d8b6ab0f5f34575fcdb8c4471d0352d118b9862d764ae997fda86e71e9d7d`.
+
+M10 passes the second-engine-family graph gate. The profile orchestrator now
+selects music adapters only through an engine/source-family registry; it has no
+direct SCUMM adapter import. An invalid `MusicBuildGraph.adapter` or mismatched
+engine/family pair is rejected before compilation output. The copyright-free
+QTMA conformance profile uses the checked-in M2 event fixture plus two generated
+integer waveform instruments to produce a one-song verified TAD bundle and demo
+ROM through the same command as the commercial-data adapters.
+
+The QTMA profile/graph/TAD/ROM SHA-256 values are
+`3bf3cc7b28c8d653c60188ce449ff6adeabd3e04f36a9a8a7211ff01e6367fc7`,
+`b622d815191cd2039d22b0f5fa3f9de1d43222c7f95ce30858f5b84be4ce9be9`,
+`8abae1aef2f32568e17f5ddbdb420b4566b980b9d68b74dfe3e5e8d1ede49a77`,
+and `c12f028ee17c81c4e81c46fc9209a78972bf6619341af727a8a579a9c7335f92`.
+Fresh and `--reuse` ROMs are byte-identical. Explicit adapter identity changes
+the Fate and Monkey graph hashes to
+`efbe8c2ff9c27899a459962a426a52841b7cd3d4ac6a933efcc12ec69c298487`
+and `7b529f7d1f6c374b1c7ad0ac63c0a5787d09a99728790a0d9b8214f7f39e85a3`,
+while their accepted ROMs remain `147c150c...ad04a` and `b6d39664...1cc43`.
+Fresh Fate-154 and Monkey-loop real-DSP report SHA-256 values are
+`fe21816ec12440078d82db95ece4443bc9f65077710d0b47f89d613b8aa7fa4b`
+and `0ecb6fd520db29d250c5b68322a9faf6b25251490b6a1c169fc7b9d69ab472ec`.
+
+M11 passes the non-SCUMM runtime-consumer gate. A dedicated profile selects the
+`qtma_conformance` SNES personality while retaining the `demo` engine-family
+adapter. The runtime module knows only logical catalog entry 1 and normalized
+audio operations. It contains no SCUMM policy, TAD symbol, or S-SMP/DSP port
+access. Its retained state changes WAITING→PLAYING at semantic frame 120 and
+PLAYING→COMPLETE at frame 423 while the backend records exactly one required
+play packet and one required stop packet.
+
+The M11 profile/graph/TAD/ROM SHA-256 values are
+`b38f5ff5f6565f13430bd529a90bbac43e30d367d709cf0f55268b2fdbb563ae`,
+`b622d815191cd2039d22b0f5fa3f9de1d43222c7f95ce30858f5b84be4ce9be9`,
+`8abae1aef2f32568e17f5ddbdb420b4566b980b9d68b74dfe3e5e8d1ede49a77`,
+and `22cf9b2fd5cee700d98b1f50729a5728ac72a3f1661e5c24a607628b5f1d3c17`.
+The final real-DSP capture is audible from 2.373 through 5.017 seconds with peak
+16283 and no clipping. Gate-report SHA-256 is
+`d77cab98c127ab31da56788b59cd0f6972f834ce7da2be56291230802af00404`.
+Rebuilt M10 demo, Fate, and Monkey ROM identities remain exact.
+Fresh Fate-154 and Monkey-loop DSP report SHA-256 values are
+`96deae99d780514de41ee78ef6d1c0040dc00ad736618a0a993c6a36e0f04fec`
+and `f779f8d1d3222fb980111dd6204067a6da78256d6609a40f768e33f00d36ca4e`.
+
+M12 moves duration and completion policy out of the QTMA consumer into an
+opt-in generic compiled-music lifecycle coordinator. A separate generated table
+preserves the stable catalog bytes while supplying bounded duration/loop policy.
+The consumer requests logical entry 1 at frame 120, reacts to READY at 136 and
+natural STOPPED at 424, and contains no hardcoded completion frame. The generic
+coordinator transitions PENDING at 120, PLAYING at 135, and COMPLETED at 423;
+host tests independently prove explicit stop, invalid identity, and looping
+no-auto-complete behavior.
+
+The M12 ROM SHA-256 is
+`e19cd796323df3d85862fb4fa5f6610bb6754be1e9596c5a53608c79a2ec7b50`.
+Real-Nexen evidence retains the exact one-play/one-stop service trace, final TAD
+blank state, and audible unclipped DSP output. Gate-report SHA-256 is
+`03ad5edceb90d18f0dcf776095e0c209832b283817213fa3a81cb381ec6e9b3b`.
+Fresh Fate-154 and Monkey-loop DSP report SHA-256 values are
+`7acaeef9a8e3e176a2049d4a01239d14319d7ab0d7a0568a1e04cbd84a314792`
+and `f19e441379fb62a1a5c2210a239d444845be4893d5935c22bb3767b99e9f7da5`.
+The next ordered music gate is M13, a strict QuickTime MOV `musi` extraction
+adapter feeding the existing QTMA importer.
+
+M13 passes that container-adapter gate. The strict self-contained QuickTime
+reader traverses normal and extended-size atoms, selects `musi` media, validates
+the zero-flag music sample description, expands `stts/stsc/stsz`, resolves
+`stco` or `co64` offsets only inside `mdat`, and rejects malformed counts,
+sizes, descriptions, timing, alignment, and offsets with source byte paths. It
+does not decode QTMA words.
+
+The 536-byte copyright-free movie stores both NoteRequests in its description
+and splits one phrase across two samples. Extraction reconstructs the exact M2
+232-byte event stream before the unchanged importer runs. Raw movie, graph,
+profile, TAD, and ROM SHA-256 values are
+`feb16d388acb55624f53b2dec2e8d76393ce1b5381b1f3d8880e23c74fe78ae1`,
+`5e7d934680fc5abb34871371bfc4b5e9acac93c37ea1ae2393f8dd4bf3ce6571`,
+`14fe551dfed95486f42d1c5c61c9c46ad615de2d927cbf9838794c1d36e834e9`,
+`8abae1aef2f32568e17f5ddbdb420b4566b980b9d68b74dfe3e5e8d1ede49a77`,
+and `e19cd796323df3d85862fb4fa5f6610bb6754be1e9596c5a53608c79a2ec7b50`.
+Fresh and reused outputs are identical; the TAD and ROM also equal M12 exactly.
+The current real-DSP runtime report SHA-256 is
+`78722cc703d9b56d82cb86017a7274b167de0bbbcb76cc3e87508aa0c1286d26`.
+Fresh Fate-154 and Monkey-loop M14 regression report SHA-256 values are
+`99d9c2e7ddc4e311a9158183a566eca84ea6d85d6206434689b0f4fc4fc69818`
+and `34de15b387c1baa963740c654b4e2601af86d2bdd021efff95a9ac123adb586d`.
+The next ordered music gate is M14, explicit rational source-time normalization
+for ordinary movie time scales without accumulated drift.
+
+M14 passes. `same.music.timing` maps absolute timestamps by integer rational
+arithmetic under explicit `exact` or `nearest_absolute` policy. Exact mode
+rejects the first fractional target tick. Nearest mode uses half-up rounding,
+reports an exact rational maximum error, preserves simultaneous order, records
+the original tick/time scale in each event's provenance, and rejects any note or
+loop collapsed by quantization.
+
+The 600 Hz movie maps to backend ticks `0,31,52,63,94,125`; its duration is
+exactly 125 ticks and maximum error is `300/600`, one-half target tick. Graph,
+profile, TAD, catalog, ROM, and real-DSP report SHA-256 values are
+`8729f155b9313c3b0226a39ab867a9813156ee9f1588ddc346a77aae85907587`,
+`f987c3745d5e6c3feafa135afd2449cd980a9e8aace48d0262156b7386a245aa`,
+`b9552071d7124d738f11b2b3a7ef1823a7eb0442c2915fa43971cfcbf2ced939`,
+`581127076eb0f8dac9be0a3dbd4415158e6fed33d083eda0c9903440df52afcb`,
+`c1ed252514aeacd9863963477407f01f9676c662f6aa05bec00f6ba195474c59`,
+and `73a8ef7a68dc942f2c3c1e38e8e9b8f605b5d51519e26a7e937d4d15601ba198`.
+Fresh/reuse outputs match. The lifecycle starts at 135, completes at 195, and
+the engine retains COMPLETE at 196; DSP is audible from 2.389 through 3.140
+seconds without clipping. M13 remains byte-exact.
+
+The next ordered music gate is M15, segmented QTMA provenance across movie
+sample descriptions, media samples, and original file-byte locations.
+
+M15 passes. The generic `SegmentedByteSource` requires a complete, ordered,
+nonoverlapping coverage map and resolves each complete importer frame back to
+one physical source segment. A frame crossing a segment boundary fails before
+semantic decoding. The QTMA importer knows only this generic resolver; MOV atom
+and sample-table knowledge remains confined to the container adapter.
+
+In the M13/M14 movie, the two NoteRequests retain sample-description 1 and
+absolute file bytes 232 and 324. The logical boundaries at bytes 184 and 212
+resolve independently to media sample 0/file byte 44 and sample 1/file byte 72;
+the first emitted event in sample 1 retains logical word 54 and file byte 76.
+After 600→125 normalization that event also retains source tick 300 and source
+scale 600. Fresh/reused M13 and M14 ROMs remain exactly
+`e19cd796323df3d85862fb4fa5f6610bb6754be1e9596c5a53608c79a2ec7b50`
+and `c1ed252514aeacd9863963477407f01f9676c662f6aa05bec00f6ba195474c59`.
+Their M15 real-DSP report SHA-256 values are
+`0f9a6501a012157f6e5a87fd683074580986695b02d82bd0c39c496a8682aba6`
+and `e54f458a23e0e253d921d4dc2fd7e9c078596ccbd822be05dc5b849f0da2aa07`.
+Fate and Monkey retain their accepted ROM identities and pass fresh DSP gates.
+
+The next ordered music gate is M16, a canonical conversion-audit manifest that
+serializes and hash-binds source provenance, normalized timing, and realization
+identity into each graph build.
+
+M16 passes without adding another QuickTime feature. The source-neutral
+`same_music_sequence_audit_v1` document records the complete imported and
+normalized `SequenceIR`: parts and instrument requests, note/control/marker
+events, lifetimes, source order, loops, diagnostics, and every provenance field.
+It separately records exact rational timing evidence and the sampled-note zone
+identities presented to the TAD compiler.
+
+M13 and M14 audit SHA-256 values are
+`d5515a65442e7c70d8137546b401a0ac187df59dc0b45ab920dbf765340bd37e`
+and `146b6e9e8548e5d40a5a74df321ef339beeb045a1377e5f8b2da0d48ad97435b`.
+Each graph declares the audit path and expected hash; the transactional builder
+and reuse verifier reject missing, corrupt, or unexpected audit bytes. MML, TAD,
+catalog, and ROM bytes remain exact. M16 real-DSP report SHA-256 values are
+`05bb8227c7e5b6a1cb3fde7b82e8c4a3c65593c4f5d2b122de686dff2d1f9faa`
+and `ec384acc596dd92ec7a4368f72a21681ce167030fceeb2be23e54abdb006c5b6`.
+
+The next ordered music gate is M17, canonical IR interchange and replay: decode
+the normalized audit IR as a strict build input and prove it realizes to the
+same MML without invoking its original importer.
+
+M17 passes. `decode_canonical_sequence_ir` reconstructs every typed part, event,
+instrument request, provenance record, diagnostic, loop, and ordering key under
+an exact-field schema, then lets `SequenceIR` reapply its note-lifetime and
+structural invariants. `decode_sequence_audit` independently recomputes M14's
+rational normalization from the imported IR and rejects any disagreement with
+the recorded normalized IR or error evidence.
+
+A fresh adapter replays both audits to their accepted MML hashes while MOV
+extraction and QTMA event decoding are patched to raise if entered. Realization
+zones are regenerated from normalized IR and must equal the recorded identities
+before the backend runs. M13/M14 audit, MML, TAD, catalog, and ROM bytes remain
+exact. M17 real-DSP report SHA-256 values are
+`f9bf20d5077d826d3fe02a24962aefd962db004559beda0904a76d5bd8a371c4`
+and `4e0c99a589669001461219ef3ee777db2d7d79b611f300ebc24159f55d04ef50`.
+
+The next ordered music gate is M18, deterministic sequencer checkpoints: save
+and restore the IR playback cursor, rational clock position, controllers,
+sustain/deferred releases, and active voice ownership without retriggering.
+
+M18 passes with explicit warm and cold contracts. Warm restore belongs to the
+originating live backend and emits no command while restoring the exact
+next-unconsumed cursor, rational remainder, allocator generations, sustain, and
+deferred ordering. Cold restore uses a SHA-256-protected canonical document
+bound to the IR, realized sample-zone catalog, schema, engine/profile, rational
+timing, voice policy, and loop configuration; validation is transactional and
+requires a fresh sequencer instance.
+
+The destructive fork oracle compares every subsequent tick after destroying
+the original B instance. It covers same-timestamp group splits, nonzero clock
+remainders, loops, deferred sustain, deterministic voice stealing, overlapping
+same-pitch notes, note-off/pause/stop/end boundaries, and repeat restore. MOV
+and QTMA importers are forced unreachable. Cold state preserves logical voice
+ownership only, not backend sample/envelope/oscillator continuity. M18 real-DSP
+report SHA-256 values are
+`7fc1113e13ed8e1b45de6524c60a8828f29f81aa51fca135d70a468a3ae9dc9f`
+and `1aeaaa3e135569ce35a2021679a8920745ac42d13b252b6d14dc893ffac6f8ff`.
+
+M19 returns the completed music work to the real SNES SCUMM dispatcher. A
+copyright-free 32-byte script executes `$02 startMusic(154)`, `$7C`
+`isSoundRunning`, `$20 stopMusic`, a stopped-status query, and a restart. The
+normal event/audio-service trace is exactly play 154, stop, play 154 from the
+engine endpoint; the debugger logical-request byte remains zero. SCUMM logical
+status is `1,0,1`, TAD reaches blank song zero after stop, and the profile-owned
+catalog maps the restart to existing Monkey church song 26.
+
+The fresh-power-on M19 ROM SHA-256 is
+`78a71ee35f2658da62a25958ad76ff6ed6036024793193ff04ab9ed27d91fc05`.
+Its 3,900-frame restarted real-DSP capture is audible and unclipped, retains
+exact video/NMI pacing, and repeats at 57.303875 seconds with 0.998934
+correlation. Gate-report SHA-256 is
+`8c54e88c5cfd0058a0ad739754f268193de65bf4d361ba46022230ac61d7f8ee`.
+M19 adds no cue conversion, source-format behavior, iMUSE transition, or
+save-state work.
+
+M20 adds the first real SNES cartridge-SRAM save path, narrowly scoped to one
+SCUMM compiled-music slot. The fixed record uses the existing `SAMESAV`
+version/engine/game/schema/length/CRC32 envelope and a versioned subrecord bound
+to the Monkey catalog and sound-154 source identities. Its declared policy is
+deterministic cue restart: a running load emits exactly stop then play 154
+through the normal SAME event/audio service, waits through the backend blank
+transfer, and restarts TAD song 26 from its compiled beginning. The stored
+logical frame position is advisory and is not honored.
+
+Midpoint and pre-loop records each survive destruction and a fresh Nexen
+process with SRAM retained; stopped state emits no play. Corrupt, wrong-engine,
+wrong-game, wrong-schema, and wrong-catalog records reject before any audio
+mutation. Eleven-process gate evidence is
+`build/scumm-m20-save-9349a24ca2df99bd/report.json`, SHA-256
+`afc7fbdc9efa6884d1db8e8c07fcac3523f4dedfe95cf4dfba2062edc90a8f0b`.
+The M20 ROM is
+`9349a24ca2df99bd374edf5cd7ef1d312b6d0b729ff3321a45f0ef6320015445`;
+M19 remains exactly
+`78a71ee35f2658da62a25958ad76ff6ed6036024793193ff04ab9ed27d91fc05`.
+
+M21 reconnects one Fate iMUSE hook to that compiled backend without claiming a
+live branch sequencer. A bounded synthetic command fixture runs encoded start
+80, flush, hook 14, flush through the normal SNES SCUMM `$4C` dispatcher; it is
+not an authentic room-entry trace. Profile-owned route
+keys select distinct precompiled TAD songs: default 26 consumes branch
+`(0,100)->(0,1920)`, while hook 14 selects song 27 and consumes
+`(0,90)->(3,1920)`. Same-frame deferral prevents the pending default route from
+ever reaching ready/playing ownership in the hooked run. Stop clears the
+one-shot selection; start alone returns to default; replaying the room pair
+selects hook 14 again.
+
+The version-2 compiled-music SRAM subrecord binds the selected route identity
+and cold load deterministically restarts that arrangement from its beginning.
+The stored position remains advisory and ignored. A CRC-valid mismatched route
+identity rejects before logical or audio mutation. Fresh-process mechanical
+evidence is `build/scumm-m21-fate-route-b16fcb68583506d0/report.json`; the M21
+ROM is `b16fcb68583506d0aa2bd97b8af2e0339136a57b5a7cb8ab0dc5c2be8fea0807`.
+Programs 32, 33, 50, 57, 77, and 82 have isolated, unclipped S-DSP auditions
+under `build/fate-m21-auditions-b16fcb68583506d0/`. Their mechanical gate
+passes, and Chad accepted the M21 timbre gate.
+
+M22 adds one genuinely live, bounded iMUSE decision. After a bounded synthetic
+fixture selects the sound-80 hook-14 route, its encoded `$4C` hook-8 command
+remains pending
+while TAD song 27 continues. A source-audited custom bytecode boundary at track
+3 tick 68160 (69,152,026 microseconds; normalized TAD tick 8644, -26
+microseconds error) selects either the no-hook continuation or the precompiled
+track-3 tick-1920 destination. The SPC reports boundary token 1; SCUMM consumes
+it once on the following engine frame without loading or restarting a song.
+
+Fresh hooked/control captures are equivalent before the boundary (median
+correlation 0.9999999 after at most 32 samples of recorder-clock alignment) and
+diverge afterward by over 3,400 times the pre-boundary differential. Both are
+audible and unclipped; `$7C` remains running, TAD remains on song 27, and packet
+loss/rejection remains zero. The final ROM is
+`de6e257897a8e150a85f78b0dcf1ea49ef80b0a49d9f359263e843f819f9b332`.
+Runtime evidence is `build/scumm-m22-fate-hook8-de6e257897a8e150/report.json`.
+
+The version-3 SRAM record preserves route history, section plan, pending or
+consumed hook choice, and catalog/source/route/bank identities while retaining
+M20's honest deterministic-restart policy. Armed, consumed, and default saves
+survive fresh emulator processes; CRC-valid wrong-route, wrong-section,
+wrong-catalog, and wrong-bank records reject transactionally. No APURAM, DSP,
+voice, BRR cursor, envelope, echo, TAD pointer, or pending SPC command is
+serialized, and the saved position remains advisory and ignored. Save evidence
+is `build/scumm-m22-save-de6e257897a8e150/report.json`.
+
+Newly reached program/range auditions for 50-low, 97, and 107 mechanically
+pass under `build/fate-m22-auditions-de6e257897a8e150/`; Chad accepted their
+human timbre gate. M23A raises the suite to 310 tests. M19, M20, and M21
+emulator regressions pass against their unchanged accepted ROM identities.
+
+M23A adds authentic Fate room-resource delivery and the generic SCUMM room
+lifecycle without executing unsupported authentic gameplay semantics. Complete
+room 49 and 63 ROOM records are cooked locally from the user-supplied archive,
+bound to source/profile/game identities, and delivered through normal host and
+SNES resource providers. ENCD, EXCD, and LSCR descriptors retain all source,
+cooked, normalized, and runtime coordinates. Authentic registration runs stop
+with ENCD pending at PC zero and emit no music; a copyright-free fixture proves
+EXCD, retirement, activation, registration, ENCD, and LSCR execution order.
+The M23A ROM is
+`6a622d0ac0fef4faa52808311ff08b73a9125aa50ecc737740de3b1c5167e640`.
+Full identities and corrected authentic command batching are in
+`docs/M23A_REPORT.md`.
+
+M23B executes the complete authentic room-49 ENCD from PC zero through that
+resource/lifecycle path. A hash-bound named pre-Thera state supplies only bit
+425 and the authentic boot-script string shapes. Authentic global scripts 144
+and 145 execute nested; the room then evaluates indexed bit 418 and sound 81/80
+ownership before reaching ENCD `+0x004F`, `+0x0057`, and `+0x0065`. The queue is
+exactly start 80 plus class-0 hook 14 and one flush selects TAD song 27 without
+letting song 26 reach audible ownership. A negative state changing only sound
+81 ownership takes the authentic skip to `+0x006D` and emits no audio packet.
+
+Fresh emulator evidence is
+`build/scumm-m23b-d0d3452e62c51801/report.json`; the positive ROM is
+`d0d3452e62c51801efd3e475b3005432446d7b0516d93ee209c84d09ea932951`
+and the negative ROM is
+`3efc7e1e66a7b48fd5e4d94d7ab4573a6274b4505422ba90dbd0eb8657d79300`.
+The suite is 311 tests. Full source mappings, dependency evidence, host trace,
+and the room-63/M23C cone are in `docs/M23B_REPORT.md`.
+
+M23C executes the authentic room-49-to-room-63 path through the normal room
+lifecycle. Room 63 begins at ENCD PC zero; canonical `$1D ifClassOfIs`, the
+authentic delayed global script 151, sound-80/82 status, hook-8 queueing,
+`0x0110`, and the later source flush all execute normally. The final flush is
+exactly hook 8 followed by command `0x0110`; hook 8 remains pending until the
+accepted M22 boundary and consumes once without a song reload, false stopped
+state, gap, clipping, packet loss, or rejected packet. Three fresh-power-on
+processes prove the positive, class-state, and sound-82 controls. The positive
+ROM is
+`ca5ae06865ebca737bc1fd5bb7f2cadbc2c6bdc829f7b449431d91939ca3bbef`.
+The suite is 315 tests; full evidence is in `docs/M23C_REPORT.md`.
+
+M24R-A proves the smallest backend mechanism that the rejected M24 composite
+needed but TAD did not expose: a generation-safe transition request observed at
+the next driver tick even while all eight channels are inside long notes, an
+independent outgoing-group fade, deterministic voice steals, and admission of
+five precompiled incoming lanes without a song reload. The synthetic ROM is
+`e68f1b513076cb34039aee47c1ae1724d87ce87c438496fca061abd00478d8b6`;
+the suite is now 318 tests. This does not implement Fate sound 82 or create a
+general mixer/sequencer. Evidence and exact costs are in `docs/M24RA_REPORT.md`.
+
+M22 deterministic cold restart passes unchanged. Complete room/class/script
+game-save restoration is still outside the current save envelope.
+
+No new timbre approval required.
+
+No new timbre approval required.
 
 Implemented in the executable host oracle:
 
@@ -670,7 +1681,14 @@ Implemented in the executable host oracle:
   with palette and auxiliary-string persistence, deterministic saved random,
   persistent pseudo-room resource mapping, resource cache/lock intent, and
   full-header actor configuration with encoded names, canonical live animation
-  requests, actor-follow camera intent,
+  requests, actor-follow camera intent, canonical point-to-actor lookup over
+  visible current-room actor bounds with untouchable-class rejection,
+  canonical actor room assignment and room-zero removal lifecycle, plus
+  canonical object-walk-point actor placement and missing-object fallback,
+  classic `$58/$59` costume initial-pose decoding, BYLE-RLE composition, and
+  rendered actor hitbox publication,
+  canonical point-to-object lookup over ordered raw-room geometry, class and
+  parent-state visibility,
   sparse 32-class object masks, bounded v5 verb configuration, and the canonical
   saved-verb bank namespace, plus the canonical signed 32-bit v5 expression
   stack with nested opcode dispatch, plus nested
@@ -678,17 +1696,19 @@ Implemented in the executable host oracle:
   bounded v5 sentence queue/callback/cancellation lifecycle;
 - room load and camera position;
 - start/stop music and sound request translation, plus bounded canonical
-  soundKludge queue/flush and normalized iMUSE command 6/8/9/10/11 mapping;
+  soundKludge queue/flush, normalized iMUSE command 6/8/9/10/11 mapping, and
+  the observed four-word class-0 hook command 0x010C compiled-route selection;
 - script slot persistence and save/load.
 
 Not yet implemented in the extracted SAME module:
 
 - full 105-opcode surface;
-- actor movement/render behavior, object, walkbox, verb drawing/input, dialog,
-  costume, and iMUSE behavior from SNES-SuperMonkeyIsland;
+- verb drawing/input and dialog;
 - direct loading of raw LucasArts data in the SNES runtime;
-- completed Fate demo actor/audio proof for the second SCUMM v5 profile; its
-  resource/input/save/boot/room preflight is complete, but S6 is not.
+- direct raw-resource delivery in the SNES runtime; production TAD delivery is
+  proven for Fate sounds 172, 17, 154, 83, 18, 185, 190, 192, 141, 201, 202,
+  207, 183, 91, 117, 78, 81, and 153, while production coverage of the other 9
+  sounds is still open.
 
 ## Current AGI v2 semantic boundary
 
@@ -720,9 +1740,63 @@ Not yet implemented:
 - An unchanged upstream ScummVM C++ binary on 65816.
 - A ScummVM launcher or dynamic plugin loader.
 - Physical-hardware-observed SNES engine host.
-- TAD/SPC delivery behind the new audio service.
-- SNES-side resource/package reader and save backend.
+- listener-approved Fate instrument zones and reviewed TAD arrangements beyond
+  the initial sound-172 production proof.
+- SNES-side resource/package reader and a general multi-slot/full-engine save
+  backend beyond M20's one-slot compiled-music SRAM proof.
 - SA-1 job execution behind the job capability.
 - Migrated MC68000/Z80 targets.
 
 See `docs/NEXT_GATES.md` for the ordered gates.
+
+## M25 authentic object-script execution
+
+Canonical v5 `$37/$77/$B7/$F7 startObject` and complete room-owned OBCD
+delivery are emulator-proven.  The authentic semantic Walk To action now runs
+global script 2, completes the 91-tick walk, executes object 596 verb 10 from
+OBCD `+$0029`, decodes `42 D3 FF` as `chainScript(211)`, retires the object
+slot, and enters room-49 LSCR 211 at PC zero through the generated local-script
+directory.  The next unsupported semantic is LSCR 211 `+$026E`, canonical
+`$B2 setCameraAt(Var[2])`. This historical frontier was cleared by Phase 6L;
+see `docs/M25_START_OBJECT_REPORT.md`.
+
+## M25 authentic stored-walkbox query
+
+Canonical SCUMM v5 `$7B/$FB getActorWalkBox` is implemented as a pure read of
+the actor's stored walkbox field. Copyright-free host/SNES tests prove direct
+and variable actor forms, exact PC consumption, result isolation, fail-closed
+input, and no actor mutation, including a position deliberately lying in a
+different geometric box. Fresh-power-on authentic Fate execution writes
+actor 1's naturally established box 11 to Var[442] at room-49 LSCR 216
+`+$0000`, then runs that local script's condition/box-flag/yield loop normally.
+
+The next authentic failure is no longer in room 49: room-63 ENCD `+$00DE`
+canonically decodes `2A CA FF` (`startScript 202`) but fails closed because
+the complete cooked LSCR 202 descriptor is not yet enabled in room 63's
+generated executable-local lookup. No LSCR 202, movement, walkbox routing, or
+audio work was added. See `docs/M25_GET_ACTOR_WALKBOX_REPORT.md`.
+M25 complete room-local LSCR lookup is emulator-proven. Authentic room-63
+`startScript(202)` resolves through the generated active-room directory,
+executes LSCR 202 from PC zero, yields at `+$0005`, and restores ENCD exactly.
+The integrated scheduler resumption was subsequently cleared by Phase 6L. See
+`docs/M25_ROOM_LOCAL_LOOKUP_REPORT.md` for the historical evidence.
+
+## Phase 6L — accepted Fate room transition
+
+**Status: Accepted and closed.** The authored M25 path is emulator-proven from
+room 49 through global script 2, object 596 / LSCR 211, the sound-82 fallback,
+`$02D9`, `$02DE`, generic `$24/$64/$A4/$E4 loadRoomWithEgo`, and room 63.
+Room-63 ENCD completes and global script 151 runs its authored periodic
+delay/movement/message loop. The stable observation is actor 1 at `(430,140)`
+on walkbox 5, stationary, with the camera lifecycle active; sound 80 owned and
+sounds 81/82 inactive. The retained `$010C` command is canonical because the
+sound-82-false branch intentionally skips the later `$0110`/flush sequence.
+
+The accepted ROM ran 10,000 emulator frames with `error=0`:
+
+`fddea1f7b877bbdb5f0bc9d9ca9bf8a13df4d4cc319a708410df178014b3a555`
+
+See `docs/PHASE6L_ACCEPTANCE.md`. The legacy `make m23c` failure is retained as
+layout-compatibility debt from the relocated M25 build; the accepted
+relocation is not rolled back. The next boundary is normal player sentence
+dispatch after the global-151 loop; no player action is fabricated by Phase 6L.

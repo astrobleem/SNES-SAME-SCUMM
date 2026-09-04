@@ -28,6 +28,7 @@ class ScummV5AdapterTests(unittest.TestCase):
         backing = HostServices.create(profile).resources
         provider = LucasartsScummV5ResourceProvider(backing, policy)
 
+        self.assertEqual(provider.global_script_count, 3)
         self.assertIn("room.1", provider.keys())
         self.assertEqual(provider.read("room.1"), b"S2-ROOM-PAYLOAD")
         self.assertEqual(provider.read("script.1"), bytes((0x80, 0x18, 0xFC, 0xFF)))

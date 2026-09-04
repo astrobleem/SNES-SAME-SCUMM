@@ -1,0 +1,21 @@
+{
+  "format": "same-snes-bg2-index4-overlay-layout",
+  "version": 1,
+  "base_address": "41:F000",
+  "bytes": 4096,
+  "descriptor": {"address": "41:F000", "bytes": 32},
+  "pixels": {"address": "41:F020", "bytes": 640},
+  "tile_stage": {"address": "41:F2A0", "bytes": 704},
+  "reserved": {"address": "41:F560", "bytes": 44},
+  "active_cells": {"address": "41:F58C", "bytes": 44},
+  "pending_cells": {"address": "41:F5B8", "bytes": 44},
+  "inflight": {"address": "41:F5E4", "bytes": 48},
+  "work": {"address": "41:F614", "bytes": 492},
+  "tilemap_stage": {"address": "41:F800", "bytes": 2048},
+  "maximum_width": 80,
+  "maximum_height": 8,
+  "maximum_cells": 22,
+  "blank_tile": 64,
+  "first_dynamic_tile": 65,
+  "last_dynamic_tile": 191
+}

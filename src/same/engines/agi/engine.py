@@ -334,8 +334,8 @@ class AgiEngine(Engine):
             tuple(raw[index : index + 3])
             for index in range(_PICTURE_HEADER.size, pixel_offset, 3)
         ]
-        context.services.video.surface.set_palette(0, colors)
-        context.services.video.surface.blit(
+        context.services.video.set_palette(0, colors)
+        context.services.video.blit(
             raw[pixel_offset:], source_width=width, source_height=height
         )
 

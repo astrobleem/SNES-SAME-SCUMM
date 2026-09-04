@@ -36,6 +36,15 @@ class _Directory:
     offsets: tuple[int, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ScummV5GlobalObjects:
+    """Canonical v5 DOBJ initial owner/state/class tables."""
+
+    owners: bytes
+    states: bytes
+    classes: tuple[int, ...]
+
+
 def _slice(data: bytes, key: str, offset: int, length: int | None) -> bytes:
     if offset < 0:
         raise ResourceError(f"resource {key!r}: offset must not be negative")
@@ -108,10 +117,36 @@ class LucasartsScummV5ResourceProvider:
         self.policy = policy
         self._index = self._decrypt(policy.index_key)
         self._data = self._decrypt(policy.data_key)
+        self.global_objects = self._parse_global_objects()
         self._directories = self._parse_index()
         self._rooms = self._parse_room_table()
         self._derived: dict[str, tuple[str, int]] = {}
         self._build_key_index()
+
+    def _parse_global_objects(self) -> ScummV5GlobalObjects:
+        chunks = _chunks(self._index, owner=self.policy.index_key)
+        matches = tuple(item for item in chunks if item.tag == "DOBJ")
+        if not matches:
+            # Minimal copyright-free adapter fixtures predate global-object
+            # coverage. Keep their declared engine capacity deterministic;
+            # authentic profiles carry one source-bound DOBJ chunk.
+            return ScummV5GlobalObjects(bytes(4096), bytes(4096), (0,) * 4096)
+        if len(matches) != 1:
+            raise ResourceError(f"{self.policy.index_key}: expected one DOBJ directory")
+        payload = matches[0].payload
+        if len(payload) < 2:
+            raise ResourceError(f"{self.policy.index_key}: DOBJ is truncated")
+        count = struct.unpack_from("<H", payload, 0)[0]
+        if count == 0 or len(payload) != 2 + count * 5:
+            raise ResourceError(f"{self.policy.index_key}: DOBJ length/count is invalid")
+        packed = payload[2:2 + count]
+        owners = bytes(value & 0x0F for value in packed)
+        states = bytes(value >> 4 for value in packed)
+        classes = tuple(
+            struct.unpack_from("<I", payload, 2 + count + index * 4)[0]
+            for index in range(count)
+        )
+        return ScummV5GlobalObjects(owners, states, classes)
 
     def _decrypt(self, key: str) -> bytes:
         if not self.backing.contains(key):
@@ -194,8 +229,21 @@ class LucasartsScummV5ResourceProvider:
                 # Never advertise a stable key whose bytes cannot be read.
                 if room == 0 or room not in self._rooms:
                     continue
+                # Some demo indexes retain stale full-game offsets even when
+                # the referenced room itself is present. Do not advertise a
+                # key unless its directory entry resolves to the promised
+                # chunk type.
+                try:
+                    self._directory_payload(tag, number, kind)
+                except ResourceError:
+                    continue
                 key = template.format(**{placeholder: number})
                 self._add_key(key, kind, number)
+
+    @property
+    def global_script_count(self) -> int:
+        """Return the authoritative v5 global/local script namespace boundary."""
+        return len(self._directories["DSCR"].rooms)
 
     def _add_key(self, key: str, kind: str, number: int) -> None:
         if key in self._derived or self.backing.contains(key):

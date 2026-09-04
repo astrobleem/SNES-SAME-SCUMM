@@ -200,6 +200,16 @@ class ScummV5AudioAdapter:
         self.music_position = 0
         self.context.services.audio.stop_music()
 
+    def stop_all(self) -> None:
+        self.music_id = None
+        self.music_position = 0
+        self.active_sfx.clear()
+        self.speech_id = None
+        self.speech_position = 0
+        self.context.services.audio.stop_music()
+        self.context.services.audio.stop_sfx()
+        self.context.services.audio.stop_speech()
+
     def play_sfx(self, logical_id: int) -> None:
         try:
             asset = self.sfx[int(logical_id)]
@@ -214,6 +224,9 @@ class ScummV5AudioAdapter:
     def stop_sfx(self, logical_id: int) -> None:
         self.active_sfx.pop(int(logical_id), None)
         self.context.services.audio.stop_sfx(logical_id)
+
+    def is_running(self, logical_id: int) -> bool:
+        return int(logical_id) == self.music_id or int(logical_id) in self.active_sfx
 
     def play_speech(self, logical_id: int) -> None:
         try:

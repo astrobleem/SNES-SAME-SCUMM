@@ -1,0 +1,11 @@
+#Title Fate audition 05 - soft bass range
+#Author SAME instrument audition
+#Timer 192
+#ZenLen 192
+
+@0 ph_bass
+
+; Octaves 1-2 are the MI-approved range. Octave 3 deliberately tests strain.
+A @0 o1 v6 c8 d e f g a b >c8 r8
+A o2 c8 e g >c <g e c4 r8
+A o3 c8 d e f g a b4 r4

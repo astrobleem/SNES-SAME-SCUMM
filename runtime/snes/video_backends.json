@@ -1,0 +1,17 @@
+{
+  "format": "same-snes-video-backends",
+  "version": 1,
+  "default": "legacy_backdrop",
+  "backends": {
+    "legacy_backdrop": {
+      "id": 0,
+      "required_carrier": null,
+      "layout": null
+    },
+    "mode3_surface": {
+      "id": 1,
+      "required_carrier": "sa1_bwram",
+      "layout": "runtime/snes/video_backends/mode3_surface_layout.json"
+    }
+  }
+}

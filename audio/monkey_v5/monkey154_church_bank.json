@@ -1,0 +1,34 @@
+{
+  "schema": "same_instrument_bank_v1",
+  "name": "Monkey v5 sound 154 church reviewed organ zones",
+  "source_device": "scumm_v5_adlib",
+  "capture_velocity": 100,
+  "capture_cc7": 127,
+  "reference_volume": 96,
+  "zones": [
+    {
+      "name": "monkey154_organ_low",
+      "patch_sha256": "625b3bfe1a9b2253828cd5c4179a02e2cf18e3aa15d98178d5a3fe597420992b",
+      "sample_resource": "audio/fate_s6/samples/mt32_p13_low.wav",
+      "sha256": "b07c086a484f91e488ce5dedd4f118a54d83b60c652ed0c377d8b69fd940e4d7",
+      "root_pitch": 48,
+      "first_pitch": 36,
+      "last_pitch": 57,
+      "loop_point": 4160,
+      "loop_samples": 1952,
+      "review_status": "accepted"
+    },
+    {
+      "name": "monkey154_organ_main",
+      "patch_sha256": "625b3bfe1a9b2253828cd5c4179a02e2cf18e3aa15d98178d5a3fe597420992b",
+      "sample_resource": "audio/fate_s6/samples/mt32_p13.wav",
+      "sha256": "101b8549d1b5cba8f503a8bdecc630c825eee44edc4497465415275690e5030e",
+      "root_pitch": 74,
+      "first_pitch": 58,
+      "last_pitch": 91,
+      "loop_point": 5120,
+      "loop_samples": 7776,
+      "review_status": "accepted"
+    }
+  ]
+}

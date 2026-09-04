@@ -1,0 +1,19 @@
+#Title Fate demo sound 190
+#Game Indiana Jones and the Fate of Atlantis interactive demo
+#Author SAME zoned ROL conversion
+#Timer 64
+#ZenLen 192
+
+; Generated from canonical ROL event times at 125 TAD ticks/second.
+; Every program/range mapping is an explicit reviewed arrangement policy.
+@0 mt32_p88_cycle
+@1 mt32_p88_cycle_x2
+@2 mt32_p74_cycle
+@3 mt32_p74_cycle_x2
+@4 mt32_p74_cycle_x4
+@5 ph_bass
+@6 mt32_marimba
+
+A q0 r%4 @5 v8 o1 c+%44 r%65
+B q0 r%7 @6 v7 o3 a+%63 r%43
+C q0 r%8 @5 v8 o1 c%105

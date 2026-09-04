@@ -1,0 +1,28 @@
+#Title Fate demo sound 83
+#Game Indiana Jones and the Fate of Atlantis interactive demo
+#Author SAME zoned ROL conversion
+#Timer 64
+#ZenLen 192
+
+; Generated from canonical ROL event times at 125 TAD ticks/second.
+; Every program/range mapping is an explicit reviewed arrangement policy.
+; Voice reduction policy: quietest-then-highest.
+; OMIT program 97 MIDI 91 at 10.904s for 1.416s (velocity*CC7=47); nine-voice collision.
+; Preserved 101 active-note CC7 fine-volume changes across 11 arranged notes without sample retrigger.
+@0 mt32_p88_cycle
+@1 mt32_p88_cycle_x2
+@2 mt32_p74_cycle
+@3 mt32_p74_cycle_x2
+@4 mt32_p74_cycle_x4
+@5 ph_bass
+@6 mt32_marimba
+@7 fate_tone
+
+A q0 r%354 @5 V12 o2 c%3 & V10 w%352 r%2 @0 V1 o3 g%92 r%1 @5 o2 g%591 & V0 w%67 r%78
+B q0 r%361 @0 V38 o3 c%62 r%2 V52 g%22 r%1 V93 o4 g%21 r%22 V48 e%206 r%17 o3 g%65 r%4 V79 o4 e%17 r%5 V5 f%153 & V4 w%20 r%4 V1 d%184 r%85 o3 g%144 & V0 w%121 r%24
+C q0 r%361 @0 V79 o4 e%59 r%6 V88 f%20 r%4 V57 c%27 r%14 @1 V69 o5 c%216 r%8 @0 V49 o4 d%63 r%6 V33 c%21 r%2 V43 d%90 & V42 w%45 V41 w%16 V40 w%17 V39 w%28 V38 w%12 V37 w%20 V36 w%22 V35 w%15 V34 w%13 V33 w%12 V32 w%22 V31 w%8 V30 w%17 V29 w%19 V28 w%15 V27 w%20 V26 w%16 V25 w%11 V24 w%23 V23 w%25 V22 w%30 V21 w%44 V20 w%38 V19 w%3 V18 w%22 V17 w%15 V16 w%10 V15 w%8 V14 w%12 V13 w%7 V12 w%10 V10 w%6 V9 w%16 V8 w%1 r%45
+D q0 r%451 @0 V10 o4 c%179 @1 V1 o5 c%167 r%10 @0 V54 o4 f%90 & V53 w%15 V52 w%30 V51 w%16 V50 w%17 V49 w%28 V48 w%12 V47 w%12 V46 w%25 V44 w%20 V43 w%6 V42 w%10 V41 w%9 V40 w%22 V39 w%8 V38 w%10 V37 w%7 V36 w%19 V35 w%15 V34 w%16 V33 w%11 V32 w%20 V31 w%7 V30 w%16 V29 w%15 V28 w%40 V27 w%15 V26 w%29 V25 w%38 V24 w%3 V23 w%7 V22 w%15 V21 w%15 V20 w%10 V19 w%3 V18 w%17 V17 w%3 V16 w%6 V15 w%1 V14 w%7 V13 w%1 V12 w%10 V11 w%11 V10 w%1 V9 w%7 V8 w%3 V7 w%2 V6 w%3 V5 w%3 V4 w%3 r%24
+E q0 r%455 @5 V1 o2 c%350 r%2 @0 V5 o4 g%151 & V4 w%161 V3 w%23 r%18 V1 o3 a%91 r%105 @3 o5 g%39 & V0 w%135 r%10
+F q0 r%809 @0 V1 o4 f%586 & V0 w%108 r%37
+G q0 r%809 @1 V1 o5 d%586 & V0 w%127 r%18
+H q0 r%1161 @0 V10 o4 d%2 & V9 w%51 V8 w%59 V7 w%112 V6 w%40 V5 w%30 V4 w%17 V3 w%23 V2 w%15 V1 w%4 r%26

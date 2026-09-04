@@ -53,12 +53,29 @@
       "key": "distribution.notice",
       "path": "../../../user-data/fate-demo/READ.ME",
       "kind": "TEXT"
+    },
+    {
+      "key": "music.catalog",
+      "path": "../../resources/music/fate_s6_compiled.json",
+      "kind": "MCAT"
+    },
+    {
+      "key": "music.build_graph",
+      "path": "../../resources/music/fate_s6_build_graph.json",
+      "kind": "MBGR"
     }
   ],
   "options": {
     "policy_schema": "scumm_v5_game_policy_v1",
     "boot_script_number": 1,
     "initial_room": 0,
+    "title_start_action": {
+      "action": "menu",
+      "from_room": 75,
+      "target_room": 49
+    },
+    "allow_cutscene_abort_on_room_change": true,
+    "headless_actor_presentation": true,
     "resource_policy": {
       "format": "lucasarts_scumm_v5",
       "index_key": "game.index",
@@ -73,6 +90,19 @@
     "audio_policy": {
       "source": "embedded",
       "stub_sound_policy": "not_running"
+    },
+    "compiled_music_catalog": "music.catalog",
+    "music_build_graph": "music.build_graph",
+    "snes_global_script_sets": {
+      "phase6ha": [2, 14, 144, 145, 151],
+      "phase6hb": [2, 14, 144, 145, 151],
+      "phase6i": [2, 14, 83, 144, 145, 151],
+      "phase6la1d": [2, 4, 13, 14, 18, 20, 74, 75, 83, 132, 144, 145, 151]
+    },
+    "snes_execution_gates": {
+      "phase6ha": {
+        "hold_after_started_global_script": 14
+      }
     },
     "coordinate_policy": {
       "logical_width": 320,

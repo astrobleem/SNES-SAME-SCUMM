@@ -1,0 +1,47 @@
+{
+  "schema": "same_compiled_music_catalog_v1",
+  "name": "Fate M24R-B bounded sound-80/82 composite",
+  "time_scale": 1000000,
+  "allow_shared_compiled_song": true,
+  "entries": [
+    {
+      "logical_id": 1,
+      "source_resource": "fate.sound80+sound82.m24rb-composite",
+      "source_sha256": "e665931c3440486624afde85035d4f1cd895a1ac097c9d915e115511b82dcb25",
+      "compiled_song": "fate_m24rb_composite",
+      "compiled_song_id": 1,
+      "duration": 134000000,
+      "loop": null
+    },
+    {
+      "logical_id": 80,
+      "source_resource": "sound.80",
+      "source_sha256": "3692a73673d619461b6215bae731832752610c99c166bbbf5978beb30afd5ed0",
+      "compiled_song": "fate_m24rb_composite",
+      "compiled_song_id": 1,
+      "duration": 134000000,
+      "loop": null,
+      "route": {
+        "kind": "default", "value": 0,
+        "identity": "dc45954e8f2581e2a4d04dead461543d3cf62188c27b302a4b7b130258354009",
+        "instrument_bank_sha256": "2280ca08ccfa18c0ed459567aec273f6418b6e50c300256dd91a79226c6af5bc",
+        "branch": [0, 100, 0, 1920]
+      }
+    },
+    {
+      "logical_id": 80,
+      "source_resource": "sound.80",
+      "source_sha256": "3692a73673d619461b6215bae731832752610c99c166bbbf5978beb30afd5ed0",
+      "compiled_song": "fate_m24rb_composite",
+      "compiled_song_id": 1,
+      "duration": 134000000,
+      "loop": null,
+      "route": {
+        "kind": "hook", "value": 14,
+        "identity": "6e0ef84edf12a95ff1069ff8015f57ccaf60f4186ff5221e8f3c0f802ceef1d6",
+        "instrument_bank_sha256": "2280ca08ccfa18c0ed459567aec273f6418b6e50c300256dd91a79226c6af5bc",
+        "branch": [0, 90, 3, 1920]
+      }
+    }
+  ]
+}

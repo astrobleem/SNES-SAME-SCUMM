@@ -1,0 +1,26 @@
+diff --git a/audio-driver/src/audio-driver.asm b/audio-driver/src/audio-driver.asm
+--- a/audio-driver/src/audio-driver.asm
++++ b/audio-driver/src/audio-driver.asm
+@@ -4943,7 +4943,21 @@ SetI8:
+ .endinline
+ 
+ 
+-bc_ReservedForCustomUse = bc__disable_channel
++.proc bc__same_m24rb_marker
++    ; The compiler supplies one ordinary argument byte.  SAME's audited
++    ; four-byte sentinel has two inert disable-echo placeholders after it;
++    ; consume those bytes and notify the S-CPU without changing channels.
++    or A, #$80
++    mov CPUIO1, A
++    mov A, songTickCounter
++    mov CPUIO2, A
++    incw instructionPtr
++    incw instructionPtr
++    jmp process_next_bytecode
++.endproc
++
++
++bc_ReservedForCustomUse = bc__same_m24rb_marker
+ 
+ 
+ BytecodeInstructionTable_l:

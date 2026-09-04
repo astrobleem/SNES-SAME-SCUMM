@@ -1,0 +1,41 @@
+#Title Fate demo sound 150
+#Game Indiana Jones and the Fate of Atlantis interactive demo
+#Author SAME zoned ROL conversion
+#Timer 64
+#ZenLen 192
+
+; Generated from canonical ROL event times at 125 TAD ticks/second.
+; Every program/range mapping is an explicit reviewed arrangement policy.
+; Voice virtualization policy: merge-sustained-identical-then-protect-outer-strongest.
+; MERGE program 33 MIDI 57 into program 36 at 7.264s for 1.456s.
+; MERGE program 36 MIDI 38 into program 33 at 9.008s for 0.192s.
+; MERGE program 36 MIDI 38 into program 56 at 9.232s for 0.032s.
+; MERGE program 33 MIDI 57 into program 36 at 9.232s for 0.896s.
+; MERGE program 36 MIDI 38 into program 33 at 9.264s for 1.792s.
+; MERGE program 56 MIDI 38 into program 33 at 9.264s for 1.920s.
+; DUCK program 92 MIDI 64 at 11.056s for 0.048s; RESTORE at 11.104s.
+; MERGE program 36 MIDI 60 into program 92 at 11.104s for 0.144s.
+; DUCK program 92 MIDI 60 at 11.136s for 0.048s; RESTORE at 11.184s.
+; DUCK program 92 MIDI 64 at 11.136s for 0.080s; source note ends here.
+; MERGE program 33 MIDI 67 into program 92 at 11.152s for 3.280s.
+; DUCK program 92 MIDI 67 at 11.184s for 0.032s; RESTORE at 11.216s.
+; Timing uses TAD's two-tick minimum key-off quantum.
+; Preserved 73 active-note CC7 fine-volume changes across 7 arranged notes without sample retrigger.
+; Terminal interactive hold retains source timing but fades static loop voices to silence by 18.680s.
+@0 mt32_p88_cycle
+@1 mt32_p88_cycle_x2
+@2 mt32_p74_cycle
+@3 mt32_p74_cycle_x2
+@4 mt32_p74_cycle_x4
+@5 ph_bass
+@6 mt32_marimba
+@7 fate_tone
+
+A q0 r%418 @6 V168 o2 c%2318 r%9134
+B q0 r%418 @6 V186 o2 g%2320 r%9132
+C q0 r%422 @5 V126 o1 d%356 & V125 w%50 V123 w%50 V122 w%48 V121 w%50 V119 w%50 V118 w%48 V117 w%50 V115 w%50 V114 w%48 V113 w%50 V111 w%50 V110 w%48 V109 w%32 @0 V47 o4 g%46 & V46 w%22 V45 w%44 V44 w%44 V43 w%22 V42 w%44 V41 w%22 V40 w%76 V37 w%52 V35 w%52 V32 w%52 V30 w%52 V27 w%52 V25 w%52 V22 w%45 Vs-22,256 w%9773 r%18
+D q0 r%454 @5 V108 o2 d%1350 @0 V36 o4 g%275 & Vs-36,256 w%9759 r%32
+E q0 r%842 @0 V65 o3 a%248 @5 V68 a%64 V67 o2 d%4 @0 V40 o4 a%248 V47 c%673 & Vs-47,256 w%9751 r%40
+F q0 r%846 @0 V64 o3 d%34 r%24 @5 V68 a%4 V61 o2 d%218 @0 V35 o4 c%26 V56 o3 a%228 & V55 w%8 o4 c%4 @5 V77 o1 f%28 & V76 w%50 V75 w%48 V74 w%50 V73 w%50 V72 w%48 V71 w%50 V70 w%50 V69 w%313 Vs-69,256 w%9785 r%6
+G q0 r%870 @0 V76 o4 d%28 r%6 @5 V92 o3 a%488 V80 o2 f%28 & V79 w%50 V78 w%48 V77 w%50 V76 w%50 V75 w%48 V74 w%50 V73 w%50 V72 w%313 Vs-72,256 w%9781 r%10
+H q0 r%904 @0 V79 o4 e%190 r%24 V69 a%32 @5 V61 o2 d%4 @0 V49 o4 e%226 & V48 w%2 V47 c%6 V48 e%4 V36 g%2 V48 g%4 V55 c%4 & V54 w%46 V53 w%22 V52 w%44 V51 w%22 V50 w%22 V49 w%44 V48 w%22 V47 w%22 V46 w%76 V43 w%52 V40 w%52 V37 w%52 V34 w%52 V31 w%52 V28 w%52 V25 w%45 Vs-25,256 w%9791

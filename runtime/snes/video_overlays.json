@@ -1,0 +1,14 @@
+{
+  "format": "same-snes-video-overlays",
+  "version": 1,
+  "default": "none",
+  "overlays": {
+    "none": {"id": 0, "required_backend": null, "required_carrier": null, "layout": null},
+    "bg2_index4": {
+      "id": 1,
+      "required_backend": "mode3_surface",
+      "required_carrier": "sa1_bwram",
+      "layout": "runtime/snes/video_backends/bg2_index4_layout.json"
+    }
+  }
+}

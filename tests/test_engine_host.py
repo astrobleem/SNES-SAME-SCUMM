@@ -9,11 +9,38 @@ from same.engines import default_registry
 from same.errors import EngineCompatibilityError, EngineLifecycleError
 from same.profile import load_profile
 from same.services import HostServices
+from same.video import HostEvidenceBackend, PresentRecord, PresentRequest
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class EngineHostTests(unittest.TestCase):
+    def test_video_present_event_is_emitted_after_backend_returns(self) -> None:
+        profile = load_profile(ROOT / "examples/profiles/agi_v2_conformance.json")
+        services = HostServices.create(profile)
+        observed: list[tuple[tuple[tuple[int, int], ...], PresentRequest]] = []
+        host_backend = HostEvidenceBackend()
+
+        class OrderingBackend:
+            def present(self, request: PresentRequest) -> PresentRecord:
+                packets = tuple(
+                    (int(packet.service), int(packet.opcode))
+                    for packet in services.events.ring.snapshot()
+                )
+                observed.append((packets, request))
+                return host_backend.present(request)
+
+        services.video.backend = OrderingBackend()
+        record = services.present()
+        self.assertEqual(len(observed), 1)
+        self.assertNotIn((1, 17), observed[0][0])
+        packets_after = tuple(
+            (int(packet.service), int(packet.opcode))
+            for packet in services.events.ring.snapshot()
+        )
+        self.assertEqual(packets_after[-1], (1, 17))
+        self.assertEqual(record, services.video.presented[-1])
+
     def test_registry_contains_independent_engines(self) -> None:
         identifiers = [item.identifier for item in default_registry().descriptors()]
         self.assertEqual(identifiers, ["agi_v2", "scumm_v5"])

@@ -1,0 +1,166 @@
+{
+  "parent_manifest": "audio/fate_s6/samples/loop_safe_manifest.json",
+  "parent_sha256": "56f17e53e38f1bad05f259e3a87da8b8af67a64041a63a9740150c65b62118e4",
+  "programs": {
+    "107": [
+      {
+        "coverage": [
+          36,
+          71
+        ],
+        "envelope": "adsr 15 1 7 0",
+        "loop": "loop_reset_filter:0",
+        "role": "pad-main",
+        "root_hz": 500.0,
+        "source": "audio/fate_s6/samples/mt32_p88_cycle.wav",
+        "source_sha256": "46f9898214a712228ed046e230bce8b2d5b67d34007857ed83e80b8a88261920",
+        "zone": "mt32_p88_cycle"
+      }
+    ],
+    "32": [
+      {
+        "coverage": [
+          36,
+          71
+        ],
+        "envelope": "adsr 15 1 7 0",
+        "loop": "loop_reset_filter:0",
+        "role": "pad-main",
+        "root_hz": 500.0,
+        "source": "audio/fate_s6/samples/mt32_p88_cycle.wav",
+        "source_sha256": "46f9898214a712228ed046e230bce8b2d5b67d34007857ed83e80b8a88261920",
+        "zone": "mt32_p88_cycle"
+      }
+    ],
+    "33": [
+      {
+        "coverage": [
+          36,
+          71
+        ],
+        "envelope": "adsr 15 1 7 0",
+        "loop": "loop_reset_filter:0",
+        "role": "pad-main",
+        "root_hz": 500.0,
+        "source": "audio/fate_s6/samples/mt32_p88_cycle.wav",
+        "source_sha256": "46f9898214a712228ed046e230bce8b2d5b67d34007857ed83e80b8a88261920",
+        "zone": "mt32_p88_cycle"
+      },
+      {
+        "coverage": [
+          72,
+          95
+        ],
+        "envelope": "adsr 15 1 7 0",
+        "loop": "loop_reset_filter:0",
+        "role": "pad-high",
+        "root_hz": 1000.0,
+        "source": "audio/fate_s6/samples/mt32_p88_cycle_x2.wav",
+        "source_sha256": "2fb5861e6b6b182fe2e39a55c223c4827c2dab37d2a6db61644039ec25429483",
+        "zone": "mt32_p88_cycle_x2"
+      }
+    ],
+    "50": [
+      {
+        "coverage": [
+          24,
+          59
+        ],
+        "envelope": "adsr 15 7 7 12",
+        "loop": "none",
+        "role": "bass",
+        "root_hz": 111.111,
+        "source": "audio/fate_s6/samples/Phantasia_Soft_Bass.brr",
+        "source_sha256": "8a200226b881a267425460a5ca09781f6ed5cb9c880c5842f19d6a798a866e89",
+        "zone": "ph_bass"
+      },
+      {
+        "coverage": [
+          36,
+          71
+        ],
+        "envelope": "adsr 15 1 7 0",
+        "loop": "loop_reset_filter:0",
+        "role": "pad-main",
+        "root_hz": 500.0,
+        "source": "audio/fate_s6/samples/mt32_p88_cycle.wav",
+        "source_sha256": "46f9898214a712228ed046e230bce8b2d5b67d34007857ed83e80b8a88261920",
+        "zone": "mt32_p88_cycle"
+      }
+    ],
+    "57": [
+      {
+        "coverage": [
+          48,
+          63
+        ],
+        "envelope": "adsr 15 1 7 0",
+        "loop": "loop_reset_filter:0",
+        "role": "flute-low",
+        "root_hz": 166.666667,
+        "source": "audio/fate_s6/samples/mt32_p74_cycle.wav",
+        "source_sha256": "6300ac1f74b88259e9f7a45e909d543f28f0193084917d4ee8dd6a40bd48b883",
+        "zone": "mt32_p74_cycle"
+      },
+      {
+        "coverage": [
+          64,
+          83
+        ],
+        "envelope": "adsr 15 1 7 0",
+        "loop": "loop_reset_filter:0",
+        "role": "flute-mid",
+        "root_hz": 333.333333,
+        "source": "audio/fate_s6/samples/mt32_p74_cycle_x2.wav",
+        "source_sha256": "fc7d29783acea7a6298e110b92c6c017735ec6ff7fe8f8716316f5cbf8c5f109",
+        "zone": "mt32_p74_cycle_x2"
+      }
+    ],
+    "77": [
+      {
+        "coverage": [
+          24,
+          59
+        ],
+        "envelope": "adsr 15 7 7 12",
+        "loop": "none",
+        "role": "bass",
+        "root_hz": 111.111,
+        "source": "audio/fate_s6/samples/Phantasia_Soft_Bass.brr",
+        "source_sha256": "8a200226b881a267425460a5ca09781f6ed5cb9c880c5842f19d6a798a866e89",
+        "zone": "ph_bass"
+      }
+    ],
+    "82": [
+      {
+        "coverage": [
+          36,
+          71
+        ],
+        "envelope": "adsr 15 1 7 0",
+        "loop": "loop_reset_filter:0",
+        "role": "pad-main",
+        "root_hz": 500.0,
+        "source": "audio/fate_s6/samples/mt32_p88_cycle.wav",
+        "source_sha256": "46f9898214a712228ed046e230bce8b2d5b67d34007857ed83e80b8a88261920",
+        "zone": "mt32_p88_cycle"
+      }
+    ],
+    "97": [
+      {
+        "coverage": [
+          64,
+          83
+        ],
+        "envelope": "adsr 15 1 7 0",
+        "loop": "loop_reset_filter:0",
+        "role": "flute-mid",
+        "root_hz": 333.333333,
+        "source": "audio/fate_s6/samples/mt32_p74_cycle_x2.wav",
+        "source_sha256": "fc7d29783acea7a6298e110b92c6c017735ec6ff7fe8f8716316f5cbf8c5f109",
+        "zone": "mt32_p74_cycle_x2"
+      }
+    ]
+  },
+  "schema": "same_fate_sound80_m22_instrument_bank_v1"
+}

@@ -1,0 +1,347 @@
+{
+  "_about": {
+    "file_type": "Terrific Audio Driver project file",
+    "version": "0.2.0-beta.2"
+  },
+  "instruments": [
+    {
+      "name": "fate_tone",
+      "source": "../../build/fate-audio/fate-tone.wav",
+      "freq": 1760.0,
+      "loop": "loop_reset_filter",
+      "loop_setting": 0,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 3,
+      "last_octave": 7,
+      "envelope": "adsr 15 2 7 16",
+      "comment": "Repository-generated band-limited source for the Fate S6 SPC proof"
+    },
+    {
+      "name": "mt32_organ_cycle",
+      "source": "samples/mt32_organ_cycle.wav",
+      "freq": 333.333333,
+      "loop": "dupe_block_hack_filter_1",
+      "loop_setting": 2,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 2,
+      "last_octave": 5,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Round-5 periodic organ: exact cycle with filter-reset loop"
+    },
+    {
+      "name": "mt32_marimba",
+      "source": "samples/mt32_marimba.wav",
+      "freq": 375.0,
+      "loop": "loop_with_filter",
+      "loop_setting": 1600,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 2,
+      "last_octave": 5,
+      "envelope": "adsr 15 1 0 0",
+      "comment": "MI-reviewed main marimba zone"
+    },
+    {
+      "name": "mt32_p74_cycle",
+      "source": "samples/mt32_p74_cycle.wav",
+      "freq": 166.666667,
+      "loop": "loop_reset_filter",
+      "loop_setting": 0,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 3,
+      "last_octave": 4,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Round-5 periodic flute low: exact cycle with filter-reset loop"
+    },
+    {
+      "name": "mt32_p74_cycle_x2",
+      "source": "samples/mt32_p74_cycle_x2.wav",
+      "freq": 333.333333,
+      "loop": "loop_reset_filter",
+      "loop_setting": 0,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 4,
+      "last_octave": 5,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Round-5 periodic flute mid: exact cycle with filter-reset loop"
+    },
+    {
+      "name": "mt32_p74_cycle_x4",
+      "source": "samples/mt32_p74_cycle_x4.wav",
+      "freq": 666.666667,
+      "loop": "loop_reset_filter",
+      "loop_setting": 0,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 5,
+      "last_octave": 6,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Round-5 periodic flute high: exact cycle with filter-reset loop"
+    },
+    {
+      "name": "mt32_p88_cycle",
+      "source": "samples/mt32_p88_cycle.wav",
+      "freq": 500.0,
+      "loop": "loop_reset_filter",
+      "loop_setting": 0,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 2,
+      "last_octave": 6,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Round-5 periodic pad: exact cycle with filter-reset loop"
+    },
+    {
+      "name": "mt32_p88_cycle_x2",
+      "source": "samples/mt32_p88_cycle_x2.wav",
+      "freq": 1000.0,
+      "loop": "loop_reset_filter",
+      "loop_setting": 0,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 5,
+      "last_octave": 6,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Round-5 periodic pad high: exact cycle with filter-reset loop"
+    },
+    {
+      "name": "ph_bass",
+      "source": "samples/Phantasia_Soft_Bass.brr",
+      "freq": 111.111,
+      "loop": "none",
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 1,
+      "last_octave": 3,
+      "envelope": "adsr 15 7 7 12",
+      "comment": "MI-approved soft bass; octave 3 is an intentional strain test"
+    },
+    {
+      "name": "fate154_ch1_low",
+      "source": "samples/fate154_ch1_low.wav",
+      "freq": 65.406391,
+      "loop": "loop_with_filter",
+      "loop_setting": 256,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 2,
+      "last_octave": 2,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Sound-154 Nuked-OPL channel 1 low zone"
+    },
+    {
+      "name": "fate154_ch1_high",
+      "source": "samples/fate154_ch1_high.wav",
+      "freq": 523.251131,
+      "loop": "loop_with_filter",
+      "loop_setting": 256,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 4,
+      "last_octave": 5,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Sound-154 Nuked-OPL channel 1 upper zone"
+    },
+    {
+      "name": "fate154_ch2_mid",
+      "source": "samples/fate154_ch2_mid.wav",
+      "freq": 261.625565,
+      "loop": "loop_with_filter",
+      "loop_setting": 256,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 3,
+      "last_octave": 4,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Sound-154 Nuked-OPL channel 2 principal voice"
+    },
+    {
+      "name": "fate154_ch4_mid",
+      "source": "samples/fate154_ch4_mid.wav",
+      "freq": 261.625565,
+      "loop": "loop_with_filter",
+      "loop_setting": 256,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 3,
+      "last_octave": 4,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Sound-154 Nuked-OPL channel 4 texture layer"
+    },
+    {
+      "name": "fate154_ch5_high",
+      "source": "samples/fate154_ch5_high.wav",
+      "freq": 1046.502261,
+      "loop": "loop_with_filter",
+      "loop_setting": 256,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 5,
+      "last_octave": 6,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Sound-154 Nuked-OPL channel 5 high shimmer"
+    },
+    {
+      "name": "fate154_ch6_low",
+      "source": "samples/fate154_ch6_low.wav",
+      "freq": 130.812783,
+      "loop": "loop_with_filter",
+      "loop_setting": 256,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 2,
+      "last_octave": 2,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Sound-154 Nuked-OPL channel 6 low zone"
+    },
+    {
+      "name": "fate154_ch6_high",
+      "source": "samples/fate154_ch6_high.wav",
+      "freq": 523.251131,
+      "loop": "loop_with_filter",
+      "loop_setting": 256,
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 4,
+      "last_octave": 5,
+      "envelope": "adsr 15 1 7 0",
+      "comment": "Sound-154 Nuked-OPL channel 6 upper zone"
+    },
+    {
+      "name": "mt32_drum_kick",
+      "source": "samples/mt32_drum_kick.wav",
+      "freq": 65.406,
+      "loop": "none",
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 2,
+      "last_octave": 2,
+      "envelope": "gain F127"
+    },
+    {
+      "name": "mt32_drum_n38",
+      "source": "samples/mt32_drum_n38.wav",
+      "freq": 65.406,
+      "loop": "none",
+      "evaluator": "default",
+      "ignore_gaussian_overflow": false,
+      "first_octave": 2,
+      "last_octave": 2,
+      "envelope": "gain F127"
+    }
+  ],
+  "samples": [],
+  "default_sfx_flags": {
+    "one_channel": true,
+    "interruptible": true
+  },
+  "high_priority_sound_effects": [],
+  "sound_effects": [],
+  "low_priority_sound_effects": [],
+  "songs": [
+    {
+      "name": "fate_sound_172",
+      "source": "sound_172.mml"
+    },
+    {
+      "name": "audition_organ_zones",
+      "source": "auditions/organ_zones.mml"
+    },
+    {
+      "name": "audition_marimba_zones",
+      "source": "auditions/marimba_zones.mml"
+    },
+    {
+      "name": "audition_flute_zones",
+      "source": "auditions/flute_zones.mml"
+    },
+    {
+      "name": "audition_pad_zones",
+      "source": "auditions/pad_zones.mml"
+    },
+    {
+      "name": "audition_bass_range",
+      "source": "auditions/bass_range.mml"
+    },
+    {
+      "name": "audition_percussion",
+      "source": "auditions/percussion.mml"
+    },
+    {
+      "name": "fate_sound_17",
+      "source": "sound_17.mml"
+    },
+    {
+      "name": "fate_sound_154",
+      "source": "sound_154.mml"
+    },
+    {
+      "name": "fate_sound_83",
+      "source": "sound_83.mml"
+    },
+    {
+      "name": "fate_sound_18",
+      "source": "sound_18.mml"
+    },
+    {
+      "name": "fate_sound_185",
+      "source": "sound_185.mml"
+    },
+    {
+      "name": "fate_sound_190",
+      "source": "sound_190.mml"
+    },
+    {
+      "name": "fate_sound_192",
+      "source": "sound_192.mml"
+    },
+    {
+      "name": "fate_sound_141",
+      "source": "sound_141.mml"
+    },
+    {
+      "name": "fate_sound_201",
+      "source": "sound_201.mml"
+    },
+    {
+      "name": "fate_sound_202",
+      "source": "sound_202.mml"
+    },
+    {
+      "name": "fate_sound_207",
+      "source": "sound_207.mml"
+    },
+    {
+      "name": "fate_sound_183",
+      "source": "sound_183.mml"
+    },
+    {
+      "name": "fate_sound_91",
+      "source": "sound_91.mml"
+    },
+    {
+      "name": "fate_sound_117",
+      "source": "sound_117.mml"
+    },
+    {
+      "name": "fate_sound_78",
+      "source": "sound_78.mml"
+    },
+    {
+      "name": "fate_sound_81",
+      "source": "sound_81.mml"
+    },
+    {
+      "name": "fate_sound_153",
+      "source": "sound_153.mml"
+    },
+    {
+      "name": "fate_sound_150",
+      "source": "sound_150.mml"
+    }
+  ]
+}

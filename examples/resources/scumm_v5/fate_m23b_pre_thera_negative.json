@@ -1,0 +1,10 @@
+{
+  "schema": "same_scumm_v5_named_engine_state_v1",
+  "name": "fate-demo-pre-thera-room49-sound81-running-negative",
+  "base": "fate_m23b_pre_thera.json",
+  "override": {
+    "bits_set": [425],
+    "running_sounds": [81]
+  },
+  "provenance": "Authentic alternate state: sound 81 is already running, so ENCD +0x0041 takes its source-authored skip and emits no sound-80 request."
+}

@@ -1,0 +1,349 @@
+{
+  "instrument_gate": {
+    "programs": {
+      "32": {
+        "audition_mml": "program_32_used_range.mml",
+        "audition_mml_sha256": "157ff9edb2631f75db2f5d81eb6e20cf7de99f7387a392569c5d70651705d4a5",
+        "audition_notes": [
+          63,
+          64
+        ],
+        "selected_zones": [
+          {
+            "coverage": [
+              36,
+              71
+            ],
+            "envelope": "adsr 15 1 7 0",
+            "loop": "loop_reset_filter:0",
+            "role": "pad-main",
+            "root_hz": 500.0,
+            "source": "audio/fate_s6/samples/mt32_p88_cycle.wav",
+            "source_sha256": "46f9898214a712228ed046e230bce8b2d5b67d34007857ed83e80b8a88261920",
+            "zone": "mt32_p88_cycle"
+          }
+        ],
+        "used_range": [
+          63,
+          64
+        ]
+      },
+      "33": {
+        "audition_mml": "program_33_used_range.mml",
+        "audition_mml_sha256": "6e45a9834d05dbb4e05f970207fe538e9b23b41342c611994d81d82b280dbd81",
+        "audition_notes": [
+          49,
+          55,
+          60,
+          67,
+          71,
+          72,
+          79,
+          85
+        ],
+        "selected_zones": [
+          {
+            "coverage": [
+              36,
+              71
+            ],
+            "envelope": "adsr 15 1 7 0",
+            "loop": "loop_reset_filter:0",
+            "role": "pad-main",
+            "root_hz": 500.0,
+            "source": "audio/fate_s6/samples/mt32_p88_cycle.wav",
+            "source_sha256": "46f9898214a712228ed046e230bce8b2d5b67d34007857ed83e80b8a88261920",
+            "zone": "mt32_p88_cycle"
+          },
+          {
+            "coverage": [
+              72,
+              95
+            ],
+            "envelope": "adsr 15 1 7 0",
+            "loop": "loop_reset_filter:0",
+            "role": "pad-high",
+            "root_hz": 1000.0,
+            "source": "audio/fate_s6/samples/mt32_p88_cycle_x2.wav",
+            "source_sha256": "2fb5861e6b6b182fe2e39a55c223c4827c2dab37d2a6db61644039ec25429483",
+            "zone": "mt32_p88_cycle_x2"
+          }
+        ],
+        "used_range": [
+          49,
+          85
+        ]
+      },
+      "50": {
+        "audition_mml": "program_50_used_range.mml",
+        "audition_mml_sha256": "a5ffc57083fa371d43bf19a0a5f44c3d57757713c7c4f57b0c8f9e1c33eee4e7",
+        "audition_notes": [
+          40,
+          45,
+          50,
+          54
+        ],
+        "selected_zones": [
+          {
+            "coverage": [
+              36,
+              71
+            ],
+            "envelope": "adsr 15 1 7 0",
+            "loop": "loop_reset_filter:0",
+            "role": "pad-main",
+            "root_hz": 500.0,
+            "source": "audio/fate_s6/samples/mt32_p88_cycle.wav",
+            "source_sha256": "46f9898214a712228ed046e230bce8b2d5b67d34007857ed83e80b8a88261920",
+            "zone": "mt32_p88_cycle"
+          }
+        ],
+        "used_range": [
+          40,
+          54
+        ]
+      },
+      "57": {
+        "audition_mml": "program_57_used_range.mml",
+        "audition_mml_sha256": "bdd804dafce718e178b36b87db1b4a362a490e37d20b4576120f030a6042a0e8",
+        "audition_notes": [
+          49,
+          55,
+          60,
+          63,
+          64,
+          72,
+          80
+        ],
+        "selected_zones": [
+          {
+            "coverage": [
+              48,
+              63
+            ],
+            "envelope": "adsr 15 1 7 0",
+            "loop": "loop_reset_filter:0",
+            "role": "flute-low",
+            "root_hz": 166.666667,
+            "source": "audio/fate_s6/samples/mt32_p74_cycle.wav",
+            "source_sha256": "6300ac1f74b88259e9f7a45e909d543f28f0193084917d4ee8dd6a40bd48b883",
+            "zone": "mt32_p74_cycle"
+          },
+          {
+            "coverage": [
+              64,
+              83
+            ],
+            "envelope": "adsr 15 1 7 0",
+            "loop": "loop_reset_filter:0",
+            "role": "flute-mid",
+            "root_hz": 333.333333,
+            "source": "audio/fate_s6/samples/mt32_p74_cycle_x2.wav",
+            "source_sha256": "fc7d29783acea7a6298e110b92c6c017735ec6ff7fe8f8716316f5cbf8c5f109",
+            "zone": "mt32_p74_cycle_x2"
+          }
+        ],
+        "used_range": [
+          49,
+          80
+        ]
+      },
+      "77": {
+        "audition_mml": "program_77_used_range.mml",
+        "audition_mml_sha256": "8d5e523317029818048427d62013d9735af734e47584b5dc58c3afe9bcd7e236",
+        "audition_notes": [
+          30,
+          36,
+          42,
+          48,
+          54,
+          56
+        ],
+        "selected_zones": [
+          {
+            "coverage": [
+              24,
+              59
+            ],
+            "envelope": "adsr 15 7 7 12",
+            "loop": "none",
+            "role": "bass",
+            "root_hz": 111.111,
+            "source": "audio/fate_s6/samples/Phantasia_Soft_Bass.brr",
+            "source_sha256": "8a200226b881a267425460a5ca09781f6ed5cb9c880c5842f19d6a798a866e89",
+            "zone": "ph_bass"
+          }
+        ],
+        "used_range": [
+          30,
+          56
+        ]
+      },
+      "82": {
+        "audition_mml": "program_82_used_range.mml",
+        "audition_mml_sha256": "88f10016362d8472c50d9e97e01799531062f43b7b440a9464823abed80e46dd",
+        "audition_notes": [
+          47,
+          48,
+          52,
+          56
+        ],
+        "selected_zones": [
+          {
+            "coverage": [
+              36,
+              71
+            ],
+            "envelope": "adsr 15 1 7 0",
+            "loop": "loop_reset_filter:0",
+            "role": "pad-main",
+            "root_hz": 500.0,
+            "source": "audio/fate_s6/samples/mt32_p88_cycle.wav",
+            "source_sha256": "46f9898214a712228ed046e230bce8b2d5b67d34007857ed83e80b8a88261920",
+            "zone": "mt32_p88_cycle"
+          }
+        ],
+        "used_range": [
+          47,
+          56
+        ]
+      }
+    },
+    "status": "human-timbre-pending"
+  },
+  "routes": [
+    {
+      "audit_sha256": "bf180e6ebb482e685f580b2c69e39bc3c9db956776cffa92a22a67ab876c8b28",
+      "consumed_branch": {
+        "source_tick": 100,
+        "source_track": 0,
+        "target_tick": 1920,
+        "target_track": 0
+      },
+      "first_destination_note": {
+        "tick": 1920,
+        "time_us": 168915,
+        "track": 0
+      },
+      "logical_sound_id": 80,
+      "mml_sha256": "113efa85ec5f6b07758d1df2172690893d1d83a4be1d7293f6029831ef339b39",
+      "name": "default",
+      "prefix": {
+        "duration_us": 168918,
+        "note_on_count": 0,
+        "sustained_voice_count": 0
+      },
+      "program_ranges": {
+        "50": {
+          "first": 38,
+          "last": 76,
+          "note_count": 19
+        },
+        "57": {
+          "first": 38,
+          "last": 88,
+          "note_count": 107
+        },
+        "73": {
+          "first": 74,
+          "last": 87,
+          "note_count": 55
+        },
+        "82": {
+          "first": 47,
+          "last": 54,
+          "note_count": 14
+        },
+        "92": {
+          "first": 55,
+          "last": 67,
+          "note_count": 43
+        }
+      },
+      "route": {
+        "kind": "default",
+        "value": 0
+      },
+      "route_identity": "803a27d55078c18841bda02966b51b9d0964b027456a7cbcbd6b5d89504cf29b",
+      "runtime_executes_source_branch": false,
+      "schema": "same_scumm_v5_compiled_route_audit_v1",
+      "section_end": {
+        "tick": 28795,
+        "time_us": 45565832,
+        "track": 0
+      },
+      "source_resource": "sound.80",
+      "source_sha256": "3692a73673d619461b6215bae731832752610c99c166bbbf5978beb30afd5ed0"
+    },
+    {
+      "audit_sha256": "8c40f9b70c91df334c921987d90884da4abd2e8bd2c0cff696a4898993d42033",
+      "consumed_branch": {
+        "source_tick": 90,
+        "source_track": 0,
+        "target_tick": 1920,
+        "target_track": 3
+      },
+      "first_destination_note": {
+        "tick": 1923,
+        "time_us": 155151,
+        "track": 3
+      },
+      "logical_sound_id": 80,
+      "mml_sha256": "d3e30d970f2a500cfd51e8154dde5f640a374cbd10df310f944de5775edb1c31",
+      "name": "hook14",
+      "prefix": {
+        "duration_us": 152026,
+        "note_on_count": 0,
+        "sustained_voice_count": 0
+      },
+      "program_ranges": {
+        "32": {
+          "first": 63,
+          "last": 64,
+          "note_count": 2
+        },
+        "33": {
+          "first": 49,
+          "last": 85,
+          "note_count": 34
+        },
+        "50": {
+          "first": 40,
+          "last": 54,
+          "note_count": 4
+        },
+        "57": {
+          "first": 49,
+          "last": 80,
+          "note_count": 59
+        },
+        "77": {
+          "first": 30,
+          "last": 56,
+          "note_count": 43
+        },
+        "82": {
+          "first": 47,
+          "last": 56,
+          "note_count": 8
+        }
+      },
+      "route": {
+        "kind": "hook",
+        "value": 14
+      },
+      "route_identity": "0d4222cb136d19c291a27371c7559a58c02bd72f627b5a43a50652d1ab16bcc1",
+      "runtime_executes_source_branch": false,
+      "schema": "same_scumm_v5_compiled_route_audit_v1",
+      "section_end": {
+        "tick": 21600,
+        "time_us": 20652026,
+        "track": 3
+      },
+      "source_resource": "sound.80",
+      "source_sha256": "3692a73673d619461b6215bae731832752610c99c166bbbf5978beb30afd5ed0"
+    }
+  ],
+  "schema": "same_fate_sound80_routes_v1",
+  "source_sha256": "3692a73673d619461b6215bae731832752610c99c166bbbf5978beb30afd5ed0"
+}

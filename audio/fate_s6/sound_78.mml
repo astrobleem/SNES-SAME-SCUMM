@@ -1,0 +1,23 @@
+#Title Fate demo sound 78
+#Game Indiana Jones and the Fate of Atlantis interactive demo
+#Author SAME zoned ROL conversion
+#Timer 64
+#ZenLen 192
+
+; Generated from canonical ROL event times at 125 TAD ticks/second.
+; Every program/range mapping is an explicit reviewed arrangement policy.
+@0 mt32_p88_cycle
+@1 mt32_p88_cycle_x2
+@2 mt32_p74_cycle
+@3 mt32_p74_cycle_x2
+@4 mt32_p74_cycle_x4
+@5 ph_bass
+@6 mt32_marimba
+@7 fate_tone
+
+A q0 r%751 @3 v2 o5 g+%33 r%2 g%32 r%31 v3 c%457 r%320 @0 v1 o3 c%58 r%23 v4 c%159 r%910 @3 v2 o5 g+%33 r%1 g%33 r%31 v3 c%457 r%18 @0 v2 o4 c+%356 r%82 c%40 r%39 v3 e%205 r%3 v2 g+%477 r%352 @3 o5 b%29 r%7 a%22 r%6 @0 o3 c%38 r%34 @3 v1 o5 g%37 r%48 g%163 r%95 @0 v2 o3 g+%1117 r%8 v1 g%338 r%213 @4 v3 o6 f%13 r%23 @3 v5 o5 g%12 r%18 v3 g+%10 r%23 @4 o6 d%12 r%20 @3 v4 o5 e%13 r%20 v3 f+%12 r%21 @4 o6 c%13 r%19 @3 v4 o5 d%17 r%409 @4 o6 f%11 r%22 @3 o5 g%13 r%18 v3 g+%12 r%22 @4 v4 o6 d%16 r%19 @3 v3 o5 e%15 r%16 f+%14 r%21 @4 v4 o6 c%14 r%21 @3 v3 o5 d%17 r%430 @0 v2 o3 d+%649 r%1457
+B q0 r%817 @3 v3 o5 e%31 r%34 @0 v2 o4 g+%37 v3 g%36 r%29 c%296 r%349 v1 o3 e%48 r%33 v2 e%157 r%975 @3 v3 o5 e%31 r%34 @0 v2 o2 g+%36 r%1 v3 g%36 r%29 c%296 r%46 v2 o4 g+%353 r%90 g%26 r%47 c%204 r%12 o3 g+%465 r%422 g%29 r%55 g%329 r%1 d+%1132 r%231 @3 o5 g%18 r%12 @4 v3 o6 g%282 r%1336 @0 v2 o2 g+%646 r%1459
+C q0 r%952 @0 v3 o4 e%32 r%244 v1 o3 e%303 r%99 g%46 r%35 v3 g%158 r%1108 o2 e%31 r%345 v1 o4 e%351 r%92 v3 e%27 r%44 g%213 r%422 @3 v2 o5 g%14 r%9 v4 b%17 r%430 @0 v1 o3 e%30 r%53 v3 c%323 r%8 v2 o2 g+%1135 r%238 @4 v3 o6 c+%21 r%1623 @0 v1 o3 g+%645 r%1452
+D q0 r%1231 @0 v2 o3 c+%306 r%322 v3 d+%298 r%1912 o4 d+%478 r%433 @3 v1 o5 g%24 r%52 @0 v2 o3 e%331 r%319 v4 o4 e%18 r%51 v3 e%22 g%275 r%107 g+%22 r%2 v4 g%287 r%2 v1 e%384 r%2161 v2 o3 c%1304 r%159
+E q0 r%1239 @0 v1 o3 g+%297 r%325 v2 o2 g+%296 r%2357 @3 v4 o5 a%14 r%10 @4 o6 c+%362 r%1170 @0 v2 o4 e%37 r%401 v1 o3 c%327 r%2204 v2 g%1300 r%161
+F q0 r%1862 @0 v4 o3 g+%299 r%8339

@@ -10,6 +10,7 @@ SAME_ENGINE_NONE       = $00
 SAME_ENGINE_DEMO       = $01
 SAME_ENGINE_SCUMM_V5   = $02
 SAME_ENGINE_AGI_V2     = $03
+SAME_ENGINE_QTMA_TEST  = $04
 
 SAME_ENGINE_CREATED    = $00
 SAME_ENGINE_PROBED     = $01
@@ -28,6 +29,7 @@ Same_Engine_Reset:
     sta.l SAME_ENGINE_LIFECYCLE
     lda #$00
     sta.l SAME_ENGINE_LAST_STATUS
+    sta.l SAME_ENGINE_FRAME_BUSY
     rep #$20
     .a16
     lda #$0000
@@ -112,13 +114,25 @@ Same_Engine_Frame:
     rts
 
 Same_Engine_Frame__running:
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_ENGINE_FRAME_BUSY
     rep #$30
     .a16
     .i16
     lda #$0000
     sta.l SAME_ENGINE_FRAME_OPS
     jsr Same_ActiveEngine_Frame
+    php
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_ENGINE_FRAME_BUSY
+    plp
     bcs Same_Engine_Frame__failed
+    rep #$20
+    .a16
     lda.l SAME_ENGINE_TOTAL_OPS
     clc
     adc.l SAME_ENGINE_FRAME_OPS

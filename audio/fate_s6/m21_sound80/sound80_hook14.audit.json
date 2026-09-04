@@ -1,0 +1,65 @@
+{
+  "consumed_branch": {
+    "source_tick": 90,
+    "source_track": 0,
+    "target_tick": 1920,
+    "target_track": 3
+  },
+  "first_destination_note": {
+    "tick": 1923,
+    "time_us": 155151,
+    "track": 3
+  },
+  "logical_sound_id": 80,
+  "prefix": {
+    "duration_us": 152026,
+    "note_on_count": 0,
+    "sustained_voice_count": 0
+  },
+  "program_ranges": {
+    "32": {
+      "first": 63,
+      "last": 64,
+      "note_count": 2
+    },
+    "33": {
+      "first": 49,
+      "last": 85,
+      "note_count": 34
+    },
+    "50": {
+      "first": 40,
+      "last": 54,
+      "note_count": 4
+    },
+    "57": {
+      "first": 49,
+      "last": 80,
+      "note_count": 59
+    },
+    "77": {
+      "first": 30,
+      "last": 56,
+      "note_count": 43
+    },
+    "82": {
+      "first": 47,
+      "last": 56,
+      "note_count": 8
+    }
+  },
+  "route": {
+    "kind": "hook",
+    "value": 14
+  },
+  "route_identity": "0d4222cb136d19c291a27371c7559a58c02bd72f627b5a43a50652d1ab16bcc1",
+  "runtime_executes_source_branch": false,
+  "schema": "same_scumm_v5_compiled_route_audit_v1",
+  "section_end": {
+    "tick": 21600,
+    "time_us": 20652026,
+    "track": 3
+  },
+  "source_resource": "sound.80",
+  "source_sha256": "3692a73673d619461b6215bae731832752610c99c166bbbf5978beb30afd5ed0"
+}

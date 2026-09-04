@@ -1,0 +1,13 @@
+#Title Fate audition 02 - marimba zones
+#Author SAME instrument audition
+#Timer 192
+#ZenLen 192
+
+@0 mt32_marimba
+
+; Round 2: the low source was rejected as floaty. Exercise the accepted main
+; source through its already-reviewed octave-2 range, then the actual Fate
+; program-13 A3-D4 range and a high arpeggio. There is no sample seam.
+A @0 o2 v6 c8 d e f g a b >c8 r8
+A o3 a8 b >c d <a b >c d r8
+A o4 c8 d e f g a b >c8 r8 <c8 e g >c r4

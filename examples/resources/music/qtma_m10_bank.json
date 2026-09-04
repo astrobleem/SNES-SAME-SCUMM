@@ -1,0 +1,9 @@
+{
+  "schema": "same_generated_instrument_bank_v1",
+  "name": "SAME M10 copyright-free QTMA proof bank",
+  "generator": "same_integer_waveforms_v1",
+  "instruments": [
+    {"name": "qtma_marimba", "kind": "decaying_triangle", "root_midi": 60},
+    {"name": "qtma_drum", "kind": "decaying_lfsr_noise", "root_midi": 36}
+  ]
+}

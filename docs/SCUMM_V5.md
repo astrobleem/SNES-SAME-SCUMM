@@ -230,13 +230,13 @@ save/load, malformed-state, and skip-abort coverage.
 
 S6 now has a bounded preflight against the redistributable Fate of Atlantis
 interactive demo. `examples/profiles/templates/fate_of_atlantis_demo.json`
-models embedded audio, costumes, all four accessible charsets, the original
+models embedded audio, costumes, all three readable charsets, the original
 320x200 coordinate space, and the demo-disabled save menu without adding a game
 branch to the opcode core. `make s6-preflight` verifies the exact archive,
-included redistribution notice, 10 rooms, 74 scripts, 28 sounds, 25 costumes,
-four charsets, logical pointer input, and a SAME save-state round trip.
+included redistribution notice, 10 rooms, 74 scripts, 27 readable sounds, 20
+costumes, three charsets, logical pointer input, and a SAME save-state round trip.
 
-This is not an S6 pass. The real boot script now crosses the C8 string workload,
+This remains an in-progress S6 gate. The real boot script now crosses the C8 string workload,
 both C9 variable ranges, and its first C10 `loadString(31, "iq-points")` while
 preserving the preallocated destination when the auxiliary file is absent. C11
 then produces 226 for the real maximum-255 random call, leaves generator state
@@ -252,9 +252,58 @@ saves `(160,8)`, centered and overhead, as slot-0 defaults through setup-only
 `$14`; the preflight also validates the real raw CHAR digit-three glyph. Boot
 crosses `$58 00` in callback script 21 at offset `$0004`, retires script 74 and
 the main boot script, and enters decoded raw room 75 on frame 524. Actor
-behavior and embedded-audio playback remain required before
-the reusable-engine claim is earned. The frontier evidence is
-`build/scumm-s6-fate-preflight/report.json`.
+placement now crosses C31/C32, C33 decodes costume 58's initial classic
+BYLE-RLE pose into a 7x7 logical actor image with an exact published hitbox,
+and C34 persistently advances its limb cursors with canonical speed timing.
+C35 applies the classic phase-table actor scales around the foot anchor.
+C36 decodes classic raw-room `ZPxx` strip masks and applies explicit actor
+`forceClip` occlusion; Fate room 42 plane 1 hides all 37 pixels of costume 58
+in the pinned proof. C37 decodes `BOXD` geometry and automatically selects that
+plane from walkbox 10 at the actor's foot position. C38 decodes `BOXM` and
+implements `$7B/$FB getActorWalkBox`. C39 implements all eight `$1E
+walkActorTo` forms, reverse-order destination snapping, shared-edge gates,
+scaled fixed-point stepping, movement facing and chores, `$56/$D6
+getActorMoving`, and `$3B/$BB waitForActor`. Save schema 5 restores complete
+in-flight routes. Fate room 42 traverses boxes `5→6→8→7→10` from `(44,80)` to
+`(200,110)` in the pinned proof. C40 strictly decodes the embedded `SOU` hardware
+renditions and their initial MIDI tracks, streams deterministic signed-16 PCM,
+implements `$7C/$FC isSoundRunning`, and restores embedded playheads under save
+schema 6. All 27 readable sounds decode; sound 172 supplies an audible exact
+WAV proof. C41 then decodes all of Fate's observed iMUSE branch commands across
+every MIDI track, proves a real hook jump and exact restore, and delivers a
+reviewed sound-172 arrangement through TAD on the S-SMP. C43 then adds a bounded
+ROL-to-zoned-MML converter and the complete 23-note sound-17 pad/flute cue. C44
+adds explicit cue-specific register policies and the complete 28-note,
+eight-voice sound-154 arrangement. C45 adds audited, deterministic reduction for
+over-capacity cues and the 29-retained-note sound-83 arrangement. C46 adds
+interval-based merging/ducking and retains all 25 notes of eleven-voice sound
+18. C47 adds the complete seven-note sound-185 marimba chord. C48 adds the
+complete split-register impact cues 190 and 192. The generic engine and
+production backend are therefore proven. C49 corrects the reviewed marimba
+ceiling and adds complete sounds 141/201/202/207. C50 adds chord-aware
+virtualization and all 110 attacks of sound 183. C51 adds complete rapid
+wide-register effects 91/117 without dropping an attack. C52 adds all 91 notes
+of the 84-second sound 78 and full-length DSP validation. C53 adds complete
+sound 81 with capacity-only identical-pitch sharing. C54 adds complete sound
+153 with attack-preserving orchestral virtualization. C55 remains under focused
+listener review after sound 150's rejection exposed discarded in-note CC7
+automation. The converter now preserves TAD fine-volume envelopes without
+retrigger, and a raw-event audit regenerated all five affected production cues:
+18, 83, 150, 154, and 192. The other fourteen contain no active-note CC7
+movement. S6 remains open until listener acceptance and the other 9 readable
+sounds have production SNES arrangements. Frontier evidence is in
+`build/scumm-s6-fate-preflight/report.json` and the hash-keyed
+`build/scumm-s6-tad-*/report.json`.
+
+M19 closes the first real-music runtime integration seam. A 32-byte
+copyright-free script executed by the SNES SCUMM dispatcher starts Monkey
+church sound 154 with `$02`, observes `$7C` running status, stops it with `$20`,
+observes stopped status, and restarts it. All three requests cross the ordinary
+SAME event/audio-service path; the logical-request debugger byte remains zero.
+SCUMM owns only the logical active sound used by its synchronous status opcode,
+while the catalog maps 154 to existing TAD song 26 below the engine boundary.
+One fresh emulator lifecycle proves stop-to-blank, restart, and the accepted
+57.303875-second DSP loop.
 
 `examples/resources/scumm_v5/boot.scrp` uses real opcode numbers. It starts music,
 loads room zero, increments variable 20, yields, and loops. The conformance profile
@@ -377,10 +426,13 @@ licensed and separable.
 
 - the complete opcode surface, enumerated from upstream semantics and exercised
   by independent fixtures (the local 65816 donor may suggest implementation);
-- actors, costumes, chores, scaling, objects, verbs, dialog, walkboxes, pathfinding,
+- route-gate traversal, actor movement, objects, verbs,
+  dialog, walkboxes, pathfinding,
   camera, room scripts, cutscenes, palettes, and resource routines;
 - a stable cooked-resource directory usable from ROM and MSU-1;
 - TAD/SPC music and SFX plus optional MSU-1 speech;
+- listener approval of the isolated Fate instrument/octave zones and complete
+  reviewed arrangements beyond sound 172;
 - complete save serialization;
 - a second game profile;
 - host/SNES differential fixtures for opcode and gameplay state.
@@ -388,3 +440,76 @@ licensed and separable.
 The acceptance criterion is not merely “Monkey Island still runs.” It is “the
 same SCUMM v5 module runs Monkey Island and another compatible profile through the
 same host services without engine-core edits.”
+
+## Bounded Fate compiled hooks
+
+M21 proves immediate hook-14 route selection before audible ownership with a
+bounded synthetic command fixture. M22 proves a delayed hook 8 while that route
+is already playing, also using a bounded synthetic command fixture. Neither is
+an authentic room-entry trace. The
+SCUMM layer retains logical cue generation, route history, one pending hook,
+section identity, and one-shot consumption only. A profile-generated section
+table maps those semantics to a compiled TAD boundary token and continuation;
+the generic `$4C` dispatcher does not name Fate, rooms, cue 80, hook 8, or TAD
+song numbers.
+
+M23A supplies the missing authentic-resource substrate without claiming that
+unsupported gameplay semantics executed. Complete Fate rooms 49 and 63 are
+cooked locally into profile-owned records; host and SNES resource providers
+validate and expose typed ENCD, EXCD, and LSCR descriptors with distinct source,
+cooked, normalized, and runtime offsets. Authentic validation stops with ENCD
+scheduled at PC zero and emits no music. A copyright-free fixture separately
+proves the generic old-EXCD, retirement, acquisition, activation, registration,
+new-ENCD, and room-local script lifecycle.
+
+M23B uses that substrate to execute the complete authentic room-49 ENCD from
+PC zero. A named, source-bound ordinary SCUMM state initializes bit 425 and the
+two IQ strings; no PC or branch result is supplied. Authentic global scripts
+144 and 145 run nested, including canonical `$A0` termination, before indexed
+bit 418 and sound 81/80 conditions reach the source `$4C` operations at
+`+0x004F`, `+0x0057`, and `+0x0065`. Start 80 and hook 14 are queued together
+and consumed by one flush. The accepted hook-14 compiled route then plays
+through SAME/TAD/SPC. A sound-81-running negative control takes the real skip
+branch and emits no sound-80 packet.
+
+M23C continues from that authentic room-49 ownership through the normal EXCD,
+retirement, resource-acquisition, registration, and ENCD lifecycle into room
+63. The complete authentic room-63 ENCD starts at PC zero. Canonical `$1D`
+class-list tests, global script 151's real delay/yield, sound-80/82 status, and
+the intervening conditional execute before the source queues `0x0110` and
+performs its later flush. The exact flushed list is hook 8 followed by iMUSE
+command 16 (`clear_queue`). Hook 8 then uses the already accepted M22 compiled
+boundary selector; no new live sequencer or transition graph was added.
+
+Canonical `$1D/$9D ifClassOfIs` uses the normal sparse 32-class object mask.
+Each direct/variable class selector is terminated by `0xFF`; bit 7 requires
+presence and an unflagged selector requires absence. All selectors must match,
+otherwise the normal signed relative branch is taken. Malformed class IDs or
+lists fail closed on host and SNES.
+
+M22 is not a general transition graph or live note sequencer. Its source audit
+binds one decision at track 3 tick 68160 to default continuation or the hook-8
+destination at track 3 tick 1920. Cold SCUMM load restarts the complete cue from
+its beginning with that saved eventual choice. It does not restore the musical
+tick or any live SPC/DSP state.
+
+## Authentic headless interpreter frontier
+
+Complete room-owned OBCD programs now share the canonical VERB lookup used by
+`getVerbEntrypoint`.  `$37/$77/$B7/$F7 startObject` decodes signed word
+varargs, allocates a generation-bound object slot, and executes it immediately
+through the existing nested interpreter.  Authentic object 596 verb 10 runs
+from OBCD `+$0029`; `chainScript(211)` retires and retypes that slot before
+LSCR 211 begins at PC zero. The historical frontier was LSCR 211 `+$026E`,
+`$B2 setCameraAt(Var[2])`; Phase 6L subsequently cleared it. See
+`M25_START_OBJECT_REPORT.md`.
+
+The room-49 path now includes canonical matrix box-flag mutation, actor
+placement, global object state, actor-facing conversion, timed headless actor
+talk, and the pure stored-walkbox query `$7B/$FB`. At LSCR 216 `+$0000`, actor
+1's authentic `putActor(399,116)` state supplies walkbox 11; the query writes
+11 to Var[442] without consulting geometry or mutating actor state. The local
+script then reaches its legitimate `breakHere` loop.
+
+That earlier room-63 LSCR-directory and scheduler boundary is retained in its
+milestone reports as historical evidence; it is no longer the active frontier.

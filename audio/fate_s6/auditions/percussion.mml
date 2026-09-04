@@ -1,0 +1,13 @@
+#Title Fate audition 06 - kick and snare
+#Author SAME instrument audition
+#Timer 192
+#ZenLen 192
+
+@0 mt32_drum_kick
+@1 mt32_drum_n38
+
+; Three velocity levels per isolated hit, then a deliberately simple beat.
+A @0 o2 v3 c4 r4 v5 c4 r4 v7 c4 r2
+A @1 o2 v3 c4 r4 v5 c4 r4 v7 c4 r2
+A @0 o2 v6 c4 r4 @1 c4 r4 @0 c4 @1 c4 @0 c4 r4 @1 c4 r4
+A @0 c4 r4 @1 c4 r4 @0 c4 @1 c4 @0 c4 r2

@@ -1,0 +1,31 @@
+{
+  "same_engine_profile": 1,
+  "engine": "scumm_v5",
+  "game": {
+    "id": "same-scumm-m25a-nested",
+    "title": "SAME M25A Nested Script Conformance",
+    "variant": "copyright-free-synthetic"
+  },
+  "timing": {
+    "tick_hz": 60,
+    "max_ops_per_tick": 4096
+  },
+  "video": {
+    "width": 256,
+    "height": 224,
+    "mode": "indexed8",
+    "logical_width": 320,
+    "logical_height": 200
+  },
+  "input": {"profile": "scumm"},
+  "capabilities": {
+    "required": ["indexed8_surface", "dirty_rects", "palette_256", "random_access_resources"],
+    "optional": []
+  },
+  "resources": [],
+  "options": {
+    "initial_room": 0,
+    "room_key_template": "room.{room}"
+  },
+  "quirks": {}
+}

@@ -1,0 +1,267 @@
+diff --git a/audio-driver/src/audio-driver.asm b/audio-driver/src/audio-driver.asm
+index 911af63..fc4d795 100644
+--- a/audio-driver/src/audio-driver.asm
++++ b/audio-driver/src/audio-driver.asm
+@@ -378,7 +378,6 @@ __EndZeropageClearAddr = nonShadow_sfx + 1
+     ; Cached SFX mutedChannels parameter for `process_channels`.
+     sfxMutedChannels : u8
+ 
+-
+ ; Channel variables that do not fit in zeropage
+ 
+     ; Delay before vibrato is applied to the current note (using `ticksAfterNote`).
+@@ -1102,6 +1101,43 @@ CommandFunctionTable_SIZE = CommandFunctionTableEnd - CommandFunctionTable
+ 
+ 
+ ; IN: Y = timer
++.proc cmd__same_layer_transition
++    cmp Y, #0
++    bne Request
++        mov A, DriverIO__PARAMETER_1_PORT
++        mov sameTransitionCurrentGeneration, A
++        mov A, #0
++        mov sameTransitionRequestPending, A
++        mov sameTransitionActive, A
++        mov sameTransitionTick, A
++        mov sameTransitionGroupBMask, A
++        mov sameTransitionStealIndex, A
++        mov sameTransitionLastEvent, A
++        mov sameTransitionRequestCount, A
++        mov sameTransitionStaleCount, A
++        mov sameTransitionStealCount, A
++        mov sameTransitionCompleteCount, A
++        mov A, #$ff
++        mov sameTransitionGroupAMask, A
++        mov sameTransitionGroupAGain, A
++        ret
++    Request:
++    cmp Y, #1
++    bne Return
++        mov A, DriverIO__PARAMETER_1_PORT
++        cmp A, sameTransitionCurrentGeneration
++        bne Stale
++            mov A, #1
++            mov sameTransitionRequestPending, A
++            ret
++    Stale:
++        inc sameTransitionStaleCount
++        mov CPUIO1, #$cf
++    Return:
++    ret
++.endproc
++
++
+ .proc cmd__set_song_timer
+     ; if (y > 0 && y < MIN_TICK_CLOCK) y = MIN_TICK_CLOCK
+     dec Y
+@@ -1479,6 +1515,10 @@ _PlaySfx_Return = sfx__both_channels_active.Return
+ .proc process_music_channels
+     incw songTickCounter
+ 
++    ; Observe requests at the driver tick boundary, independently of channel
++    ; countdown timers and bytecode instruction pointers.
++    call same_process_layer_transition
++
+     .assert page(pendingNon_music) != 0
+     mov A, pendingNon_music
+     mov nonShadow_music, A
+@@ -1527,6 +1567,139 @@ _PlaySfx_Return = sfx__both_channels_active.Return
+ .endproc
+ 
+ 
++; Synthetic M24R-A admission plan.  Incoming lanes are precompiled song
++; subroutines 0..4; this table only decides when and where they are admitted.
++; These writable bytes live in code-bank APURAM because TAD's existing
++; zero/first-page variable banks are intentionally left ABI-stable.
++sameTransitionCurrentGeneration: .db 0
++sameTransitionRequestPending: .db 0
++sameTransitionActive: .db 0
++sameTransitionTick: .db 0
++sameTransitionGroupAMask: .db 0
++sameTransitionGroupBMask: .db 0
++sameTransitionGroupAGain: .db 0
++sameTransitionStealIndex: .db 0
++sameTransitionRequestCount: .db 0
++sameTransitionStaleCount: .db 0
++sameTransitionStealCount: .db 0
++sameTransitionCompleteCount: .db 0
++sameTransitionLastEvent: .db 0
++sameTransitionAdmissionTicks:
++    .db 19, 38, 63, 94, 125
++sameTransitionAdmissionVoices:
++    .db 7, 6, 5, 4, 3
++SAME_TRANSITION_ADMISSION_COUNT = 5
++
++
++.proc same_process_layer_transition
++    mov A, sameTransitionRequestPending
++    beq NoRequest
++        mov A, #0
++        mov sameTransitionRequestPending, A
++        mov sameTransitionTick, A
++        mov sameTransitionStealIndex, A
++        mov sameTransitionGroupBMask, A
++        mov A, #1
++        mov sameTransitionActive, A
++        mov A, #$ff
++        mov sameTransitionGroupAMask, A
++        mov sameTransitionGroupAGain, A
++        inc sameTransitionRequestCount
++        mov A, #$10
++        mov sameTransitionLastEvent, A
++        mov CPUIO1, #$90
++        mov A, sameTransitionTick
++        mov CPUIO2, A
++    NoRequest:
++
++    mov A, sameTransitionActive
++    bne Active
++        ret
++    Active:
++
++    inc sameTransitionTick
++
++    ; One gain unit per 125 Hz tick: 255 ticks = 2.040 seconds.
++    mov A, sameTransitionGroupAGain
++    beq FadeComplete
++        dec sameTransitionGroupAGain
++        mov A, sameTransitionGroupAMask
++        or A, volShadowDirty_music
++        mov volShadowDirty_music, A
++
++    mov X, sameTransitionStealIndex
++    cmp X, #SAME_TRANSITION_ADMISSION_COUNT
++    bcs Return
++    mov A, sameTransitionTick
++    cmp A, sameTransitionAdmissionTicks + X
++    bne Return
++
++        ; Subroutine id equals this bounded schedule index.
++        mov zpTmp3, X
++        mov A, sameTransitionAdmissionVoices + X
++        mov X, A
++        mov A, ChannelVoiceBit + X
++        tclr1 sameTransitionGroupAMask
++        tset1 sameTransitionGroupBMask
++        tset1 keyOffShadow_music
++        tclr1 eonShadow_music
++        tclr1 pendingNon_music
++
++        ; Reset and redirect the existing channel interpreter.  No note data
++        ; or free-voice search is performed by this transition primitive.
++        mov A, #MAX_PAN / 2
++        call __reset_channel
++        mov Y, zpTmp3
++        mov A, [subroutineTable_l] + Y
++        clrc
++        adc A, songPtr.l
++        mov channelSoA_instructionPtr_l + X, A
++        mov A, [subroutineTable_h] + Y
++        adc A, songPtr.h
++        mov channelSoA_instructionPtr_h + X, A
++
++        inc sameTransitionStealIndex
++        inc sameTransitionStealCount
++        mov A, X
++        or A, #$20
++        mov sameTransitionLastEvent, A
++        or A, #$80
++        mov CPUIO1, A
++        mov A, sameTransitionTick
++        mov CPUIO2, A
++        ret
++
++    FadeComplete:
++        ; Remaining A streams reached zero.  Retire only them; B continues.
++        mov A, sameTransitionGroupAMask
++        tset1 keyOffShadow_music
++        mov Y, A
++        mov X, #0
++    DisableLoop:
++        mov A, Y
++        lsr A
++        mov Y, A
++        bcc KeepChannel
++            mov A, #0
++            mov channelSoA_instructionPtr_h + X, A
++        KeepChannel:
++        inc X
++        cmp X, #N_MUSIC_CHANNELS
++        bcc DisableLoop
++        mov A, #0
++        mov sameTransitionGroupAMask, A
++        mov sameTransitionActive, A
++        inc sameTransitionCompleteCount
++        mov A, #$3f
++        mov sameTransitionLastEvent, A
++        mov CPUIO1, #$bf
++        mov A, sameTransitionTick
++        mov CPUIO2, A
++    Return:
++    ret
++.endproc
++
++
+ .inline process_sfx_channels
+     .assert N_SFX_CHANNELS == 2
+     BOTH_SFX_ACTIVE = (1 << 7) | (1 << 6)
+@@ -2321,6 +2494,19 @@ Return:
+     NoMul:
+     ; Y = volume
+ 
++    ; Apply the bounded outgoing-group gain after authored/global volume and
++    ; before pan.  Stolen B voices are removed from the A mask first.
++    mov A, sameTransitionActive
++    beq NoSameGroupGain
++    mov A, ChannelVoiceBit + X
++    and A, sameTransitionGroupAMask
++    beq NoSameGroupGain
++        mov A, sameTransitionGroupAGain
++        cmp A, #$ff
++        beq NoSameGroupGain
++        mul YA
++    NoSameGroupGain:
++
+     ; Reading carry here saves a `SEC` instruction when calculating VOL_R
+     mov1 C, loaderDataType, LoaderDataType__STEREO_FLAG_BIT
+     bcs Stereo
+@@ -4809,4 +4995,3 @@ BcStackIndexesStart:
+ ValidLoopStackPointerTable:
+     .dbrepeat i in 0..N_CHANNELS, (i + 1) * BC_CHANNEL_STACK_SIZE + BC_CHANNEL_STACK_OFFSET - 3 + 1
+ .assert PC - ValidLoopStackPointerTable == N_CHANNELS
+-
+diff --git a/audio-driver/src/common-memmap.inc b/audio-driver/src/common-memmap.inc
+index 36b9f17..32462fa 100644
+--- a/audio-driver/src/common-memmap.inc
++++ b/audio-driver/src/common-memmap.inc
+@@ -45,7 +45,9 @@ LAST_VAR_PAGE_SIZE = (BC_CHANNEL_STACK_SIZE + 11) * 10
+ ; If this constant is modified, the following should also be updated:
+ ;   * The Tad_AudioDriver_SIZE assert in `ca65-api/tad-audio.s`
+ ;   * The Tad_AudioDriver_SIZE assert in `64tass-api/tad-process.inc`
+-COMMON_DATA_ADDR = $1100 - 24
++; SAME M24R-A reserves one additional 256-byte page for the bounded transition
++; code/state while retaining the common-data page-alignment invariant.
++COMMON_DATA_ADDR = $1200 - 24
+ 
+ ; `CODE_ADDR` MUST be an even address (The loader only works with even addresses)
+ CODE_ADDR = $200 + LOADER_SIZE
+@@ -81,4 +83,3 @@ CODE_END_ADDR = COMMON_DATA_ADDR - LAST_VAR_PAGE_SIZE
+     ;   Disadvantages: Stereo flag is not set until a song is loaded.
+     loaderDataType : u8
+ .endvars
+-
+diff --git a/audio-driver/src/io-commands.inc b/audio-driver/src/io-commands.inc
+index 05e1f91..5aea7d0 100644
+--- a/audio-driver/src/io-commands.inc
++++ b/audio-driver/src/io-commands.inc
+@@ -297,5 +297,9 @@ IoCommands__PAUSE = 0
+     ;
+     ; NOTE: Global volumes persist after a new song or common-audio-data is loaded.
+     cmd__set_global_volumes ; CMD 20
+-.endftdef
+ 
++    ; SAME M24R-A bounded asynchronous layer transition.
++    ; parameter0: 0 bind generation, 1 request transition
++    ; parameter1: generation identity
++    cmd__same_layer_transition ; CMD 22
++.endftdef

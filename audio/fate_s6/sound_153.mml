@@ -1,0 +1,69 @@
+#Title Fate demo sound 153
+#Game Indiana Jones and the Fate of Atlantis interactive demo
+#Author SAME zoned ROL conversion
+#Timer 64
+#ZenLen 192
+
+; Generated from canonical ROL event times at 125 TAD ticks/second.
+; Every program/range mapping is an explicit reviewed arrangement policy.
+; Voice virtualization policy: merge-sustained-identical-then-protect-outer-strongest.
+; DUCK program 50 MIDI 67 at 2.896s for 0.672s; RESTORE at 3.568s.
+; MERGE program 32 MIDI 48 into program 36 at 2.896s for 1.344s.
+; DUCK program 97 MIDI 76 at 2.912s for 1.328s; source note ends here.
+; DUCK program 32 MIDI 64 at 2.928s for 0.640s; RESTORE at 3.568s.
+; DUCK program 97 MIDI 84 at 3.568s for 0.656s; RESTORE at 4.224s.
+; MERGE program 32 MIDI 48 into program 36 at 5.024s for 0.496s.
+; MERGE program 32 MIDI 64 into program 92 at 5.024s for 0.480s.
+; MERGE program 32 MIDI 48 into program 36 at 5.536s for 0.176s.
+; DUCK program 50 MIDI 67 at 5.552s for 0.128s; RESTORE at 5.680s.
+; MERGE program 32 MIDI 48 into program 36 at 5.744s for 1.968s.
+; MERGE program 50 MIDI 67 into program 92 at 5.744s for 0.144s.
+; MERGE program 36 MIDI 60 into program 92 at 5.792s for 0.160s.
+; MERGE program 32 MIDI 64 into program 92 at 6.080s for 1.632s.
+; MERGE program 32 MIDI 72 into program 92 at 6.080s for 1.104s.
+; MERGE program 32 MIDI 72 into program 36 at 7.184s for 0.528s.
+; MERGE program 32 MIDI 72 into program 92 at 7.712s for 0.080s.
+; MERGE program 36 MIDI 72 into program 92 at 7.712s for 0.080s.
+; MERGE program 36 MIDI 72 into program 32 at 7.792s for 0.592s.
+; MERGE program 32 MIDI 48 into program 36 at 7.824s for 0.016s.
+; MERGE program 32 MIDI 48 into program 36 at 7.856s for 0.512s.
+; MERGE program 50 MIDI 55 into program 92 at 7.856s for 0.512s.
+; MERGE program 36 MIDI 72 into program 32 at 8.400s for 0.112s.
+; MERGE program 32 MIDI 48 into program 36 at 8.416s for 0.128s.
+; DUCK program 32 MIDI 43 at 8.592s for 0.016s; RESTORE at 8.608s.
+; DUCK program 32 MIDI 72 at 8.608s for 0.016s; source note ends here.
+; MERGE program 50 MIDI 65 into program 32 at 8.608s for 0.016s.
+; MERGE program 92 MIDI 65 into program 32 at 8.608s for 0.016s.
+; MERGE program 32 MIDI 65 into program 92 at 8.624s for 4.224s.
+; MERGE program 50 MIDI 65 into program 92 at 8.624s for 1.344s.
+; MERGE program 92 MIDI 62 into program 50 at 10.000s for 1.280s.
+; MERGE program 50 MIDI 62 into program 36 at 11.424s for 0.048s.
+; MERGE program 92 MIDI 62 into program 36 at 11.424s for 0.048s.
+; MERGE program 36 MIDI 62 into program 92 at 11.472s for 1.360s.
+; MERGE program 32 MIDI 65 into program 36 at 12.848s for 0.144s.
+; MERGE program 92 MIDI 65 into program 36 at 12.848s for 0.144s.
+; DUCK program 50 MIDI 55 at 12.992s for 1.152s; RESTORE at 14.144s.
+; MERGE program 32 MIDI 65 into program 92 at 12.992s for 1.312s.
+; MERGE program 36 MIDI 65 into program 92 at 12.992s for 1.312s.
+; DUCK program 97 MIDI 79 at 13.056s for 1.200s; RESTORE at 14.256s.
+; DUCK program 97 MIDI 79 at 14.272s for 0.112s; source note ends here.
+; DUCK program 50 MIDI 50 at 14.304s for 0.032s; RESTORE at 14.336s.
+; MERGE program 32 MIDI 65 into program 36 at 14.304s for 0.032s.
+; Timing uses TAD's two-tick minimum key-off quantum.
+@0 mt32_p88_cycle
+@1 mt32_p88_cycle_x2
+@2 mt32_p74_cycle
+@3 mt32_p74_cycle_x2
+@4 mt32_p74_cycle_x4
+@5 ph_bass
+@6 mt32_marimba
+@7 fate_tone
+
+A q0 r%354 @5 v2 o2 c%356 @0 v1 o4 g%8 v2 c%6 @5 v1 o2 c%350 @0 v4 o4 d%176 v1 d%178 o3 a%90 g%106 v4 o4 f%164 v3 f%626 r%86 v1 o3 g%98 r%168 g%746 r%59
+B q0 r%358 @0 v1 o2 c%3146 r%67
+C q0 r%358 @6 v1 o2 a+%88 @0 o4 e%182 v3 o3 c%62 @5 v1 c%2 @0 v4 g%22 @5 v1 c%4 @0 v5 o4 c%26 v2 c%154 @1 v1 o5 c%66 @5 o3 c%14 @0 g%4 v4 g%66 @1 v1 o5 c%2 @0 v6 o4 e%18 @5 v1 o3 c%2 r%2 o2 g%2 @0 v2 o4 f%2 @5 v1 o2 g%2480 r%15
+D q0 r%358 @5 v1 o3 c%4 @0 o4 e%4 @4 o6 c%80 @0 o4 g%248 v7 f%20 r%2 g%20 v1 g%244 @5 o3 c%2 @0 v4 o4 d%64 @5 v1 o3 c%6 @0 v3 o4 c%20 r%2 v4 f%2 v1 f%2 v4 f%528 v3 f%18 @3 v1 o5 g%8 @4 o6 g%176 r%158 @0 o3 g%174 r%80 c%198 r%84 @5 d%356 r%2 g%622 r%89
+E q0 r%358 @5 v2 o3 c%1434 @0 v1 d%176 r%168 g+%90 r%96 @5 o2 g%296 r%953
+F q0 r%358 @1 v1 o5 c%402 @0 v4 o4 e%204 v1 e%82 o3 g%26 r%2 v2 o4 g%336 v4 d%18 v2 d%6 v4 d%334 v1 o3 g%38 r%330 o4 g%1078 r%357
+G q0 r%360 @0 v1 o4 g%2 @3 o5 e%2 @5 o1 c%1418 @3 o5 g%2 @0 o3 d%4 v2 o4 a%356 r%268 v1 o3 g+%94 r%82 o2 b%196 r%787
+H q0 r%362 @7 v1 o7 c%166 @4 o6 c%2 @5 o3 c%98 @0 v6 o4 e%60 v1 e%72 @1 v5 o5 c%214 v1 c%102 d%730 r%1765

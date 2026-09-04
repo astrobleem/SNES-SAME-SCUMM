@@ -1,0 +1,101 @@
+{
+  "schema": "same_instrument_bank_v1",
+  "name": "Fate sound 154 reviewed SCUMM v5 AdLib zones",
+  "source_device": "scumm_v5_adlib",
+  "capture_velocity": 100,
+  "capture_cc7": 127,
+  "reference_volume": 96,
+  "zones": [
+    {
+      "name": "fate154_ch1_low", "patch": 1,
+      "patch_sha256": "0543d2c6c2699bbac208aed3048ba78ce6aa155e6759dac0f7607f48d6e6bc88",
+      "sample_resource": "audio/fate_s6/samples/fate154_ch1_low.wav",
+      "scale_note_index": 0, "frequency": 65.406391,
+      "first_octave": 2, "last_octave": 2,
+      "root_pitch": 36, "first_pitch": 36, "last_pitch": 47,
+      "note_step_frames": 56448, "window_loop_start": 896,
+      "loop_point": 256, "loop_samples": 3616, "source_samples": 3872,
+      "seam_score": 0.01484021,
+      "sha256": "49f2c6f9dcd7624798cd1598cae37d9986f39543739ea17068027c9206594bfb",
+      "review_status": "accepted"
+    },
+    {
+      "name": "fate154_ch1_high", "patch": 1,
+      "patch_sha256": "0543d2c6c2699bbac208aed3048ba78ce6aa155e6759dac0f7607f48d6e6bc88",
+      "sample_resource": "audio/fate_s6/samples/fate154_ch1_high.wav",
+      "scale_note_index": 3, "frequency": 523.251131,
+      "first_octave": 4, "last_octave": 5,
+      "root_pitch": 72, "first_pitch": 60, "last_pitch": 83,
+      "note_step_frames": 56448, "window_loop_start": 3232,
+      "loop_point": 256, "loop_samples": 2960, "source_samples": 3216,
+      "seam_score": 0.09628348,
+      "sha256": "c46d0020077ff8803477a97284edc6a09c8e64a484a3d493a6b557425a4baa7e",
+      "review_status": "accepted"
+    },
+    {
+      "name": "fate154_ch2_mid", "patch": 2,
+      "patch_sha256": "21f74b21dfac4f08e5cf9e4efb9506b8ec12bb74cf3fe69667283d9f8b9c7557",
+      "sample_resource": "audio/fate_s6/samples/fate154_ch2_mid.wav",
+      "scale_note_index": 2, "frequency": 261.625565,
+      "first_octave": 3, "last_octave": 4,
+      "root_pitch": 60, "first_pitch": 48, "last_pitch": 71,
+      "note_step_frames": 56448, "window_loop_start": 5984,
+      "loop_point": 256, "loop_samples": 2096, "source_samples": 2352,
+      "seam_score": 0.02250769,
+      "sha256": "77c99efdfe384219d00ca303ef8ecb7e947fbf2b156e830baa883659195e71ed",
+      "review_status": "accepted"
+    },
+    {
+      "name": "fate154_ch4_mid", "patch": 3,
+      "patch_sha256": "67822b2c47061b4620e1012fea21d25a807fc40d074a71576bad8f66eeb3b23d",
+      "sample_resource": "audio/fate_s6/samples/fate154_ch4_mid.wav",
+      "scale_note_index": 2, "frequency": 261.625565,
+      "first_octave": 3, "last_octave": 4,
+      "root_pitch": 60, "first_pitch": 48, "last_pitch": 71,
+      "note_step_frames": 56448, "window_loop_start": 5584,
+      "loop_point": 256, "loop_samples": 2592, "source_samples": 2848,
+      "seam_score": 0.08730713,
+      "sha256": "3204140f7ec4574a7e6162f4daff871da09c214d67b3dbc2b285d8efa49aa93b",
+      "review_status": "accepted"
+    },
+    {
+      "name": "fate154_ch5_high", "patch": 4,
+      "patch_sha256": "1a4af4c3c1c82fba550e057dbad87e3f2f3c5a1f5fc09d9bda86bd259270aa29",
+      "sample_resource": "audio/fate_s6/samples/fate154_ch5_high.wav",
+      "scale_note_index": 4, "frequency": 1046.502261,
+      "first_octave": 5, "last_octave": 6,
+      "root_pitch": 84, "first_pitch": 72, "last_pitch": 95,
+      "note_step_frames": 56448, "window_loop_start": 4976,
+      "loop_point": 256, "loop_samples": 2096, "source_samples": 2352,
+      "seam_score": 0.03131136,
+      "sha256": "a9d3ce073f1f59afce93eba2f37a7b08eed3f63bb727cd28543ef42ff8279fb3",
+      "review_status": "accepted"
+    },
+    {
+      "name": "fate154_ch6_low", "patch": 5,
+      "patch_sha256": "30befa64a38c51d5dc4e87a8e522f0a7b30d4024f287649c0c00d14028787e08",
+      "sample_resource": "audio/fate_s6/samples/fate154_ch6_low.wav",
+      "scale_note_index": 1, "frequency": 130.812783,
+      "first_octave": 2, "last_octave": 2,
+      "root_pitch": 48, "first_pitch": 36, "last_pitch": 47,
+      "note_step_frames": 56448, "window_loop_start": 6272,
+      "loop_point": 256, "loop_samples": 3968, "source_samples": 4224,
+      "seam_score": 0.01165836,
+      "sha256": "03ee835e35a9ee2327e9e5ca894fefeb9fa9036eb8d23925668dddc72e985a16",
+      "review_status": "accepted"
+    },
+    {
+      "name": "fate154_ch6_high", "patch": 5,
+      "patch_sha256": "30befa64a38c51d5dc4e87a8e522f0a7b30d4024f287649c0c00d14028787e08",
+      "sample_resource": "audio/fate_s6/samples/fate154_ch6_high.wav",
+      "scale_note_index": 3, "frequency": 523.251131,
+      "first_octave": 4, "last_octave": 5,
+      "root_pitch": 72, "first_pitch": 60, "last_pitch": 83,
+      "note_step_frames": 56448, "window_loop_start": 2592,
+      "loop_point": 256, "loop_samples": 3824, "source_samples": 4080,
+      "seam_score": 0.0253763,
+      "sha256": "3b895ca9a2d724d3bf8312871ead22e5a1719fa195ea1ab528e4fd537f030bfa",
+      "review_status": "accepted"
+    }
+  ]
+}

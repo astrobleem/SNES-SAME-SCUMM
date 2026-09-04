@@ -293,6 +293,7 @@ class ScummV5VideoAdapter:
         self.accelerators: tuple[str, ...] = ()
         self.plan: dict[str, int] = {}
         self._projection = (0, 0, 0, 0, 0, 0)
+        self.composition_surface: IndexedSurface | None = None
 
     def _draw_actor(self, surface: IndexedSurface, scene: ScummScene, actor: SceneActor) -> None:
         for source_y in range(actor.height):
@@ -357,16 +358,8 @@ class ScummV5VideoAdapter:
                 tiles.add(bytes(tile))
         return len(tiles)
 
-    def render(self, scene_key: str, *, cursor_key: str | None = None) -> str:
-        scene = decode_scene(self.context.services.resource_read(scene_key), key=scene_key)
-        expected_width = self.context.profile.video.logical_width or self.context.profile.video.width
-        expected_height = self.context.profile.video.logical_height or self.context.profile.video.height
-        if (scene.width, scene.height) != (expected_width, expected_height):
-            raise ResourceError(
-                f"SCUMM scene {scene_key!r} is {scene.width}x{scene.height}; "
-                f"profile logical surface is {expected_width}x{expected_height}"
-            )
-        surface = IndexedSurface(scene.width, scene.height)
+    def _compose_scene(self, surface: IndexedSurface, scene: ScummScene) -> int:
+        """Rebuild the immutable synthetic scene below runtime text."""
         surface.set_palette(0, scene.palette)
         surface.pixels[:] = scene.background
         for actor in sorted(scene.actors, key=lambda item: item.priority):
@@ -381,8 +374,19 @@ class ScummV5VideoAdapter:
                 )
                 fonts[text.font_key] = font
             glyph_count += self._draw_text(surface, text, font)
-        surface.mark_dirty(Rect(0, 0, scene.width, scene.height))
+        return glyph_count
 
+    def render(self, scene_key: str, *, cursor_key: str | None = None) -> str:
+        scene = decode_scene(self.context.services.resource_read(scene_key), key=scene_key)
+        expected_width = self.context.profile.video.logical_width or self.context.profile.video.width
+        expected_height = self.context.profile.video.logical_height or self.context.profile.video.height
+        if (scene.width, scene.height) != (expected_width, expected_height):
+            raise ResourceError(
+                f"SCUMM scene {scene_key!r} is {scene.width}x{scene.height}; "
+                f"profile logical surface is {expected_width}x{expected_height}"
+            )
+        surface = IndexedSurface(scene.width, scene.height)
+        glyph_count = self._compose_scene(surface, scene)
         selected = self.context.negotiated_capabilities & _ACCELERATORS
         self.accelerators = capability_names(selected)
         self.mode = "accelerated" if selected else "baseline"
@@ -397,7 +401,7 @@ class ScummV5VideoAdapter:
         self.logical_surface = surface
         self.scene = scene
         self.logical_sha256 = surface.hash()
-        self._project()
+        self.project()
 
         if cursor_key is not None:
             width, height, hotspot_x, hotspot_y, transparent, pixels = decode_cursor(
@@ -414,29 +418,27 @@ class ScummV5VideoAdapter:
         self.context.services.debug.marker("scumm_v5.scene", int(self.logical_sha256[:8], 16))
         return self.logical_sha256
 
-    def _project(self) -> None:
+    def recompose(self) -> None:
+        """Restore the decoded scene below engine-owned runtime text."""
+        if self.scene is None or self.logical_surface is None:
+            raise ResourceError("SCUMM scene cannot recompose before it is rendered")
+        self._compose_scene(self.logical_surface, self.scene)
+        self.logical_sha256 = self.logical_surface.hash()
+
+    def project(self) -> None:
         assert self.scene is not None and self.logical_surface is not None
-        target = self.context.services.video.surface
+        video = self.context.services.video
+        target = video.surface
         scene = self.scene
         width = min(target.width, scene.width - scene.viewport_x)
         height = min(target.height, scene.height - scene.viewport_y)
         destination_x = max(0, (target.width - width) // 2)
         destination_y = max(0, (target.height - height) // 2)
-        target.fill(0)
-        target.set_palette(0, scene.palette)
-        cropped = b"".join(
-            self.logical_surface.pixels[
-                (scene.viewport_y + row) * scene.width
-                + scene.viewport_x : (scene.viewport_y + row) * scene.width
-                + scene.viewport_x
-                + width
-            ]
-            for row in range(height)
-        )
-        target.blit(
-            cropped,
-            source_width=width,
-            source_height=height,
+        video.fill(0)
+        video.set_palette(0, scene.palette)
+        video.blit_surface(
+            self.logical_surface,
+            source_rect=Rect(scene.viewport_x, scene.viewport_y, width, height),
             x=destination_x,
             y=destination_y,
         )
@@ -448,6 +450,39 @@ class ScummV5VideoAdapter:
             width,
             height,
         )
+        self.logical_sha256 = self.logical_surface.hash()
+
+    def prepare_composition(self) -> IndexedSurface:
+        """Build the screen-relative logical frame below runtime overlays."""
+        assert self.scene is not None and self.logical_surface is not None
+        video = self.context.services.video
+        target = video.surface
+        scene = self.scene
+        width = min(target.width, scene.width - scene.viewport_x)
+        height = min(target.height, scene.height - scene.viewport_y)
+        destination_x = max(0, (target.width - width) // 2)
+        destination_y = max(0, (target.height - height) // 2)
+        surface = self.composition_surface
+        if surface is None or (surface.width, surface.height) != (target.width, target.height):
+            surface = IndexedSurface(target.width, target.height)
+            self.composition_surface = surface
+        surface.fill(0)
+        surface.set_palette(0, scene.palette)
+        surface.blit_surface(
+            self.logical_surface,
+            source_rect=Rect(scene.viewport_x, scene.viewport_y, width, height),
+            x=destination_x,
+            y=destination_y,
+        )
+        return surface
+
+    def project_composition(self) -> None:
+        """Project the already composed logical-screen frame once."""
+        assert self.scene is not None and self.composition_surface is not None
+        video = self.context.services.video
+        video.fill(0)
+        video.set_palette(0, self.scene.palette)
+        video.blit_surface(self.composition_surface)
 
     def move_cursor(self, logical_x: int, logical_y: int) -> None:
         source_x, source_y, destination_x, destination_y, width, height = self._projection

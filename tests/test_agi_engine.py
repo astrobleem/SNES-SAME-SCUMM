@@ -12,6 +12,7 @@ from same.errors import EngineExecutionError, SaveFormatError
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
 from same.services import HostServices
+from same.video import Rect
 
 ROOT = Path(__file__).resolve().parents[1]
 PICTURE = (ROOT / "examples/resources/agi/picture0.agip").read_bytes()
@@ -57,6 +58,13 @@ class AgiEngineTests(unittest.TestCase):
         state = host.engine.inspect_state()
         self.assertEqual(state["variables"], {"1": 7, "2": 10})
         self.assertEqual(state["flags"], [5])
+
+    def test_picture_projection_uses_ordered_display_invalidation(self) -> None:
+        host = self._host(bytes((0x00,)))
+        width = host.services.video.surface.width
+        height = host.services.video.surface.height
+        full = Rect(0, 0, width, height)
+        self.assertEqual(host.services.video._dirty.rects, (full, full, full))
 
     def test_corrupt_save_payload_fails_closed(self) -> None:
         host = self._host(bytes([0x00]))

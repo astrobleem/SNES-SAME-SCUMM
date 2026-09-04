@@ -1,0 +1,62 @@
+[
+  {
+    "output": "mt32_organ_cycle.wav",
+    "source": "mt32_organ.wav",
+    "source_sha256": "f3da09a70ea6eb4adf7aaa85d7bc376445c484619204c775fac408ac5e5f84da",
+    "source_loop_start": 4800,
+    "source_cycles_averaged": 72,
+    "period_samples": 96,
+    "frequency": 333.333333,
+    "sha256": "611925f99b15a6ab5f957d76b57a696d21d2d19b188f2cb62799e19377d08e7d"
+  },
+  {
+    "output": "mt32_p74_cycle.wav",
+    "source": "mt32_p74_low.wav",
+    "source_sha256": "d3e2ae8c9603960d081e9a7faa16680193a899a32f451d22cd8f1f71388dccbf",
+    "source_loop_start": 3200,
+    "source_cycles_averaged": 8,
+    "period_samples": 192,
+    "frequency": 166.666667,
+    "sha256": "6300ac1f74b88259e9f7a45e909d543f28f0193084917d4ee8dd6a40bd48b883"
+  },
+  {
+    "output": "mt32_p74_cycle_x2.wav",
+    "source": "mt32_p74_low.wav",
+    "source_sha256": "d3e2ae8c9603960d081e9a7faa16680193a899a32f451d22cd8f1f71388dccbf",
+    "source_loop_start": 3200,
+    "source_cycles_averaged": 8,
+    "period_samples": 96,
+    "frequency": 333.333333,
+    "sha256": "fc7d29783acea7a6298e110b92c6c017735ec6ff7fe8f8716316f5cbf8c5f109"
+  },
+  {
+    "output": "mt32_p74_cycle_x4.wav",
+    "source": "mt32_p74_low.wav",
+    "source_sha256": "d3e2ae8c9603960d081e9a7faa16680193a899a32f451d22cd8f1f71388dccbf",
+    "source_loop_start": 3200,
+    "source_cycles_averaged": 8,
+    "period_samples": 48,
+    "frequency": 666.666667,
+    "sha256": "3b264692dccd3da63bb03bc4de06a04cd601925190edad8d8364460c2f1958d4"
+  },
+  {
+    "output": "mt32_p88_cycle.wav",
+    "source": "mt32_p88.wav",
+    "source_sha256": "26d24605e1848483e3d8cccaf3320836b3c06fe15b25f273ab1d2edad6d013eb",
+    "source_loop_start": 3840,
+    "source_cycles_averaged": 39,
+    "period_samples": 64,
+    "frequency": 500.0,
+    "sha256": "46f9898214a712228ed046e230bce8b2d5b67d34007857ed83e80b8a88261920"
+  },
+  {
+    "output": "mt32_p88_cycle_x2.wav",
+    "source": "mt32_p88.wav",
+    "source_sha256": "26d24605e1848483e3d8cccaf3320836b3c06fe15b25f273ab1d2edad6d013eb",
+    "source_loop_start": 3840,
+    "source_cycles_averaged": 39,
+    "period_samples": 32,
+    "frequency": 1000.0,
+    "sha256": "2fb5861e6b6b182fe2e39a55c223c4827c2dab37d2a6db61644039ec25429483"
+  }
+]

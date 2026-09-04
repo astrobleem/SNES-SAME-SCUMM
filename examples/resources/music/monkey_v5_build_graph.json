@@ -1,0 +1,59 @@
+{
+  "schema": "same_music_build_graph_v1",
+  "name": "Monkey v5 M7 reviewed TAD graph",
+  "profile": "monkey1-ultimate-talkie",
+  "adapter": "scumm_v5_archive_v1",
+  "time_scale": 125,
+  "project_output": "monkey-m7.terrificaudio",
+  "catalog_template": "monkey-catalog",
+  "dependencies": [
+    {
+      "name": "monkey-catalog",
+      "path": "examples/resources/music/monkey_v5_compiled.json",
+      "sha256": "0859072807c14312901d6b4e60733ffb8e6f15fec57a6b046b9f05be3b0e8792"
+    },
+    {
+      "name": "fate-project",
+      "path": "audio/fate_s6/fate.terrificaudio",
+      "sha256": "0052a3cde3d835c56e5c5d964c3d7b1e7723c81c6685e03b86fe4f2489910dd8"
+    },
+    {
+      "name": "monkey-organ-bank",
+      "path": "audio/monkey_v5/monkey154_church_bank.json",
+      "sha256": "f09963eda43734b174d77241489a62a53b181a5b5e4a0f853b046518edcda8a5"
+    },
+    {
+      "name": "monkey-organ-low-sample",
+      "path": "audio/fate_s6/samples/mt32_p13_low.wav",
+      "sha256": "b07c086a484f91e488ce5dedd4f118a54d83b60c652ed0c377d8b69fd940e4d7"
+    },
+    {
+      "name": "monkey-organ-main-sample",
+      "path": "audio/fate_s6/samples/mt32_p13.wav",
+      "sha256": "101b8549d1b5cba8f503a8bdecc630c825eee44edc4497465415275690e5030e"
+    }
+  ],
+  "renditions": [
+    {
+      "logical_id": 154,
+      "source_resource": "sound.154",
+      "source_sha256": "dd5af48a6626fe50a31fe10ef1850a9c178d84ecdd505f937f49ba8afbb0325b",
+      "importer": "scumm_v5_adlib_generic_v1",
+      "source_device": "scumm_v5_adlib_v1",
+      "bank": "monkey-organ-bank",
+      "target": "terrific_audio_driver_mml_v1",
+      "policy": {
+        "author": "SAME M5 generic sampled backend",
+        "pan": "stereo_cc10",
+        "title": "Monkey v5 church generic sampled arrangement",
+        "voice_limit": 8
+      },
+      "output": "monkey_sound_154.mml",
+      "mml_sha256": "3781ebf57a3cacb4a8f9ffaa835642213b364f240d1595453f03fb75eda410de",
+      "compiled_song": "monkey_m5_church",
+      "compiled_song_id": 26,
+      "duration": 7174,
+      "loop": [2, 7174]
+    }
+  ]
+}

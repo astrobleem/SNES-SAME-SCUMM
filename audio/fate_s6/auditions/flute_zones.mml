@@ -1,0 +1,16 @@
+#Title Fate audition 03 - flute zones
+#Author SAME instrument audition
+#Timer 192
+#ZenLen 192
+
+@0 mt32_p74_cycle
+@1 mt32_p74_cycle_x2
+@2 mt32_p74_cycle_x4
+
+; Round 5: low/mid/high exact-period wavetables now use filter-reset BRR loops.
+; Sustain first, then test seams after removing predictor-state drift.
+A @0 o3 v5 g2 r4 o4 d+2 r4
+A @0 o4 d+16 @1 e16 @0 d+16 @1 e16 @0 d+16 @1 e16 r8
+A @1 o4 a2 r4 o5 b2 r4
+A @1 o5 b16 @2 o6 c16 @1 o5 b16 @2 o6 c16 @1 o5 b16 @2 o6 c16 r8
+A @2 o6 c2 r4 g2 r4

@@ -1,0 +1,11 @@
+#Title Fate demo sound 172
+#Game Indiana Jones and the Fate of Atlantis interactive demo
+#Author SAME conversion proof
+#Timer 256
+
+; The source event is MIDI note 104 from tick 25 through tick 505 at PPQN 480.
+; This compact SPC arrangement preserves the delayed attack and half-second
+; running interval; richer instrumentation belongs in later reviewed renditions.
+@0 fate_tone
+
+A @0 o7 v6 r%2 g+%12

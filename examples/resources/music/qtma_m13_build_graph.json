@@ -1,0 +1,56 @@
+{
+  "schema": "same_music_build_graph_v1",
+  "name": "SAME copyright-free QTMA MOV M13 graph",
+  "profile": "same-qtma-mov-conformance",
+  "adapter": "qtma_mov_musi_v1",
+  "time_scale": 125,
+  "project_output": "qtma-m13.terrificaudio",
+  "catalog_template": "qtma-catalog",
+  "dependencies": [
+    {
+      "name": "qtma-catalog",
+      "path": "examples/resources/music/qtma_m13_compiled.json",
+      "sha256": "b555cb2bf38f4f447fdb032c4f3e7dea09fe1910d8f1b16d1f8f562c7d4ff2a1"
+    },
+    {
+      "name": "qtma-movie",
+      "path": "examples/resources/music/qtma_m13_movie.hex",
+      "sha256": "113dcd7865dee9c0cdd22a51ef57df537b1a49ed7c0e44b348218de3e3568250"
+    },
+    {
+      "name": "qtma-generated-bank",
+      "path": "examples/resources/music/qtma_m10_bank.json",
+      "sha256": "faa1ec06857c9f67347f01fe1be6f91b6ab1e93f9081019cf9884155f0f5bbbf"
+    }
+  ],
+  "renditions": [
+    {
+      "logical_id": 1,
+      "source_resource": "qtma.movie.m13",
+      "source_sha256": "feb16d388acb55624f53b2dec2e8d76393ce1b5381b1f3d8880e23c74fe78ae1",
+      "importer": "qtma_mov_musi_v1",
+      "source_device": "qtma_gm_note_request_v1",
+      "bank": "qtma-generated-bank",
+      "target": "terrific_audio_driver_mml_v1",
+      "policy": {
+        "author": "SAME M10 generic QTMA adapter",
+        "movie_dependency": "qtma-movie",
+        "music_track": 0,
+        "pan": "stereo_cc10",
+        "source_time_scale": 125,
+        "sustain": "encoded_note_lifetimes",
+        "time_normalization": "exact",
+        "title": "SAME QTMA conformance score",
+        "voice_limit": 8
+      },
+      "output": "qtma_conformance.mml",
+      "mml_sha256": "3ba893a7735391182d1fd353ce7ced491b0962e10570228ef3e26452bc78a68e",
+      "audit_output": "qtma_conformance.audit.json",
+      "audit_sha256": "d5515a65442e7c70d8137546b401a0ac187df59dc0b45ab920dbf765340bd37e",
+      "compiled_song": "qtma_conformance",
+      "compiled_song_id": 1,
+      "duration": 600,
+      "loop": null
+    }
+  ]
+}

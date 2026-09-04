@@ -138,6 +138,7 @@ def main() -> int:
         r"^\s*([A-Za-z][A-Za-z0-9]*)(?:\.(l|w|b))?\s+(.+?)\s*$",
         re.IGNORECASE,
     )
+    operand_symbols = re.compile(r"\bSAME_[A-Z0-9_]+\b", re.IGNORECASE)
     for path in files:
         for line_number, raw_line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
@@ -149,14 +150,19 @@ def main() -> int:
             if match is None:
                 continue
             _mnemonic, suffix, operand = match.groups()
-            for symbol, value in far_symbols.items():
-                if re.search(rf"\b{re.escape(symbol)}\b", operand):
-                    if suffix is None or suffix.lower() != "l":
-                        errors.append(
-                            f"{path}:{line_number}: far WRAM symbol {symbol} "
-                            f"(${value:06X}) requires explicit .l access"
-                        )
-                    break
+            if operand.lstrip().startswith("#"):
+                continue
+            for token in operand_symbols.findall(operand):
+                symbol = token.upper()
+                value = far_symbols.get(symbol)
+                if value is None:
+                    continue
+                if suffix is None or suffix.lower() != "l":
+                    errors.append(
+                        f"{path}:{line_number}: far WRAM symbol {symbol} "
+                        f"(${value:06X}) requires explicit .l access"
+                    )
+                break
 
     missing = sorted(REQUIRED_LABELS - labels)
     if missing:

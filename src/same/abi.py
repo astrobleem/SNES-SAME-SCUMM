@@ -109,6 +109,7 @@ class AudioOpcode(IntEnum):
     SPEECH_PLAY = 9
     SPEECH_STOP = 10
     QUERY_CAPABILITIES = 11
+    MUSIC_SECTION_SELECT = 12
 
 
 class InputOpcode(IntEnum):

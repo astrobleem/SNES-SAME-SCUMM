@@ -1,0 +1,84 @@
+diff --git a/engines/scumm/imuse/imuse.cpp b/engines/scumm/imuse/imuse.cpp
+--- a/engines/scumm/imuse/imuse.cpp
++++ b/engines/scumm/imuse/imuse.cpp
+@@ -557,6 +557,10 @@ void IMuseInternal::startSound(int sound) {
+ 	startSound_internal(sound);
+ }
+ 
++MidiChannel *IMuseInternal::sameAdlibAuditionChannel() {
++	return _midi_adlib ? _midi_adlib->allocateChannel() : nullptr;
++}
++
+ void IMuseInternal::stopSound(int sound) {
+diff --git a/engines/scumm/imuse/imuse_internal.h b/engines/scumm/imuse/imuse_internal.h
+--- a/engines/scumm/imuse/imuse_internal.h
++++ b/engines/scumm/imuse/imuse_internal.h
+@@ -572,6 +572,7 @@ public:
+ 
+ public:
+ 	void startSoundWithNoteOffset(int sound, int offset) override;
++	MidiChannel *sameAdlibAuditionChannel();
+ 
+ 	// MusicEngine interface
+diff --git a/engines/scumm/scumm.cpp b/engines/scumm/scumm.cpp
+--- a/engines/scumm/scumm.cpp
++++ b/engines/scumm/scumm.cpp
+@@ -20,6 +20,8 @@
+  */
+ 
+ #include "common/config-manager.h"
++#include "common/file.h"
++#include "common/fs.h"
+ #include "common/compression/clickteam.h"
+@@ -48,6 +50,7 @@
+ #include "scumm/file.h"
+ #include "scumm/file_nes.h"
+ #include "scumm/imuse/imuse.h"
++#include "scumm/imuse/imuse_internal.h"
+ #include "scumm/imuse_digi/dimuse_engine.h"
+@@ -2787,6 +2790,48 @@ Common::Error ScummEngine::go() {
+ 		_saveLoadFlag = 0;
+ 	}
+ 
++	// SAME reference-only harness. The input is locally extracted from the
++	// user-supplied demo and is intentionally not part of this patch.
++	if (_game.id == GID_INDY4) {
++		_musicEngine->stopAllSounds();
++		Common::File patches;
++		if (!patches.open(Common::FSNode("/home/chad/fate154-adlib-patches.bin")))
++			error("SAME AdLib audition patch file is missing");
++		const byte notes[] = {36, 48, 60, 72, 84};
++		const int patchIndex = ConfMan.getInt("boot_param");
++		if (patchIndex < 0 || patchIndex >= 6)
++			error("SAME AdLib audition patch index is invalid");
++		{
++			patches.seek(patchIndex * 31);
++			const byte sourceChannel = patches.readByte();
++			byte patch[30];
++			if (patches.read(patch, sizeof(patch)) != sizeof(patch))
++				error("SAME AdLib audition patch is truncated");
++			MidiChannel *channel = static_cast<IMuseInternal *>(_imuse)->sameAdlibAuditionChannel();
++			if (!channel)
++				error("SAME AdLib audition channel allocation failed");
++			channel->sysEx_customInstrument(MKTAG('A', 'D', 'L', ' '), patch, 30);
++			channel->volume(127);
++			for (uint i = 0; i < ARRAYSIZE(notes); ++i) {
++				channel->noteOn(notes[i], 100);
++				uint32 end = _system->getMillis() + 1000;
++				while (!shouldQuit() && _system->getMillis() < end)
++					_system->delayMillis(10);
++				channel->noteOff(notes[i]);
++				end = _system->getMillis() + 500;
++				while (!shouldQuit() && _system->getMillis() < end)
++					_system->delayMillis(10);
++			}
++			channel->release();
++			warning("SAME auditioned sound-154 AdLib patch %d (channel %d)", patchIndex, sourceChannel);
++			uint32 end = _system->getMillis() + 1000;
++			while (!shouldQuit() && _system->getMillis() < end)
++				_system->delayMillis(10);
++		}
++		return Common::kNoError;
++	}
++
+ 	// In ScummVM 2.7.0, original GUI support was added.

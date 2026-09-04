@@ -9,12 +9,15 @@ Same_Video_Reset:
     .a8
     lda #$80
     sta.l SAME_VIDEO_DISPLAY_SHADOW
+.include "../generated/video_backend_reset.inc.pasm"
+.include "../generated/video_overlay_reset.inc.pasm"
     plp
     rts
 
 ; Called only from NMI while the PPU commit window is owned by the kernel.
 Same_Video_Commit:
     php
+.include "../generated/video_backend_commit.inc.pasm"
     jsr Same_Dma_ProcessQueue
     sep #$20
     .a8
@@ -28,6 +31,8 @@ Same_Video_Commit:
 
 Same_Video_Handle:
     php
+.include "../generated/video_overlay_service.inc.pasm"
+.include "../generated/video_backend_service.inc.pasm"
     sep #$20
     .a8
     lda.l SAME_EVENT_STAGING+SAME_PKT_OPCODE
@@ -44,6 +49,8 @@ Same_Video_Handle__done:
 
 ; K1 transfer fixtures exercise the public semantic request seam.  They live in
 ; unused PPU memory and never name or configure a DMA channel.
+.if SAME_VIDEO_BACKEND_LEGACY
+.if !SAME_BUILD_SCUMM_M23A
 Same_K1_Fixture_QueueInitial:
     php
     rep #$30
@@ -133,6 +140,13 @@ Same_K1_Fixture_QueueDeferred:
     jsr Same_Dma_Enqueue
     plp
     rts
+.else
+; Source-bound SCUMM builds keep the K1 queueing routines in their far-code
+; bank so the canonical interpreter does not collide with the bank-0 header.
+Same_K1_Dma_Enqueue_Far:
+    jsr Same_Dma_Enqueue
+    rtl
+.endif
 
 Same_K1_Vram_Data:
     .byte $11,$22,$33,$44,$55,$66,$77,$88,$99,$AA,$BB,$CC,$DD,$EE,$F0,$0F
@@ -144,3 +158,32 @@ Same_K1_ForcedBlank_Sentinel:
     .byte $00,$00,$00,$00,$00,$00,$00,$00
 Same_K1_ForcedBlank_Data:
     .byte $DE,$AD,$BE,$EF,$4B,$31,$00,$01
+.endif
+
+.if SAME_VIDEO_BACKEND_MODE3
+; Far backend code remains outside bank zero, but reuses the one production
+; event and DMA implementation through these bounded call adapters.
+Same_Mode3_Dma_Enqueue_Far:
+    jsr Same_Dma_Enqueue
+    rtl
+Same_Mode3_Video_Commit_Far:
+    jsr Same_Video_Commit
+    rtl
+Same_Mode3_Event_Stage_Far:
+    jsr Same_Event_StageEngine
+    rtl
+Same_Mode3_Event_Push_Far:
+    jsr Same_Event_Push
+    rtl
+Same_Mode3_Kernel_DrainEvents_Far:
+    jsr Same_Kernel_DrainEvents
+    rtl
+.if SAME_BUILD_SCUMM_ROOM_VISUAL
+ScummV5_Visual_RequestRoom_Far:
+    jsr ScummV5_M23A_RequestRoom
+    rtl
+ScummV5_Visual_ResourceReady_Far:
+    jsr ScummV5_M23A_ResourceReady
+    rtl
+.endif
+.endif

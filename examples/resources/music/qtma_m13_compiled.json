@@ -1,0 +1,16 @@
+{
+  "schema": "same_compiled_music_catalog_v1",
+  "name": "SAME copyright-free QTMA MOV conformance catalog",
+  "time_scale": 125,
+  "entries": [
+    {
+      "logical_id": 1,
+      "source_resource": "qtma.movie.m13",
+      "source_sha256": "feb16d388acb55624f53b2dec2e8d76393ce1b5381b1f3d8880e23c74fe78ae1",
+      "compiled_song": "qtma_conformance",
+      "compiled_song_id": 1,
+      "duration": 600,
+      "loop": null
+    }
+  ]
+}

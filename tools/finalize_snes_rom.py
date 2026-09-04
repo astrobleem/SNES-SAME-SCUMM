@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-"""Pad a headered LoROM image and write its checksum/complement pair."""
+"""Finalize a selected SAME SNES carrier and write its checksum pair."""
 
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from same.snes_carrier import load_carrier
 
 
 HEADER_OFFSET = 0x7FC0
@@ -20,10 +28,69 @@ def next_power_of_two(value: int) -> int:
     return size
 
 
-def finalize(raw: bytes) -> bytes:
+def _validate_carrier_header(
+    raw: bytes,
+    *,
+    carrier: str,
+    manifest: dict[str, object] | None,
+) -> None:
+    if len(raw) < HEADER_OFFSET + 0x19:
+        raise ValueError("image does not contain carrier header fields")
+    if manifest is None:
+        expected_map = 0x20 if carrier == "lorom" else 0x23
+        if raw[HEADER_OFFSET + 0x15] != expected_map:
+            raise ValueError(
+                f"requested carrier {carrier} conflicts with map mode "
+                f"${raw[HEADER_OFFSET + 0x15]:02X}"
+            )
+        return
+    if manifest.get("carrier") != carrier:
+        raise ValueError("requested carrier conflicts with generated manifest")
+    save_enabled = bool(manifest.get("save_enabled"))
+    description = load_carrier(ROOT, carrier, save_enabled=save_enabled)
+    header = manifest.get("header")
+    if not isinstance(header, dict):
+        raise ValueError("carrier manifest has no header record")
+    expected = bytes(
+        (
+            description.map_mode,
+            description.cartridge_type,
+            int(header["rom_size"]),
+            description.ram_size,
+        )
+    )
+    observed = raw[HEADER_OFFSET + 0x15 : HEADER_OFFSET + 0x19]
+    if observed != expected:
+        raise ValueError(
+            f"assembled carrier header {observed.hex()} conflicts with "
+            f"manifest {expected.hex()}"
+        )
+    if manifest.get("carrier_config_sha256") != description.config_sha256:
+        raise ValueError("carrier manifest was generated from a different carrier config")
+    if manifest.get("layout_sha256") != description.layout_sha256:
+        raise ValueError("carrier manifest was generated from a different layout")
+
+
+def finalize(
+    raw: bytes,
+    *,
+    carrier: str = "lorom",
+    manifest: dict[str, object] | None = None,
+) -> bytes:
     if len(raw) > 0x400000:
-        raise ValueError(f"LoROM image is unexpectedly large: {len(raw)} bytes")
+        raise ValueError(f"SNES image is unexpectedly large: {len(raw)} bytes")
+    if carrier not in {"lorom", "sa1_bwram"}:
+        raise ValueError(f"unsupported SNES carrier {carrier!r}")
+    _validate_carrier_header(raw, carrier=carrier, manifest=manifest)
     size = next_power_of_two(len(raw))
+    if carrier == "sa1_bwram":
+        expected_size_code = size.bit_length() - 11
+        observed_size_code = raw[HEADER_OFFSET + 0x17]
+        if observed_size_code != expected_size_code:
+            raise ValueError(
+                f"SA-1 ROM size code ${observed_size_code:02X} conflicts with "
+                f"finalized size {size} (expected ${expected_size_code:02X})"
+            )
     image = bytearray(raw)
     image.extend(b"\x00" * (size - len(image)))
     if len(image) < HEADER_OFFSET + 0x40:
@@ -43,11 +110,18 @@ def finalize(raw: bytes) -> bytes:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("rom", type=Path)
+    parser.add_argument("--carrier", choices=("lorom", "sa1_bwram"), default="lorom")
+    parser.add_argument("--manifest", type=Path)
     args = parser.parse_args()
     raw = args.rom.read_bytes()
-    finalized = finalize(raw)
+    manifest = (
+        json.loads(args.manifest.read_text(encoding="utf-8"))
+        if args.manifest is not None
+        else None
+    )
+    finalized = finalize(raw, carrier=args.carrier, manifest=manifest)
     args.rom.write_bytes(finalized)
-    print(f"Finalized LoROM: {args.rom} ({len(finalized)} bytes)")
+    print(f"Finalized {args.carrier}: {args.rom} ({len(finalized)} bytes)")
     return 0
 
 

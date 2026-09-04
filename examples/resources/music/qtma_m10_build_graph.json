@@ -1,0 +1,51 @@
+{
+  "schema": "same_music_build_graph_v1",
+  "name": "SAME copyright-free QTMA M10 graph",
+  "profile": "same-qtma-music-conformance",
+  "adapter": "qtma_fixture_v1",
+  "time_scale": 125,
+  "project_output": "qtma-m10.terrificaudio",
+  "catalog_template": "qtma-catalog",
+  "dependencies": [
+    {
+      "name": "qtma-catalog",
+      "path": "examples/resources/music/qtma_m10_compiled.json",
+      "sha256": "6ee2ebbecf8696f3b42ab3da60e4db5f832d944d2406c54634b577c28117522c"
+    },
+    {
+      "name": "qtma-fixture",
+      "path": "examples/resources/music/qtma_m2_fixture.hex",
+      "sha256": "650af33ab40519e3efe1513f8f38f22e49ff4cc0c2abad0c027112d893fd019d"
+    },
+    {
+      "name": "qtma-generated-bank",
+      "path": "examples/resources/music/qtma_m10_bank.json",
+      "sha256": "faa1ec06857c9f67347f01fe1be6f91b6ab1e93f9081019cf9884155f0f5bbbf"
+    }
+  ],
+  "renditions": [
+    {
+      "logical_id": 1,
+      "source_resource": "qtma.fixture.m2",
+      "source_sha256": "1a595217e6ef5e05e3f15c193a92d364243db7c308c179ff48109e1456e2b0c0",
+      "importer": "qtma_events_v1",
+      "source_device": "qtma_gm_note_request_v1",
+      "bank": "qtma-generated-bank",
+      "target": "terrific_audio_driver_mml_v1",
+      "policy": {
+        "author": "SAME M10 generic QTMA adapter",
+        "fixture_dependency": "qtma-fixture",
+        "pan": "stereo_cc10",
+        "sustain": "encoded_note_lifetimes",
+        "title": "SAME QTMA conformance score",
+        "voice_limit": 8
+      },
+      "output": "qtma_conformance.mml",
+      "mml_sha256": "f612f370bd9c7a055a647c08594c24b3ed0a9243aaa3f202592af4ecfd87dbb2",
+      "compiled_song": "qtma_conformance",
+      "compiled_song_id": 1,
+      "duration": 600,
+      "loop": null
+    }
+  ]
+}

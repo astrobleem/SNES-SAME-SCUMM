@@ -1,0 +1,80 @@
+diff --git a/audio-driver/src/audio-driver.asm b/audio-driver/src/audio-driver.asm
+index 911af63..3046ded 100644
+--- a/audio-driver/src/audio-driver.asm
++++ b/audio-driver/src/audio-driver.asm
+@@ -95,6 +95,11 @@ VOL_PAN_EFFECT_TRIANGLE_DOWN = $41
+     ; This bitmask is set by the SET_MUSIC_CHANNELS IO comamnd, it is not `keyOnMask`.
+     io_musicChannelsMask : u8
+ 
++    ; SAME bounded compiled-section selector. An IO command arms zero/default
++    ; or nonzero/alternate; reserved bytecode consumes the choice without
++    ; changing the currently sounding voice state.
++    sameCompiledRouteSelector : u8
++
+ 
+     ; The table of subroutine offsets
+     ; (2x pointer to low-byte & high-byte tables)
+@@ -1101,6 +1106,13 @@ CommandFunctionTable_SIZE = CommandFunctionTableEnd - CommandFunctionTable
+ .endproc
+ 
+ 
++.proc cmd__same_set_compiled_route
++    mov sameCompiledRouteSelector, Y
++    ret
++.endproc
++
++
+ ; IN: Y = timer
+ .proc cmd__set_song_timer
+     ; if (y > 0 && y < MIN_TICK_CLOCK) y = MIN_TICK_CLOCK
+@@ -4757,7 +4769,40 @@ SetI8:
+ .endinline
+ 
+ 
+-bc_ReservedForCustomUse = bc__disable_channel
++.proc bc__same_select_compiled_subroutine
++_defaultSubroutine = zpTmp
++_alternateSubroutine = zpTmp2
++_boundaryToken = zpTmp3
++
++    mov _defaultSubroutine, A
++    mov A, [instructionPtr] + Y
++    mov _alternateSubroutine, A
++    incw instructionPtr
++    mov A, [instructionPtr] + Y
++    mov _boundaryToken, A
++    incw instructionPtr
++
++    mov A, _boundaryToken
++    or A, #$80
++    mov CPUIO1, A
++
++    mov A, sameCompiledRouteSelector
++    beq Default
++        mov A, _alternateSubroutine
++        bra Selected
++    Default:
++        mov A, _defaultSubroutine
++    Selected:
++    mov Y, #0
++    jmp bc__call_subroutine
++.endproc
++
++
++bc_ReservedForCustomUse = bc__same_select_compiled_subroutine
+ 
+ 
+ BytecodeInstructionTable_l:
+diff --git a/audio-driver/src/io-commands.inc b/audio-driver/src/io-commands.inc
+index 05e1f91..4035fb8 100644
+--- a/audio-driver/src/io-commands.inc
++++ b/audio-driver/src/io-commands.inc
+@@ -297,5 +297,9 @@ IoCommands__PAUSE = 0
+     ;
+     ; NOTE: Global volumes persist after a new song or common-audio-data is loaded.
+     cmd__set_global_volumes ; CMD 20
+-.endftdef
+ 
++    ; SAME bounded compiled-section route selector.
++    cmd__same_set_compiled_route ; CMD 22
++.endftdef
