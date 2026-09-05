@@ -1,0 +1,52 @@
+diff --git a/runtime/snes/kernel/memory.pasm b/runtime/snes/kernel/memory.pasm
+--- a/runtime/snes/kernel/memory.pasm
++++ b/runtime/snes/kernel/memory.pasm
+@@
+-SAME_SCUMM_PUT_ACTOR_BOX_CAPACITY         = $0020
+-SAME_SCUMM_PUT_ACTOR_BOXES                = $7FFB65 ; 32 x 18-byte BOXD records
++SAME_SCUMM_PUT_ACTOR_BOX_CAPACITY         = $00FF
++SAME_SCUMM_PUT_ACTOR_BOXES                = $7FFB65 ; compatibility alias
++SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK        = $7FFB65 ; one fetched BOXD record
+ SAME_SCUMM_PUT_ACTOR_BOX_STRIDE           = $0012
+
+diff --git a/tools/generate_snes_cooked_rooms.py b/tools/generate_snes_cooked_rooms.py
+--- a/tools/generate_snes_cooked_rooms.py
++++ b/tools/generate_snes_cooked_rooms.py
+@@
++ScummV5_PutActor_LoadGeometry_Far:
++    sep #$20 / .a8 / rep #$10 / .i16
++    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
++    ; generated per-record dispatch validates cpx against that room count
++    ; and copies nine words from explicit-bank immutable BOXD geometry.
+
+diff --git a/runtime/snes/engines/scumm_v5_matrix_far.pasm b/runtime/snes/engines/scumm_v5_matrix_far.pasm
+--- a/runtime/snes/engines/scumm_v5_matrix_far.pasm
++++ b/runtime/snes/engines/scumm_v5_matrix_far.pasm
+@@
+-    ; read geometry from the former 32-record RAM image
++    jsl ScummV5_PutActor_LoadGeometry_Far
++    bcs ScummV5_PutActor_FarEntry__scale_done
++    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+16
++    sta.l SAME_SCUMM_PUT_ACTOR_BOX_SCALE_RAW,x
+@@
++    jsl ScummV5_PutActor_LoadGeometry_Far
++    bcs ScummV5_PutActor_Adjust_Far__invalid_box
++    ; placement calculations consume the bounded working record.
+
+diff --git a/tests/test_scumm_v5_room.py b/tests/test_scumm_v5_room.py
+--- a/tests/test_scumm_v5_room.py
++++ b/tests/test_scumm_v5_room.py
+@@
++    def test_source_backed_high_index_walkboxes_survive_decode(self) -> None:
++        self.assertEqual(len(room.walkboxes), 64)
++        self.assertEqual(room.walkboxes[63].scale, 0x803F)
++        self.assertEqual(room.walkboxes[63].points, expected_points)
+
+diff --git a/tests/test_scumm_v5_engine.py b/tests/test_scumm_v5_engine.py
+--- a/tests/test_scumm_v5_engine.py
++++ b/tests/test_scumm_v5_engine.py
+@@
++    def test_room55_accessor_and_c25_relocation_are_bounded_contracts(self) -> None:
++        self.assertIn("ScummV5_PutActor_LoadGeometry_Far:", generator)
++        self.assertIn('f"    cpx #${count:04X}"', generator)
++        self.assertIn("SAME_SCUMM_PUT_ACTOR_BOX_STRIDE           = $0012", memory)
