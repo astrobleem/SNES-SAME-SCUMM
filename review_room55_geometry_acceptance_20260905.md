@@ -5,7 +5,8 @@ Screened review handoff only: no ROMs, savestates, ATLANTIS.zip, generated game 
 ## Identity
 
 - ROM: `build/same-room55-c25far-final.sfc`
-- SHA-256: `5a3efe446e36d5f4b77af2209ed4d483dae328ae357686ce92bde51a2ca37ec8`
+- Corrected-stride ROM: `build/same-room55-accessor-fixed2.sfc`; SHA-256:
+  `44a9dc0cf25e6bf10ce31ed781a137a55e4b0ae086f79e7b25934119108acedd`
 - room-55 source payload SHA-256: `321610e001c4b05f6a74641862a9886b10f22e1983e95c54957554926418d6ea`
 - Poppy: `715b14431478b62433498cc516c1cbbb8f418c1d7b39a8e71098ed98d9c9167e`
 - Shared armory: `astrobleem/Mesen2` mcp-server `4e1e86bb1`.
@@ -32,7 +33,11 @@ the room-55 `cpx #$0040` guard. The corrected exact accessor body is in
 The copyright-free target accessor fixture `build/same-room55-accessor-fixture.sfc`
 executes 64 real `putActor` calls through the generated accessor; its target
 snapshot reports `box_count=64`, accessor count 64, and completion at index 63.
-A target multi-leg route through a box above 31 remains unproven.
+A target run now executes 64 real production `putActor` calls through the
+generated accessor with `box_count=64`, error 0. The validator includes the
+host-only `--capture-put-actor-sequence` observation mode; the first run's
+frame batching collapsed the per-call observations, so returned-work-record
+comparison and target multi-leg movement remain explicitly pending.
 
 ## Validation/cost
 

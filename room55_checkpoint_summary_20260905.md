@@ -15,3 +15,15 @@
   legitimately resolves a high-index target but does not request movement.
 - No ROM, savestate, archive, generated game payload, or unrelated campaign
   file is included in this review branch.
+## Current bounded acceptance update
+
+- The corrected generator and emitted accessor use saved `2*index` plus three
+  ASLs, i.e. the 18-byte stride. The prior four-ASL statement was an inaccurate
+  extract, not production code.
+- Corrected target ROM: `44a9dc0cf25e6bf10ce31ed781a137a55e4b0ae086f79e7b25934119108acedd`.
+  Target fixture executed 64 production `putActor` calls with room box count
+  64 and error 0. This proves call coverage, not yet every returned work
+  record; the new host-observation option is present locally.
+- Source/cooked geometry remains 64/64 equal; target multileg movement and the
+  same-source hoist rerun remain open. No game payloads or ROMs are in this
+  review branch.
