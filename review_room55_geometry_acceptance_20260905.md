@@ -16,7 +16,7 @@ Before, `$7FFB65-$7FFF70` was a 32-record x 18-byte mutable geometry image (576 
 
 Immutable geometry/routes/portals/object-walk tables and initial flags are generated ROM data. `ScummV5_PutActor_LoadGeometry_Far` validates active record and unsigned 8-bit index, computes `index * $12` with 16-bit X/index arithmetic, copies nine words, returns carry clear, and returns with A8. It does not preserve X; callers own X as scratch. The fetched record is temporary and must not survive a nested geometry call. Explicit `.bank` sections keep each immutable table inside one LoROM bank. Room load reloads mutable flags/count and active record; no RAM geometry pointer is retained.
 
-Bank-0 map: end `$D8E8`, 9,943 bytes free before header. The 576-byte saving is RAM-layout savings; generated ROM payload was retained.
+Bank-0 map: end `$D8E8`, 9,943 bytes free before header. The old 576-byte image was replaced by 18 bytes, reclaiming 558 RAM bytes. The geometry refactor itself saves zero bank-0 ROM bytes; generated immutable payload was retained in ROM/far banks.
 
 ## 64-record and target evidence
 
