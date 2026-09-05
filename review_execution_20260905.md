@@ -19,13 +19,15 @@ re-establish 8-bit index width on each pass.
 
 ## Same-ROM evidence
 
-The current local debug46 ROM has SHA-256:
+The current local debug47 ROM has SHA-256:
 
-`1a618f6fd12f58f1840a91270bc3d56efe892d1e834dc4a53060f04d1c539f12`
+`f241e0239f4bec1ac3826c5dbd7416c02db842ddfbcf102cc0e67462d1e14d67`
 
 Focused startup42 execution on that ROM ran in safe frame steps through room
 42, room 82, and back to room 42 with `error=0`. Room-82 local scripts,
 including LSCR 207, executed; the former room-82 opcode failure was removed.
+The SNES family matcher was additionally audited so `$7B/$FB getActorWalkBox`
+cannot alias the exact `$3B/$BB getActorScale` family.
 The detailed report remains local and is intentionally excluded from this
 branch.
 
@@ -35,7 +37,8 @@ branch.
 
 Result: 123 tests passed. The new generic `$3B/$BB getActorScale` test covers
 direct and variable actor operands; the existing message, nested-scheduler,
-width, and sentence-fetch tests remain green. `git diff --check` passes.
+width, sentence-fetch, and actor-family coverage remain green. `git diff --check`
+passes.
 
 This handoff does not claim that the broad implementation commit is screened
 for publication; it publishes only review evidence and source-level claims.
