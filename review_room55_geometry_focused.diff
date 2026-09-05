@@ -33,6 +33,14 @@ diff --git a/runtime/snes/engines/scumm_v5_matrix_far.pasm b/runtime/snes/engine
 +    bcs ScummV5_PutActor_Adjust_Far__invalid_box
 +    ; placement calculations consume the bounded working record.
 
+diff --git a/tools/generate_snes_cooked_rooms.py b/tools/generate_snes_cooked_rooms.py
+--- a/tools/generate_snes_cooked_rooms.py
++++ b/tools/generate_snes_cooked_rooms.py
+@@
+-            "    asl", "    asl", "    asl", "    asl",
++            # 18-byte BOXD record: saved 2*index plus three shifts for 16*index.
++            "    asl", "    asl", "    asl",
+
 diff --git a/tests/test_scumm_v5_room.py b/tests/test_scumm_v5_room.py
 --- a/tests/test_scumm_v5_room.py
 +++ b/tests/test_scumm_v5_room.py
