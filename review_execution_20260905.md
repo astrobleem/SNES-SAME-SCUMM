@@ -19,9 +19,9 @@ re-establish 8-bit index width on each pass.
 
 ## Same-ROM evidence
 
-The current local debug47 ROM has SHA-256:
+The current local startup42 debug53 ROM has SHA-256:
 
-`f241e0239f4bec1ac3826c5dbd7416c02db842ddfbcf102cc0e67462d1e14d67`
+`9eab9a4847f78db12db0882ce5963dea54e7859f5573804ca6c65dc35eacb681`
 
 Focused startup42 execution on that ROM ran in safe frame steps through room
 42, room 82, and back to room 42 with `error=0`. Room-82 local scripts,
@@ -30,6 +30,13 @@ The SNES family matcher was additionally audited so `$7B/$FB getActorWalkBox`
 cannot alias the exact `$3B/$BB getActorScale` family.
 The detailed report remains local and is intentionally excluded from this
 branch.
+
+The target message fixture was also rerun against matching ROM builds. The
+generated map places its variable table at `$7E0800`; the run observes the
+post-wait `var10=1` write, but currently stalls before the canonical delayed
+C23 completion/clear boundary. This is retained as an open execution result,
+not presented as a passing message-lifetime proof. No fixture-only message
+auto-clear is enabled.
 
 ## Validation
 
