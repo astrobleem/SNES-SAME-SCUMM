@@ -5,7 +5,7 @@ Screened review handoff only: no ROMs, savestates, ATLANTIS.zip, generated game 
 ## Identity
 
 - ROM: `build/same-room55-c25far-final.sfc`
-- SHA-256: `a788eb6b78c8ed6d11154a7480c5a0526e02e407eddba0fa1e2654c5cba4d518`
+- SHA-256: `5a3efe446e36d5f4b77af2209ed4d483dae328ae357686ce92bde51a2ca37ec8`
 - room-55 source payload SHA-256: `321610e001c4b05f6a74641862a9886b10f22e1983e95c54957554926418d6ea`
 - Poppy: `715b14431478b62433498cc516c1cbbb8f418c1d7b39a8e71098ed98d9c9167e`
 - Shared armory: `astrobleem/Mesen2` mcp-server `4e1e86bb1`.
@@ -29,9 +29,14 @@ Generated index witnesses are `1*$12=$0012`, `31*$12=$022E`,
 the room-55 `cpx #$0040` guard. The corrected exact accessor body is in
 `review_room55_geometry_source_extract.pasm`.
 
+The copyright-free target accessor fixture `build/same-room55-accessor-fixture.sfc`
+executes 64 real `putActor` calls through the generated accessor; its target
+snapshot reports `box_count=64`, accessor count 64, and completion at index 63.
+A target multi-leg route through a box above 31 remains unproven.
+
 ## Validation/cost
 
-- `PYTHONPATH=src python3 -m unittest tests.test_scumm_v5_engine tests.test_scumm_v5_room -q`: 144 tests OK.
+- `PYTHONPATH=src python3 -m unittest tests.test_scumm_v5_engine tests.test_scumm_v5_room tests.test_m25a_validator -q`: 151 tests OK.
 - `python3 -m py_compile tools/generate_snes_cooked_rooms.py tools/build_m25a_validator_room.py tools/validate_scumm_startup42_nexen.py`: PASS.
 - `git diff --check`: PASS.
 - `python3 tools/audit_snes_rom.py build/same-room55-c25far-final.sfc`: PASS.
