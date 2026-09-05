@@ -12,7 +12,6 @@ ScummV5_PutActor_LoadGeometry__room55:
     asl
     asl
     asl
-    asl
     clc
     adc.l SAME_SCUMM_PUT_ACTOR_TEMP0
     tax

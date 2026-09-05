@@ -24,6 +24,11 @@ Independent ATLANTIS room-55 decode versus cooked `room-55.sc5c`: 64 records in 
 
 Final-ROM target command was the existing `validate_scumm_startup42_nexen.py` with `--expected-room 55 --frames 420 --light --minimal-observation --sentence 10 780 0`. Result: room 55, phase 0, error 0, `box_count=64`; authored object 780 walk point `(640,198)` resolved to box 43. Its source handler is scenery/name and correctly does not request movement. Thus target evidence proves valid high-index lookup, not game-authored movement. Host tests cover invalid index, high-index identity/scale, mutable flags, room re-entry, and nested decode. A separate copyright-free target multi-leg route through a box above 31 remains unproven.
 
+Generated index witnesses are `1*$12=$0012`, `31*$12=$022E`,
+`32*$12=$0240`, `43*$12=$0306`, and `63*$12=$046E`; index 64 is rejected by
+the room-55 `cpx #$0040` guard. The corrected exact accessor body is in
+`review_room55_geometry_source_extract.pasm`.
+
 ## Validation/cost
 
 - `PYTHONPATH=src python3 -m unittest tests.test_scumm_v5_engine tests.test_scumm_v5_room -q`: 144 tests OK.
