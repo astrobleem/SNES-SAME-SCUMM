@@ -324,3 +324,22 @@ git diff --check
   `setState(500,0)`, bit 444, and room 82 were not dynamically observed.
 - Current immediate work is paused for review publication/handoff; do not
   load any save state against a non-matching ROM.
+
+- Review branch published from the verified base: repository
+  `astrobleem/SNES-SAME-SCUMM`, branch `review/hoist-message-lifetime`, commit
+  `e2b1a44f988123368bc29fc97b48b991f68397b5`; remote HEAD was verified equal.
+- Message-lifetime correction: fixture C23 no longer clears talk state or
+  skips `Talk_Begin`; it uses the logical talk frame lifecycle. A generic
+  headless long-text path now handles encoded messages filling the 32-byte
+  presentation buffer by retaining logical length/delay without claiming
+  presentation bytes. Focused host suite: 117 tests pass.
+- Latest corrected ROM:
+  `build/same-startup42-hoist-room82-talklifecycle4.sfc`, SHA-256
+  `c8917d0dcfe6ddbf2be17ab2c2aa19c24928e62fe2370a2c9e1019686d14dcac`;
+  audit PASS, bank-0 end `$F551`, 2670 bytes free. The matching startup
+  checkpoint reaches room 42/error 0 at frame 1106.
+- Compressor sentence `(8,492,0)` was published and consumed from the
+  matching checkpoint; object 492 state became 1 and error remained 0. The
+  sentence script recorded 68 fetches but remains live at PC 0, so the next
+  hoist sentence is still pending. This is the current ordinary scheduler /
+  nested-return frontier; no hoist downstream effect is accepted yet.

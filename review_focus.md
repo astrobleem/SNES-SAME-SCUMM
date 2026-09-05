@@ -35,6 +35,12 @@ This is delivery/decode acknowledgement only in the sense that the text bytes
 have been accepted by C23; it is not logical message completion and does not
 auto-acknowledge `waitForMessage`.
 
+The follow-up fixture path also treats `C23_RAW_INDEX >= 32` as a logical
+headless-long message rather than validating a discarded buffer byte. Its
+logical duration is retained without expanding the presentation buffer.
+The scheduler post-run path restores the scheduler-selected slot before the
+common save/retirement operation, protecting parent state after nested runs.
+
 ## Scope
 
 No production title/gameplay behavior, ROM/resource payload, validator WRAM

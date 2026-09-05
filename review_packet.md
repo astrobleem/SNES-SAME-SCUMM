@@ -554,3 +554,24 @@ Not yet proven dynamically on the fresh room-82 image: LSCR 207 completion, `set
 This packet is source-only as requested and gameplay is paused. The corrected
 ROM is `build/same-startup42-hoist-room82-talklifecycle.sfc`, SHA-256
 `821e58555d1c2cc979bb781a93f269908f083bbd62dcffe68a20e98d1f956ec6`.
+
+## Review follow-up
+
+The corrected message-lifetime implementation is now represented by
+`build/same-startup42-hoist-room82-talklifecycle4.sfc`, SHA-256
+`c8917d0dcfe6ddbf2be17ab2c2aa19c24928e62fe2370a2c9e1019686d14dcac`.
+The fixture uses logical Talk lifecycle, and a generic headless long-text
+path handles messages that fill the compact presentation buffer. Focused host
+validation is 117 tests passing; ROM audit passes.
+
+The published review branch is
+`review/hoist-message-lifetime` at
+`e2b1a44f988123368bc29fc97b48b991f68397b5`, remotely verified. The latest
+runtime scheduler change remains local and is not silently represented as
+published implementation code.
+
+Latest matching runtime observation: startup reaches room 42/error 0;
+`(8,492,0)` is consumed and object 492 becomes state 1. The sentence script
+records 68 fetches but remains live at PC 0, leaving the hoist downstream
+effects unproven. This is the current ordinary scheduler/nested-return
+frontier; gameplay remains paused pending review.

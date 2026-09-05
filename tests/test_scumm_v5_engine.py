@@ -35,6 +35,17 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertIn("ScummV5_Talk_Begin_Far", fixture)
         self.assertIn("ScummV5_Talk_FrameBegin_Far", talk_runtime)
         self.assertIn("ScummV5_Talk_FrameEnd_Far", talk_runtime)
+        self.assertIn("headless fixture may decode", talk_runtime)
+        self.assertIn("SAME_SCUMM_TALK_RAW_LENGTH", talk_runtime)
+        self.assertIn("SAME_SCUMM_TALK_HAVE_MSG", talk_runtime)
+
+    def test_scheduler_saves_the_selected_slot_after_nested_execution(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        scheduler = runtime.split("ScummV5_C4_Scheduler_Frame:", 1)[1]
+        scheduler = scheduler.split("ScummV5_C4_Scheduler_Frame__advance:", 1)[0]
+        self.assertIn("jsr ScummV5_Engine_RunSelected", scheduler)
+        self.assertIn("lda.l SAME_SCUMM_C4_SCHED_SLOT", scheduler)
+        self.assertIn("sta.l SAME_SCUMM_C4_CURRENT_SLOT", scheduler)
 
         # Headless means presentation is optional; the existing talk lifecycle
         # still owns delay, waitForMessage completion, continuation, and clear
