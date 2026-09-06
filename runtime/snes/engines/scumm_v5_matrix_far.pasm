@@ -5067,12 +5067,12 @@ ScummV5_Talk_Begin_Far__delay_done:
     .a8
     lda #$01
     jsr ScummV5_Talk_RecordEvent_Far
-    .if SAME_VIDEO_OVERLAY_BG2
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     rep #$20
     .a16
     lda.l SAME_FRAME_COUNTER
     sta.l SAME_OVERLAY_TRACE_S0
-    jsl Same_VideoOverlay_ShowTalkSegment_Far
+    jsl Same_VideoText_ShowSegment_Far
     .else
     lda.l SAME_SCUMM_TALK_VISUAL_STATUS
     inc
@@ -5118,14 +5118,14 @@ ScummV5_Talk_FrameBegin_Far:
     ; visible dialogue cannot remain stuck on the old HUD prompt.
     lda.l SAME_SCUMM_TALK_VISUAL_STATUS
     beq ScummV5_Talk_FrameBegin_Far__delay
-    .if SAME_VIDEO_OVERLAY_BG2
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     rep #$20
     .a16
     lda.l SAME_FRAME_COUNTER
     sta.l SAME_OVERLAY_TRACE_S0
     sep #$20
     .a8
-    jsl Same_VideoOverlay_ShowTalkSegment_Far
+    jsl Same_VideoText_ShowSegment_Far
     .endif
 ScummV5_Talk_FrameBegin_Far__delay:
     rep #$20
@@ -5213,7 +5213,7 @@ ScummV5_Talk_Stop_Far:
     .a8
     lda.l SAME_SCUMM_TALK_ACTIVE
     beq ScummV5_Talk_Stop_Far__done
-    .if SAME_VIDEO_OVERLAY_BG2
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     rep #$20
     .a16
     lda.l SAME_FRAME_COUNTER
@@ -5230,7 +5230,7 @@ ScummV5_Talk_Stop_Far:
     bne ScummV5_Talk_Stop_Far__retain_visual
     .endif
 ScummV5_Talk_Stop_Far__hide_visual:
-    jsl Same_VideoOverlay_Hide_Far
+    jsl Same_VideoText_Hide_Far
 ScummV5_Talk_Stop_Far__retain_visual:
     .a8
     .else
@@ -5388,12 +5388,12 @@ ScummV5_Talk_Continue_Far__delay:
 ScummV5_Talk_Continue_Far__delay_done:
     lda.l SAME_SCUMM_OPERAND
     sta.l SAME_SCUMM_TALK_DELAY
-    .if SAME_VIDEO_OVERLAY_BG2
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     rep #$20
     .a16
     lda.l SAME_FRAME_COUNTER
     sta.l SAME_OVERLAY_TRACE_S0
-    jsl Same_VideoOverlay_ShowTalkSegment_Far
+    jsl Same_VideoText_ShowSegment_Far
     .else
     sep #$20
     .a8

@@ -445,7 +445,7 @@ ScummV5_Controller_Frame__hud:
     beq ScummV5_Controller_Frame__done
     lda #$00
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
-    .if SAME_VIDEO_OVERLAY_BG2
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     ; Authored C23 owns the BG2 talk layer while a message is active.
     lda.l SAME_SCUMM_TALK_ACTIVE
     bne ScummV5_Controller_Frame__done
@@ -457,10 +457,10 @@ ScummV5_Controller_Frame__done:
 
 ; Compose the source-backed costume.2 stand/walk pose over the indexed room
 ; surface.  This is deliberately a surface compositor: actor state selects
-; the cooked pose, while the existing surface service retains palette, DMA,
-; and PPU ownership.  A room rebuild precedes each actor-state change so
+; the cooked pose, while the existing surface service retains palette and
+; presentation ownership.  A room rebuild precedes each actor-state change so
 ; pixels from the previous pose are restored by the normal room compositor.
-.if SAME_VIDEO_OVERLAY_BG2
+.if SAME_VIDEO_SURFACE_AVAILABLE
 ScummV5_Controller_RenderActor_Far:
     php
     rep #$30
@@ -501,11 +501,8 @@ ScummV5_Controller_RenderActor__y_same:
     beq ScummV5_Controller_RenderActor__changed
     lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
     beq ScummV5_Controller_RenderActor__retry_done
-    lda.l SAME_MODE3_CONTROL_STATE
-    cmp #SAME_MODE3_STATE_IDLE
-    bne ScummV5_Controller_RenderActor__retry_done
-    lda.l SAME_MODE3_CONTROL_SURFACE_LOCKED
-    bne ScummV5_Controller_RenderActor__retry_done
+    jsl Same_VideoSurface_CanWrite_Far
+    bcs ScummV5_Controller_RenderActor__retry_done
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
     jsl Same_VideoSurface_PushDirtyPresent_Far
     bcs ScummV5_Controller_RenderActor__retry_done
@@ -621,7 +618,7 @@ ScummV5_Controller_RenderActor__pixel:
     adc.l SAME_SCUMM_CONTROLLER_RENDER_DST
     tax
     lda.l SAME_SCUMM_CONTROLLER_RENDER_FRAME
-    sta.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
 ScummV5_Controller_RenderActor__transparent:
     rep #$20
     .a16
@@ -675,7 +672,7 @@ ScummV5_Controller_RenderActor__done:
 
 ; Minimal data-driven room-object presentation for the controller fixture.
 ; Pixels are cooked from room 42's OBIM/SMAP; the surface service retains
-; palette conversion, dirty publication, and PPU/DMA ownership.
+; palette conversion, dirty publication, and presentation ownership.
 ScummV5_Controller_RenderLocker_Far:
     php
     rep #$30
@@ -748,7 +745,7 @@ ScummV5_Controller_RenderLocker__pixel:
     adc.l SAME_SCUMM_CONTROLLER_RENDER_DST
     tax
     lda.l SAME_SCUMM_CONTROLLER_RENDER_FRAME
-    sta.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
     lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
     inc
     sta.l SAME_SCUMM_CONTROLLER_RENDER_COL
@@ -764,7 +761,7 @@ ScummV5_Controller_RenderLocker__done:
     rtl
 .endif
 
-.if SAME_VIDEO_OVERLAY_BG2
+.if SAME_VIDEO_SURFACE_AVAILABLE
 ; Draw the cursor into the same indexed surface composition as the actor.
 ; This helper intentionally does not publish: the caller owns the single
 ; room/actor/cursor present transaction.
@@ -823,7 +820,7 @@ ScummV5_Controller_DrawCursor__pixel:
     adc.l SAME_SCUMM_CONTROLLER_RENDER_BASE
     tax
     lda #$000F
-    sta.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
 ScummV5_Controller_DrawCursor__transparent:
     rep #$20
     .a16
@@ -881,9 +878,8 @@ ScummV5_Controller_RenderCursor__changed:
     ; conversion.  The cached cursor coordinates remain different/invalid,
     ; so this same path retries on the first idle frame without publishing a
     ; competing generation every frame.
-    lda.l SAME_MODE3_CONTROL_STATE
-    cmp #SAME_MODE3_STATE_IDLE
-    beq ScummV5_Controller_RenderCursor__changed_idle
+    jsl Same_VideoSurface_CanWrite_Far
+    bcc ScummV5_Controller_RenderCursor__changed_idle
     lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
     bne ScummV5_Controller_RenderCursor__changed_deferred
     jmp ScummV5_Controller_RenderCursor__done
@@ -950,7 +946,7 @@ ScummV5_Controller_RenderCursor__pixel:
     adc.l SAME_SCUMM_CONTROLLER_RENDER_BASE
     tax
     lda #$000F
-    sta.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
 ScummV5_Controller_RenderCursor__transparent:
     rep #$20
     .a16
@@ -992,7 +988,7 @@ ScummV5_Controller_Cursor_Data:
     .byte $01,$01,$01,$01,$01,$01,$01,$01
 .endif
 
-.if SAME_VIDEO_OVERLAY_BG2
+.if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
 ScummV5_Controller_ShowHud_Far:
     ; Keep the first visual proof deliberately small: a source-neutral cursor
     ; marker and verb prompt. Authored dialogue later replaces it normally.
@@ -1082,7 +1078,7 @@ ScummV5_Controller_ShowHud__copy:
     sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
     lda #$00
     sta.l SAME_SCUMM_TALK_SEGMENT_GLYPHS
-    jsl Same_VideoOverlay_ShowTalkSegment_Far
+    jsl Same_VideoText_ShowSegment_Far
 ScummV5_Controller_ShowHud__done:
     rtl
 .endif

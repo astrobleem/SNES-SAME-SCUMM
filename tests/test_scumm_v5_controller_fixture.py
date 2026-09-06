@@ -92,7 +92,7 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         stop = source.split("ScummV5_Talk_Stop_Far:", 1)[1].split(
             "ScummV5_Talk_Stop_Far__done:", 1)[0]
         self.assertIn("SAME_BUILD_SCUMM_CONTROLLER_FIXTURE", stop)
-        self.assertIn("Same_VideoOverlay_Hide_Far", stop)
+        self.assertIn("Same_VideoText_Hide_Far", stop)
         self.assertIn("SAME_SCUMM_TALK_ACTIVE", stop)
 
     def test_active_talk_retries_presentation_without_shortening_message_lifetime(self) -> None:
@@ -100,7 +100,7 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         block = source.split("ScummV5_Talk_FrameBegin_Far:", 1)[1].split(
             "ScummV5_Talk_FrameEnd_Far:", 1)[0]
         self.assertIn("SAME_SCUMM_TALK_VISUAL_STATUS", block)
-        self.assertIn("Same_VideoOverlay_ShowTalkSegment_Far", block)
+        self.assertIn("Same_VideoText_ShowSegment_Far", block)
         self.assertIn("SAME_SCUMM_TALK_DELAY", block)
 
     def test_talk_overlay_skips_encoded_controls_but_keeps_logical_raw_stream(self) -> None:
@@ -114,7 +114,7 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
     def test_cursor_redraw_does_not_restart_full_surface_generation(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         cursor = source.split("ScummV5_Controller_RenderCursor__changed:", 1)[1]
-        self.assertIn("SAME_MODE3_CONTROL_STATE", cursor)
+        self.assertIn("Same_VideoSurface_CanWrite_Far", cursor)
         self.assertIn("SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID", cursor)
         self.assertNotIn("Same_VideoSurface_PushDirtyPresent_Far", cursor)
 
