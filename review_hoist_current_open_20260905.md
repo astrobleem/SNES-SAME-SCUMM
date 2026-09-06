@@ -1,4 +1,7 @@
-# Current same-source hoist regression
+# Historical same-source hoist regression (superseded)
+
+The open failure described below is historical. The final screened evidence
+and exact-ROM completion are in `review_hoist_final_evidence_20260905.md`.
 
 This screened note records the remaining open gate. It contains no ROM,
 savestate, ATLANTIS bytes, or generated game payload.
