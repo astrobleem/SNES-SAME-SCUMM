@@ -43,15 +43,13 @@ ScummV5_RoomVisual_Installed_Far:
     inc
 ScummV5_RoomVisual_Installed__generation_ok:
     sta.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION
+    bne ScummV5_RoomVisual_Installed__initial_already_done
     sep #$20
     .a8
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
     jsl Same_VideoSurface_ComposeRoom_Far
-    ; Room installation can overlap the previous room's conversion.  Publish
-    ; the new room through the normal pending-visual path as well, so the
-    ; frame service retries after the backend unlocks even when the camera
-    ; coordinate itself did not change.
-    jsl Same_VideoSurface_CameraPublished_Far
+ScummV5_RoomVisual_Installed__initial_already_done:
     plp
     rtl
 
@@ -71,16 +69,15 @@ ScummV5_Visual_Frame_Far:
     lda #$70
     sta BG12NBA
     plp
-    ; Room/camera publication can enqueue video packets during the SCUMM
-    ; engine pass after the kernel's earlier drain. Consume that production
-    ; queue at the visual-frame boundary before servicing the pending room;
-    ; otherwise the surface may be valid while the Mode-3 tile/CGRAM commit
-    ; remains stranded behind the event FIFO.
+    ; Resolve any room/camera presentation request before the actor pass.
+    ; Actor composition must be the final indexed-surface mutation for this
+    ; frame; otherwise a pending background blit can erase the actor before
+    ; the native presentation service consumes the surface.
     jsl Same_Mode3_Kernel_DrainEvents_Far
     jsl Same_VideoSurface_ServicePending_Far
-    ; ServicePending publishes the room's dirty/palette/present packets.
-    ; Consume that publication in this same visual-frame boundary so the
-    ; backend starts conversion immediately instead of leaving the first
-    ; room batch stranded behind the next scheduler phase.
+    jsl Same_Mode3_Kernel_DrainEvents_Far
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+      jsl ScummV5_Controller_RenderActor_Far
+    .endif
     jsl Same_Mode3_Kernel_DrainEvents_Far
     rtl

@@ -42,6 +42,7 @@ ScummV5_Controller_SeedRoom42SourceStrings_Far__fill:
     pla
     plp
     rtl
+
 .endif
 
 ScummV5_Controller_Frame_Far:
@@ -83,6 +84,26 @@ ScummV5_Controller_Frame__room_ok:
     beq ScummV5_Controller_Frame__room68
     jmp ScummV5_Controller_Frame__room42_check
 ScummV5_Controller_Frame__room68:
+    sep #$20
+    .a8
+    ; Room-68 title text is a real logical message.  In the controller
+    ; scenario an A edge is the normal user acknowledgement; route it through
+    ; the existing talk-stop lifecycle so ownership/completion bookkeeping is
+    ; preserved before the room-42 handoff is requested.
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    beq ScummV5_Controller_Frame__room68_phase
+    rep #$20
+    .a16
+    lda.l SAME_INPUT_PRESSED
+    and #$0080
+    beq ScummV5_Controller_Frame__room68_phase16
+    sep #$20
+    .a8
+    jsr ScummV5_Talk_Stop_Far
+ScummV5_Controller_Frame__room68_phase:
+    sep #$20
+    .a8
+ScummV5_Controller_Frame__room68_phase16:
     sep #$20
     .a8
     lda #$11
@@ -193,6 +214,8 @@ ScummV5_Controller_Frame__mode_ready:
     .a8
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
     rep #$20
     .a16
 ScummV5_Controller_Frame__right_done:
@@ -209,6 +232,8 @@ ScummV5_Controller_Frame__right_done:
     .a8
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
     rep #$20
     .a16
 ScummV5_Controller_Frame__left_done:
@@ -225,6 +250,8 @@ ScummV5_Controller_Frame__left_done:
     .a8
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
     rep #$20
     .a16
 ScummV5_Controller_Frame__up_done:
@@ -241,6 +268,8 @@ ScummV5_Controller_Frame__up_done:
     .a8
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
     rep #$20
     .a16
 ScummV5_Controller_Frame__down_done:
@@ -417,22 +446,576 @@ ScummV5_Controller_Frame__hud:
     lda #$00
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
     .if SAME_VIDEO_OVERLAY_BG2
+    ; Authored C23 owns the BG2 talk layer while a message is active.
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    bne ScummV5_Controller_Frame__done
     jsl ScummV5_Controller_ShowHud_Far
     .endif
 ScummV5_Controller_Frame__done:
     plp
     rtl
 
+; Compose the source-backed costume.2 stand/walk pose over the indexed room
+; surface.  This is deliberately a surface compositor: actor state selects
+; the cooked pose, while the existing surface service retains palette, DMA,
+; and PPU ownership.  A room rebuild precedes each actor-state change so
+; pixels from the previous pose are restored by the normal room compositor.
+.if SAME_VIDEO_OVERLAY_BG2
+ScummV5_Controller_RenderActor_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    ; ACTIVE_ROOM is a byte field.  Keep the comparison byte-wide so the
+    ; adjacent pending-record byte cannot become part of the room identity.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    cmp #$2A
+    beq ScummV5_Controller_RenderActor__room_ok
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    plp
+    rtl
+ScummV5_Controller_RenderActor__room_ok:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C31_POSITIONS+4
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_X
+    bne ScummV5_Controller_RenderActor__x_diff
+    jmp ScummV5_Controller_RenderActor__x_same
+ScummV5_Controller_RenderActor__x_diff:
+    jmp ScummV5_Controller_RenderActor__changed
+ScummV5_Controller_RenderActor__x_same:
+    lda.l SAME_SCUMM_C31_POSITIONS+6
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_Y
+    bne ScummV5_Controller_RenderActor__y_diff
+    jmp ScummV5_Controller_RenderActor__y_same
+ScummV5_Controller_RenderActor__y_diff:
+    jmp ScummV5_Controller_RenderActor__changed
+ScummV5_Controller_RenderActor__y_same:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    beq ScummV5_Controller_RenderActor__changed
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    beq ScummV5_Controller_RenderActor__retry_done
+    lda.l SAME_MODE3_CONTROL_STATE
+    cmp #SAME_MODE3_STATE_IDLE
+    bne ScummV5_Controller_RenderActor__retry_done
+    lda.l SAME_MODE3_CONTROL_SURFACE_LOCKED
+    bne ScummV5_Controller_RenderActor__retry_done
+    lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    jsl Same_VideoSurface_PushDirtyPresent_Far
+    bcs ScummV5_Controller_RenderActor__retry_done
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    dec
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    ; This publish contains the complete indexed surface, including the
+    ; cursor already painted by the cursor pass.  Do not schedule a second
+    ; full-surface conversion for that same cursor paint.
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_RETRY
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
+ScummV5_Controller_RenderActor__retry_done:
+    jmp ScummV5_Controller_RenderActor__done
+ScummV5_Controller_RenderActor__changed:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    jsl Same_VideoSurface_ComposeRoom_Far
+    bcc ScummV5_Controller_RenderActor__compose_ok
+    jmp ScummV5_Controller_RenderActor__done
+ScummV5_Controller_RenderActor__compose_ok:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C31_POSITIONS+4
+    sec
+    sbc #$0010
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    lda.l SAME_SCUMM_C31_POSITIONS+6
+    sec
+    sbc #$0037
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    xba
+    and #$FF00
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+
+    ; Frame zero is the source-defined standing pose. During movement select
+    ; the second cooked pose on alternating frame-counter phases.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C31_MOVING+1
+    beq ScummV5_Controller_RenderActor__stand
+    rep #$20
+    .a16
+    lda.l SAME_FRAME_COUNTER
+    lsr
+    lsr
+    lsr
+    and #$0001
+    beq ScummV5_Controller_RenderActor__stand
+    lda #$0800
+    bra ScummV5_Controller_RenderActor__frame_base
+ScummV5_Controller_RenderActor__stand:
+    rep #$20
+    .a16
+    lda #$0000
+ScummV5_Controller_RenderActor__frame_base:
+    rep #$20
+    .a16
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_SRC
+    lda #$0000
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+ScummV5_Controller_RenderActor__row:
+    rep #$20
+    .a16
+    ; Keep SRC as the immutable frame base.  The previous implementation
+    ; added each row's offset back into SRC, making the source advance by
+    ; 0+32+64+... and eventually read past the cooked pose.  FRAME is the
+    ; per-row source cursor; the pixel loop may then use it without changing
+    ; the frame base needed by the next row.
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    asl
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_SRC
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROWSRC
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    xba
+    and #$FF00
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    lda #$0000
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_COL
+ScummV5_Controller_RenderActor__pixel:
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_ROWSRC
+    tax
+    sep #$20
+    .a8
+    lda.l ScummV5_ActorSprite_Data,x
+    beq ScummV5_Controller_RenderActor__transparent
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_FRAME
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    tax
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_FRAME
+    sta.l SAME_BWRAM_SURFACE_BASE,x
+ScummV5_Controller_RenderActor__transparent:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    inc
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    cmp #$0020
+    bcc ScummV5_Controller_RenderActor__pixel
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    inc
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    cmp #$0040
+    bcc ScummV5_Controller_RenderActor__row
+
+    ; Add the source-backed locker OBIM through the same indexed surface
+    ; compositor before publishing.  State 1 is the authored opened form,
+    ; so the ordinary room compose leaves the locker image absent.
+    jsl ScummV5_Controller_RenderLocker_Far
+    jsl ScummV5_Controller_DrawCursor_Far
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    jsl Same_VideoSurface_PushDirtyPresent_Far
+    bcs ScummV5_Controller_RenderActor__present_retry
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    bra ScummV5_Controller_RenderActor__present_record
+ScummV5_Controller_RenderActor__present_retry:
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+ScummV5_Controller_RenderActor__present_record:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C31_POSITIONS+4
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_X
+    lda.l SAME_SCUMM_C31_POSITIONS+6
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_Y
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
+ScummV5_Controller_RenderActor__done:
+    plp
+    rtl
+
+; Minimal data-driven room-object presentation for the controller fixture.
+; Pixels are cooked from room 42's OBIM/SMAP; the surface service retains
+; palette conversion, dirty publication, and PPU/DMA ownership.
+ScummV5_Controller_RenderLocker_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    cmp #$2A
+    beq ScummV5_Controller_RenderLocker__room_ok
+    jmp ScummV5_Controller_RenderLocker__done
+ScummV5_Controller_RenderLocker__room_ok:
+    lda.l SAME_SCUMM_OBJECT_STATES+490
+    beq ScummV5_Controller_RenderLocker__state_ok
+    jmp ScummV5_Controller_RenderLocker__done
+ScummV5_Controller_RenderLocker__state_ok:
+    rep #$20
+    .a16
+    lda #$00B8
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    lda #$0040
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    xba
+    and #$FF00
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    lda #$0000
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+ScummV5_Controller_RenderLocker__row:
+    rep #$20
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    asl
+    asl
+    asl
+    asl
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_SRC
+    lda #$0000
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_COL
+ScummV5_Controller_RenderLocker__pixel:
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_SRC
+    tax
+    sep #$20
+    .a8
+    lda.l ScummV5_ObjectSprite_Data,x
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_FRAME
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    tax
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_FRAME
+    sta.l SAME_BWRAM_SURFACE_BASE,x
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    inc
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    cmp #$0010
+    bcc ScummV5_Controller_RenderLocker__pixel
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    inc
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    cmp #$0010
+    bcc ScummV5_Controller_RenderLocker__row
+ScummV5_Controller_RenderLocker__done:
+    plp
+    rtl
+.endif
+
+.if SAME_VIDEO_OVERLAY_BG2
+; Draw the cursor into the same indexed surface composition as the actor.
+; This helper intentionally does not publish: the caller owns the single
+; room/actor/cursor present transaction.
+ScummV5_Controller_DrawCursor_Far:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    xba
+    and #$FF00
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    lda #$0000
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+ScummV5_Controller_DrawCursor__row:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    asl
+    asl
+    asl
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROWSRC
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    xba
+    and #$FF00
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    lda #$0000
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_COL
+ScummV5_Controller_DrawCursor__pixel:
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_ROWSRC
+    tax
+    sep #$20
+    .a8
+    lda.l ScummV5_Controller_Cursor_Data,x
+    beq ScummV5_Controller_DrawCursor__transparent
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    tax
+    lda #$000F
+    sta.l SAME_BWRAM_SURFACE_BASE,x
+ScummV5_Controller_DrawCursor__transparent:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    inc
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    cmp #$0008
+    bcc ScummV5_Controller_DrawCursor__pixel
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    inc
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    cmp #$0008
+    bcc ScummV5_Controller_DrawCursor__row
+    rtl
+
+; Render the engine cursor in the indexed surface.  This is the generic
+; source-independent SCUMM arrow used when the source corpus has no separate
+; cursor resource; its logical position is the same coordinate consumed by
+; the controller hit-test, and the video backend still owns presentation.
+ScummV5_Controller_RenderCursor_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    cmp #$2A
+    beq ScummV5_Controller_RenderCursor__room_ok
+    plp
+    rtl
+ScummV5_Controller_RenderCursor__room_ok:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    cmp.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_X
+    bne ScummV5_Controller_RenderCursor__changed
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    cmp.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_Y
+    bne ScummV5_Controller_RenderCursor__changed
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
+    beq ScummV5_Controller_RenderCursor__changed
+    jmp ScummV5_Controller_RenderCursor__done
+ScummV5_Controller_RenderCursor__changed:
+    ; Restore the room and actor, then draw the cursor over that composed
+    ; surface.  The actor helper remains the sole costume compositor.  A
+    ; cursor-only redraw must not invalidate an already committed actor pose:
+    ; doing so re-enters ComposeRoom while the backend is converting the
+    ; previous full frame and can restart conversion indefinitely.
+    sep #$20
+    .a8
+    ; Keep the surface compositor quiescent while the backend owns a full
+    ; conversion.  The cached cursor coordinates remain different/invalid,
+    ; so this same path retries on the first idle frame without publishing a
+    ; competing generation every frame.
+    lda.l SAME_MODE3_CONTROL_STATE
+    cmp #SAME_MODE3_STATE_IDLE
+    beq ScummV5_Controller_RenderCursor__changed_idle
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    bne ScummV5_Controller_RenderCursor__changed_deferred
+    jmp ScummV5_Controller_RenderCursor__done
+ScummV5_Controller_RenderCursor__changed_idle:
+ScummV5_Controller_RenderCursor__changed_deferred:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    bne ScummV5_Controller_RenderCursor__actor_ready
+    jsl ScummV5_Controller_RenderActor_Far
+ScummV5_Controller_RenderCursor__actor_ready:
+
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    xba
+    and #$FF00
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    lda #$0000
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+ScummV5_Controller_RenderCursor__row:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    asl
+    asl
+    asl
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROWSRC
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    xba
+    and #$FF00
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    lda #$0000
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_COL
+ScummV5_Controller_RenderCursor__pixel:
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_ROWSRC
+    tax
+    sep #$20
+    .a8
+    lda.l ScummV5_Controller_Cursor_Data,x
+    beq ScummV5_Controller_RenderCursor__transparent
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    clc
+    adc.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    tax
+    lda #$000F
+    sta.l SAME_BWRAM_SURFACE_BASE,x
+ScummV5_Controller_RenderCursor__transparent:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    inc
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_COL
+    cmp #$0008
+    bcc ScummV5_Controller_RenderCursor__pixel
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    inc
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROW
+    cmp #$0008
+    bcc ScummV5_Controller_RenderCursor__row
+
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_X
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_Y
+    sep #$20
+    .a8
+ScummV5_Controller_RenderCursor__done:
+    plp
+    rtl
+
+ScummV5_Controller_Cursor_Data:
+    .byte $01,$00,$00,$00,$00,$00,$00,$00
+    .byte $01,$01,$00,$00,$00,$00,$00,$00
+    .byte $01,$00,$01,$00,$00,$00,$00,$00
+    .byte $01,$00,$00,$01,$00,$00,$00,$00
+    .byte $01,$00,$00,$00,$01,$00,$00,$00
+    .byte $01,$00,$00,$00,$00,$01,$00,$00
+    .byte $01,$00,$00,$00,$00,$00,$01,$00
+    .byte $01,$01,$01,$01,$01,$01,$01,$01
+.endif
+
 .if SAME_VIDEO_OVERLAY_BG2
 ScummV5_Controller_ShowHud_Far:
     ; Keep the first visual proof deliberately small: a source-neutral cursor
     ; marker and verb prompt. Authored dialogue later replaces it normally.
+    ; Anchor the prompt with the same room-to-display transform used by the
+    ; controller hit-test.  This keeps the visible selection tied to the
+    ; displayed cursor instead of a second hard-coded coordinate system.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    clc
+    adc.l SAME_SCUMM_CAMERA_VSCREEN_XSTART
+    adc #$0020
+    sec
+    sbc #$000C
+    sec
+    sbc.l SAME_VIDEO_SURFACE_DEST_X
+    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_X
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    sec
+    sbc #$0008
+    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_Y
     sep #$20
     .a8
-    lda #$08
-    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_X
-    lda #$08
-    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_Y
     rep #$20
     .a16
     lda #$013F
@@ -457,28 +1040,28 @@ ScummV5_Controller_ShowHud_Far:
     beq ScummV5_Controller_ShowHud__done
     ldx #ScummV5_Controller_HudHover
     ldy #SAME_SCUMM_TALK_RAW
-    lda #$000C
+    lda #$000D
     bra ScummV5_Controller_ShowHud__copy
 ScummV5_Controller_ShowHud__verb:
     sep #$20
     .a8
     ldx #ScummV5_Controller_HudVerb
     ldy #SAME_SCUMM_TALK_RAW
-    lda #$000E
+    lda #$000F
     bra ScummV5_Controller_ShowHud__copy
 ScummV5_Controller_ShowHud__inspect:
     sep #$20
     .a8
     ldx #ScummV5_Controller_HudInspect
     ldy #SAME_SCUMM_TALK_RAW
-    lda #$0009
+    lda #$000A
     bra ScummV5_Controller_ShowHud__copy
 ScummV5_Controller_ShowHud__walk:
     sep #$20
     .a8
     ldx #ScummV5_Controller_HudWalk
     ldy #SAME_SCUMM_TALK_RAW
-    lda #$0009
+    lda #$000A
 ScummV5_Controller_ShowHud__copy:
     sta.l SAME_SCUMM_TALK_RAW_LENGTH
     rep #$30
