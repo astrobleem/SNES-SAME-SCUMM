@@ -35,6 +35,15 @@ divergence; the experiment ROM SHA-256 is
 This is a configuration/runtime regression requiring follow-up; it is not
 claimed as a geometry failure.
 
+The frame snapshot and setter fields are distinct observations. For the
+room55-case fresh build, the first common `SetError` capture is
+`[count=74, code=2, program=211, pc=146, last_opcode=4, room=49]`; the
+frame snapshot still reports program 208/PC 6/opcode 38 because it is sampled
+after the error path has restored interpreter context. For the preserved
+`b6a9...` ROM, the first setter is
+`[count=33, code=2, program=245, pc=3, last_opcode=0, room=82]`.
+These are tied to different ROMs and are not interchangeable.
+
 ## Reproduction identities
 
 Target commands and full build environments are recorded in the project
