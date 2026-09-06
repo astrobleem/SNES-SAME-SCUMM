@@ -36,6 +36,11 @@ The replay captures `01-ready.png`, `02-hover.png`, `03-opened.png`,
 `04-dialogue-complete.png` and corresponding local surface PPMs. These derived
 captures remain local.
 
+Manual controls use the same input path: D-pad moves the visible cursor, A
+selects the highlighted object/action, and Y changes the verb. Before opening,
+Y selects Open; after the locker is open, Y selects Inspect. The manual route
+does not write the sentence mailbox or game state directly.
+
 ## Focused implementation claims
 
 - `scumm_v5_controller_far.pasm` is fixture-gated. It consumes ordinary SNES
