@@ -25,7 +25,7 @@ PYTHONPATH=src python3 tools/validate_scumm_room42_controller_nexen.py \
   --startup-frames 500 --port 44247
 ```
 
-The clean replay passed. It observed: room-42 visual readiness; cursor moved
+The clean replay passed its semantic/controller assertions. It observed: room-42 visual readiness; cursor moved
 to locker hotspot; A selected object 490; Y selected authored Open; A submitted
 `(3,490,0)` through the normal sentence mailbox; actor reached `(218,104)` in
 walkbox 10 and became idle; object 490 changed `0 -> 1`; the controller waited
@@ -34,7 +34,47 @@ active and then completed; final error was 0 and controller submissions were 2.
 
 The replay captures `01-ready.png`, `02-hover.png`, `03-opened.png`,
 `04-dialogue-complete.png` and corresponding local surface PPMs. These derived
-captures remain local.
+captures remain local. They were subsequently opened and inspected: the native
+PNG captures are multicolored static, not recognizable room-42 scenery. The
+indexed intermediate `01-ready-surface.png`/PPM is authentic room-42 scenery.
+Therefore the semantic/controller result is reported as passing, but visible
+presentation is failed evidence and the controller-playable milestone is
+incomplete.
+
+The historical visual-readiness condition was insufficient: it checked the
+indexed room surface and successful PNG creation/semantic state, but no native
+frame was opened or checked for expected room content. The old capture is
+preserved as a false visual pass, not presentation evidence.
+
+## Presentation failure and current correction
+
+The native screenshot is not a conversion-only failure: the PPU framebuffer
+contains the static tilemap/character data while the live indexed surface is
+valid. The stale generated overlay-service path consumed non-overlay
+surface-dirty, palette, and present packets before the Mode-3 backend could
+drain them. The generated service is corrected to fall through without writing
+overlay state/error; the event drain is corrected to gate its preparation stop
+only on SET_LAYER, not on stale PREPARING state while other packets are being
+processed. The corrected v5 run is partial native evidence: inspected captures
+show the room-42 harbor backdrop instead of static noise, while the semantic
+controller sequence still passes. The visible milestone remains incomplete:
+the target-side SCUMM actor/costume renderer is not implemented, and the
+bounded HUD/cursor-control/dialogue overlay is not yet a complete readable
+visual interaction. No full visual acceptance claim is made.
+
+v5 ROM SHA-256:
+`ffc37a47bed9547e0fceba8a4159d3411acb95e11dd7a71e8bce3ce13a79eb6f`.
+Local inspected captures are under
+`build/controller-room42-nativefix-root42-v5-run/`; game-derived captures
+remain excluded from this review branch.
+
+The v5 native captures were opened individually. They show the room-42
+harbor/boat backdrop, so the prior static-tilemap failure is corrected. They
+do not show a target-rendered Indy/costume or visible cursor, and the bounded
+HUD/dialogue text is clipped at the top-left. The target runtime currently
+has actor state and host-side costume decoding but no native costume-to-tile/
+OAM renderer. Visible controller-playable acceptance therefore remains
+incomplete; this report does not claim that milestone passed.
 
 Manual controls use the same input path: D-pad moves the visible cursor, A
 selects the highlighted object/action, and Y changes the verb. Before opening,

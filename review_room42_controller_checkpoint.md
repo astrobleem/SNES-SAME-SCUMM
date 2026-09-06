@@ -17,3 +17,12 @@
   source-backed costume/placement; replay waits for the semantic inspect-mode
   handoff before sending A.
 - Full target command and evidence are in `review_room42_controller_scene.md`.
+- Visual correction status: the original native PNGs were opened and are
+  multicolored static; the old readiness check did not inspect native pixels.
+  The corrected v5 ROM is
+  `ffc37a47bed9547e0fceba8a4159d3411acb95e11dd7a71e8bce3ce13a79eb6f` and
+  its opened native captures show the room-42 harbor backdrop, but not a
+  target-rendered Indy/costume or visible cursor; HUD/dialogue text is clipped.
+  Semantic/controller execution passes, while visible controller-playable
+  acceptance remains incomplete pending a target costume/OAM renderer and
+  complete visible controls.

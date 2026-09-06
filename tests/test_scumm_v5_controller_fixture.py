@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 
@@ -30,6 +32,33 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         self.assertIn("ScummV5_PutActor_FarCall_DefaultActor", root)
         self.assertIn("SAME_SCUMM_C14_A_COSTUME+64", root)
         self.assertIn("SAME_SCUMM_C31_POSITIONS+4", root)
+
+    def test_video_overlay_non_overlay_packets_reach_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "generated"
+            manifest = Path(tmp) / "manifest.json"
+            subprocess.run(
+                [
+                    "python3", str(ROOT / "tools/generate_snes_video_overlay.py"),
+                    "--overlay", "bg2_index4", "--carrier", "sa1_bwram",
+                    "--backend", "mode3_surface", "--output-dir", str(output),
+                    "--manifest", str(manifest),
+                ], check=True, cwd=ROOT, capture_output=True, text=True,
+            )
+            service = (output / "video_overlay_service.inc.pasm").read_text()
+            self.assertIn("bcc Same_Video_Handle__overlay_not_handled", service)
+            self.assertIn("Same_Video_Handle__overlay_not_handled:", service)
+            self.assertNotIn("sta.l SAME_OVERLAY_STATE", service)
+            self.assertNotIn("sta.l SAME_OVERLAY_ERROR_COUNT", service)
+            self.assertNotIn("SAME_OVERLAY_STATE", service.split(
+                "Same_Video_Handle__overlay_not_handled:", 1)[1])
+
+    def test_native_visual_readiness_requires_displayed_planes(self) -> None:
+        validator = (ROOT / "tools/validate_scumm_room42_controller_nexen.py").read_text()
+        self.assertIn("accepted_present > 0", validator)
+        self.assertIn("event_count == 0", validator)
+        self.assertIn('session.read_memory("snesVideoRam", 0, 0xE000)', validator)
+        self.assertIn('session.read_memory("snesCgRam", 0, 0x200)', validator)
 
 
 if __name__ == "__main__":
