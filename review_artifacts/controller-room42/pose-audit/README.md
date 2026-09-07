@@ -13,7 +13,9 @@ standing and slot 1 while moving; its exact walking frame-counter value was
 not preserved and is recorded as UNKNOWN rather than guessed. The audit uses a
 32x64 canvas, origin `(16 + relative_x, 55 + relative_y)`, source transparency
 0, palette indirection, source column-major cel data, and row-major canvas
-output. The complete cel metadata is in `pose-manifest.json`.
+output. The complete cel metadata is in `pose-manifest.json`. The actual
+emitted four-frame binary SHA-256 is
+`12a6590e7da085c98666a1a5eefdc5f9fde9cf5bf9072c3aacd7caec46177eee`.
 
 ## Independent stage results
 
@@ -31,6 +33,12 @@ The first proven divergence was the old cooker assembly. The generic fix in
 pose. No PPU/BG/Mode3/BW-RAM/backend knowledge was added. The fresh ROM is
 `bbfabe380ed5b1c305af8174ab191bc79eb77e117e09a87be64df58b266f82d7`.
 
+The fresh standing surface PNG SHA-256 is
+`28db9682e60ba90fdbde8a902c2494c90e649ec9d7be5fe0bcb0f412201a184d`; its
+fresh native ready PNG SHA-256 is
+`1e86912c66a45ee777ee247d3aae65838441077fad26e38a99d4dc82c4aa4581`; the
+fresh native walking PNG SHA-256 is
+`4fa91a46264c681530213bcf64a83e7972149bbc354920bd61e56ba2a1f6a156`.
 The native actor gate is not promoted to final PASS yet: the exact walking
 pose’s indexed-surface crop and native frame correspondence still need a
 formalized capture. The prior malformed native frame remains preserved in the

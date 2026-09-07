@@ -72,6 +72,11 @@ opened standing surface/native captures and walking native capture show a
 coherent actor. The exact walking surface/native crop correspondence remains
 formalization work, so actor fidelity is not yet final PASS.
 
+The validator now includes a no-advance target indexed-surface dump at the
+walking capture boundary, with surface/backend generations and scene metadata.
+This is observational diagnostics only and does not add hardware knowledge to
+SCUMM.
+
 ## Intermediate, not native acceptance evidence
 
 `intermediate/01-ready-surface.png` is a 256x224 RGB indexed-surface export

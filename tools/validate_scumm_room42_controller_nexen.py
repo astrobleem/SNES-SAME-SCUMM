@@ -320,8 +320,8 @@ def tap(session, button: int) -> None:
     session.set_input(0, 2)
 
 
-def capture_mode3_surface(session, path: Path) -> None:
-    """Save the actual SA-1 indexed surface, independent of PPU screenshots."""
+def dump_mode3_surface(session, path: Path) -> None:
+    """Save the actual SA-1 indexed surface without advancing the CPU."""
     pixels = session.read_memory("snesMemory", 0x402000, 256 * 224)
     palette = session.read_memory("snesMemory", 0x41E200, 768)
     rgb = bytearray()
@@ -334,6 +334,11 @@ def capture_mode3_surface(session, path: Path) -> None:
     path.write_bytes(
         (f"P6\n256 224\n255\n".encode("ascii")) + bytes(rgb)
     )
+
+
+def capture_mode3_surface(session, path: Path) -> None:
+    """Save the surface and then release the one-frame input latch."""
+    dump_mode3_surface(session, path)
     session.set_input(0, 1)
     step(session)
 
@@ -768,7 +773,19 @@ def main() -> int:
         # Preserve one native frame while the actor is actually walking.  It
         # is evidence of runtime animation, not a host-composited reference.
         advance_safe(session, 4)
-        capture_native(session, args.output / "03-walking.png")
+        dump_mode3_surface(session, args.output / "03-walking-surface.ppm")
+        surface_state = session.read_memory("snesMemory", 0x401080, 0x34)
+        (args.output / "03-walking-surface-meta.json").write_text(json.dumps({
+            "rom_sha256": __import__("hashlib").sha256(args.rom.read_bytes()).hexdigest(),
+            "state": read_scene(session),
+            "surface_generation": int.from_bytes(surface_state[2:4], "little"),
+            "surface_committed_generation": int.from_bytes(surface_state[4:6], "little"),
+            "backend": list(session.read_memory("snesMemory", 0x401000, 0x40)),
+            "event_queue": list(session.read_memory("snesMemory", 0x7E2000, 0x06)),
+        }, indent=2) + "\n")
+        # The actor is intentionally in flight at this boundary; requiring a
+        # globally quiet backend would skip the exact committed pose witness.
+        capture_native(session, args.output / "03-walking.png", wait_for_quiet=False)
         for _ in range(24):
             advance_safe(session, 16)
             state = read_locker_progress(session)

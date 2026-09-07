@@ -21,6 +21,10 @@
   publication was explicitly authorized by the user.
 - Do not resume HUD/dialogue or rendering fixes until the reviewer has inspected
   this packet. Main worktree remains intentionally dirty and untouched.
+- The controller validator now includes a no-advance target surface dump at
+  the walking capture boundary. A replay using it did not reach that boundary
+  before the existing native-reference polling terminated, so exact walking
+  surface/native equivalence remains unclaimed.
 - Actor-pipeline audit: independent host composition versus the actual emitted
   generator `.bin` now matches byte-for-byte for source frames 1 and 2. The old
   malformed stage was the cooker’s row-major interpretation of column-major
