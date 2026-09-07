@@ -336,6 +336,59 @@ def dump_mode3_surface(session, path: Path) -> None:
     )
 
 
+def wait_for_surface_generation(session, baseline_present: int,
+                                max_frames: int = 4096) -> dict[str, int]:
+    """Wait at complete frame boundaries until the live surface is presented.
+
+    The surface producer and the native screenshot have separate lifetimes.
+    This observes their published generation numbers and never advances after
+    the matching generation is committed, so the screenshot is the same
+    presentation witness as the indexed dump.
+    """
+    target = None
+    for _ in range(max_frames):
+        state = session.read_memory("snesMemory", 0x401080, 0x34)
+        generation = int.from_bytes(state[2:4], "little")
+        # The facade's PRESENTED_* fields describe producer camera
+        # bookkeeping, while the selected backend owns the native-display
+        # fence.  These are distinct generation namespaces: the backend's
+        # pending/committed values must not be compared numerically with the
+        # facade room generation.
+        backend = session.read_memory("snesMemory", 0x401000, 0x40)
+        pending = int.from_bytes(backend[0x0e:0x10], "little")
+        committed = int.from_bytes(backend[0x10:0x12], "little")
+        committed_hi = int.from_bytes(backend[0x18:0x1a], "little")
+        accepted_present = int.from_bytes(backend[0x1a:0x1c], "little")
+        if target is None or generation != target:
+            target = generation
+        if (generation == target and pending == committed and committed_hi == 0
+                and state[0] == 42
+                and state[0x26] == 0 and backend[0x0a] == 1
+                and backend[0x0b] == 1 and backend[0x0c] == 1
+                and backend[0x13] == 1 and backend[0x14] == 0
+                and accepted_present > baseline_present
+                and int.from_bytes(
+                    session.read_memory("snesMemory", 0x7E2004, 2), "little") == 0):
+            return {
+                "surface_generation": generation,
+                "backend_pending_generation": pending,
+                "surface_presented_generation": committed,
+                "backend_committed_generation_hi": committed_hi,
+                "backend_accepted_present": accepted_present,
+                "surface_status": state[4],
+            }
+        advance_safe(session, 1)
+    raise RuntimeError(
+        f"surface generation did not commit: state={list(state)} "
+        f"backend={list(backend)}")
+
+
+def capture_native_immediate(session, path: Path) -> None:
+    """Capture the paused native framebuffer without crossing a frame boundary."""
+    raw = base64.b64decode(session.take_screenshot(format="base64")["base64"])
+    path.write_bytes(raw)
+
+
 def capture_mode3_surface(session, path: Path) -> None:
     """Save the surface and then release the one-frame input latch."""
     dump_mode3_surface(session, path)
@@ -773,19 +826,35 @@ def main() -> int:
         # Preserve one native frame while the actor is actually walking.  It
         # is evidence of runtime animation, not a host-composited reference.
         advance_safe(session, 4)
+        backend_before_walking = session.read_memory("snesMemory", 0x401000, 0x40)
+        baseline_present = int.from_bytes(backend_before_walking[0x1a:0x1c], "little")
+        wait_for_surface_generation(session, baseline_present)
         dump_mode3_surface(session, args.output / "03-walking-surface.ppm")
         surface_state = session.read_memory("snesMemory", 0x401080, 0x34)
+        presented_generation = int.from_bytes(surface_state[0x22:0x24], "little")
+        presented_room = int.from_bytes(surface_state[0x20:0x22], "little")
+        pending_visual = surface_state[0x26]
         (args.output / "03-walking-surface-meta.json").write_text(json.dumps({
             "rom_sha256": __import__("hashlib").sha256(args.rom.read_bytes()).hexdigest(),
+            "frame_counter": int.from_bytes(session.read_memory("snesMemory", 0x7E2210, 2), "little"),
+            "selected_cooked_frame": 1 + ((int.from_bytes(session.read_memory("snesMemory", 0x7E2210, 2), "little") >> 3) & 1),
             "state": read_scene(session),
             "surface_generation": int.from_bytes(surface_state[2:4], "little"),
-            "surface_committed_generation": int.from_bytes(surface_state[4:6], "little"),
+            "surface_status": surface_state[4],
+            "surface_presented_room": presented_room,
+            "surface_presented_generation": presented_generation,
+            "surface_pending_visual": pending_visual,
+            "surface_source_x": int.from_bytes(surface_state[0x0c:0x0e], "little"),
+            "surface_source_y": int.from_bytes(surface_state[0x0e:0x10], "little"),
+            "surface_dest_x": int.from_bytes(surface_state[0x10:0x12], "little"),
+            "surface_dest_y": int.from_bytes(surface_state[0x12:0x14], "little"),
             "backend": list(session.read_memory("snesMemory", 0x401000, 0x40)),
             "event_queue": list(session.read_memory("snesMemory", 0x7E2000, 0x06)),
         }, indent=2) + "\n")
-        # The actor is intentionally in flight at this boundary; requiring a
-        # globally quiet backend would skip the exact committed pose witness.
-        capture_native(session, args.output / "03-walking.png", wait_for_quiet=False)
+        # The actor is intentionally in flight at this boundary.  The
+        # generation wait above proves this exact surface is committed; take
+        # the screenshot while paused rather than advancing to another pose.
+        capture_native_immediate(session, args.output / "03-walking.png")
         for _ in range(24):
             advance_safe(session, 16)
             state = read_locker_progress(session)

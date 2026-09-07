@@ -10,7 +10,25 @@
 
 ## Current WIP review status (2026-09-07)
 
-- Implementation work is paused pending independent actor-presentation review.
+- Actor cooker evidence is accepted: independent host composition and the
+  actual emitted generator frames match 2048/2048 for idle and walking. The
+  old striped output remains a negative regression witness.
+- Fresh corrected ROM: `bbfabe380ed5b1c305af8174ab191bc79eb77e117e09a87be64df58b266f82d7`.
+- The normal controller replay reaches the walking boundary and completes the
+  locker/inspection semantic path. Native captures were opened; background,
+  actor presence/movement, HUD, locker, active dialogue, cleared dialogue,
+  and post-dialogue are visibly present in the final run.
+- Walking capture synchronization is now backend-owned: the validator waits
+  for a new accepted PRESENT after the walking request, requires backend
+  pending == committed, valid surface/tile/palette, idle/unlocked backend, and
+  empty event FIFO, then captures the paused framebuffer without advancing.
+- Remaining actor-fidelity gate: a same-pose indexed-surface/native proof is
+  not yet accepted. Earlier captures taken before the actor PRESENT retry show
+  a partial live surface (`accepted_present` unchanged, `rejected_dirty=1`);
+  they are preserved as negative timing witnesses. A later 4096-frame fence
+  commits only after the actor has reached its destination, so it no longer
+  binds a walking pose. This is a bounded backend conversion/actor-present
+  timing blocker, not a cooker result.
 - Native room/background and HUD evidence is useful, but actor costume
   fidelity is not accepted. `visualfix26-run1/native/03-walking.png` is a
   preserved FAIL witness; other captures containing Indy are UNKNOWN for actor

@@ -1,5 +1,23 @@
 # Room-42 native visual WIP review
 
+## Current acceptance status
+
+The corrected normal replay is semantically complete and visually shows the
+harbor, Indy, HUD, locker transition, active dialogue, cleared dialogue, and
+post-dialogue control. Actor-fidelity proof remains pending: the validator now
+uses the backend's actual accepted-PRESENT fence, but the first walking request
+can be rejected while the backend is locked. The pre-fence partial surface is
+preserved as a FAIL witness. A long fence can commit after walking completes,
+which is not an exact walking-pose witness. The overall visible milestone is
+therefore still WIP, not PASS.
+
+`fresh-corrected-normal14/` is the latest matching-ROM normal replay. Its ROM
+is `bbfabe380ed5b1c305af8174ab191bc79eb77e117e09a87be64df58b266f82d7` and its
+semantic report ends with `result: pass`. Its native PNGs were opened during
+review. `03-walking-surface.ppm` is a committed-generation capture only when
+the new actor PRESENT is accepted; earlier `normal2`/`normal4` captures are
+explicitly pre-retry negative witnesses.
+
 This is a non-final, independently inspectable evidence packet. Images are
 unchanged native emulator PNGs; none were repainted, cropped, filtered, or
 replaced with host-rendered output. Fate imagery is intentionally included for
