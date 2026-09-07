@@ -21,6 +21,13 @@
   publication was explicitly authorized by the user.
 - Do not resume HUD/dialogue or rendering fixes until the reviewer has inspected
   this packet. Main worktree remains intentionally dirty and untouched.
+- Actor-pipeline audit: independent host composition versus the actual emitted
+  generator `.bin` now matches byte-for-byte for source frames 1 and 2. The old
+  malformed stage was the cooker’s row-major interpretation of column-major
+  SCUMM cel data. Fresh corrected ROM `bbfabe380ed5b1c305af8174ab191bc79eb77e117e09a87be64df58b266f82d7`
+  shows coherent standing/walking actor in opened native captures. Exact
+  walking surface/native crop binding is still pending; actor gate is not final
+  PASS. HUD/dialogue work remains paused.
 - Actor-pipeline audit: source/host composites are coherent; the old cooker was
   proven wrong by row-major cel indexing and produced striped output. The
   isolated review branch now has the generic column-major cooker fix and focused

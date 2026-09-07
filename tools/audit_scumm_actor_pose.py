@@ -11,6 +11,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import zipfile
 
 from PIL import Image
@@ -76,7 +79,15 @@ def main() -> int:
     args = ap.parse_args()
     costume = ScummV5Costume(provider(args.archive, args.profile).read("costume.2"), key="costume.2")
     manifest = {"costume": 2, "facing": args.facing, "canvas": [32, 64], "poses": []}
-    for frame in (1, 2):
+    with tempfile.TemporaryDirectory(prefix="scumm-actor-cook-") as temp:
+      cooked_root = Path(temp)
+      subprocess.run([
+          sys.executable, str(Path(__file__).with_name("generate_snes_scumm_actor_sprite.py")),
+          "--archive", str(args.archive), "--profile", str(args.profile),
+          "--costume", "2", "--output", str(cooked_root / "actor_pose.asm"),
+      ], check=True, stdout=subprocess.PIPE, text=True)
+      emitted = (cooked_root / "actor_pose.bin").read_bytes()
+      for frame in (1, 2):
         pose = costume.decode_pose(frame, facing=args.facing, step=0)
         pose_dir = args.output / ("idle" if frame == 1 else "walk")
         pose_dir.mkdir(parents=True, exist_ok=True)
@@ -91,16 +102,18 @@ def main() -> int:
                        palette=costume.palette)
         current = compose(pose, width=32, height=64, canonical=False,
                           palette=costume.palette)
+        cooked = emitted[(frame - 1) * 2048:frame * 2048]
         png(host, 32, 64, pose_dir / "host-composite.png", costume.palette)
-        # The corrected generator's emitted indexed frame is equivalent to
-        # this source-order composition; retain the old output separately as
-        # the regression witness.
-        png(host, 32, 64, pose_dir / "cooked-composite.png", costume.palette)
+        png(cooked, 32, 64, pose_dir / "cooked-composite.png", costume.palette)
         png(current, 32, 64, pose_dir / "current-cooker-composite.png", costume.palette)
         manifest["poses"].append({
             "frame": frame, "direction": pose.direction,
             "draw_to_right": pose.draw_to_right,
             "commands": [list(item) for item in pose.commands],
+            "emitted_sha256": __import__("hashlib").sha256(cooked).hexdigest(),
+            "host_sha256": __import__("hashlib").sha256(host).hexdigest(),
+            "mismatch_count": sum(a != b for a, b in zip(host, cooked)),
+            "first_mismatch": next((i for i, (a, b) in enumerate(zip(host, cooked)) if a != b), None),
             "cels": [{"index": i, "width": c.width, "height": c.height,
                       "relative_x": c.relative_x, "relative_y": c.relative_y,
                       "move_x": c.move_x, "move_y": c.move_y,

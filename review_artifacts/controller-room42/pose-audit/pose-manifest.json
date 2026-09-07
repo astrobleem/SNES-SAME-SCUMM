@@ -20,6 +20,10 @@
           0
         ]
       ],
+      "emitted_sha256": "09e14514f0ad9dcf446765ee072866f606f223a7aaadd2a33a18f0d4fe7050f0",
+      "host_sha256": "09e14514f0ad9dcf446765ee072866f606f223a7aaadd2a33a18f0d4fe7050f0",
+      "mismatch_count": 0,
+      "first_mismatch": null,
       "cels": [
         {
           "index": 0,
@@ -95,6 +99,10 @@
           6
         ]
       ],
+      "emitted_sha256": "28688a892671ea00df57d7ee006ab0193e1e4637d5aa757d8f1d084f3eaa682c",
+      "host_sha256": "28688a892671ea00df57d7ee006ab0193e1e4637d5aa757d8f1d084f3eaa682c",
+      "mismatch_count": 0,
+      "first_mismatch": null,
       "cels": [
         {
           "index": 0,

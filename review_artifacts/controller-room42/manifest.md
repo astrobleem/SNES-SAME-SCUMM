@@ -57,6 +57,21 @@ host and cooked indexed canvases match exactly for idle and walking. No exact
 indexed-surface capture was available for these pose identities yet; native
 walking remains a FAIL witness, not a repaired result.
 
+## Actor-pipeline audit
+
+`pose-audit/` contains source-decoded cel PNGs, independently composed host
+poses, the old cooker composites, actual emitted corrected `.bin` frames, and
+the full pose/cel manifest. Its README records the exact hashes and stage
+results. The old cooker was the first demonstrated divergence; the actual
+corrected emitted idle/walk frames match the host indexed composites exactly.
+
+Fresh corrected ROM downstream evidence is under `fresh-corrected-rom/` and
+`fresh-corrected-surface/`, ROM SHA-256
+`bbfabe380ed5b1c305af8174ab191bc79eb77e117e09a87be64df58b266f82d7`. The
+opened standing surface/native captures and walking native capture show a
+coherent actor. The exact walking surface/native crop correspondence remains
+formalization work, so actor fidelity is not yet final PASS.
+
 ## Intermediate, not native acceptance evidence
 
 `intermediate/01-ready-surface.png` is a 256x224 RGB indexed-surface export
