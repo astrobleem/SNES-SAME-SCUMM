@@ -23,11 +23,11 @@ ROM and semantic run; exact per-file SHA-256 is recorded here.
 
 | file | frame/state | assessment | SHA-256 / visual observation |
 |---|---|---|---|
-| `native/01-ready.png` | frame 128, room 42, actor idle, locker closed | PASS for visible baseline | `06b61c8ce16055d02130ae1b5042bcaf23718d27c30faa503ba3201aca0799ec`; harbor, Indy, locker and OPEN LOCKER HUD visible |
-| `native/02-hover.png` | hover/action selection | PASS | `6ad84394a2183e68dd8eb69c3c303008aa9e8094e2197f1747deab048286c8ba`; harbor and OPEN LOCKER visible |
-| `native/03-walking.png` | authored locker movement | PASS | `4c46b9932ae5b8034ce9a62fe36ba8f17e28a94d9978ed5fb515cc5faabbee45`; actor and WALKING control visible |
-| `native/03-opened.png` | locker open, inspect available | PASS | `be671132e27737394612ec06e7566eed3eccb21313c543eb9c6bdb340a5bc5f5`; opened locker and INSPECT visible |
-| `native/04-dialogue-active.png` | authored dialogue active | PASS | `727a2ed4fed231c56f92ec80b67be03f69030a8f64a0a14576b3f5d82ef25ce64`; authored dialogue text visible over room |
+| `native/01-ready.png` | frame 128, room 42, actor idle, locker closed | background/HUD PASS; actor fidelity UNKNOWN; overall FAIL | `06b61c8ce16055d02130ae1b5042bcaf23718d27c30faa503ba3201aca0799ec`; harbor, Indy presence, locker and OPEN LOCKER HUD visible, but costume fidelity is not yet proven |
+| `native/02-hover.png` | hover/action selection | background/HUD PASS; actor fidelity UNKNOWN; overall FAIL | `6ad84394a2183e68dd8eb69c3c303008aa9e8094e2197f1747deab048286c8ba`; harbor and OPEN LOCKER visible, actor comparison pending |
+| `native/03-walking.png` | authored locker movement | background/HUD/movement PASS; actor fidelity FAIL; overall FAIL | `4c46b9932ae5b8034ce9a62fe36ba8f17e28a94d9978ed5fb515cc5faabbee45`; recognizable movement and WALKING control, visibly malformed Indy costume |
+| `native/03-opened.png` | locker open, inspect available | background/HUD/state PASS; actor fidelity UNKNOWN; overall FAIL | `be671132e27737394612ec06e7566eed3eccb21313c543eb9c6bdb340a5bc5f5`; opened locker and INSPECT visible, actor fidelity unaccepted |
+| `native/04-dialogue-active.png` | authored dialogue active | background/dialogue PASS; actor fidelity UNKNOWN; overall FAIL | `727a2ed4fed231c56f92ec80b67be03f69030a8f64a0a14576b3f5d82ef25ce64`; readable authored text visible, actor fidelity unaccepted |
 | `native/04-dialogue-complete.png` | dialogue complete | UNKNOWN | `36b36b24570e4c68f6c92b45c9d4e2d157851a73f42507b5143832b552a93fc1`; room/actor visible, no dialogue at this instant |
 | `native/05-post-dialogue.png` | post-dialogue control | UNKNOWN | `36b36b24570e4c68f6c92b45c9d4e2d157851a73f42507b5143832b552a93fc1`; byte-identical to dialogue-complete capture |
 
@@ -41,6 +41,11 @@ ROM and semantic run; exact per-file SHA-256 is recorded here.
 * `../finaltest-clean-run/native/01-ready.png`: ROM identity UNKNOWN in the
   source run metadata; visibly multicolored static rather than room 42. SHA-256:
   `36a259b50cc383a84def172ea6b4903f9abcb3e13310d8600498208bc6444c30`.
+
+Actor-fidelity rule: every visualfix26 capture containing Indy is UNKNOWN for
+actor fidelity unless matched against a correct source pose. The walking frame
+is the explicit FAIL witness. The harbor/background and HUD assessments do not
+upgrade the overall frame to PASS.
 
 ## Intermediate, not native acceptance evidence
 

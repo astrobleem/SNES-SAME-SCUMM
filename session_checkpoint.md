@@ -8,6 +8,20 @@
 > blocker is proven, or the user explicitly requests a status-only stop.  See
 > `AGENTS.md`.
 
+## Current WIP review status (2026-09-07)
+
+- Implementation work is paused pending independent actor-presentation review.
+- Native room/background and HUD evidence is useful, but actor costume
+  fidelity is not accepted. `visualfix26-run1/native/03-walking.png` is a
+  preserved FAIL witness; other captures containing Indy are UNKNOWN for actor
+  fidelity until matched against a correct source pose.
+- Review WIP branch: `review/controller-room42-visual-wip`, based on published
+  `9639f1c`; local review commit is being updated with unmodified native PNGs,
+  defective captures, reports, and focused source/tests. Public screenshot
+  publication was explicitly authorized by the user.
+- Do not resume HUD/dialogue or rendering fixes until the reviewer has inspected
+  this packet. Main worktree remains intentionally dirty and untouched.
+
 ## Mission and repository
 
 - Expand SAME's generic SCUMM v5 runtime against Fate of Atlantis with source-backed resources and controlled scenario fixtures.
