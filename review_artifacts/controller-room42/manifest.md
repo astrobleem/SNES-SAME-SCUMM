@@ -47,6 +47,16 @@ actor fidelity unless matched against a correct source pose. The walking frame
 is the explicit FAIL witness. The harbor/background and HUD assessments do not
 upgrade the overall frame to PASS.
 
+## Actor-pipeline audit
+
+`pose-audit/` contains source-decoded individual cels, host composites, the
+old malformed cooker composites, corrected cooked composites, and the complete
+pose/cel manifest. Its README records the exact costume/facing/frame identity,
+hashes, and stage results. The first proven divergence is the cooker: corrected
+host and cooked indexed canvases match exactly for idle and walking. No exact
+indexed-surface capture was available for these pose identities yet; native
+walking remains a FAIL witness, not a repaired result.
+
 ## Intermediate, not native acceptance evidence
 
 `intermediate/01-ready-surface.png` is a 256x224 RGB indexed-surface export

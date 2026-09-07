@@ -21,6 +21,12 @@
   publication was explicitly authorized by the user.
 - Do not resume HUD/dialogue or rendering fixes until the reviewer has inspected
   this packet. Main worktree remains intentionally dirty and untouched.
+- Actor-pipeline audit: source/host composites are coherent; the old cooker was
+  proven wrong by row-major cel indexing and produced striped output. The
+  isolated review branch now has the generic column-major cooker fix and focused
+  regression. Corrected cooked idle/walk canvases match host bytes exactly.
+  Native actor fidelity is still unproven because the corrected ROM has not yet
+  been rebuilt/captured; preserve the malformed native walking witness.
 
 ## Mission and repository
 

@@ -33,8 +33,8 @@ def source_bytes(archive: Path) -> dict[str, bytes]:
     raise RuntimeError(f"{archive}: no supported SCUMM v5 index/data pair")
 
 
-def cook_pose(costume: ScummV5Costume, frame: int, *, width: int, height: int) -> bytes:
-    pose = costume.decode_pose(frame, facing=180, step=0)
+def assemble_pose(costume, pose, *, width: int, height: int) -> bytes:
+    """Rasterize decoded SCUMM cels into the target indexed canvas."""
     pixels = bytearray(width * height)
     for cel in pose.cels:
         origin_x = width // 2 + cel.relative_x
@@ -44,13 +44,22 @@ def cook_pose(costume: ScummV5Costume, frame: int, *, width: int, height: int) -
             if not 0 <= target_y < height:
                 continue
             for x in range(cel.width):
-                target_x = origin_x + x
-                if not 0 <= target_x < width:
-                    continue
-                value = cel.pixels[y * cel.width + x]
+                # SCUMM v5 costume cels are decoded in column-major order.
+                # Keep the source orientation selected by the pose; the
+                # target compositor receives the already assembled indexed
+                # canvas, so mirroring belongs here rather than in the SNES
+                # backend.
+                value = cel.pixels[x * cel.height + y]
+                target_x = origin_x + x if pose.draw_to_right else origin_x - x
                 if value:
-                    pixels[target_y * width + target_x] = costume.palette[value]
+                    if 0 <= target_x < width:
+                        pixels[target_y * width + target_x] = costume.palette[value]
     return bytes(pixels)
+
+
+def cook_pose(costume: ScummV5Costume, frame: int, *, width: int, height: int) -> bytes:
+    pose = costume.decode_pose(frame, facing=180, step=0)
+    return assemble_pose(costume, pose, width=width, height=height)
 
 
 def rows(data: bytes, width: int) -> str:

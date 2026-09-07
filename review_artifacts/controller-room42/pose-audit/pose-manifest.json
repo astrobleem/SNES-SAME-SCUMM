@@ -1,0 +1,133 @@
+{
+  "costume": 2,
+  "facing": 180,
+  "canvas": [
+    32,
+    64
+  ],
+  "poses": [
+    {
+      "frame": 1,
+      "direction": 2,
+      "draw_to_right": true,
+      "commands": [
+        [
+          1,
+          22
+        ],
+        [
+          4,
+          0
+        ]
+      ],
+      "cels": [
+        {
+          "index": 0,
+          "width": 19,
+          "height": 40,
+          "relative_x": -9,
+          "relative_y": -40,
+          "move_x": 0,
+          "move_y": 0,
+          "decoded_pixels": 550,
+          "transparent": 0,
+          "palette": [
+            1,
+            192,
+            193,
+            194,
+            195,
+            196,
+            197,
+            198,
+            199,
+            200,
+            201,
+            202,
+            203,
+            204,
+            205,
+            206
+          ],
+          "source_order": "column-major",
+          "draw_order": 0
+        },
+        {
+          "index": 1,
+          "width": 12,
+          "height": 12,
+          "relative_x": -6,
+          "relative_y": -50,
+          "move_x": 0,
+          "move_y": 0,
+          "decoded_pixels": 99,
+          "transparent": 0,
+          "palette": [
+            1,
+            192,
+            193,
+            194,
+            195,
+            196,
+            197,
+            198,
+            199,
+            200,
+            201,
+            202,
+            203,
+            204,
+            205,
+            206
+          ],
+          "source_order": "column-major",
+          "draw_order": 1
+        }
+      ]
+    },
+    {
+      "frame": 2,
+      "direction": 2,
+      "draw_to_right": true,
+      "commands": [
+        [
+          1,
+          6
+        ]
+      ],
+      "cels": [
+        {
+          "index": 0,
+          "width": 19,
+          "height": 49,
+          "relative_x": -7,
+          "relative_y": -49,
+          "move_x": 2,
+          "move_y": 0,
+          "decoded_pixels": 570,
+          "transparent": 0,
+          "palette": [
+            1,
+            192,
+            193,
+            194,
+            195,
+            196,
+            197,
+            198,
+            199,
+            200,
+            201,
+            202,
+            203,
+            204,
+            205,
+            206
+          ],
+          "source_order": "column-major",
+          "draw_order": 0
+        }
+      ]
+    }
+  ]
+}
