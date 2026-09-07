@@ -176,15 +176,29 @@ Same_Mode3_Event_Push_Far:
     jsr Same_Event_Push
     rtl
 Same_Mode3_Kernel_DrainEvents_Far:
-    .if SAME_VIDEO_OVERLAY_BG2
     php
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_SERVICE_CALLS
+    inc
+    sta.l SAME_VIDEO_DIAG_SERVICE_CALLS
     sep #$20
     .a8
+    .if SAME_VIDEO_OVERLAY_BG2
     lda #$70
     sta BG12NBA
-    plp
     .endif
     jsr Same_Kernel_DrainEvents
+    rep #$20
+    .a16
+    lda.l SAME_EVENT_HEAD
+    sta.l SAME_VIDEO_DIAG_SERVICE_LAST_HEAD
+    lda.l SAME_EVENT_TAIL
+    sta.l SAME_VIDEO_DIAG_SERVICE_LAST_TAIL
+    lda.l SAME_EVENT_COUNT
+    sta.l SAME_VIDEO_DIAG_SERVICE_LAST_COUNT
+Same_Mode3_Kernel_DrainEvents_Far__done:
+    plp
     rtl
 ; Neutral alias to the selected backend's synchronous service entry.
 Same_VideoSurface_ServiceEvents_Far = Same_Mode3_Kernel_DrainEvents_Far

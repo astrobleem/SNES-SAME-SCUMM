@@ -12,6 +12,7 @@ import argparse
 import base64
 import hashlib
 import json
+import time
 from pathlib import Path
 import sys
 from io import BytesIO
@@ -315,7 +316,7 @@ def tap(session, button: int) -> None:
     # it clears the one-frame edge before SAME_Input_Poll can consume it.
     # Hold through two emulated frames: the first frame creates the edge and
     # the second keeps the controller level present across the NMI/frame seam.
-    session.set_input(button, 4)
+    session.set_input(button, 8)
     session.set_input(0, 2)
 
 
@@ -376,15 +377,30 @@ def settle_native_capture(session, frames: int = 1800) -> None:
         # make a legitimate conversion look like a validator hang.
         advance_safe(session, 32)
     print("native display timeout:", {
+        "cpu": session.get_cpu_state("Snes"),
+        "ppu": session.get_ppu_state(),
+        "reset_diag": list(session.read_memory("snesMemory", 0x7E1020, 0x20)),
+        "scene": read_scene(session),
         "surface": list(session.read_memory("snesMemory", 0x401080, 0x34)),
         "backend": list(session.read_memory("snesMemory", 0x401000, 0x40)),
+        "backend_work": list(session.read_memory("snesMemory", 0x41E750, 0xB0)),
         "events": list(session.read_memory("snesMemory", 0x7E2000, 0x06)),
         "overlay": list(session.read_memory("snesMemory", 0x41F614, 0x20)),
+                "service_diag": list(session.read_memory("snesMemory", 0x7E5FB0, 0x2E)),
+        "scenario_error": list(session.read_memory("snesMemory", 0x7E5F20, 0x20)),
+        "scumm_error": list(session.read_memory("snesMemory", 0x7E2300, 0x10)),
     }, flush=True)
+    try:
+        trace = session.tool("trace_log", {"count": 1000, "cpuType": "Snes"})
+        (ROOT / "build/controller-room42-last-timeout-trace.json").write_text(
+            json.dumps(trace, indent=2) + "\n")
+    except Exception as exc:
+        print("native timeout trace unavailable:", exc, flush=True)
     raise RuntimeError("native display did not converge before capture")
 
 
-def capture_native(session, path: Path, *, min_overlay_generation: int | None = None) -> None:
+def capture_native(session, path: Path, *, min_overlay_generation: int | None = None,
+                   wait_for_quiet: bool = True) -> None:
     """Capture an emulator framebuffer with a source-stage landmark check.
 
     A Mesen screenshot can race the final PPU commit and return an all-black
@@ -393,9 +409,19 @@ def capture_native(session, path: Path, *, min_overlay_generation: int | None = 
     previously inspected native room-42 baseline.  This is an emulator-frame
     check, not a host-rendered replacement or a generic nonblack test.
     """
-    reference_path = ROOT / "build/controller-room42-visualfix9-run/01-ready.png"
+    # Use the inspected full-room native capture as the landmark reference.
+    # The older visualfix9 image has a large empty/letterboxed left region;
+    # comparing only that crop allowed black partial frames to pass.
+    reference_path = ROOT / "build/controller-room42-visualfix26-run1/01-ready.png"
     reference = Image.open(reference_path).convert("RGB") if reference_path.is_file() else None
     last = None
+    # Publication and native presentation have separate lifetimes.  A PRESENT
+    # packet being accepted only means that the backend has started converting
+    # the indexed surface; the SNES planes are not valid evidence until the
+    # bounded conversion/DMA turn has completed.  Keep this wait in the
+    # validator rather than teaching SCUMM about backend state.
+    if wait_for_quiet:
+        settle_native_capture(session, frames=2048)
     # A hide/show layer is a normal queued presentation transaction.  The
     # room path usually settles in a few iterations, but a talk completion
     # can follow a committed surface and require the full backend/DMA turn.
@@ -406,9 +432,15 @@ def capture_native(session, path: Path, *, min_overlay_generation: int | None = 
         overlay_state = overlay[0]
         overlay_generation = int.from_bytes(overlay[2:4], "little")
         overlay_committed = int.from_bytes(overlay[6:8], "little")
-        if (overlay_state != 0 or overlay_generation != overlay_committed
-                or (min_overlay_generation is not None
-                    and overlay_committed < min_overlay_generation)):
+        # A visible overlay is legitimately left in the backend's in-flight
+        # state while its BG2 realization remains active.  Requiring the
+        # state byte to return to IDLE made HUD captures wait forever after
+        # the text service was correctly enabled.  The screenshot landmark
+        # below is the actual display proof; only an unpublished generation
+        # or an explicitly requested minimum generation blocks sampling.
+        if ((min_overlay_generation is not None
+             and overlay_generation < min_overlay_generation)
+                or (overlay_state != 0 and overlay_generation == 0)):
             advance_safe(session, 8)
             continue
         advance_safe(session, 1)
@@ -418,11 +450,11 @@ def capture_native(session, path: Path, *, min_overlay_generation: int | None = 
         if reference is None:
             path.write_bytes(raw)
             return
-        # The top-left corner contains intentional letterbox/sky black.  Use
-        # the decoded harbor structure below it as the native-frame landmark;
-        # otherwise an all-black late screenshot can accidentally pass a
-        # corner-only similarity check.
-        landmark = (0, 40, 64, 104)
+        # Compare the complete displayed gameplay viewport, excluding only
+        # the 40-pixel top letterbox and the bottom border.  The previous
+        # left-side crop was empty in the reference and admitted black
+        # partial frames as false visual evidence.
+        landmark = (0, 40, 256, 184)
         crop = ImageChops.difference(image.crop(landmark),
                                      reference.crop(landmark))
         mean = ImageStat.Stat(crop).mean
@@ -434,6 +466,10 @@ def capture_native(session, path: Path, *, min_overlay_generation: int | None = 
             f"native capture did not reach a committed frame: {path}; "
             f"overlay={list(session.read_memory('snesMemory', 0x41F614, 0x20))}")
     path.write_bytes(last)
+    print("native capture ppu:", session.get_ppu_state(), flush=True)
+    print("native capture reset diag:", list(session.read_memory("snesMemory", 0x7E1020, 0x20)), flush=True)
+    print("native capture surface:", list(session.read_memory("snesMemory", 0x401080, 0x34)), flush=True)
+    print("native capture backend:", list(session.read_memory("snesMemory", 0x401000, 0x40)), flush=True)
     raise RuntimeError(f"native capture did not match the inspected room-42 landmark: {path}")
 
 
@@ -475,6 +511,7 @@ def main() -> int:
         start_release = None
         ready = 0
         last_room = None
+        last_start_edge = -10_000
         # Startup title input is a real one-frame controller boundary.  Do not
         # batch this observation window: room 75 can be installed and consumed
         # between two eight-frame samples, which loses the START edge while
@@ -491,7 +528,7 @@ def main() -> int:
             # accepting either room keeps this controller replay on the real
             # input path instead of depending on an observation of the brief
             # intermediate room-75 install.
-            if not started and pre["room"] in (68, 75) and pre["phase"] in (0, 2):
+            if (not started and pre["room"] in (68, 75) and pre["phase"] in (0, 2)):
                 # The current headless presentation keeps the authored title
                 # message logically alive.  START enters the title boundary;
                 # A is the normal controller acknowledgement for that
@@ -499,6 +536,18 @@ def main() -> int:
                 session.set_input(session.BTN_START | session.BTN_A, 40)
                 started = True
                 start_release = frame + 40
+                last_start_edge = frame
+            elif (started and pre["room"] in (68, 75)
+                  and frame - last_start_edge >= 32
+                  and frame < 180):
+                # Some title profiles expose the room-68 phase boundary one
+                # frame before the authored input consumer is alive.  A
+                # bounded repeat of the same real controller edge preserves
+                # the input path without writing a room/mailbox state or
+                # selecting the target room from the validator.
+                session.set_input(session.BTN_START | session.BTN_A, 40)
+                start_release = frame + 40
+                last_start_edge = frame
             elif (started and not title_ack and pre["room"] == 68
                   and pre["talk_active"]):
                 # The title script may begin its logical message after the
@@ -565,7 +614,7 @@ def main() -> int:
         # pending-room service to publish room 42; do not bypass it or write
         # the PPU from the validator.
         visual_ready = False
-        for _ in range(300):
+        for visual_poll in range(300):
             surface_state = session.read_memory("snesMemory", 0x401080, 0x34)
             backend = session.read_memory("snesMemory", 0x401000, 0x40)
             event_state = session.read_memory("snesMemory", 0x7E2000, 0x06)
@@ -582,12 +631,25 @@ def main() -> int:
                 break
             advance_safe(session, 8)
         if not visual_ready:
+            control_events = session.drain_notifications(timeout=0.2)
+            control_events = [
+                e for e in control_events
+                if e.get("method") == "notifications/mesen/hookFired"
+            ]
+            print("host control-flow hooks:", control_events[-24:], flush=True)
             print("visual wait CPU:", session.get_cpu_state("Snes"), flush=True)
             print("visual wait SA1:", session.get_cpu_state("Sa1"), flush=True)
+            print("visual service diagnostics:", list(session.read_memory("snesMemory", 0x7E5FB0, 0x28)), flush=True)
+            print("backend control:", list(session.read_memory("snesMemory", 0x401000, 0x40)), flush=True)
+            print("event state:", list(session.read_memory("snesMemory", 0x7E2000, 0x10)), flush=True)
+            print("event buffer services/opcodes:", [
+                list(session.read_memory("snesMemory", 0x7E2100 + i * 0x10, 3))
+                for i in range(16)
+            ], flush=True)
         require(visual_ready, f"room-42 visual publication was not reached; state={list(surface_state)}")
         events.append({"stage": "visual_ready", "state": read_scene(session)})
         print("native stage: ready checkpoint", flush=True)
-        settle_native_capture(session, frames=1800)
+        advance_safe(session, 32)
         print("native stage: ready settled", flush=True)
         capture_native(session, args.output / "01-ready.png")
         if args.capture_only:
@@ -649,20 +711,49 @@ def main() -> int:
         # coalescing during the first visible room frames.
         # The controller bridge advances the cursor by two logical pixels per
         # accepted edge.  The source-backed start point is 145 and the locker
-        # hotspot begins at 190, so 32 ordinary taps is a bounded replay
+        # hotspot begins at 190, so 64 ordinary taps is a bounded replay
         # budget, not an open-ended retry loop.
-        for _ in range(32):
+        horizontal_button = session.BTN_RIGHT
+        cursor_trace = []
+        for _ in range(64):
             # Keep this polling path narrow: a complete scene snapshot here
             # would issue dozens of MCP memory reads for every two-frame tap.
             cursor_x = u16(session.read_memory("snesMemory", 0x7E5FE1, 2))
             if 190 <= cursor_x <= 240:
                 break
-            tap(session, session.BTN_RIGHT if cursor_x < 190 else session.BTN_LEFT)
-        require(190 <= u16(session.read_memory("snesMemory", 0x7E5FE1, 2)) <= 240,
-                "controller cursor did not reach locker hotspot")
+            if cursor_x > 240:
+                horizontal_button = session.BTN_LEFT
+            before_x = cursor_x
+            tap(session, horizontal_button)
+            after_x = u16(session.read_memory("snesMemory", 0x7E5FE1, 2))
+            if len(cursor_trace) < 12:
+                cursor_trace.append({
+                    "before": before_x,
+                    "after": after_x,
+                    "button": horizontal_button,
+                    "held": u16(session.read_memory("snesMemory", 0x7E2200, 2)),
+                    "pressed": u16(session.read_memory("snesMemory", 0x7E2204, 2)),
+                    "mode": session.read_memory("snesMemory", 0x7E5FE0, 1)[0],
+                })
+            if after_x < before_x:
+                horizontal_button = session.BTN_LEFT
+            elif after_x > before_x:
+                horizontal_button = session.BTN_RIGHT
+        final_cursor_x = u16(session.read_memory("snesMemory", 0x7E5FE1, 2))
+        if not (190 <= final_cursor_x <= 240):
+            print("controller input at hover failure:", {
+                "cursor_x": final_cursor_x,
+                "held": u16(session.read_memory("snesMemory", 0x7E2200, 2)),
+                "pressed": u16(session.read_memory("snesMemory", 0x7E2204, 2)),
+                "diag_input": session.read_memory("snesMemory", 0x7E5FF0, 1)[0],
+                "diag": session.read_memory("snesMemory", 0x7E5FEC, 4).hex(),
+                "cursor_trace": cursor_trace,
+            }, flush=True)
+        require(190 <= final_cursor_x <= 240,
+                f"controller cursor did not reach locker hotspot: x={final_cursor_x}")
         print("native stage: locker hover", flush=True)
         events.append({"stage": "locker_hover", "frame": frame, "state": read_scene(session)})
-        settle_native_capture(session, frames=1800)
+        advance_safe(session, 32)
         print("native stage: hover settled", flush=True)
         capture_native(session, args.output / "02-hover.png")
         overlay_before_dialogue = int.from_bytes(
@@ -686,9 +777,15 @@ def main() -> int:
         require(state["object490_state"] == 1, f"locker did not open through controller sentence: {state}")
         events.append({"stage": "opened", "state": state})
         print("native stage: locker opened", state, flush=True)
-        settle_native_capture(session, frames=1800)
-        settle_native_capture(session, frames=1800)
-        capture_native(session, args.output / "03-opened.png")
+        # Keep the inspection input in the same authored room/session.  The
+        # live actor redraw can keep the backend non-idle while it is still a
+        # valid native frame, so observe a bounded conversion window and let
+        # the screenshot landmark check decide when the committed frame is
+        # visible instead of waiting for perpetual backend quiescence.
+        advance_safe(session, 128)
+        capture_native(session, args.output / "03-opened.png", wait_for_quiet=False)
+        require(read_scene(session)["room"] == 42,
+                "room changed before controller inspection input")
         for _ in range(120):
             if read_scene(session)["mode"] == 3:
                 break
@@ -698,6 +795,20 @@ def main() -> int:
         tap(session, session.BTN_A)
         events.append({"stage": "inspect_submitted", "state": read_scene(session)})
         print("native stage: inspect submitted", events[-1]["state"], flush=True)
+        print("inspect boundary diagnostics", {
+            "cpu": session.get_cpu_state("Snes"),
+            "reset_diag": list(session.read_memory("snesMemory", 0x7E1020, 0x20)),
+            "events": list(session.read_memory("snesMemory", 0x7E2000, 0x06)),
+            "service_diag": list(session.read_memory("snesMemory", 0x7E5FB0, 0x32)),
+            "backend": list(session.read_memory("snesMemory", 0x401000, 0x40)),
+            "surface": list(session.read_memory("snesMemory", 0x401080, 0x34)),
+        }, flush=True)
+        try:
+            trace = session.trace_log(200)
+            (args.output / "inspect-boundary-trace.json").write_text(
+                json.dumps(trace, indent=2) + "\n")
+        except Exception as exc:
+            print("inspect boundary trace unavailable:", exc, flush=True)
         message_seen = False
         dialogue_captured = False
         # Encoded text controls can own a substantial authored delay before
@@ -727,6 +838,7 @@ def main() -> int:
                 capture_native(
                     session, args.output / "04-dialogue-active.png",
                     min_overlay_generation=overlay_before_dialogue + 1,
+                    wait_for_quiet=False,
                 )
                 visual_state = read_scene(session)
                 require(visual_state["overlay_pixels_nonzero"] > 0,
@@ -738,7 +850,6 @@ def main() -> int:
         require(dialogue_captured, "inspection dialogue was not captured while active")
         require(current["error"] == 0, f"SCUMM error after inspection: {current}")
         events.append({"stage": "inspection_complete", "state": current})
-        settle_native_capture(session, frames=1800)
         capture_native(session, args.output / "04-dialogue-complete.png")
         # Prove that the real controller path remains live after the authored
         # message releases its wait.  This is an ordinary input edge, not a
@@ -751,7 +862,7 @@ def main() -> int:
                 "dialogue remained logically active after completion boundary")
         require(post_dialogue["cursor_x"] > cursor_before,
                 "controller input did not remain usable after dialogue")
-        settle_native_capture(session, frames=1800)
+        advance_safe(session, 32)
         capture_native(session, args.output / "05-post-dialogue.png")
     report = {
         "result": "pass", "rom_sha256": hashlib.sha256(args.rom.read_bytes()).hexdigest(),

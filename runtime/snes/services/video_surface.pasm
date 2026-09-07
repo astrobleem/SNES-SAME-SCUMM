@@ -32,6 +32,44 @@ SAME_VIDEO_SURFACE_CAMERA_NOCHANGE_COUNT = SAME_VIDEO_SURFACE_STATE+$2E
 SAME_VIDEO_SURFACE_CAMERA_DEFER_COUNT = SAME_VIDEO_SURFACE_STATE+$30
 SAME_VIDEO_SURFACE_CAMERA_STALE_COUNT = SAME_VIDEO_SURFACE_STATE+$32
 SAME_VIDEO_SURFACE_STATE_SIZE         = $0034
+; Debug-only service pipeline witness.  This is in the unused tail of the
+; backend-reserved block, after the surface descriptor/state and before no
+; other published service allocation.  It is not visible to SCUMM.
+; Debug-only service witness in the reserved fixture diagnostic gap.  The
+; carrier window is intentionally not used for observation: its physical
+; mapping is backend-owned and must not be confused with the service state.
+; The witness occupies only the prefix of the fixture diagnostic gap.  It ends
+; at $7E5FDF; $7E5FE0 and above belong to the SCUMM controller/object state.
+SAME_VIDEO_DIAG_BASE                  = $7E5FB0
+SAME_VIDEO_DIAG_ROOM_INSTALLS         = SAME_VIDEO_DIAG_BASE+$00
+SAME_VIDEO_DIAG_INSTALL_NEXTGEN       = SAME_VIDEO_DIAG_BASE+$02
+SAME_VIDEO_DIAG_COMPOSE_ENTRIES       = SAME_VIDEO_DIAG_BASE+$04
+SAME_VIDEO_DIAG_COMPOSE_CANWRITE_FAIL = SAME_VIDEO_DIAG_BASE+$06
+SAME_VIDEO_DIAG_COMPOSE_STATUS        = SAME_VIDEO_DIAG_BASE+$08
+SAME_VIDEO_DIAG_COMPOSE_PUSH_FAIL     = SAME_VIDEO_DIAG_BASE+$09
+SAME_VIDEO_DIAG_COMPOSE_EXITS         = SAME_VIDEO_DIAG_BASE+$0A
+SAME_VIDEO_DIAG_PUSH_ENTRIES          = SAME_VIDEO_DIAG_BASE+$0C
+SAME_VIDEO_DIAG_PUSH_EVENT_BEFORE     = SAME_VIDEO_DIAG_BASE+$0E
+SAME_VIDEO_DIAG_PUSH_GENERATION       = SAME_VIDEO_DIAG_BASE+$10
+SAME_VIDEO_DIAG_PUSH_FAIL_STAGE       = SAME_VIDEO_DIAG_BASE+$12
+SAME_VIDEO_DIAG_PUSH_EVENT_AFTER      = SAME_VIDEO_DIAG_BASE+$13
+SAME_VIDEO_DIAG_DRAIN_VIDEO            = SAME_VIDEO_DIAG_BASE+$14
+SAME_VIDEO_DIAG_LAST_SERVICE           = SAME_VIDEO_DIAG_BASE+$16
+SAME_VIDEO_DIAG_LAST_OPCODE            = SAME_VIDEO_DIAG_BASE+$17
+SAME_VIDEO_DIAG_DIRTY_HANDLES          = SAME_VIDEO_DIAG_BASE+$18
+SAME_VIDEO_DIAG_PALETTE_HANDLES        = SAME_VIDEO_DIAG_BASE+$1A
+SAME_VIDEO_DIAG_PRESENT_HANDLES        = SAME_VIDEO_DIAG_BASE+$1C
+SAME_VIDEO_DIAG_SERVICE_CALLS          = SAME_VIDEO_DIAG_BASE+$1E
+SAME_VIDEO_DIAG_SERVICE_LAST_HEAD      = SAME_VIDEO_DIAG_BASE+$20
+SAME_VIDEO_DIAG_SERVICE_LAST_TAIL      = SAME_VIDEO_DIAG_BASE+$22
+SAME_VIDEO_DIAG_SERVICE_LAST_COUNT     = SAME_VIDEO_DIAG_BASE+$24
+SAME_VIDEO_DIAG_KERNEL_ENTRIES         = SAME_VIDEO_DIAG_BASE+$26
+SAME_VIDEO_DIAG_KERNEL_POPS            = SAME_VIDEO_DIAG_BASE+$28
+SAME_VIDEO_DIAG_KERNEL_LAST_SERVICE    = SAME_VIDEO_DIAG_BASE+$2A
+SAME_VIDEO_DIAG_KERNEL_LAST_OPCODE     = SAME_VIDEO_DIAG_BASE+$2B
+SAME_VIDEO_DIAG_BACKEND_STEPS          = SAME_VIDEO_DIAG_BASE+$2C
+SAME_VIDEO_DIAG_CONVERT_REMAIN         = SAME_VIDEO_DIAG_BASE+$2E
+SAME_VIDEO_DIAG_BACKEND_STAGE          = SAME_VIDEO_DIAG_BASE+$30
 SAME_VIDEO_SURFACE_STATUS_OK          = $01
 SAME_VIDEO_SURFACE_STATUS_UNAVAILABLE = $02
 SAME_VIDEO_SURFACE_STATUS_INVALID     = $03
@@ -72,12 +110,25 @@ Same_VideoSurface_WriteIndexedPixel_Far:
 ; Generic talk/HUD facade. The selected presentation service supplies the
 ; implementation without changing the established far-call ABI.
 .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
-Same_VideoText_ShowSegment_Far = Same_VideoOverlay_ShowTalkSegment_Far
-Same_VideoText_Hide_Far = Same_VideoOverlay_Hide_Far
+; These are real wrappers rather than cross-bank aliases.  The surface facade
+; is bank 20 while the selected overlay implementation is bank 23; a symbol
+; alias would preserve the local address but could lose the implementation
+; bank in a far call.
+Same_VideoText_ShowSegment_Far:
+    jsl Same_VideoOverlay_ShowTalkSegment_Far
+    rtl
+Same_VideoText_Hide_Far:
+    jsl Same_VideoOverlay_Hide_Far
+    rtl
+Same_VideoText_CanWrite_Far:
+    jsl Same_VideoOverlay_CanWrite_Far
+    rtl
 .else
 Same_VideoText_ShowSegment_Far = Same_VideoSurface_NoTextService_Far
 Same_VideoText_Hide_Far = Same_VideoSurface_NoTextService_Far
+Same_VideoText_CanWrite_Far = Same_VideoSurface_NoTextService_Far
 Same_VideoSurface_NoTextService_Far:
+    sec
     rtl
 .endif
 
@@ -414,9 +465,24 @@ Same_VideoSurface_BlitProjection__pixel8:
 Same_VideoSurface_PushPresentation:
     rep #$20
     .a16
+    lda.l SAME_VIDEO_DIAG_PUSH_ENTRIES
+    inc
+    sta.l SAME_VIDEO_DIAG_PUSH_ENTRIES
+    lda.l SAME_EVENT_COUNT
+    sta.l SAME_VIDEO_DIAG_PUSH_EVENT_BEFORE
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_VIDEO_DIAG_PUSH_FAIL_STAGE
+    rep #$20
+    .a16
     lda.l SAME_EVENT_COUNT
     cmp #(SAME_EVENT_CAPACITY-2)
     bcc Same_VideoSurface_PushPresentation__space
+    sep #$20
+    .a8
+    lda #$04
+    sta.l SAME_VIDEO_DIAG_PUSH_FAIL_STAGE
     jmp Same_VideoSurface_PushPresentation__fail
 Same_VideoSurface_PushPresentation__space:
     jsl Same_Mode3_Event_Stage_Far
@@ -436,7 +502,7 @@ Same_VideoSurface_PushPresentation__space:
     lda #$00E0
     sta.l SAME_EVENT_STAGING+SAME_PKT_ARG1+$02
     jsl Same_Mode3_Event_Push_Far
-    bcs Same_VideoSurface_PushPresentation__fail
+    bcs Same_VideoSurface_PushPresentation__fail_dirty
     jsl Same_Mode3_Event_Stage_Far
     sep #$20
     .a8
@@ -449,7 +515,7 @@ Same_VideoSurface_PushPresentation__space:
     lda #$0100
     sta.l SAME_EVENT_STAGING+SAME_PKT_ARG0+$02
     jsl Same_Mode3_Event_Push_Far
-    bcs Same_VideoSurface_PushPresentation__fail
+    bcs Same_VideoSurface_PushPresentation__fail_palette
     jsl Same_Mode3_Event_Stage_Far
     sep #$20
     .a8
@@ -467,10 +533,45 @@ Same_VideoSurface_PushPresentation__generation_ok:
     sta.l SAME_VIDEO_SURFACE_NEXT_GENERATION
     sta.l SAME_EVENT_STAGING+SAME_PKT_ARG0
     jsl Same_Mode3_Event_Push_Far
-    bcs Same_VideoSurface_PushPresentation__fail
+    bcs Same_VideoSurface_PushPresentation__fail_present
+    rep #$20
+    .a16
+    lda.l SAME_EVENT_COUNT
+    sta.l SAME_VIDEO_DIAG_PUSH_EVENT_AFTER
+    lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION
+    sta.l SAME_VIDEO_DIAG_PUSH_GENERATION
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_VIDEO_DIAG_PUSH_FAIL_STAGE
     clc
     rts
+Same_VideoSurface_PushPresentation__fail_dirty:
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_VIDEO_DIAG_PUSH_FAIL_STAGE
+    bra Same_VideoSurface_PushPresentation__fail
+Same_VideoSurface_PushPresentation__fail_palette:
+    sep #$20
+    .a8
+    lda #$02
+    sta.l SAME_VIDEO_DIAG_PUSH_FAIL_STAGE
+    bra Same_VideoSurface_PushPresentation__fail
+Same_VideoSurface_PushPresentation__fail_present:
+    sep #$20
+    .a8
+    lda #$03
+    sta.l SAME_VIDEO_DIAG_PUSH_FAIL_STAGE
 Same_VideoSurface_PushPresentation__fail:
+    rep #$20
+    .a16
+    lda.l SAME_EVENT_COUNT
+    sta.l SAME_VIDEO_DIAG_PUSH_EVENT_AFTER
+    lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION
+    sta.l SAME_VIDEO_DIAG_PUSH_GENERATION
+    sep #$20
+    .a8
     sec
     rts
 
@@ -530,8 +631,15 @@ Same_VideoSurface_PushDirtyPresent__fail:
 Same_VideoSurface_ComposeRoom_Far:
     php
     pha
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_COMPOSE_ENTRIES
+    inc
+    sta.l SAME_VIDEO_DIAG_COMPOSE_ENTRIES
+    sep #$20
+    .a8
     jsl Same_VideoSurface_CanWrite_Far
-    bcs Same_VideoSurface_ComposeRoom__locked
+    bcs Same_VideoSurface_ComposeRoom__locked_diag
     pla
     jsr Same_VideoSurface_FindVisual
     bcs Same_VideoSurface_ComposeRoom__missing
@@ -559,9 +667,28 @@ Same_VideoSurface_ComposeRoom_Far:
     .a8
     lda.l SAME_VIDEO_SURFACE_ROOM
     sta.l SAME_VIDEO_SURFACE_PRESENTED_ROOM
+    lda #SAME_VIDEO_SURFACE_STATUS_OK
+    sta.l SAME_VIDEO_DIAG_COMPOSE_STATUS
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_COMPOSE_EXITS
+    inc
+    sta.l SAME_VIDEO_DIAG_COMPOSE_EXITS
+    sep #$20
+    .a8
     plp
     clc
     rtl
+Same_VideoSurface_ComposeRoom__locked_diag:
+    sep #$20
+    .a8
+    pla
+    lda #SAME_VIDEO_SURFACE_STATUS_LOCKED
+    sta.l SAME_VIDEO_DIAG_COMPOSE_STATUS
+    lda.l SAME_VIDEO_DIAG_COMPOSE_CANWRITE_FAIL
+    inc
+    sta.l SAME_VIDEO_DIAG_COMPOSE_CANWRITE_FAIL
+    bra Same_VideoSurface_ComposeRoom__status_fail
 Same_VideoSurface_ComposeRoom__locked:
     .a8
     pla
@@ -579,6 +706,14 @@ Same_VideoSurface_ComposeRoom__status_fail:
     sep #$20
     .a8
     sta.l SAME_VIDEO_SURFACE_STATUS
+    sta.l SAME_VIDEO_DIAG_COMPOSE_STATUS
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_COMPOSE_EXITS
+    inc
+    sta.l SAME_VIDEO_DIAG_COMPOSE_EXITS
+    sep #$20
+    .a8
     plp
     sec
     rtl

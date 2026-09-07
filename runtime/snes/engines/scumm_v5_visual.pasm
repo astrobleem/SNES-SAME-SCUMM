@@ -35,19 +35,33 @@ ScummV5_RoomVisual_Installed_Far:
     php
     rep #$20
     .a16
+    lda.l SAME_VIDEO_DIAG_ROOM_INSTALLS
+    inc
+    sta.l SAME_VIDEO_DIAG_ROOM_INSTALLS
+    lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION
+    sta.l SAME_VIDEO_DIAG_INSTALL_NEXTGEN
+    rep #$20
+    .a16
     lda.l SAME_VIDEO_SURFACE_ROOM_GENERATION
     inc
     bne ScummV5_RoomVisual_Installed__generation_ok
     inc
 ScummV5_RoomVisual_Installed__generation_ok:
     sta.l SAME_VIDEO_SURFACE_ROOM_GENERATION
-    lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION
-    bne ScummV5_RoomVisual_Installed__initial_already_done
+    ; NEXT_GENERATION is a global presentation sequence, not a per-room
+    ; installation marker.  Earlier room/camera traffic may legitimately
+    ; leave it nonzero before this room is installed.  Every room install must
+    ; compose its own descriptor once; otherwise the first present packet for
+    ; the new room is silently skipped.
     sep #$20
     .a8
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
     jsl Same_VideoSurface_ComposeRoom_Far
-ScummV5_RoomVisual_Installed__initial_already_done:
+    ; Room installation may publish its first presentation after the frame's
+    ; ordinary pre-engine drain.  Consume that target-neutral publication at
+    ; the room lifecycle boundary so the selected backend receives the room
+    ; generation without requiring SCUMM to know its implementation.
+    jsl Same_VideoSurface_ServiceEvents_Far
     plp
     rtl
 

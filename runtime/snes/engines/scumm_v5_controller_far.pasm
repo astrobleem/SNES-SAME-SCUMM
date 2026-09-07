@@ -290,11 +290,22 @@ ScummV5_Controller_Frame__mode_not_2:
 ScummV5_Controller_Frame__mode_not_3:
     sep #$20
     .a8
-    cmp #$01
+    cmp #$05
+    bne ScummV5_Controller_Frame__mode_not_5
+    jmp ScummV5_Controller_Frame__release_hud
+ScummV5_Controller_Frame__mode_not_5:
+    sep #$20
+    .a8
+    cmp #$06
     bne ScummV5_Controller_Frame__mode_select
-    jmp ScummV5_Controller_Frame__select_verb
+    jmp ScummV5_Controller_Frame__submit_inspect
 ScummV5_Controller_Frame__mode_select:
-
+    sep #$20
+    .a8
+    cmp #$01
+    bne ScummV5_Controller_Frame__mode_select_fallback
+    jmp ScummV5_Controller_Frame__select_verb
+ScummV5_Controller_Frame__mode_select_fallback:
     ; A selects the authored object only when the cursor is inside the
     ; source-backed CDHD hotspot used by object 490.
     rep #$20
@@ -391,20 +402,58 @@ ScummV5_Controller_Frame__select_verb_a_pressed:
     sta.l SAME_SCUMM_CONTROLLER_MODE
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
-    bra ScummV5_Controller_Frame__hud
+    jmp ScummV5_Controller_Frame__hud
 
 ScummV5_Controller_Frame__check_opened:
     sep #$20
     .a8
     lda.l SAME_SCUMM_OBJECT_STATES+$01EA
-    beq ScummV5_Controller_Frame__hud
+    bne ScummV5_Controller_Frame__opened
+    jmp ScummV5_Controller_Frame__hud
+ScummV5_Controller_Frame__opened:
+    sep #$20
+    .a8
+    ; Release the previous HUD layer before authored inspection talk owns
+    ; the same target-neutral text service.  The two-step mode waits for the
+    ; existing overlay transaction to become writable, then waits for the
+    ; hide transaction to finish before exposing Inspect.
+    lda #$05
+    sta.l SAME_SCUMM_CONTROLLER_MODE
+    jmp ScummV5_Controller_Frame__done
+
+ScummV5_Controller_Frame__release_hud:
+    sep #$20
+    .a8
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
+    jsl Same_VideoText_CanWrite_Far
+    bcc ScummV5_Controller_Frame__release_ready
+    jmp ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__release_ready:
+    sep #$20
+    .a8
+    jsl Same_VideoText_Hide_Far
+    lda #$06
+    sta.l SAME_SCUMM_CONTROLLER_MODE
+    .else
+    lda #$03
+    sta.l SAME_SCUMM_CONTROLLER_MODE
+    .endif
+    jmp ScummV5_Controller_Frame__done
+
+ScummV5_Controller_Frame__submit_inspect:
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
+    jsl Same_VideoText_CanWrite_Far
+    bcs ScummV5_Controller_Frame__done
+    .endif
+    sep #$20
+    .a8
     lda #$03
     sta.l SAME_SCUMM_CONTROLLER_MODE
     lda #$09
     sta.l SAME_SCUMM_CONTROLLER_VERB
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
-    bra ScummV5_Controller_Frame__hud
+    jmp ScummV5_Controller_Frame__done
 
 ScummV5_Controller_Frame__select_inspect:
     rep #$20
@@ -1027,13 +1076,29 @@ ScummV5_Controller_ShowHud_Far:
     sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_FLAGS
     lda.l SAME_SCUMM_CONTROLLER_MODE
     cmp #$01
-    beq ScummV5_Controller_ShowHud__verb
+    bne ScummV5_Controller_ShowHud__mode_not_verb
+    jmp ScummV5_Controller_ShowHud__verb
+ScummV5_Controller_ShowHud__mode_not_verb:
+    sep #$20
+    .a8
     cmp #$03
-    beq ScummV5_Controller_ShowHud__inspect
+    bne ScummV5_Controller_ShowHud__mode_not_inspect
+    jmp ScummV5_Controller_ShowHud__inspect
+ScummV5_Controller_ShowHud__mode_not_inspect:
+    sep #$20
+    .a8
     cmp #$02
-    beq ScummV5_Controller_ShowHud__walk
+    bne ScummV5_Controller_ShowHud__mode_not_walk
+    jmp ScummV5_Controller_ShowHud__walk
+ScummV5_Controller_ShowHud__mode_not_walk:
+    sep #$20
+    .a8
     cmp #$04
-    beq ScummV5_Controller_ShowHud__done
+    bne ScummV5_Controller_ShowHud__hover_mode
+    jmp ScummV5_Controller_ShowHud__done
+ScummV5_Controller_ShowHud__hover_mode:
+    sep #$20
+    .a8
     ldx #ScummV5_Controller_HudHover
     ldy #SAME_SCUMM_TALK_RAW
     lda #$000D
@@ -1063,10 +1128,66 @@ ScummV5_Controller_ShowHud__copy:
     rep #$30
     .a16
     .i16
+    ; Keep this tiny fixture copy interrupt-safe and source-correct.  The
+    ; selected HUD labels live in this code bank; the former MVN used a stale
+    ; hard-coded source bank, so it copied unrelated ROM into the logical talk
+    ; buffer and sent the overlay path through undefined text data.  A bounded
+    ; byte copy retains the selected X source pointer and uses the current
+    ; code bank explicitly.  It is also short enough that the normal NMI
+    ; boundary remains independent of a block-move DBR/X/Y transition.
     lda.l SAME_SCUMM_TALK_RAW_LENGTH
-    dec
+    sta.l SAME_OVERLAY_PRODUCER_TEMP
     phb
-    mvn $7E,$09
+    sep #$20
+    .a8
+    lda #$7E
+    pha
+    plb
+    rep #$30
+    .a16
+    .i16
+    ldx #$0000
+    ldy #$0000
+ScummV5_Controller_ShowHud__copy_loop:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_MODE
+    cmp #$01
+    bne ScummV5_Controller_ShowHud__copy_mode_not_verb
+    jmp ScummV5_Controller_ShowHud__copy_verb
+ScummV5_Controller_ShowHud__copy_mode_not_verb:
+    sep #$20
+    .a8
+    cmp #$02
+    bne ScummV5_Controller_ShowHud__copy_mode_not_walk
+    jmp ScummV5_Controller_ShowHud__copy_walk
+ScummV5_Controller_ShowHud__copy_mode_not_walk:
+    sep #$20
+    .a8
+    cmp #$03
+    bne ScummV5_Controller_ShowHud__copy_hover
+    jmp ScummV5_Controller_ShowHud__copy_inspect
+ScummV5_Controller_ShowHud__copy_hover:
+    lda.l ScummV5_Controller_HudHover,x
+    bra ScummV5_Controller_ShowHud__copy_store
+ScummV5_Controller_ShowHud__copy_verb:
+    lda.l ScummV5_Controller_HudVerb,x
+    bra ScummV5_Controller_ShowHud__copy_store
+ScummV5_Controller_ShowHud__copy_walk:
+    lda.l ScummV5_Controller_HudWalk,x
+    bra ScummV5_Controller_ShowHud__copy_store
+ScummV5_Controller_ShowHud__copy_inspect:
+    lda.l ScummV5_Controller_HudInspect,x
+ScummV5_Controller_ShowHud__copy_store:
+    sta.w $7A30,y
+    rep #$20
+    .a16
+    inx
+    iny
+    lda.l SAME_OVERLAY_PRODUCER_TEMP
+    dec
+    sta.l SAME_OVERLAY_PRODUCER_TEMP
+    bne ScummV5_Controller_ShowHud__copy_loop
     plb
     rep #$20
     .a16
@@ -1078,7 +1199,9 @@ ScummV5_Controller_ShowHud__copy:
     sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
     lda #$00
     sta.l SAME_SCUMM_TALK_SEGMENT_GLYPHS
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     jsl Same_VideoText_ShowSegment_Far
+    .endif
 ScummV5_Controller_ShowHud__done:
     rtl
 .endif

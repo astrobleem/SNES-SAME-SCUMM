@@ -33,6 +33,17 @@ Same_Mode3_Reset__clear_control:
     inx
     cpx #SAME_MODE3_CONTROL_SIZE
     bcc Same_Mode3_Reset__clear_control
+    ; Clear the bounded service-pipeline witness in the unused tail of the
+    ; backend reservation.  It is diagnostic state only and never part of the
+    ; SCUMM surface contract.
+    ldx #$0000
+Same_Mode3_Reset__clear_video_diag:
+    .a16
+    .i16
+    sta.l SAME_VIDEO_DIAG_BASE,x
+    inx
+    cpx #$0030
+    bcc Same_Mode3_Reset__clear_video_diag
     .if SAME_BUILD_SCUMM_ROOM_VISUAL
     rep #$30
     .a16
@@ -163,11 +174,44 @@ Same_Mode3_Handle_Far:
     .a8
     lda.l SAME_EVENT_STAGING+SAME_PKT_OPCODE
     cmp #SAME_VIDEO_OP_SURFACE_DIRTY
-    beq Same_Mode3_Handle__dirty
+    bne Same_Mode3_Handle__check_palette_diag
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_DIRTY_HANDLES
+    inc
+    sta.l SAME_VIDEO_DIAG_DIRTY_HANDLES
+    sep #$20
+    .a8
+    bra Same_Mode3_Handle__dirty
+Same_Mode3_Handle__check_palette_diag:
+    sep #$20
+    .a8
     cmp #SAME_VIDEO_OP_PALETTE_WRITE
-    beq Same_Mode3_Handle__palette
+    bne Same_Mode3_Handle__check_present_diag
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_PALETTE_HANDLES
+    inc
+    sta.l SAME_VIDEO_DIAG_PALETTE_HANDLES
+    sep #$20
+    .a8
+    bra Same_Mode3_Handle__palette
+Same_Mode3_Handle__check_present_diag:
+    sep #$20
+    .a8
     cmp #SAME_VIDEO_OP_PRESENT
-    beq Same_Mode3_Handle__present
+    bne Same_Mode3_Handle__other
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_PRESENT_HANDLES
+    inc
+    sta.l SAME_VIDEO_DIAG_PRESENT_HANDLES
+    sep #$20
+    .a8
+    bra Same_Mode3_Handle__present
+Same_Mode3_Handle__other:
+    sep #$20
+    .a8
     cmp #SAME_VIDEO_OP_SET_BACKDROP
     bne Same_Mode3_Handle__done
     lda #$02
@@ -187,7 +231,24 @@ Same_Mode3_Handle__done:
 
 Same_Mode3_Step_Far:
     php
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_BACKEND_STEPS
+    inc
+    sta.l SAME_VIDEO_DIAG_BACKEND_STEPS
     jsr Same_Mode3_Step
+    plp
+    rtl
+
+; The selected backend owns a small bounded per-frame conversion budget.  Keep
+; the budget here so the kernel/SCUMM layers only invoke the neutral generated
+; frame hook.
+Same_Mode3_Frame_Far:
+    php
+    jsl Same_Mode3_Step_Far
+    jsl Same_Mode3_Step_Far
+    jsl Same_Mode3_Step_Far
+    jsl Same_Mode3_Step_Far
     plp
     rtl
 

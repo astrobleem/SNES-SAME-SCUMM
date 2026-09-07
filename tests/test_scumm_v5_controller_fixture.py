@@ -80,7 +80,9 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         self.assertIn("capture_native", validator)
         self.assertIn("ImageChops.difference", validator)
         self.assertIn("reference_path", validator)
-        self.assertIn("landmark = (0, 40, 64, 104)", validator)
+        self.assertIn("visualfix26-run1/01-ready.png", validator)
+        self.assertIn("landmark = (0, 40, 256, 184)", validator)
+        self.assertIn("visible overlay is legitimately left", validator)
 
     def test_native_dialogue_capture_waits_for_printable_segment(self) -> None:
         validator = (ROOT / "tools/validate_scumm_room42_controller_nexen.py").read_text()
