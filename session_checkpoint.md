@@ -29,6 +29,14 @@
   commits only after the actor has reached its destination, so it no longer
   binds a walking pose. This is a bounded backend conversion/actor-present
   timing blocker, not a cooker result.
+- Latest replay artifact: `review_artifacts/controller-room42/fresh-corrected-normal14/`.
+  The corrected validator completed the normal controller scenario with
+  `result: pass`; ROM SHA is the value above. Its accepted-PRESENT fence is
+  real, but the captured post-fence actor is already at `(218,104)` idle, so
+  this run proves the complete semantic/visual scene and backend fencing, not
+  the required in-flight walking-pose binding. The pre-retry walking capture
+  remains the preserved negative witness.
+- Latest review branch commit: `521343033b1827b8fccb1a3061980d807bd5e240`.
 - Native room/background and HUD evidence is useful, but actor costume
   fidelity is not accepted. `visualfix26-run1/native/03-walking.png` is a
   preserved FAIL witness; other captures containing Indy are UNKNOWN for actor
