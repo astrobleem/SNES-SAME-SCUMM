@@ -14,9 +14,6 @@ ScummV5_Controller_SeedRoom42SourceStrings_Far:
     rep #$30
     .a16
     .i16
-    pha
-    phx
-    phy
     sep #$20
     .a8
     lda #$99
@@ -37,9 +34,6 @@ ScummV5_Controller_SeedRoom42SourceStrings_Far__fill:
     rep #$30
     .a16
     .i16
-    ply
-    plx
-    pla
     plp
     rtl
 
@@ -120,7 +114,10 @@ ScummV5_Controller_Frame__room68_request:
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_SCENARIO_REQUESTED
     lda #$2A
-    jsr ScummV5_RequestRoom
+    ; This fixture runs in bank 9.  The bank-0 ScummV5_RequestRoom helper
+    ; is an RTS entry and cannot be reached with JSR while PBR remains 9.
+    ; Use the existing same-bank far lifecycle entry instead.
+    jsl ScummV5_M23A_RequestRoom_FarEntry
     jmp ScummV5_Controller_Frame__done
 ScummV5_Controller_Frame__room42_check:
     sep #$20
@@ -151,6 +148,21 @@ ScummV5_Controller_Frame__stack_ok:
     beq ScummV5_Controller_Frame__talk_ok
     jmp ScummV5_Controller_Frame__done
 ScummV5_Controller_Frame__talk_ok:
+    ; Mode 4 is the fixture's inspect-talk ownership state.  Talk_Stop clears
+    ; the logical message, but the controller must explicitly hand control
+    ; back to its ordinary hover state before the next input edge.  Keep this
+    ; transition semantic and target-neutral; presentation will consume the
+    ; new HUD-dirty state in the normal late visual phase.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_MODE
+    cmp #$04
+    bne ScummV5_Controller_Frame__talk_mode_ready
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_MODE
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+ScummV5_Controller_Frame__talk_mode_ready:
     sep #$20
     .a8
     lda #$04
@@ -501,6 +513,135 @@ ScummV5_Controller_Frame__hud:
     jsl ScummV5_Controller_ShowHud_Far
     .endif
 ScummV5_Controller_Frame__done:
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && !(SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $04)
+    ; Diagnostic pre-ordering variant: retain the historical controller-phase
+    ; actor render so the ordering family can be bisected independently.
+    jsl ScummV5_Controller_RenderActor_Far
+    .endif
+    ; Input/controller semantics end here.  Actor presentation consumes the
+    ; coherent desired snapshot from ScummV5_Visual_Frame_Far, after the
+    ; movement/scheduler phase, so a single logical frame cannot compose two
+    ; different actor snapshots.
+    plp
+    rtl
+
+; Publish semantic actor state after movement has committed its complete
+; record. A non-room-42 frame is intentionally inert.
+ScummV5_Controller_PublishActorVisual_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    cmp #$2A
+    beq ScummV5_Controller_PublishActorVisual__room_ok
+    jmp ScummV5_Controller_PublishActorVisual__done
+ScummV5_Controller_PublishActorVisual__room_ok:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C31_POSITIONS+4
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    lda.l SAME_SCUMM_C31_POSITIONS+6
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    lda.l SAME_SCUMM_PUT_ACTOR_DEST_X+2
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_DEST
+    ; C31 position and destination are committed before the movement flag is
+    ; refreshed on this path.  Derive the visual pose from the coherent
+    ; position/destination pair as well as the flag; otherwise the first
+    ; position change publishes a standing pose at the new position, starts a
+    ; long presentation conversion, and the actual walking snapshot arrives
+    ; only after movement has completed.  FFFF is the authored no-destination
+    ; sentinel, so it cannot make an idle actor appear to walk.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C31_MOVING+1
+    beq ScummV5_Controller_PublishActorVisual__check_destination
+    jmp ScummV5_Controller_PublishActorVisual__moving
+ScummV5_Controller_PublishActorVisual__check_destination:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_DEST
+    cmp #$FFFF
+    bne ScummV5_Controller_PublishActorVisual__destination_valid
+    ; Movement update publishes position before destination on one ordinary
+    ; scheduler path.  Once a visible snapshot exists, a changed position
+    ; paired with the no-destination sentinel is an incomplete record, not a
+    ; coherent teleport/standing state.  Retain the last desired snapshot so
+    ; the next frame can publish the position and destination together.
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
+    beq ScummV5_Controller_PublishActorVisual__standing
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_X
+    bne ScummV5_Controller_PublishActorVisual__done
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_Y
+    bne ScummV5_Controller_PublishActorVisual__done
+    bra ScummV5_Controller_PublishActorVisual__standing
+ScummV5_Controller_PublishActorVisual__destination_valid:
+    cmp.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    beq ScummV5_Controller_PublishActorVisual__compare_destination_y
+    jmp ScummV5_Controller_PublishActorVisual__moving
+ScummV5_Controller_PublishActorVisual__compare_destination_y:
+    lda.l SAME_SCUMM_MOVE_DEST_Y+2
+    cmp.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    beq ScummV5_Controller_PublishActorVisual__standing
+    bra ScummV5_Controller_PublishActorVisual__moving
+ScummV5_Controller_PublishActorVisual__moving:
+    sep #$20
+    .a8
+    lda #$01
+    bra ScummV5_Controller_PublishActorVisual__pose_done
+ScummV5_Controller_PublishActorVisual__standing:
+    sep #$20
+    .a8
+    lda #$00
+ScummV5_Controller_PublishActorVisual__pose_done:
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C14_ACTORS+64+SAME_SCUMM_C14_A_COSTUME
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME
+    lda.l SAME_SCUMM_ACTOR_FACINGS+2
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_FACING
+    lda.l SAME_SCUMM_C14_ACTORS+64+SAME_SCUMM_C14_A_VISIBLE
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
+ScummV5_Controller_PublishActorVisual__done:
+    plp
+    rtl
+
+; Room installation owns cache lifetime. This is called by the generic room
+; visual lifecycle, so startup/other rooms cannot inherit a fixture snapshot.
+ScummV5_Controller_ResetVisualCache_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROOM
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    .if SAME_SCUMM_CONTROLLER_WITNESS
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_VALID
+    .endif
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_RETRY
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_COSTUME
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_VISIBLE
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_DEST
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_FACING
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_FACING
     plp
     rtl
 
@@ -515,6 +656,28 @@ ScummV5_Controller_RenderActor_Far:
     rep #$30
     .a16
     .i16
+    pha
+    phx
+    phy
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_RENDER_ENTRIES
+    inc
+    sta.l SAME_VIDEO_DIAG_RENDER_ENTRIES
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    beq ScummV5_Controller_RenderActor__entry_diag_done
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_RENDER_MOVING_ENTRIES
+    inc
+    sta.l SAME_VIDEO_DIAG_RENDER_MOVING_ENTRIES
+ScummV5_Controller_RenderActor__entry_diag_done:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    sta.l SAME_VIDEO_DIAG_RENDER_DESIRED
     ; ACTIVE_ROOM is a byte field.  Keep the comparison byte-wide so the
     ; adjacent pending-record byte cannot become part of the room identity.
     sep #$20
@@ -522,28 +685,60 @@ ScummV5_Controller_RenderActor_Far:
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
     cmp #$2A
     beq ScummV5_Controller_RenderActor__room_ok
-    lda #$00
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
-    plp
-    rtl
-ScummV5_Controller_RenderActor__room_ok:
     rep #$30
     .a16
     .i16
-    lda.l SAME_SCUMM_C31_POSITIONS+4
+    ply
+    plx
+    pla
+    plp
+    rtl
+ScummV5_Controller_RenderActor__room_ok:
+    ; Position is not a complete visual cache key: an actor can change from
+    ; standing to walking without moving during the first logical step.
+    sep #$20
+    .a8
+    .if SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $01
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_ACTOR_SELECT
+    beq ScummV5_Controller_RenderActor__pose_same
+    jmp ScummV5_Controller_RenderActor__changed
+    .endif
+ScummV5_Controller_RenderActor__pose_same:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
     cmp.l SAME_SCUMM_CONTROLLER_RENDER_X
     bne ScummV5_Controller_RenderActor__x_diff
     jmp ScummV5_Controller_RenderActor__x_same
 ScummV5_Controller_RenderActor__x_diff:
     jmp ScummV5_Controller_RenderActor__changed
 ScummV5_Controller_RenderActor__x_same:
-    lda.l SAME_SCUMM_C31_POSITIONS+6
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
     cmp.l SAME_SCUMM_CONTROLLER_RENDER_Y
     bne ScummV5_Controller_RenderActor__y_diff
     jmp ScummV5_Controller_RenderActor__y_same
 ScummV5_Controller_RenderActor__y_diff:
     jmp ScummV5_Controller_RenderActor__changed
 ScummV5_Controller_RenderActor__y_same:
+    sep #$20
+    .a8
+    .if SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $01
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_COSTUME
+    bne ScummV5_Controller_RenderActor__changed
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_VISIBLE
+    bne ScummV5_Controller_RenderActor__changed
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_FACING
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_FACING
+    bne ScummV5_Controller_RenderActor__changed
+    .endif
+    sep #$20
+    .a8
     sep #$20
     .a8
     lda.l SAME_SCUMM_CONTROLLER_RENDER_VALID
@@ -570,15 +765,230 @@ ScummV5_Controller_RenderActor__retry_done:
 ScummV5_Controller_RenderActor__changed:
     sep #$20
     .a8
-    lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
-    jsl Same_VideoSurface_ComposeRoom_Far
-    bcc ScummV5_Controller_RenderActor__compose_ok
-    jmp ScummV5_Controller_RenderActor__done
-ScummV5_Controller_RenderActor__compose_ok:
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    bne ScummV5_Controller_RenderActor__bounded_compose
+    brl ScummV5_Controller_RenderActor__full_compose
+ScummV5_Controller_RenderActor__bounded_compose:
+    ; Restore only the union of the cached and current actor bounds.  The
+    ; surface service owns clipping and room-source projection.
     rep #$30
     .a16
     .i16
-    lda.l SAME_SCUMM_C31_POSITIONS+4
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_X
+    sec
+    sbc #$0010
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    sec
+    sbc #$0010
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    bcs ScummV5_Controller_RenderActor__damage_x0_done
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+ScummV5_Controller_RenderActor__damage_x0_done:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_X
+    sec
+    sbc #$0010
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    clc
+    adc #$0020
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    sec
+    sbc #$0010
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    clc
+    adc #$0020
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    bcc ScummV5_Controller_RenderActor__damage_x1_done
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+ScummV5_Controller_RenderActor__damage_x1_done:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_Y
+    sec
+    sbc #$0037
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    sec
+    sbc #$0037
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    bcs ScummV5_Controller_RenderActor__damage_y0_done
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+ScummV5_Controller_RenderActor__damage_y0_done:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_Y
+    sec
+    sbc #$0037
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    clc
+    adc #$0040
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    sec
+    sbc #$0037
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    clc
+    adc #$0040
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    bcc ScummV5_Controller_RenderActor__damage_y1_done
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+ScummV5_Controller_RenderActor__damage_y1_done:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    sec
+    sbc.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    sec
+    sbc.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    ; RestoreRect takes packed pixel-space arguments: A=(y<<8)|x and
+    ; X=(height<<8)|width.
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    and #$00FF
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    and #$00FF
+    xba
+    ora.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    pha
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    and #$00FF
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    and #$00FF
+    xba
+    ora.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    tax
+    pla
+    sta.l SAME_SCUMM_CONTROLLER_RESTORE_CALL_A
+    txa
+    sta.l SAME_SCUMM_CONTROLLER_RESTORE_CALL_X
+    tax
+    lda.l SAME_SCUMM_CONTROLLER_RESTORE_CALL_A
+    jsl Same_VideoSurface_RestoreRect_Far
+    bcs ScummV5_Controller_RenderActor__restore_retry
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_ACTIVE
+    jmp ScummV5_Controller_RenderActor__compose_actor
+ScummV5_Controller_RenderActor__restore_retry:
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    jmp ScummV5_Controller_RenderActor__done
+ScummV5_Controller_RenderActor__full_compose:
+    sep #$20
+    .a8
+    ; The installed room visual is already the committed background when the
+    ; initial actor pass is allowed to run. Restore only the actor rectangle
+    ; instead of rebuilding the full 256x224 room inside one logical frame.
+    ; This is still a target-neutral pixel-space surface operation.
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_ACTIVE
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    sec
+    sbc #$0010
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    clc
+    adc #$0020
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    sec
+    sbc #$0037
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    clc
+    adc #$0040
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    sec
+    sbc.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    sec
+    sbc.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    and #$00FF
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    and #$00FF
+    xba
+    ora.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    pha
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    and #$00FF
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    and #$00FF
+    xba
+    ora.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    tax
+    pla
+    sta.l SAME_SCUMM_CONTROLLER_RESTORE_CALL_A
+    txa
+    sta.l SAME_SCUMM_CONTROLLER_RESTORE_CALL_X
+    tax
+    lda.l SAME_SCUMM_CONTROLLER_RESTORE_CALL_A
+    jsl Same_VideoSurface_RestoreRect_Far
+    bcc ScummV5_Controller_RenderActor__compose_actor
+    brl ScummV5_Controller_RenderActor__full_compose_retry
+ScummV5_Controller_RenderActor__compose_actor:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
     sec
     sbc #$0010
     clc
@@ -586,7 +996,7 @@ ScummV5_Controller_RenderActor__compose_ok:
     sec
     sbc.l SAME_VIDEO_SURFACE_SOURCE_X
     sta.l SAME_SCUMM_CONTROLLER_RENDER_BASE
-    lda.l SAME_SCUMM_C31_POSITIONS+6
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
     sec
     sbc #$0037
     clc
@@ -598,89 +1008,93 @@ ScummV5_Controller_RenderActor__compose_ok:
     clc
     adc.l SAME_SCUMM_CONTROLLER_RENDER_BASE
     sta.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ACTOR_BASE
 
-    ; Frame zero is the source-defined standing pose. During movement select
-    ; the second cooked pose on alternating frame-counter phases.
+    ; Frame zero is the source-defined standing pose. A moving actor uses the
+    ; source-backed walking pose. Pose choice follows logical actor state, not
+    ; a controller/validator frame counter, so a committed presentation can
+    ; never regress to standing merely because observation crossed a phase.
     sep #$20
     .a8
-    lda.l SAME_SCUMM_C31_MOVING+1
+    ; The late compositor consumes the coherent desired snapshot.  The live
+    ; C31 movement byte and controller mode can belong to different logical
+    ; phases; neither may force a pose before PublishActorVisual has published
+    ; the corresponding actor state.
+    lda.l SAME_SCUMM_CONTROLLER_MODE
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_MODE_SAMPLE
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_MOVING_SAMPLE
+    bne ScummV5_Controller_RenderActor__walk
+    ; Keep the destination sample diagnostic-only; it is not a pose selector.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_DEST
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DEST_SAMPLE
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_VALID
     beq ScummV5_Controller_RenderActor__stand
     rep #$20
     .a16
-    lda.l SAME_FRAME_COUNTER
-    lsr
-    lsr
-    lsr
-    and #$0001
-    beq ScummV5_Controller_RenderActor__stand
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_X
+    bne ScummV5_Controller_RenderActor__walk
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_Y
+    bne ScummV5_Controller_RenderActor__walk
+    jmp ScummV5_Controller_RenderActor__stand
+ScummV5_Controller_RenderActor__walk:
+    sep #$20
+    .a8
+    ; DESIRED_SELECT is the semantic snapshot published after movement.  The
+    ; compositor must not rewrite it while selecting an attempted cooked
+    ; frame: a busy/rejected PRESENT must leave the latest desired state
+    ; intact for the next retry.
+    rep #$20
+    .a16
     lda #$0800
     bra ScummV5_Controller_RenderActor__frame_base
 ScummV5_Controller_RenderActor__stand:
+    sep #$20
+    .a8
+    ; Keep the published semantic pose immutable during composition.
     rep #$20
     .a16
+    ; TEMP diagnostic: retain the selected standing value here; target
+    ; selection tracing below distinguishes branch entry from later storage.
     lda #$0000
 ScummV5_Controller_RenderActor__frame_base:
     rep #$20
     .a16
     sta.l SAME_SCUMM_CONTROLLER_RENDER_SRC
-    lda #$0000
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROW
-ScummV5_Controller_RenderActor__row:
-    rep #$20
-    .a16
-    ; Keep SRC as the immutable frame base.  The previous implementation
-    ; added each row's offset back into SRC, making the source advance by
-    ; 0+32+64+... and eventually read past the cooked pose.  FRAME is the
-    ; per-row source cursor; the pixel loop may then use it without changing
-    ; the frame base needed by the next row.
-    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
-    asl
-    asl
-    asl
-    asl
-    asl
-    clc
-    adc.l SAME_SCUMM_CONTROLLER_RENDER_SRC
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROWSRC
-    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
-    xba
-    and #$FF00
-    clc
-    adc.l SAME_SCUMM_CONTROLLER_RENDER_BASE
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
-    lda #$0000
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_COL
-ScummV5_Controller_RenderActor__pixel:
-    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
-    clc
-    adc.l SAME_SCUMM_CONTROLLER_RENDER_ROWSRC
-    tax
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ACTOR_FRAME
+    ; Batch the actor's indexed pixels through the target-neutral surface
+    ; service.  The previous path made 2048 far calls for every pose, which
+    ; could starve the mainline before it reached the single PRESENT.
     sep #$20
     .a8
-    lda.l ScummV5_ActorSprite_Data,x
-    beq ScummV5_Controller_RenderActor__transparent
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_FRAME
-    rep #$20
+    lda #$00
+    sta SAME_VIDEO_SURFACE_DP_SOURCE
+    lda #$80
+    sta SAME_VIDEO_SURFACE_DP_SOURCE+$01
+    lda #SCUMM_V5_ACTOR_SPRITE_BANK
+    sta SAME_VIDEO_SURFACE_DP_SOURCE+$02
+    rep #$30
     .a16
-    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
-    clc
-    adc.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_BASE
+    pha
+    lda #$4020
     tax
-    lda.l SAME_SCUMM_CONTROLLER_RENDER_FRAME
-    jsl Same_VideoSurface_WriteIndexedPixel_Far
-ScummV5_Controller_RenderActor__transparent:
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_CONTROLLER_RENDER_COL
-    inc
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_COL
-    cmp #$0020
-    bcc ScummV5_Controller_RenderActor__pixel
-    lda.l SAME_SCUMM_CONTROLLER_RENDER_ROW
-    inc
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_ROW
-    cmp #$0040
-    bcc ScummV5_Controller_RenderActor__row
+    ; BlitIndexedRect takes A=(y<<8)|x, X=(height<<8)|width, and
+    ; Y=source offset.  Keep the packed destination in A; loading the
+    ; source into A here used to send the source offset as the destination
+    ; and produced the striped actor at the wrong surface location.
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_SRC
+    tay
+    pla
+    jsl Same_VideoSurface_BlitIndexedRect_Far
+    bcc ScummV5_Controller_RenderActor__blit_ok
+    brl ScummV5_Controller_RenderActor__present_retry
+ScummV5_Controller_RenderActor__blit_ok:
 
     ; Add the source-backed locker OBIM through the same indexed surface
     ; compositor before publishing.  State 1 is the authored opened form,
@@ -689,33 +1103,141 @@ ScummV5_Controller_RenderActor__transparent:
     jsl ScummV5_Controller_DrawCursor_Far
     sep #$20
     .a8
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_ACTIVE
+    beq ScummV5_Controller_RenderActor__full_present
+    jsl Same_VideoSurface_PushDamagePresent_Far
+    bra ScummV5_Controller_RenderActor__present_result
+ScummV5_Controller_RenderActor__full_compose_retry:
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    jmp ScummV5_Controller_RenderActor__done
+ScummV5_Controller_RenderActor__full_present:
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
     jsl Same_VideoSurface_PushDirtyPresent_Far
-    bcs ScummV5_Controller_RenderActor__present_retry
+ScummV5_Controller_RenderActor__present_result:
+    sep #$20
+    .a8
+    bcc ScummV5_Controller_RenderActor__present_success
+    brl ScummV5_Controller_RenderActor__present_retry
+ScummV5_Controller_RenderActor__present_success:
+    sep #$20
+    .a8
     lda #$00
     sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
-    bra ScummV5_Controller_RenderActor__present_record
+    ; The fixture hook is interested in the in-flight walk proof.  Do not
+    ; generate asynchronous notifications for the many ordinary standing
+    ; redraws; a successful moving publication remains the exact witness.
+    .if SAME_SCUMM_CONTROLLER_WITNESS
+    ; The late compositor consumes the coherent desired snapshot.  The live
+    ; movement byte may already have been cleared by the next scheduler phase;
+    ; rereading it here would reject a successful walking composition.
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    sta.l SAME_VIDEO_DIAG_WITNESS_MOVING
+    lda.l SAME_VIDEO_DIAG_WITNESS_ATTEMPTS
+    inc
+    sta.l SAME_VIDEO_DIAG_WITNESS_ATTEMPTS
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    beq ScummV5_Controller_RenderActor__skip_moving_witness
+    ; The witness is a post-success publication record.  Capture the
+    ; semantic state and the exact generation allocated by the accepted
+    ; PRESENT; rejected/busy paths branch above and never reach this block.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_FRAME_COUNT
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_FRAME
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_X
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_Y
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_DEST
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_DEST_X
+    lda.l SAME_SCUMM_MOVE_DEST_Y+2
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_DEST_Y
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_X
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_Y
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_W
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_H
+    lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_PRESENT
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_POSE
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_MOVING
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_VALID
+    ; Publish the serial last so a write hook observes a complete witness.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_WITNESS_SERIAL
+    inc
+    sta.l SAME_SCUMM_CONTROLLER_WITNESS_SERIAL
+    bra ScummV5_Controller_RenderActor__witness_done
+    .endif
+ScummV5_Controller_RenderActor__skip_moving_witness:
+    .if SAME_SCUMM_CONTROLLER_WITNESS
+    lda.l SAME_VIDEO_DIAG_WITNESS_SKIPS
+    inc
+    sta.l SAME_VIDEO_DIAG_WITNESS_SKIPS
+    .endif
+ScummV5_Controller_RenderActor__witness_done:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_X
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_Y
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_ACTOR_SELECT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_FACING
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_FACING
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_COSTUME
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_VISIBLE
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
+    jmp ScummV5_Controller_RenderActor__done
 ScummV5_Controller_RenderActor__present_retry:
     sep #$20
     .a8
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
-ScummV5_Controller_RenderActor__present_record:
+    .if !(SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $02)
+    ; Diagnostic pre-fix variant: emulate the historical incorrect cache
+    ; commit after a rejected PRESENT for the independent bisect.
     rep #$20
     .a16
-    lda.l SAME_SCUMM_C31_POSITIONS+4
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
     sta.l SAME_SCUMM_CONTROLLER_RENDER_X
-    lda.l SAME_SCUMM_C31_POSITIONS+6
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
     sta.l SAME_SCUMM_CONTROLLER_RENDER_Y
-    sep #$20
-    .a8
-    lda #$01
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
-    lda #$00
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
-    lda #$01
-    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
+    .endif
+    ; The attempted composition is not accepted state.  Leave the old
+    ; position/pose key intact; the next writable frame retries the latest
+    ; semantic state instead of pretending this generation was rendered.
 ScummV5_Controller_RenderActor__done:
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
     plp
     rtl
 

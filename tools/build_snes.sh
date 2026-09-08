@@ -8,7 +8,7 @@ POPPY_DLL="${POPPY_DLL:-$POPPY_ROOT/src/Poppy.CLI/bin/Release/net10.0/poppy.dll}
 PYTHON="${PYTHON:-python3}"
 TAD_COMPILER="${TAD_COMPILER:-$ROOT/../terrific-audio-driver/target/release/tad-compiler}"
 SAME_MUSIC_CATALOG="${SAME_MUSIC_CATALOG:-$ROOT/examples/resources/music/fate_s6_compiled.json}"
-EXPECTED_POPPY_SHA256=715b14431478b62433498cc516c1cbbb8f418c1d7b39a8e71098ed98d9c9167e
+EXPECTED_POPPY_SHA256=34514923ea8dc79a4664fa327f583cee8e8daa64e3be47518ae22ba5a2c7608e
 
 cd "$ROOT"
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
@@ -94,6 +94,10 @@ if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" == "1" ]]; then
 fi
 if [[ "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-controller-fixture)
+    ENGINE_SELECTION_ARGS+=(--scumm-controller-behavior-mask "${SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK:-7}")
+    if [[ "${SAME_SCUMM_CONTROLLER_WITNESS:-1}" != "0" ]]; then
+        ENGINE_SELECTION_ARGS+=(--scumm-controller-witness)
+    fi
 fi
 if [[ "${SAME_BUILD_SCUMM_SAVE_PERSISTENCE_VALIDATOR:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-save-persistence-validator)
@@ -382,14 +386,15 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" ]]; then
             --archive "${SAME_FATE_DEMO_ARCHIVE:-/home/chad/fatedemo-box.zip}" \
             --profile "${SAME_SNES_PROFILE:-examples/profiles/templates/fate_of_atlantis_demo.json}" \
             --costume 2 \
+            --facing "${SAME_SCUMM_ACTOR_SPRITE_FACING:-90}" \
             --output runtime/snes/generated/scumm_v5_actor_sprite.inc.pasm \
-            --bank "${SAME_SCUMM_ACTOR_SPRITE_BANK:-96}"
+            --bank "${SAME_SCUMM_ACTOR_SPRITE_BANK:-118}"
         "$PYTHON" tools/generate_snes_scumm_object_sprite.py \
             --archive "${SAME_FATE_DEMO_ARCHIVE:-/home/chad/fatedemo-box.zip}" \
             --profile "${SAME_SNES_PROFILE:-examples/profiles/templates/fate_of_atlantis_demo.json}" \
             --room 42 --object 490 \
             --output runtime/snes/generated/scumm_v5_object_sprite.inc.pasm \
-            --bank "${SAME_SCUMM_OBJECT_SPRITE_BANK:-97}"
+            --bank "${SAME_SCUMM_OBJECT_SPRITE_BANK:-119}"
     fi
 fi
 "$PYTHON" tools/generate_snes_engine_selection.py "${ENGINE_SELECTION_ARGS[@]}"
@@ -489,3 +494,10 @@ echo "SNES layout map: $SAME_SNES_MAP"
 "$PYTHON" tools/audit_snes_rom.py "$SAME_SNES_OUTPUT" \
     --carrier "$SAME_SNES_CARRIER" --manifest "$CARRIER_MANIFEST"
 sha256sum "$SAME_SNES_OUTPUT"
+"$PYTHON" tools/write_build_identity.py \
+    --rom "$SAME_SNES_OUTPUT" \
+    --output "${SAME_SNES_OUTPUT%.sfc}.build_identity.json" \
+    --poppy-sha256 "$POPPY_SHA256" \
+    --carrier-manifest "$CARRIER_MANIFEST" \
+    --video-backend-manifest "$VIDEO_BACKEND_MANIFEST" \
+    --video-overlay-manifest "$VIDEO_OVERLAY_MANIFEST"

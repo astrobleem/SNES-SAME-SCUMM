@@ -33,33 +33,38 @@ def source_bytes(archive: Path) -> dict[str, bytes]:
     raise RuntimeError(f"{archive}: no supported SCUMM v5 index/data pair")
 
 
-def assemble_pose(costume, pose, *, width: int, height: int) -> bytes:
-    """Rasterize decoded SCUMM cels into the target indexed canvas."""
+def cook_pose(
+    costume: ScummV5Costume,
+    frame: int,
+    *,
+    width: int,
+    height: int,
+    facing: int = 180,
+) -> bytes:
+    pose = costume.decode_pose(frame, facing=facing, step=0)
     pixels = bytearray(width * height)
     for cel in pose.cels:
-        origin_x = width // 2 + cel.relative_x
+        # Costume BYLE data is traversed in source column-major order.  Keep
+        # the same directional placement contract as ScummV5RoomRenderer:
+        # facing-dependent poses may paint from right to left around the
+        # actor anchor.  The old cooker flattened the cel row-major and
+        # therefore emitted a transposed/striped actor while its self-check
+        # still compared two copies of the same wrong composition.
+        origin_x = width // 2 + cel.relative_x if pose.draw_to_right else width // 2 - cel.relative_x
         origin_y = height - 9 + cel.relative_y
+        x_step = 1 if pose.draw_to_right else -1
         for y in range(cel.height):
             target_y = origin_y + y
             if not 0 <= target_y < height:
                 continue
             for x in range(cel.width):
-                # SCUMM v5 costume cels are decoded in column-major order.
-                # Keep the source orientation selected by the pose; the
-                # target compositor receives the already assembled indexed
-                # canvas, so mirroring belongs here rather than in the SNES
-                # backend.
+                target_x = origin_x + x_step * x
+                if not 0 <= target_x < width:
+                    continue
                 value = cel.pixels[x * cel.height + y]
-                target_x = origin_x + x if pose.draw_to_right else origin_x - x
                 if value:
-                    if 0 <= target_x < width:
-                        pixels[target_y * width + target_x] = costume.palette[value]
+                    pixels[target_y * width + target_x] = costume.palette[value]
     return bytes(pixels)
-
-
-def cook_pose(costume: ScummV5Costume, frame: int, *, width: int, height: int) -> bytes:
-    pose = costume.decode_pose(frame, facing=180, step=0)
-    return assemble_pose(costume, pose, width=width, height=height)
 
 
 def rows(data: bytes, width: int) -> str:
@@ -74,6 +79,7 @@ def main() -> int:
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--costume", type=int, default=2)
+    parser.add_argument("--facing", type=int, default=180)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--bank", type=lambda value: int(value, 0), default=95)
     args = parser.parse_args()
@@ -88,7 +94,8 @@ def main() -> int:
     key = policy.costume_key_template.format(costume=args.costume)
     costume = ScummV5Costume(provider.read(key), key=key)
     width, height = 32, 64
-    frames = tuple(cook_pose(costume, frame, width=width, height=height)
+    frames = tuple(cook_pose(costume, frame, width=width, height=height,
+                             facing=args.facing)
                    for frame in (1, 2, 3, 4))
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +108,8 @@ def main() -> int:
         f"SCUMM_V5_ACTOR_SPRITE_HEIGHT = ${height:04X}",
         f"SCUMM_V5_ACTOR_SPRITE_FRAME_COUNT = ${len(frames):02X}",
         f"SCUMM_V5_ACTOR_SPRITE_COSTUME = ${args.costume:02X}",
+        f"SCUMM_V5_ACTOR_SPRITE_FACING = ${args.facing:04X}",
+        f"SCUMM_V5_ACTOR_SPRITE_BANK = ${args.bank:02X}",
         f".bank {args.bank}", ".org $8000",
         "ScummV5_ActorSprite_Data:",
         f'    .incbin "{binary.resolve()}"',

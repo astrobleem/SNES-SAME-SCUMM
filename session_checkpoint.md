@@ -1,5 +1,245 @@
 # SAME / SCUMM v5 session checkpoint
 
+## Poppy semantic-address fix (2026-09-08)
+
+- Independent Poppy reproducer and matrix are in `/home/chad/poppy-jsl-address-fix`.
+  The JSL encoder emits the correct four bytes (`$22 ll hh bb`); the SAME
+  apparent `+3` drift was caused by conditional `EQU` symbols not being
+  pre-registered during semantic sizing. The fix recursively pre-registers
+  constants in conditional branches, so direct-page sizing agrees with codegen.
+- Existing upstream issue: [TheAnsarya/poppy#376](https://github.com/TheAnsarya/poppy/issues/376);
+  supplemental evidence comment:
+  https://github.com/TheAnsarya/poppy/issues/376#issuecomment-5587606104.
+  Review PR: https://github.com/TheAnsarya/poppy/pull/392.
+- SAME remains pinned to the tested fork DLL/commit:
+  `8ee859b33bad94e3a01e9c78026803e482292801`, DLL SHA-256:
+  `34514923ea8dc79a4664fa327f583cee8e8daa64e3be47518ae22ba5a2c7608e`.
+- The clean upstream-base review is now `astrobleem/poppy` branch
+  `fix/poppy-376-focused-clean`, commit
+  `5ab64a4745532d8ef732a2ee694ac9b6dd0e054d`, PR #393:
+  https://github.com/TheAnsarya/poppy/pull/393. Stale broad PR #392 was
+  closed/superseded. The clean branch excludes unrelated fork work; full
+  Poppy suite: 3375/3375. Issue #376 has final root-cause and evidence
+  comments recorded.
+- Fixed-Poppy SAME ROM: `build/poppy-fixed-startup42.sfc`, SHA-256
+  `2059497c0d5bddb0df5c622662060f7082f504b4c2f3128f531c9aeff12cda26`.
+  Build identity: `build/poppy-fixed-startup42.build_identity.json`; explicit
+  FULL corpus is `/home/chad/ATLANTIS.zip` with member hashes recorded there.
+  The corrected map now places `RenderActor__blit_ok=$9DDE`,
+  `full_compose_retry=$9DF4`, and `ScummV5_Camera_ResetState_Far=$D0FE`,
+  matching emitted bytes. Explicit startup42 reaches room 42, actor room 42,
+  readiness 1, error 0 at frame 702. Do not resume walking proof from the
+  old Poppy build; use this ROM/configuration.
+- Witness perturbation matrix on the same explicit FULL configuration:
+  witness-out ROM `build/poppy-fixed-startup42-witness-off.sfc`, SHA-256
+  `47edf9f9f3e3526e127d7840e982637c7210ac21c0ac67d1896fc9ae53486ae9`,
+  also reaches room 42/readiness 1/error 0 at frame 702. Witness-in and
+  witness-out therefore do not show an early startup divergence. The fixed
+  witness-in controller run reaches hover, Open, and a moving semantic
+  snapshot, but no successful moving actor PRESENT is currently observed;
+  that is a separate post-startup visual-publication frontier, not evidence
+  against the Poppy fix.
+
+## Event-driven walking-proof frontier (2026-09-08)
+
+- Startup regression remains accepted CLOSED at ROM
+  `d4eaba6099f9ae428a3ad7dd582d2b432c216b1d9d9b72ac3d38999cd113d746`:
+  explicit FULL startup42 reaches room 42, actor room 42, readiness 1, and
+  error 0; the accepted focused regression total is 516/516.
+- The walking observation path is now fenced by production-success events in
+  the validator, not guessed frame polling: a write hook on the semantic
+  final desired-visible field (`$7E5E4D`) records the complete desired snapshot,
+  a write hook
+  on the fixture-only successful-publication validity byte (`$7E5E6A`) records
+  only a completed actor PRESENT, and a backend committed-generation hook
+  (`$401010-$401011`) fences the same PRESENT through conversion completion.
+- `wait_for_semantic_moving_snapshot()` and the ordered validator stages
+  `semantic_moving_snapshot -> walking publication witness -> committed
+  generation` are observational only. They do not add production waits,
+  alter movement timing, submit sentences, or update the witness on failed
+  PRESENTs.
+- Exact moving surface/native fidelity is still pending. Do not claim it from
+  a standing frame or from a post-movement screenshot. Run A must capture the
+  moving witness and its committed generation before advancing another logical
+  frame; Run B remains the ordinary full controller/dialogue replay.
+
+## Current semantic-snapshot frontier (2026-09-07)
+
+- Accepted baseline for this pass: explicit FULL startup42 must reproduce
+  `script 1 -> room 1 -> room 42 -> ENCD/scripts 200/201/208 -> error 0`
+  before the walking gate is considered. Current regression ROM under audit:
+  `e1739ea71cef9d60909072ec9d40e33dab8292ea3187565b5a471f70a90338da`.
+- Bisect scope is limited to three behavior families: pose-aware cache
+  invalidation, no-cache-commit on failed PRESENT, and post-controller visual
+  snapshot/order. Fresh explicit-FULL target results: A mask `$00` ROM
+  `21ef65148004af9f8e4917a87ce4ec961789b2698f1d4035ae3def8c8f555d08`, B
+  pose-only mask `$01` ROM `c1f70977b71264c7f43705f482e0a5a9f5a72cc630e77957d59c6c70b9acc99c`,
+  and D ordering-only mask `$04` ROM
+  `01ac818ebb000796fc558ea104ad07e83526558e62f660ddb34165dceca08938`
+  reached room 42/error 0; C mask `$02` ROM
+  `123c5c6ae9978197ab16be0d5d8bb5a8e1b320bacc344af9c36828b600769a7c`
+  was first bad, and E mask `$07` ROM
+  `7119cb18d7c1eee42b2bf46fafbc8353e62361d65d118950d30447de2d8b4145`
+  reproduced it. At frame 282 C/E had room 42/error 0 but actor-1 room 0,
+  active slots 0/144/145, readiness 0; A/D had actor-1 room 42 and delayed
+  script 208. The failure is visual-service starvation, not a SCUMM error.
+- Generic repair: if a rejected PRESENT leaves the accepted render cache
+  invalid, the late visual phase waits for the room's pending visual request
+  to clear and surface status to become OK before one-time actor composition.
+  This avoids repeated pre-ready full-room composition without committing a
+  failed render. Guard-fixed all-three ROM `build/semantic-snapshot-guardfix.sfc`
+  SHA-256 `074c98ab84bc5c4dc1718cb1271d0f928eaa7dd7741087ec6379225a960dd30a`;
+  target startup reaches room 42/actor room 42/readiness 1/error 0 at frame
+  352.
+- Finalized guard-fixed ROM (carrier manifest applied):
+  `build/semantic-snapshot-guardfix.sfc`, SHA-256
+  `9ac22e244e44495d5803b12e48ace3e159fdf2b4bfb1136a49b88c947cf62823`.
+  Explicit FULL startup42 replay reaches room 42, actor room 42, readiness 1,
+  error 0 at frame 352; the pre-finalization `074c98...` hash is retained only
+  as intermediate target evidence.
+- Current controller replay reaches room 42 and consumes Open with the
+  expected semantic movement (`157,101` toward `218,104`), but the validator
+  currently fails to bind an accepted moving generation before movement ends.
+  This is the next visual-snapshot/runtime observation frontier; no actor
+  fidelity PASS is claimed from that run.
+- Contract repair after the bisect: `ScummV5_Controller_RenderActor_Far` no
+  longer writes `DESIRED_SELECT` while choosing a cooked frame. The semantic
+  snapshot is now immutable during attempted composition; only a successful
+  PRESENT updates the accepted render key. Focused suite is 165 tests passing.
+  Rebuilt/finalized ROM `build/semantic-snapshot-contractfix.sfc`, SHA-256
+  `d4eaba6099f9ae428a3ad7dd582d2b432c216b1d9d9b72ac3d38999cd113d746`;
+  explicit FULL startup42 reaches room 42, actor room 42, readiness 1,
+  error 0 at frame 352. The native controller replay still needs a bounded
+  moving-generation run; no visual acceptance is claimed.
+- Validator-only observation improvements: `--no-native-captures` permits a
+  semantic run without screenshot calls, `advance_until` uses a compact poll
+  instead of the full scene snapshot, and surface damage reads use the
+  generated carrier service window. These do not alter production execution.
+- Startup guard requirement: fixture actor snapshot/cache logic is inert before
+  a valid room/actor state exists in rooms 68, 75, and 1. Room mismatch must
+  not clear or publish unrelated presentation state.
+
+## Retained bounded-damage frontier (historical)
+
+- Latest source fix: `Same_VideoSurface_ComposeRoomOnly_Far` now prepares an
+  installed room in the indexed surface without publishing. The actor path
+  adds actor/locker/cursor pixels and submits one atomic PRESENT, preventing a
+  background PRESENT from starving the actor transaction. Actor damage bounds
+  use the semantic desired snapshot consistently. Fresh ROM
+  `build/room55-semanticcontract.sfc` SHA-256
+  `f9fe12d9bc612e37d90e81d95ce462bfd907675aeb413764eb072dc974b52a15`.
+- Explicit FULL startup42 reaches room 42/error 0 on the fresh ROM. The
+  target replay has proven desired moving state `(200,101), moving=10,
+  destination=218` before the late visual phase, but the current controller
+  replay is not yet a complete acceptance run: input/observation is flaky at
+  hover in recent runs. No visual or semantic PASS is claimed for this ROM.
+- Target service synchronization in the validator uses Mode3 IDLE=`$01` and
+  live FIFO count, not the uninitialized state code `$00`. This is validator
+  observation only. `action_tap` is separated from the long cursor hold so
+  Open does not consume the short authored walk before sampling.
+
+- Acceptance status: bounded-damage semantics and natural intermediate
+  `(200,101)` remain proven; exact actor walking fidelity is pending. The
+  current task is a generic semantic-state-to-visual-snapshot repair, not a
+  cooker/backend change.
+- Current source baseline after the first ordering repair builds and enters
+  room 42/error 0. The latest semantic-snapshot diagnostic ROM is
+  `build/room55-snapshotfix3.sfc`, SHA-256
+  `1329d6811cf35d504271d6fddf9838ad916534029b7cb0a20a4fbfd5c0efee4e`.
+- First demonstrated new cache failure: making non-room RenderActor calls
+  inert exposed stale/uninitialized `RENDER_VALID` at room entry. The generic
+  fix moves cache invalidation to `ScummV5_RoomVisual_Installed_Far` via
+  `ScummV5_Controller_ResetVisualCache_Far`; nonmatching rooms no longer clear
+  presentation state. Semantic actor snapshot fields are `$7E5E42-$7E5E49`.
+- The snapshot producer runs after `ScummV5_Movement_UpdateAll_Far`; the late
+  compositor consumes desired X/Y/pose and commits accepted cache identity only
+  after successful PRESENT. Target scene has reached a natural
+  `(200,101), moving=10, destination=218` state on the snapshot build, but the
+  latest controller replay still has an intermittent input/readiness failure;
+  full visual acceptance is not claimed.
+- Latest source build: `build/room55-snapshotfinal.sfc`, SHA-256
+  `78cc06b578ca7f0015ceaaafdf71a4b2be57169a38fd98b47e56590cfae0ebef`.
+  Explicit FULL startup42 reaches room 42/error 0 and a natural moving state;
+  target replay has not yet completed the controller handoff in the latest
+  runs. The current validator waits at complete frame boundaries for semantic
+  mode transitions and records the failure state rather than advancing a
+  guessed batch.
+- Current proof status: host focused suite 29/29 and full test discovery
+  504/504 pass; Poppy build/lint and `sa1_bwram` ROM audit pass. Target visual
+  fidelity remains pending. Do not publish this diagnostic ROM as accepted.
+- Current diagnostic builds: `build/room55-phasefix.sfc` SHA-256
+  `0c08cd7ae5e307a412ceae2deb21488abdf837e740dbdc216b0abd586254a18f`,
+  `build/room55-phasefix2.sfc` SHA-256
+  `3e847142a3a7ddce4b97865147ed62cb14d5573759713a08230a7c16f4f8e14c`,
+  and `build/room55-phasefix3.sfc` SHA-256
+  `3be51823032a712ac4bff2f750626efe9e168c4b1ca818c8be593ddea1c01e32`.
+- Current source changes move actor composition to the post-controller
+  semantic boundary and add pose-aware invalidation; target replay must still
+  bind a committed moving generation. Do not claim actor fidelity yet.
+- The prior concrete evidence remains: renderer samples were
+  `moving=0/mode=0/destination=$FFFF` while post-frame state was
+  `(200,101)/moving=10/mode=2/destination=218`. This is the ordering symptom,
+  not evidence against the accepted cooker or backend.
+- Last complete target scene before the unresolved fidelity gate:
+  `build/room55-damage19-run1/`, ROM SHA-256
+  `f55281926afa113bb041983c72fa4beaf6085a0421e51c450cb352a9095d82bb`;
+  semantic controller result PASS, native scene generated, exact actor crop
+  NOT PASS. Diagnostic run 17 records the same pre-publication samples.
+
+- Explicit FULL corpus is authoritative: `/home/chad/ATLANTIS.zip`; DEMO is
+  only a negative control. Do not let `fatedemo-box.zip` substitute silently.
+- Current bounded-damage ROM: `build/room55-damage6.sfc`, SHA-256
+  `1c06c3d2f4fb5beeade6da139fc7c379f1363300b202eb280d966326a56e62b3`.
+- Build used `SAME_FATE_DEMO_ARCHIVE=/home/chad/ATLANTIS.zip`, the Fate profile,
+  `SAME_M25A_VALIDATOR_CASE=startup42`, scenario fixture/start room 42,
+  `sa1_bwram` + `mode3_surface` + `bg2_index4`, ROM size `0x0C`, and the
+  generated room manifest under `build/m25a-validator/startup42/room42/`.
+- Service-progress diagnosis is closed: the S-CPU reaches `WAI` in the main
+  loop while NMI/frame activity continues; `Same_Frame_Run`, event drain/pop,
+  and backend steps all advance. The earlier five “queued events” were stale
+  packet slots; the live FIFO drains to count zero. The first producer fault
+  was `Same_VideoSurface_FindVisual` failing to reload the requested room key
+  after failed-record arithmetic; the generic room-key reload fix is retained.
+- Kernel drain/pop counters and live FIFO decoding are now diagnostic-only;
+  `SAME_ENGINE_FRAME_BUSY` plus logical/NMI counters distinguish main service
+  from NMI-only activity. Do not overlap SCUMM state.
+- Corrected target capture `build/service-progress-findfix-capture3/` proves
+  service progress: NMI `19188`, logical frames `1765`, kernel drain entries
+  `3271`, successful FIFO pops `13`, backend steps `545`; backend state idle,
+  lock clear, accepted PRESENT `2`, rejected PRESENT `1`, live FIFO
+  head=tail=`13`, count `0`. The earlier apparent five events were stale
+  packet-buffer bytes, not queued records. Room 42 PRESENT is now genuinely
+  accepted and drained.
+- Corrected ROM `build/service-progress-findfix.sfc` SHA-256
+  `c8018b33e4dc0eca2cf8846bc9f5fa9a438f73c4a566b900d6571fc92226c49e`.
+- Focused host validation: `PYTHONPATH=src python3 -m unittest
+  tests.test_scumm_v5_room_visual tests.test_m25a_validator -q` => 15/15.
+- Full-compose before measurement: 256x224 dirty coverage (896 candidate
+  tiles) per actor redraw; the prior trace recorded roughly 515 full compose
+  calls. Bounded actor redraw now restores/presents one clipped pixel union.
+- Current target run `build/room55-damage6-run6/` is PASS semantically and
+  reaches a natural intermediate walk state `(x=200,y=101,moving=10,
+  walkbox=10)` before the locker destination `(218,104)`. Its bound snapshot
+  records one committed generation, empty FIFO, backend idle/unlocked, and a
+  clipped damage rectangle `x=0,y=0,w=82,h=64`; native walking differs from
+  the opened frame. The matching no-advance indexed-surface capture is
+  `03-walking-surface.ppm` (SHA-256
+  `2aaabd8be1d17a0ad255895e64ef6f9723cad9ecf683ed01a5359da20b99a89b`); the
+  native walking PNG is SHA-256
+  `a1c5fcacfe256549051cc4391d8ff4e5df76c2564ac0ea50a9620bfb686c3374`.
+  The complete scene remains error-free.
+- Run-6 target command: `PYTHONPATH=src python3 -u
+  tools/validate_scumm_room42_controller_nexen.py --rom
+  build/room55-damage6.sfc --nexen
+  /mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/mcp-exact-publish/Nexen
+  --port 44521 --startup-frames 4096 --output
+  build/room55-damage6-run6`.
+- Target-side service binding is now captured by the validator at the walking
+  boundary (`walking_presentation`); the diagnostic reader uses the generated
+  backend offsets for pending/committed generation and tile counts. Remaining
+  acceptance work is exact indexed-surface/native crop conformance and the
+  focused restore-retry target regression, not startup corpus selection.
+
 > UPDATE THIS FILE AT EVERY MEANINGFUL MILESTONE OR BEFORE A LONG/RISKY DEBUGGING PASS.
 
 > **STOP-GATE:** Do not end work for an intermediate diagnostic, build,
@@ -8,62 +248,41 @@
 > blocker is proven, or the user explicitly requests a status-only stop.  See
 > `AGENTS.md`.
 
-## Current WIP review status (2026-09-07)
+## Corpus/configuration audit (2026-09-07)
 
-- Actor cooker evidence is accepted: independent host composition and the
-  actual emitted generator frames match 2048/2048 for idle and walking. The
-  old striped output remains a negative regression witness.
-- Fresh corrected ROM: `bbfabe380ed5b1c305af8174ab191bc79eb77e117e09a87be64df58b266f82d7`.
-- The normal controller replay reaches the walking boundary and completes the
-  locker/inspection semantic path. Native captures were opened; background,
-  actor presence/movement, HUD, locker, active dialogue, cleared dialogue,
-  and post-dialogue are visibly present in the final run.
-- Walking capture synchronization is now backend-owned: the validator waits
-  for a new accepted PRESENT after the walking request, requires backend
-  pending == committed, valid surface/tile/palette, idle/unlocked backend, and
-  empty event FIFO, then captures the paused framebuffer without advancing.
-- Remaining actor-fidelity gate: a same-pose indexed-surface/native proof is
-  not yet accepted. Earlier captures taken before the actor PRESENT retry show
-  a partial live surface (`accepted_present` unchanged, `rejected_dirty=1`);
-  they are preserved as negative timing witnesses. A later 4096-frame fence
-  commits only after the actor has reached its destination, so it no longer
-  binds a walking pose. This is a bounded backend conversion/actor-present
-  timing blocker, not a cooker result.
-- Latest replay artifact: `review_artifacts/controller-room42/fresh-corrected-normal14/`.
-  The corrected validator completed the normal controller scenario with
-  `result: pass`; ROM SHA is the value above. Its accepted-PRESENT fence is
-  real, but the captured post-fence actor is already at `(218,104)` idle, so
-  this run proves the complete semantic/visual scene and backend fencing, not
-  the required in-flight walking-pose binding. The pre-retry walking capture
-  remains the preserved negative witness.
-- Latest review branch commit: `521343033b1827b8fccb1a3061980d807bd5e240`.
-- Native room/background and HUD evidence is useful, but actor costume
-  fidelity is not accepted. `visualfix26-run1/native/03-walking.png` is a
-  preserved FAIL witness; other captures containing Indy are UNKNOWN for actor
-  fidelity until matched against a correct source pose.
-- Review WIP branch: `review/controller-room42-visual-wip`, based on published
-  `9639f1c`; local review commit is being updated with unmodified native PNGs,
-  defective captures, reports, and focused source/tests. Public screenshot
-  publication was explicitly authorized by the user.
-- Do not resume HUD/dialogue or rendering fixes until the reviewer has inspected
-  this packet. Main worktree remains intentionally dirty and untouched.
-- The controller validator now includes a no-advance target surface dump at
-  the walking capture boundary. A replay using it did not reach that boundary
-  before the existing native-reference polling terminated, so exact walking
-  surface/native equivalence remains unclaimed.
-- Actor-pipeline audit: independent host composition versus the actual emitted
-  generator `.bin` now matches byte-for-byte for source frames 1 and 2. The old
-  malformed stage was the cooker’s row-major interpretation of column-major
-  SCUMM cel data. Fresh corrected ROM `bbfabe380ed5b1c305af8174ab191bc79eb77e117e09a87be64df58b266f82d7`
-  shows coherent standing/walking actor in opened native captures. Exact
-  walking surface/native crop binding is still pending; actor gate is not final
-  PASS. HUD/dialogue work remains paused.
-- Actor-pipeline audit: source/host composites are coherent; the old cooker was
-  proven wrong by row-major cel indexing and produced striped output. The
-  isolated review branch now has the generic column-major cooker fix and focused
-  regression. Corrected cooked idle/walk canvases match host bytes exactly.
-  Native actor fidelity is still unproven because the corrected ROM has not yet
-  been rebuilt/captured; preserve the malformed native walking witness.
+- FULL corpus is `/home/chad/ATLANTIS.zip`: archive SHA-256
+  `0f3fc396642c800069d31ab9a087b314f1bb1612d37accbe13b6013219ac94f0`;
+  `.000` `72913003d61fffaa614795f12b33d9f2ef3bdcebb155cc5a53fc93b88e57c3bb`;
+  `.001` `8381ba5a2eee3ed887a42d63794f7c6f1b4bbf809c928a4223f95ee3646a7baf`.
+- DEMO is `/home/chad/fatedemo-box.zip`: archive SHA-256
+  `558cc436cebed658ad12bc64152efa19490e0327f89ec97acfb108e8d438d798`;
+  `.000` `4e277158329edab802619ea3ef91c3f6ecec04f3fab6b67f44d275fc5f9b65a9`;
+  `.001` `e3bb0ad591c8a633377ad6219eff700517a144effb6f3944dcce31bb3ae43240`.
+- Recovered accepted-style env: `SAME_FATE_DEMO_ARCHIVE=/home/chad/ATLANTIS.zip`,
+  `SAME_SNES_PROFILE=examples/profiles/templates/fate_of_atlantis_demo.json`,
+  `SAME_M25A_VALIDATOR_CASE=startup42`,
+  `SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1`,
+  `SAME_SCUMM_SCENARIO_START_ROOM=42`, `SAME_SNES_ENGINE=scumm_v5`,
+  `SAME_SNES_CARRIER=sa1_bwram`, `SAME_SNES_VIDEO_BACKEND=mode3_surface`,
+  `SAME_SNES_VIDEO_OVERLAY=bg2_index4`, M24RB/M23A/M23B/M23C/PHASE6L_A1D/
+  M25A/M25_MOVEMENT/ROOM_VISUAL/CONTROLLER_FIXTURE all `=1`, and
+  `SAME_SNES_ROM_SIZE_CODE=0x0C`; room visual manifest is
+  `build/m25a-validator/startup42/room42/manifest.json`.
+- Full-corpus room manifest source fields match both FULL member hashes;
+  main-tree SHA is `9b07e3d06ac98f2a03e66c129feadbb90c25129992872f043935f4220dc95468`.
+  M25A now records `selected_corpus` and writes `corpus_identity.json` before
+  resource resolution, including on a negative build.
+- Full-corpus isolated rebuild: ROM
+  `18cc43b26f79aefa143ea4a3e13f84fb0f7ca0d259142c813209ca037d6b0d14`,
+  reaches room 42/error 0 but current video service does not accept initial
+  PRESENT. This is not damage-path acceptance evidence. The DEMO control
+  identifies PLAYFATE then fails on missing full-cone `script.57`, proving no
+  silent substitution. The old `0fa66db...` artifact lacks a complete env dump
+  and remains historical evidence only; details: `docs/corpus_config_audit_20260907.md`.
+- Target-testing the generic deferred initial-publication path retains the
+  room-42 request (`pending_visual=2`, generation 1), but backend state remains
+  locked with five queued events and no accepted PRESENT through 4096 frames;
+  bounded damage remains unjudged.
 
 ## Mission and repository
 
@@ -1501,3 +1720,89 @@ git diff --check
   `9639f1c95cfa6319d4bb7408ba04f7bd746a0389` (remote HEAD matches). It
   contains the neutral engine/service source, backend implementation files,
   architecture traps, controller tests, and screened evidence only.
+
+## Poppy #376 closure and current moving-presentation frontier (2026-09-08)
+
+- Poppy issue `TheAnsarya/poppy#376` is closed for SAME. Fixed commit:
+  `8ee859b33bad94e3a01e9c78026803e482292801`. Pinned DLL SHA-256:
+  `34514923ea8dc79a4664fa327f583cee8e8daa64e3be47518ae22ba5a2c7608e`.
+  Clean focused upstream review is Poppy PR #393; polluted PR #392 was
+  superseded. Do not blame Poppy again without new evidence.
+- Explicit FULL startup42 uses `SAME_FATE_DEMO_ARCHIVE=/home/chad/ATLANTIS.zip`,
+  `SAME_M25A_VALIDATOR_CASE=startup42`, `SAME_SCUMM_SCENARIO_START_ROOM=42`,
+  `SAME_SNES_CARRIER=sa1_bwram`, `SAME_SNES_VIDEO_BACKEND=mode3_surface`,
+  and controller witness flags.
+- `build/poppy-fixed-startup42-actorabi6-facing90.sfc` SHA-256:
+  `21a61986407b4cf42d44887533f77f316ef68d0a4c85d9f1bc4e6bcfe954c5d6`.
+  Run `build/poppy-fixed-actorabi6-facing90-run1/` proved moving actor
+  `(157,101)`, moving `1`, destination `218`, pose `1`, damage
+  `(65,86,32,64)`, PRESENT 3 committed as generation 3, idle/unlocked with
+  empty FIFO; the full locker/dialogue replay passed with error `0`.
+- Dirty cooker fix: `tools/generate_snes_scumm_actor_sprite.py` now traverses
+  BYLE cels column-major, applies directional placement, and accepts explicit
+  `--facing`; the FULL room-42 fixture uses facing `90`. Asymmetric executable
+  tests cover column order and facing selection.
+- Dirty surface fix: `RestoreRect` used `row*3` for five-byte room-visual row
+  descriptors, while full projection uses `row*5`. It now uses `row*5`; the
+  old behavior caused wrong-row bytes and horizontal background stripes.
+- Rebuild after restore fix:
+  `build/poppy-fixed-startup42-actorabi7-restorefix.sfc` SHA-256
+  `9370b4acb6ff649b008c5e4135771b24dc89fb74be798e5bfbc2cbda7aa8702f`;
+  build identity SHA-256
+  `3b2678c61632ca3b90fe2e0f52088da25d10d28c9c73466f191c2125ee698b5e`.
+  Poppy lint and ROM audit pass. The fresh target rerun completed in
+  `build/poppy-fixed-actorabi7-restorefix-run3/`; report result is `pass` and
+  its ROM SHA matches the build above.
+- Event-driven moving witness is proven: actor `(157,101)`, moving `1`,
+  destination `(218,104)`, pose `1`, damage `(65,86,32,64)`, PRESENT
+  generation `3`; the matching backend commit witness reports committed
+  generation `3`, idle/unlocked, FIFO empty. The later `walking_presentation`
+  snapshot is deliberately not used as the semantic moving-state capture;
+  it records the already-committed generation after movement advanced.
+- The committed indexed crop is `03-walking-surface.indexed.bin`, region
+  `(65,86,32,58)`. Against emitted pose 1 (503 non-transparent pixels),
+  481 pixels match exactly and 22 are occupied by legitimate overlapping
+  room/cursor/object pixels in the crop; the crop and native capture were
+  bound to PRESENT/commit generation 3. `03-walking.png` was opened and
+  shows recognizable Indy in the harbor with no former horizontal stripe
+  corruption. `04-dialogue-active.png` was opened and shows readable active
+  authored dialogue.
+- The full normal controller replay passes: locker opens at `(218,104)` in
+  walkbox 10, object 490 changes `0 -> 1`, inspection dialogue starts and
+  completes, post-dialogue input remains usable, and error is `0`.
+- Focused cooker tests, Poppy lint, ROM audit, and `git diff --check` pass.
+  The prior actorabi6 run remains a semantic/presentation comparison; the
+  actorabi7 run is the current restore-fix evidence. Do not reopen Poppy,
+  cooker, Mode3, or RestoreRect without contradictory evidence.
+
+## Room-42 surface/controller milestone — CLOSED (2026-09-08)
+
+- Corpus ambiguity: CLOSED. FULL is `/home/chad/ATLANTIS.zip`; member hashes
+  are recorded in the build identity.
+- Poppy #376 sizing defect: CLOSED/PINNED. Issue `TheAnsarya/poppy#376`,
+  focused PR #393, commit `8ee859b33bad94e3a01e9c78026803e482292801`, DLL
+  SHA-256 `34514923ea8dc79a4664fa327f583cee8e8daa64e3be47518ae22ba5a2c7608e`.
+- Cooker column-major/directional defect: CLOSED. SAME actor pose 1 emitted
+  bytes match the independent host pose; asymmetric cooker tests remain.
+- SAME architecture leak, FindVisual defect, bounded restore retry defect,
+  and visual snapshot/cache ordering defect: CLOSED with regressions.
+- Accepted ROM: `build/poppy-fixed-startup42-actorabi7-restorefix.sfc`,
+  SHA-256 `9370b4acb6ff649b008c5e4135771b24dc89fb74be798e5bfbc2cbda7aa8702f`.
+  Build identity SHA-256:
+  `3b2678c61632ca3b90fe2e0f52088da25d10d28c9c73466f191c2125ee698b5e`.
+- Natural moving PRESENT: actor `(157,101)`, moving, destination `(218,104)`,
+  pose 1, damage `(65,86,32,64)`, PRESENT generation 3 committed as
+  generation 3, backend idle/unlocked, FIFO empty. Indexed accounting:
+  503 emitted nontransparent pixels, 481 exact captured matches, 22
+  documented overlap pixels, 0 unexplained pixels.
+- Full controller/dialogue result: actor reaches `(218,104)`/walkbox 10;
+  object 490 changes `0 -> 1`; inspection dialogue starts/completes; input
+  remains usable; error `0`.
+- Final validation: `PYTHONPATH=src python3 -m unittest discover -s tests -q`
+  = 525/525; Python compilation, `git diff --check`, Poppy lint, and
+  `audit_snes_rom.py --carrier sa1_bwram` pass. Explicit FULL startup42
+  replay: `build/poppy-fixed-actorabi7-final-run/`, result `pass`.
+- Final review publication is screened separately from dirty main. ROMs,
+  savestates, ATLANTIS.zip, generated game payloads, and unrelated campaign
+  files remain local. Next goal is generic source-driven cursor/object/verb
+  selection; do not continue room-42-specific graphics work.

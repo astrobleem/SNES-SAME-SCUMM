@@ -20,6 +20,9 @@ from io import BytesIO
 from PIL import Image, ImageChops, ImageStat
 
 ROOT = Path(__file__).resolve().parents[1]
+CAPTURE_NATIVE_ENABLED = True
+INPUT_HOLD_FRAMES = 40
+RESTORE_DEBUG_HOOK = None
 sys.path.insert(0, str(ROOT / "src"))
 from same.engines.scumm_v5.room_visual import decode_room_visual  # noqa: E402
 
@@ -40,8 +43,21 @@ CONTROLLER = 0x7E5FE0
 VISUAL = 0x401080
 
 
-def u16(raw: bytes) -> int:
-    return int.from_bytes(raw[:2], "little")
+def build_identity_for(rom: Path) -> dict[str, str] | None:
+    """Return the build sidecar identity without making it a runtime input."""
+    sidecar = rom.with_suffix(".build_identity.json")
+    if not sidecar.is_file():
+        return None
+    raw = sidecar.read_bytes()
+    return {
+        "path": str(sidecar),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+
+
+def u16(raw: bytes, offset: int = 0) -> int:
+    """Read a little-endian word from a debugger memory response."""
+    return int.from_bytes(raw[offset:offset + 2], "little")
 
 
 def read_scene(session) -> dict[str, int]:
@@ -49,9 +65,19 @@ def read_scene(session) -> dict[str, int]:
     actor = session.read_memory("snesMemory", ACTOR_POSITIONS + 4, 4)
     state = session.read_memory("snesMemory", OBJECT_STATES + 490, 1)[0]
     ctl = session.read_memory("snesMemory", CONTROLLER, 0x10)
+    surface_state = session.read_memory("snesMemory", 0x401080, 0x40)
     return {
         "room": room[1], "phase": room[4],
         "actor_x": u16(actor), "actor_y": u16(actor[2:]),
+            "frame_counter": u16(session.read_memory("snesMemory", 0x7E2210, 2)),
+            "engine_frame": u16(session.read_memory("snesMemory", 0x7E2308, 2)),
+            "engine_busy": session.read_memory("snesMemory", 0x7E2231, 1)[0],
+        "actor_facing_angle": u16(session.read_memory("snesMemory", 0x7E78F2, 2)),
+        "selected_cooked_pose": (
+            1 if session.read_memory("snesMemory", 0x7FF221, 1)[0]
+            and ((u16(session.read_memory("snesMemory", 0x7E2210, 2)) >> 3) & 1)
+            else 0
+        ),
         "walkbox": session.read_memory("snesMemory", ACTOR_WALKBOX + 1, 1)[0],
         "moving1": session.read_memory("snesMemory", 0x7FF221, 1)[0],
         "moving2": session.read_memory("snesMemory", 0x7FF222, 1)[0],
@@ -128,18 +154,136 @@ def read_scene(session) -> dict[str, int]:
         "input_pressed": u16(session.read_memory("snesMemory", 0x7E2204, 2)),
         "c20": session.read_memory("snesMemory", 0x7FD380, 1)[0],
         "sentence_api_pending": session.read_memory("snesMemory", 0x7E7EC7, 1)[0],
+        "scumm_stack_pointer": session.read_memory("snesMemory", 0x7FD348, 1)[0],
+        "desired_visual_x": u16(session.read_memory("snesMemory", 0x7E5E42, 2)),
+        "desired_visual_y": u16(session.read_memory("snesMemory", 0x7E5E44, 2)),
+        "desired_visual_select": session.read_memory("snesMemory", 0x7E5E46, 1)[0],
+        "desired_visual_dest": u16(session.read_memory("snesMemory", 0x7E5E48, 2)),
+        "desired_visual_facing": u16(session.read_memory("snesMemory", 0x7E5E4A, 2)),
+        "desired_visual_costume": session.read_memory("snesMemory", 0x7E5E4C, 1)[0],
+        "desired_visual_visible": session.read_memory("snesMemory", 0x7E5E4D, 1)[0],
+        "accepted_visual_x": u16(session.read_memory("snesMemory", 0x7E5E10, 2)),
+        "accepted_visual_y": u16(session.read_memory("snesMemory", 0x7E5E12, 2)),
+        "accepted_visual_select": session.read_memory("snesMemory", 0x7E5E3C, 1)[0],
+        "accepted_visual_facing": u16(session.read_memory("snesMemory", 0x7E5E4E, 2)),
+        "accepted_visual_costume": session.read_memory("snesMemory", 0x7E5E50, 1)[0],
+        "accepted_visual_visible": session.read_memory("snesMemory", 0x7E5E51, 1)[0],
+        "visual_retry": session.read_memory("snesMemory", 0x7E5E24, 1)[0],
         "render_valid": session.read_memory("snesMemory", 0x7E5E16, 1)[0],
         "cursor_render_valid": session.read_memory("snesMemory", 0x7E5E2A, 1)[0],
         "cursor_render_x": u16(session.read_memory("snesMemory", 0x7E5E26, 2)),
         "cursor_render_y": u16(session.read_memory("snesMemory", 0x7E5E28, 2)),
         "render_base": u16(session.read_memory("snesMemory", 0x7E5E20, 2)),
+        "actor_render_base": u16(session.read_memory("snesMemory", 0x7E5E38, 2)),
+        "actor_render_frame_base": u16(session.read_memory("snesMemory", 0x7E5E3A, 2)),
+        "actor_render_select": session.read_memory("snesMemory", 0x7E5E3C, 1)[0],
+        "actor_render_moving_sample": session.read_memory("snesMemory", 0x7E5E3D, 1)[0],
+        "actor_render_mode_sample": session.read_memory("snesMemory", 0x7E5E3E, 1)[0],
+        "actor_render_dest_sample": u16(session.read_memory("snesMemory", 0x7E5E40, 2)),
         "render_src": u16(session.read_memory("snesMemory", 0x7E5E18, 2)),
         "render_rowsrc": u16(session.read_memory("snesMemory", 0x7E5E22, 2)),
         "mode3_state": session.read_memory("snesMemory", 0x401013, 1)[0],
+        "mode3_locked": session.read_memory("snesMemory", 0x401014, 1)[0],
+        "mode3_event_count": u16(session.read_memory("snesMemory", 0x7E2004, 2)),
         "mode3_accepted_present": u16(session.read_memory("snesMemory", 0x40101A, 2)),
         "mode3_rejected_present": u16(session.read_memory("snesMemory", 0x40101C, 2)),
         "mode3_rejected_dirty": u16(session.read_memory("snesMemory", 0x40101E, 2)),
         "mode3_candidate_count": u16(session.read_memory("snesMemory", 0x401022, 2)),
+        "mode3_pending_count": u16(session.read_memory("snesMemory", 0x401024, 2)),
+        "mode3_inflight_count": u16(session.read_memory("snesMemory", 0x401026, 2)),
+        "mode3_expected_dma": u16(session.read_memory("snesMemory", 0x401028, 2)),
+        "mode3_converted_count": u16(session.read_memory("snesMemory", 0x40102A, 2)),
+        "mode3_scan_tile": u16(session.read_memory("snesMemory", 0x401038, 2)),
+        "mode3_scan_palette": u16(session.read_memory("snesMemory", 0x40103A, 2)),
+        "surface_compose": {
+            "entries": u16(session.read_memory("snesMemory", 0x7E5E94, 2)),
+            "canwrite_fail": u16(session.read_memory("snesMemory", 0x7E5E96, 2)),
+            "status": session.read_memory("snesMemory", 0x7E5E98, 1)[0],
+            "push_fail": session.read_memory("snesMemory", 0x7E5E99, 1)[0],
+            "exits": u16(session.read_memory("snesMemory", 0x7E5E9A, 2)),
+        },
+        "surface_blit": {
+            "entries": u16(session.read_memory("snesMemory", 0x7E5EC2, 2)),
+            "fail_stage": session.read_memory("snesMemory", 0x7E5EC4, 1)[0],
+            "exits": u16(session.read_memory("snesMemory", 0x7E5EC5, 2)),
+            "state_at_failure": session.read_memory("snesMemory", 0x7E5EC6, 1)[0],
+            "locked_at_failure": session.read_memory("snesMemory", 0x7E5EC7, 1)[0],
+            "entry_state": session.read_memory("snesMemory", 0x7E5EC8, 1)[0],
+            "entry_locked": session.read_memory("snesMemory", 0x7E5EC9, 1)[0],
+        },
+        "witness_diag": {
+            "attempts": u16(session.read_memory("snesMemory", 0x7E5ECA, 2)),
+            "skips": u16(session.read_memory("snesMemory", 0x7E5ECC, 2)),
+            "moving": session.read_memory("snesMemory", 0x7E5ECE, 1)[0],
+            "render_entries": u16(session.read_memory("snesMemory", 0x7E5ED0, 2)),
+            "render_desired": u16(session.read_memory("snesMemory", 0x7E5ED2, 2)),
+            "render_moving_entries": u16(session.read_memory("snesMemory", 0x7E5ED4, 2)),
+        },
+        # These addresses mirror SAME_VIDEO_DIAG_BASE=$7E5E90 in
+        # runtime/snes/services/video_surface.pasm.  Keep this observation
+        # map tied to the service-owned diagnostic block; the old $7E5Fxx
+        # offsets were stale and reported unrelated WRAM as video state.
+        "mode3_backend_steps": u16(session.read_memory("snesMemory", 0x7E5EBC, 2)),
+        "video_service_calls": u16(session.read_memory("snesMemory", 0x7E5EAE, 2)),
+        "kernel_entries": u16(session.read_memory("snesMemory", 0x7E5EB6, 2)),
+        "kernel_pops": u16(session.read_memory("snesMemory", 0x7E5EB8, 2)),
+        "surface_push": {
+            "entries": u16(session.read_memory("snesMemory", 0x7E5E9C, 2)),
+            "event_before": u16(session.read_memory("snesMemory", 0x7E5E9E, 2)),
+            "generation": u16(session.read_memory("snesMemory", 0x7E5EA0, 2)),
+            "fail_stage": session.read_memory("snesMemory", 0x7E5EA2, 1)[0],
+            "event_after": u16(session.read_memory("snesMemory", 0x7E5EA3, 2)),
+        },
+        # Surface state is in the selected carrier's service window.  Keep
+        # this observation map tied to the generated carrier constants rather
+        # than the SCUMM WRAM diagnostic block.
+        "surface_damage": {
+            "x": u16(session.read_memory("snesMemory", 0x4010B4, 2)),
+            "y": u16(session.read_memory("snesMemory", 0x4010B6, 2)),
+            "width": u16(session.read_memory("snesMemory", 0x4010B8, 2)),
+            "height": u16(session.read_memory("snesMemory", 0x4010BA, 2)),
+        },
+        "surface_projection": {
+            "source_x": u16(surface_state[0x0C:0x0E]),
+            "source_y": u16(surface_state[0x0E:0x10]),
+            "dest_x": u16(surface_state[0x10:0x12]),
+            "dest_y": u16(surface_state[0x12:0x14]),
+            "copy_width": u16(surface_state[0x14:0x16]),
+            "copy_height": u16(surface_state[0x16:0x18]),
+        },
+        "controller_damage": {
+            "x0": u16(session.read_memory("snesMemory", 0x7E5E2E, 2)),
+            "y0": u16(session.read_memory("snesMemory", 0x7E5E30, 2)),
+            "x1": u16(session.read_memory("snesMemory", 0x7E5E32, 2)),
+            "y1": u16(session.read_memory("snesMemory", 0x7E5E34, 2)),
+        },
+        "surface_status": session.read_memory("snesMemory", 0x401084, 1)[0],
+        "restore_stage": session.read_memory("snesMemory", 0x7E5EBF, 1)[0],
+        "restore_input": {
+            "x": u16(session.read_memory("snesMemory", 0x7E5E6C, 2)),
+            "y": u16(session.read_memory("snesMemory", 0x7E5E6E, 2)),
+            "width": u16(session.read_memory("snesMemory", 0x7E5E70, 2)),
+            "height": u16(session.read_memory("snesMemory", 0x7E5E72, 2)),
+        },
+        "restore_calls": u16(session.read_memory("snesMemory", 0x7E5E74, 2)),
+        "restore_after_canwrite": {
+            "a": u16(session.read_memory("snesMemory", 0x7E5E76, 2)),
+            "x": u16(session.read_memory("snesMemory", 0x7E5E78, 2)),
+        },
+        "restore_caller": {
+            "a": u16(session.read_memory("snesMemory", 0x7E5E7A, 2)),
+            "x": u16(session.read_memory("snesMemory", 0x7E5E7C, 2)),
+        },
+        "restore_loop": {
+            "row": u16(session.read_memory("snesMemory", 0x7E5E7E, 2)),
+            "col": u16(session.read_memory("snesMemory", 0x7E5E80, 2)),
+            "width": u16(session.read_memory("snesMemory", 0x7E5E82, 2)),
+            "height": u16(session.read_memory("snesMemory", 0x7E5E84, 2)),
+            "dst": u16(session.read_memory("snesMemory", 0x7E5E86, 2)),
+            "src": u16(session.read_memory("snesMemory", 0x7E5E88, 2)),
+        },
+        "surface_pending_visual": session.read_memory("snesMemory", 0x4010A6, 1)[0],
+        "surface_next_generation": u16(session.read_memory("snesMemory", 0x40109C, 2)),
     }
 
 
@@ -305,8 +449,23 @@ def step(session, count: int = 1) -> None:
 
 def advance_safe(session, frames: int = 8) -> None:
     """Advance only after a stable boundary, without sampling mid-frame."""
+    global RESTORE_DEBUG_HOOK
     session.resume()
-    result = session.run_frames(frames)
+    if RESTORE_DEBUG_HOOK is not None:
+        result = session.run_until(max_frames=frames,
+                                   hook_handle=RESTORE_DEBUG_HOOK)
+        if "timedOut" not in result:
+            # The hook stops at the completion label before the routine's
+            # epilogue. Remove it, let that epilogue return normally, and
+            # continue the same frame boundary. The hook is observational;
+            # it must not become a second scheduler or a validator stop.
+            session.remove_hook(RESTORE_DEBUG_HOOK)
+            RESTORE_DEBUG_HOOK = None
+            session.resume()
+            result = session.run_frames(frames)
+    else:
+        result = session.run_frames(frames)
+    session.pause()
     if result["framesAdvanced"] != frames or result["timedOut"]:
         raise RuntimeError(f"unsafe/incomplete frame batch: {result}")
 
@@ -314,15 +473,106 @@ def advance_safe(session, frames: int = 8) -> None:
 def tap(session, button: int) -> None:
     # set_input is itself a bounded emulator run.  Advancing once more after
     # it clears the one-frame edge before SAME_Input_Poll can consume it.
-    # Hold through two emulated frames: the first frame creates the edge and
-    # the second keeps the controller level present across the NMI/frame seam.
+    # Keep the real controller level present across the NMI/autojoy seam long
+    # enough for the production input poll to sample it; the controller logic
+    # still reacts only to the first pressed edge.
+    session.set_input(button, INPUT_HOLD_FRAMES)
+    session.set_input(0, 1)
+
+
+def action_tap(session, button: int) -> None:
+    """Submit one action edge without consuming the authored walk window."""
+    # Cursor navigation uses the longer hold above because its bridge advances
+    # one logical pixel edge at a time.  A sentence action must not be held
+    # for that duration: Open's short authored walk can complete while the
+    # validator is still inside set_input, hiding every in-flight generation.
+    # Auto-joypad is sampled at a hardware-defined seam; four frames spans
+    # the seam while leaving the authored locker walk observable.  The caller
+    # then advances complete frames and waits on the actual movement state.
     session.set_input(button, 8)
-    session.set_input(0, 2)
+    session.set_input(0, 1)
 
 
-def dump_mode3_surface(session, path: Path) -> None:
-    """Save the actual SA-1 indexed surface without advancing the CPU."""
-    pixels = session.read_memory("snesMemory", 0x402000, 256 * 224)
+def advance_until(session, predicate, limit: int, description: str) -> dict:
+    """Advance complete frames until a semantic controller boundary exists."""
+    def poll():
+        actor = session.read_memory("snesMemory", ACTOR_POSITIONS + 4, 4)
+        ctl = session.read_memory("snesMemory", 0x7E5FE0, 0x3A)
+        backend = session.read_memory("snesMemory", 0x401000, 0x40)
+        return {
+            "room": session.read_memory("snesMemory", 0x7FF2BF, 1)[0],
+            "actor_x": u16(actor),
+            "actor_y": u16(actor[2:]),
+            "moving1": session.read_memory("snesMemory", 0x7FF221, 1)[0],
+            "mode": ctl[0],
+            "submissions": ctl[9],
+            "last_action": ctl[10],
+            "sentence_api_pending": session.read_memory("snesMemory", 0x7E7EC7, 1)[0],
+            "c20": session.read_memory("snesMemory", 0x7FD380, 1)[0],
+            "engine_frame": u16(session.read_memory("snesMemory", 0x7E2308, 2)),
+            "engine_busy": session.read_memory("snesMemory", 0x7E2231, 1)[0],
+            "scumm_stack_pointer": session.read_memory("snesMemory", 0x7FD348, 1)[0],
+            "mode3_state": backend[0x13],
+            "mode3_event_count": u16(session.read_memory("snesMemory", 0x7E2004, 2)),
+            "error": session.read_memory("snesMemory", 0x7E2303, 1)[0],
+            "desired_visual_x": u16(session.read_memory("snesMemory", 0x7E5E42, 2)),
+            "desired_visual_select": session.read_memory("snesMemory", 0x7E5E46, 1)[0],
+            "accepted_visual_x": u16(session.read_memory("snesMemory", 0x7E5E10, 2)),
+            "accepted_visual_select": session.read_memory("snesMemory", 0x7E5E3C, 1)[0],
+        }
+    state = poll()
+    for _ in range(limit):
+        if predicate(state):
+            return read_scene(session)
+        advance_safe(session, 1)
+        state = poll()
+    state["cpu"] = session.get_cpu_state("Snes")
+    state["frame_counter"] = u16(session.read_memory("snesMemory", 0x7E2210, 2))
+    state["trace_tail"] = session.trace_log(cpu_type="Snes", count=12)
+    raise RuntimeError(f"did not reach {description}: {state}")
+
+
+def capture_mode3_surface(session, path: Path, *, region: tuple[int, int, int, int] | None = None,
+                          advance_after: bool = True) -> dict[str, int]:
+    if not CAPTURE_NATIVE_ENABLED:
+        return {}
+    """Save the actual indexed surface using its published descriptor.
+
+    The carrier surface is not necessarily a 256-byte-pitch framebuffer.  In
+    the current Mode-3 service the descriptor is 408x144 with a 408-byte
+    pitch.  Reading 256*224 contiguous bytes silently splices rows and is not
+    evidence for a surface crop, even when the resulting RGB image changes.
+    """
+    state = session.read_memory("snesMemory", 0x401080, 0x40)
+    width = u16(state, 0x06)
+    height = u16(state, 0x08)
+    pitch = u16(state, 0x0A)
+    require(width > 0 and height > 0 and pitch >= width,
+            f"invalid live surface descriptor: width={width} height={height} pitch={pitch}")
+    # The descriptor's pitch describes the installed room source projection;
+    # the active indexed carrier is the documented 256x224 live surface.
+    backing_width, backing_height, backing_pitch = 256, 224, 256
+    if region is None:
+        # Keep the established ready-only diagnostic inexpensive.  Exact
+        # actor evidence uses an explicit descriptor-backed crop below.
+        x, y, capture_width, capture_height = 0, 0, backing_width, backing_height
+        raw = bytes(session.read_memory("snesMemory", 0x402000,
+                                       capture_width * capture_height))
+        rows = [raw[row * capture_width:(row + 1) * capture_width]
+                for row in range(capture_height)]
+    else:
+        x, y, capture_width, capture_height = region
+    require(0 <= x < backing_width and 0 <= y < backing_height and capture_width > 0 and
+            capture_height > 0 and x + capture_width <= backing_width and
+            y + capture_height <= backing_height,
+            f"surface capture outside carrier: region={region} carrier={(backing_width, backing_height, backing_pitch)}")
+    if region is not None:
+        raw = bytes(session.read_memory(
+            "snesMemory", 0x402000 + y * backing_pitch, backing_pitch * capture_height))
+        rows = [raw[row * backing_pitch + x:row * backing_pitch + x + capture_width]
+                for row in range(capture_height)]
+    pixels = b"".join(rows)
+    path.with_suffix(".indexed.bin").write_bytes(pixels)
     palette = session.read_memory("snesMemory", 0x41E200, 768)
     rgb = bytearray()
     for index in pixels:
@@ -332,68 +582,146 @@ def dump_mode3_surface(session, path: Path) -> None:
         # SNES BGR555/CGRAM data.
         rgb.extend(palette[index * 3:index * 3 + 3])
     path.write_bytes(
-        (f"P6\n256 224\n255\n".encode("ascii")) + bytes(rgb)
+        (f"P6\n{capture_width} {capture_height}\n255\n".encode("ascii")) + bytes(rgb)
     )
+    if advance_after:
+        session.set_input(0, 1)
+        step(session)
+    return {"x": x, "y": y, "width": capture_width, "height": capture_height,
+            "surface_width": width, "surface_height": height, "surface_pitch": pitch}
 
 
-def wait_for_surface_generation(session, baseline_present: int,
-                                max_frames: int = 4096) -> dict[str, int]:
-    """Wait at complete frame boundaries until the live surface is presented.
-
-    The surface producer and the native screenshot have separate lifetimes.
-    This observes their published generation numbers and never advances after
-    the matching generation is committed, so the screenshot is the same
-    presentation witness as the indexed dump.
-    """
-    target = None
-    for _ in range(max_frames):
-        state = session.read_memory("snesMemory", 0x401080, 0x34)
-        generation = int.from_bytes(state[2:4], "little")
-        # The facade's PRESENTED_* fields describe producer camera
-        # bookkeeping, while the selected backend owns the native-display
-        # fence.  These are distinct generation namespaces: the backend's
-        # pending/committed values must not be compared numerically with the
-        # facade room generation.
-        backend = session.read_memory("snesMemory", 0x401000, 0x40)
-        pending = int.from_bytes(backend[0x0e:0x10], "little")
-        committed = int.from_bytes(backend[0x10:0x12], "little")
-        committed_hi = int.from_bytes(backend[0x18:0x1a], "little")
-        accepted_present = int.from_bytes(backend[0x1a:0x1c], "little")
-        if target is None or generation != target:
-            target = generation
-        if (generation == target and pending == committed and committed_hi == 0
-                and state[0] == 42
-                and state[0x26] == 0 and backend[0x0a] == 1
-                and backend[0x0b] == 1 and backend[0x0c] == 1
-                and backend[0x13] == 1 and backend[0x14] == 0
-                and accepted_present > baseline_present
-                and int.from_bytes(
-                    session.read_memory("snesMemory", 0x7E2004, 2), "little") == 0):
-            return {
-                "surface_generation": generation,
-                "backend_pending_generation": pending,
-                "surface_presented_generation": committed,
-                "backend_committed_generation_hi": committed_hi,
-                "backend_accepted_present": accepted_present,
-                "surface_status": state[4],
-            }
-        advance_safe(session, 1)
-    raise RuntimeError(
-        f"surface generation did not commit: state={list(state)} "
-        f"backend={list(backend)}")
-
-
-def capture_native_immediate(session, path: Path) -> None:
-    """Capture the paused native framebuffer without crossing a frame boundary."""
+def capture_native_current(session, path: Path) -> None:
+    """Capture exactly the current emulator frame without advancing it."""
+    if not CAPTURE_NATIVE_ENABLED:
+        return
     raw = base64.b64decode(session.take_screenshot(format="base64")["base64"])
     path.write_bytes(raw)
 
 
-def capture_mode3_surface(session, path: Path) -> None:
-    """Save the surface and then release the one-frame input latch."""
-    dump_mode3_surface(session, path)
-    session.set_input(0, 1)
-    step(session)
+def read_publication_witness(session) -> dict[str, int]:
+    raw = bytes(session.read_memory("snesMemory", 0x7E5E52, 0x1A))
+    return {
+        "serial": u16(raw, 0x00),
+        "frame": u16(raw, 0x02),
+        "x": u16(raw, 0x04),
+        "y": u16(raw, 0x06),
+        "moving": raw[0x08],
+        "dest_x": u16(raw, 0x09),
+        "dest_y": u16(raw, 0x0B),
+        "pose": raw[0x0D],
+        "damage_x": u16(raw, 0x0E),
+        "damage_y": u16(raw, 0x10),
+        "damage_w": u16(raw, 0x12),
+        "damage_h": u16(raw, 0x14),
+        "present_generation": u16(raw, 0x16),
+        "valid": raw[0x18],
+    }
+
+
+def wait_for_moving_publication(session, hook_handle: int,
+                                baseline_serial: int, limit: int = 32) -> dict[str, int]:
+    """Stop on the success witness, not on a guessed logical-frame poll."""
+    for _ in range(limit):
+        # Keep each debugger transaction below the emulator's notification
+        # timeout.  The write hook remains the stop condition; the bounded
+        # windows only make an absent notification observable and recoverable.
+        result = session.run_until(max_frames=600, hook_handle=hook_handle)
+        witness = read_publication_witness(session)
+        if (witness["valid"] and witness["serial"] != baseline_serial
+                and witness["moving"] and witness["x"] not in (150, 218)):
+            return witness
+        if int(result.get("framesAdvanced", 0)) <= 0:
+            break
+    raise RuntimeError(
+        f"no successful moving actor publication: witness={witness} "
+        f"scene={read_scene(session)} "
+        f"cpu={session.get_cpu_state('Snes')} "
+        f"nmi={u16(session.read_memory('snesMemory', 0x7E102E, 2))}")
+
+
+def wait_for_semantic_moving_snapshot(session, hook_handle: int,
+                                      limit: int = 32) -> dict[str, int]:
+    """Fence the SCUMM desired-state publication before surface composition.
+
+    This is deliberately a validator/debugger boundary.  The production
+    engine remains free to compose later in its established visual phase; the
+    hook merely proves that the walking semantic snapshot was published
+    before the successful actor PRESENT witness is awaited.
+    """
+    last: dict[str, int] = {}
+    for _ in range(limit):
+        result = session.run_until(max_frames=600, hook_handle=hook_handle)
+        raw = bytes(session.read_memory("snesMemory", 0x7E5E42, 0x0C))
+        last = {
+            "x": u16(raw, 0x00),
+            "y": u16(raw, 0x02),
+            "select": raw[0x04],
+            "dest_x": u16(raw, 0x06),
+            "facing": u16(raw, 0x08),
+            "costume": raw[0x0A],
+            "visible": raw[0x0B],
+            "frames_advanced": int(result.get("framesAdvanced", 0)),
+        }
+        if last["select"] == 1 and last["visible"]:
+            return last
+        if last["frames_advanced"] <= 0:
+            break
+    raise RuntimeError(f"no semantic moving snapshot publication: {last}")
+
+
+def wait_for_committed_generation(session, hook_handle: int,
+                                  generation: int, limit: int = 32) -> dict:
+    """Fence the exact PRESENT generation using the backend commit write."""
+    for _ in range(limit):
+        result = session.run_until(max_frames=1200, hook_handle=hook_handle)
+        backend = bytes(session.read_memory("snesMemory", 0x401000, 0x40))
+        committed = u16(backend, 0x10)
+        if committed == generation:
+            return {
+                "committed_generation": committed,
+                "backend_state": backend[0x13],
+                "backend_locked": backend[0x14],
+                "frames_advanced": int(result.get("framesAdvanced", 0)),
+            }
+        if int(result.get("framesAdvanced", 0)) <= 0:
+            break
+    dma = bytes(session.read_memory("snesMemory", 0x7E223A, 0x0C))
+    mode3 = bytes(session.read_memory("snesMemory", 0x401022, 0x20))
+    queue = bytes(session.read_memory("snesMemory", 0x7E2260, 0x40))
+    slot = u16(dma, 0) & 0x003F
+    work = bytes(session.read_memory("snesMemory", 0x41E750, 0x24))
+    pending_bits = bytes(session.read_memory("snesMemory", 0x41E570, 0x70))
+    inflight_bits = bytes(session.read_memory("snesMemory", 0x41E5E0, 0x70))
+    pending_palette = bytes(session.read_memory("snesMemory", 0x41E670, 0x20))
+    raise RuntimeError(
+        f"PRESENT generation did not commit: wanted={generation} "
+        f"committed={committed} state={backend[0x13]} lock={backend[0x14]} "
+        f"dma_current={u16(dma, 0)} dma_pending={u16(dma, 2)} "
+        f"dma_committed={u16(dma, 4)} expected_dma={u16(backend, 0x28)} "
+        f"records={u16(backend, 0x3E)} inflight={u16(backend, 0x26)} "
+        f"candidates={u16(backend, 0x22)} pending_tiles={u16(backend, 0x24)} "
+        f"converted={u16(backend, 0x2A)} mode3_last={u16(mode3, 0)} "
+        f"queue_slot={slot} queue_desc={list(queue[slot:slot+8])} "
+        f"work_index={u16(work, 0x0C)} work_row={u16(work, 0x04)} "
+        f"work_run={u16(work, 0x12)} cpu={session.get_cpu_state('Snes')} "
+        f"pending_bytes={list(pending_bits[:8])} inflight_bytes={list(inflight_bits[:8])} "
+        f"pending_palette={list(pending_palette[:20])}")
+
+
+def wait_for_backend_idle(session, hook_handle: int, limit: int = 8) -> None:
+    """Fence an already-owned conversion with a state-write hook."""
+    for _ in range(limit):
+        state = session.read_memory("snesMemory", 0x401013, 1)[0]
+        if state == 1:
+            return
+        result = session.run_until(max_frames=600, hook_handle=hook_handle)
+        state = session.read_memory("snesMemory", 0x401013, 1)[0]
+        if state == 1:
+            return
+        if int(result.get("framesAdvanced", 0)) <= 0:
+            break
+    raise RuntimeError("backend did not reach idle at its state transition")
 
 
 def settle_native_capture(session, frames: int = 1800) -> None:
@@ -413,7 +741,12 @@ def settle_native_capture(session, frames: int = 1800) -> None:
         surface_state = session.read_memory("snesMemory", 0x401080, 0x34)
         backend = session.read_memory("snesMemory", 0x401000, 0x40)
         event_state = session.read_memory("snesMemory", 0x7E2000, 0x06)
-        if (surface_state[0] == 42 and surface_state[4] == 1
+        # The backend's committed generation and drained event FIFO are the
+        # native-readiness contract.  Surface status is a producer-side
+        # diagnostic and may describe a later rejected/retried compose while
+        # the committed generation is already valid; do not turn that
+        # auxiliary byte into a false capture timeout.
+        if (surface_state[0] == 42
                 and surface_state[0x26] == 0
                 and int.from_bytes(backend[0x1A:0x1C], "little") > 0
                 and int.from_bytes(event_state[0x04:0x06], "little") == 0
@@ -447,6 +780,8 @@ def settle_native_capture(session, frames: int = 1800) -> None:
                 "service_diag": list(session.read_memory("snesMemory", 0x7E5FB0, 0x2E)),
         "scenario_error": list(session.read_memory("snesMemory", 0x7E5F20, 0x20)),
         "scumm_error": list(session.read_memory("snesMemory", 0x7E2300, 0x10)),
+        "service_progress": read_service_progress(session),
+        "fifo_snapshot": read_event_fifo(session),
     }, flush=True)
     try:
         trace = session.tool("trace_log", {"count": 1000, "cpuType": "Snes"})
@@ -457,8 +792,112 @@ def settle_native_capture(session, frames: int = 1800) -> None:
     raise RuntimeError("native display did not converge before capture")
 
 
+def read_event_fifo(session) -> dict:
+    """Decode the live FIFO without treating stale packet slots as queued."""
+    state = bytes(session.read_memory("snesMemory", 0x7E2000, 6))
+    head = int.from_bytes(state[0:2], "little")
+    tail = int.from_bytes(state[2:4], "little")
+    count = int.from_bytes(state[4:6], "little")
+    packets = []
+    for n in range(min(count, 16)):
+        index = (head + n) & 0x0F
+        raw = bytes(session.read_memory("snesMemory", 0x7E2100 + index * 0x10, 0x10))
+        packets.append({
+            "index": index,
+            "service": raw[0], "opcode": raw[1], "flags": raw[2],
+            "source": raw[3], "destination": raw[4],
+            "arg0": int.from_bytes(raw[6:8], "little"),
+            "arg1": int.from_bytes(raw[8:10], "little"),
+            "arg2": int.from_bytes(raw[10:12], "little"),
+            "sequence": int.from_bytes(raw[12:14], "little"),
+        })
+    return {"head": head, "tail": tail, "count": count, "packets": packets}
+
+
+def read_service_progress(session) -> dict:
+    """Read only service-owned progress and the existing engine frame guard."""
+    # Read through the legacy backend-stage byte as well.  It is outside the
+    # 0x30-byte diagnostic prefix and is retained only for old reports; do not
+    # use it as a service-progress counter because that address is shared with
+    # the controller mode in current layouts.
+    # SAME_VIDEO_DIAG_BASE=$7E5E90; the former $7E5FB0 read was an obsolete
+    # map and made service progress appear unrelated or frozen.
+    diag = bytes(session.read_memory("snesMemory", 0x7E5E90, 0x31))
+    backend = bytes(session.read_memory("snesMemory", 0x401000, 0x40))
+    engine = bytes(session.read_memory("snesMemory", 0x7E2220, 0x12))
+    def w(offset):
+        return int.from_bytes(diag[offset:offset + 2], "little")
+    return {
+        "nmi": int.from_bytes(session.read_memory("snesMemory", 0x7E102E, 2), "little"),
+        "frame_counter": int.from_bytes(session.read_memory("snesMemory", 0x7E2210, 2), "little"),
+        "logical_frame_count": int.from_bytes(session.read_memory("snesMemory", 0x7E2308, 2), "little"),
+        "engine_frame_busy": engine[0x11],
+        "engine_lifecycle": engine[1],
+        "engine_phase": session.read_memory("snesMemory", 0x7E103C, 1)[0],
+        "kernel_entries": w(0x26),
+        "kernel_pops": w(0x28),
+        "kernel_last_service": diag[0x2A],
+        "kernel_last_opcode": diag[0x2B],
+        "backend_steps": w(0x2C),
+        "backend_stage": diag[0x30],
+        "backend_state": backend[0x13],
+        "backend_locked": backend[0x14],
+        "accepted_present": int.from_bytes(backend[0x1A:0x1C], "little"),
+        "rejected_present": int.from_bytes(backend[0x1C:0x1E], "little"),
+    }
+
+
+def read_presentation_binding(session) -> dict:
+    """Snapshot the service/backend generation carrying the current pixels.
+
+    This is deliberately validator-side observation.  The engine exposes only
+    the pixel-space damage contract; backend state is read here to bind a
+    capture to a committed presentation, not to steer production execution.
+    """
+    surface = bytes(session.read_memory("snesMemory", 0x401080, 0x40))
+    backend = bytes(session.read_memory("snesMemory", 0x401000, 0x40))
+    fifo = read_event_fifo(session)
+    return {
+        "surface_room": surface[0],
+        "surface_generation": int.from_bytes(surface[2:4], "little"),
+        "surface_status": surface[4],
+        "surface_next_generation": int.from_bytes(surface[0x1C:0x1E], "little"),
+        "surface_pending_visual": surface[0x26],
+        "surface_projection": {
+            "width": int.from_bytes(surface[0x06:0x08], "little"),
+            "height": int.from_bytes(surface[0x08:0x0A], "little"),
+            "pitch": int.from_bytes(surface[0x0A:0x0C], "little"),
+            "source_x": int.from_bytes(surface[0x0C:0x0E], "little"),
+            "source_y": int.from_bytes(surface[0x0E:0x10], "little"),
+            "dest_x": int.from_bytes(surface[0x10:0x12], "little"),
+            "dest_y": int.from_bytes(surface[0x12:0x14], "little"),
+        },
+        "damage": {
+            "x": int.from_bytes(surface[0x34:0x36], "little"),
+            "y": int.from_bytes(surface[0x36:0x38], "little"),
+            "width": int.from_bytes(surface[0x38:0x3A], "little"),
+            "height": int.from_bytes(surface[0x3A:0x3C], "little"),
+        },
+        "backend_state": backend[0x13],
+        "backend_locked": backend[0x14],
+        "backend_pending_generation": int.from_bytes(backend[0x0E:0x10], "little"),
+        "backend_committed_generation": int.from_bytes(backend[0x10:0x12], "little"),
+        "backend_candidate_tiles": int.from_bytes(backend[0x22:0x24], "little"),
+        "backend_pending_tiles": int.from_bytes(backend[0x24:0x26], "little"),
+        "backend_inflight_tiles": int.from_bytes(backend[0x26:0x28], "little"),
+        "accepted_present": int.from_bytes(backend[0x1A:0x1C], "little"),
+        "rejected_present": int.from_bytes(backend[0x1C:0x1E], "little"),
+        "event_count": fifo["count"],
+        "event_head": fifo["head"],
+        "event_tail": fifo["tail"],
+    }
+
+
 def capture_native(session, path: Path, *, min_overlay_generation: int | None = None,
-                   wait_for_quiet: bool = True) -> None:
+                   wait_for_quiet: bool = True,
+                   sample_current_frame: bool = False) -> None:
+    if not CAPTURE_NATIVE_ENABLED:
+        return
     """Capture an emulator framebuffer with a source-stage landmark check.
 
     A Mesen screenshot can race the final PPU commit and return an all-black
@@ -501,7 +940,8 @@ def capture_native(session, path: Path, *, min_overlay_generation: int | None = 
                 or (overlay_state != 0 and overlay_generation == 0)):
             advance_safe(session, 8)
             continue
-        advance_safe(session, 1)
+        if not (sample_current_frame and last is None):
+            advance_safe(session, 1)
         raw = base64.b64decode(session.take_screenshot(format="base64")["base64"])
         image = Image.open(BytesIO(raw)).convert("RGB")
         last = raw
@@ -540,7 +980,15 @@ def main() -> int:
     parser.add_argument("--startup-frames", type=int, default=5000)
     parser.add_argument("--capture-only", action="store_true",
                         help="stop at the stable visible room-42 checkpoint")
+    parser.add_argument("--no-native-captures", action="store_true",
+                        help="diagnostic mode: run the real controller path without emulator screenshots")
+    parser.add_argument("--fast-observation-input", action="store_true",
+                        help="diagnostic mode: use short real input holds to reduce MCP observation latency")
     args = parser.parse_args()
+    global CAPTURE_NATIVE_ENABLED, INPUT_HOLD_FRAMES
+    CAPTURE_NATIVE_ENABLED = not args.no_native_captures
+    if args.fast_observation_input:
+        INPUT_HOLD_FRAMES = 8
     args.output.mkdir(parents=True, exist_ok=True)
     require(args.rom.is_file(), f"missing ROM: {args.rom}")
     require(args.nexen.is_file(), f"missing Nexen: {args.nexen}")
@@ -550,7 +998,10 @@ def main() -> int:
     events: list[dict[str, object]] = []
     with mcp_session.McpSession(
         rom=args.rom.resolve(), mesen=args.nexen.resolve(), cwd=ROOT,
-        port=args.port, boot_wait=2.0, socket_timeout=10.0,
+        # Hook-fenced conversion can span the bounded backend budget without
+        # being an observation failure.  This only enlarges the debugger
+        # transaction timeout; production timing is unchanged.
+        port=args.port, boot_wait=2.0, socket_timeout=600.0,
         stderr_log=args.output / "nexen-stderr.log",
     ) as session:
         session.pause()
@@ -564,6 +1015,25 @@ def main() -> int:
         session.run_frames(2)
         session.pause()
         session.drain_notifications(timeout=0.0)
+        # Fixture-only success witnesses.  The actor serial is written last
+        # by the production compositor, so a write hook is an exact boundary
+        # for a completed actor publication.  The backend generation hook
+        # is installed only after the moving witness, so ordinary startup
+        # commits cannot flood the observer.
+        # Hook the post-success validity byte rather than the final serial
+        # word.  The emulator's WRAM write notification does not reliably
+        # report the two-byte long store at the serial address; VALID is
+        # written after every witness field and immediately before serial.
+        # The production witness publishes its fields first, marks the record
+        # valid, and increments SERIAL last.  Fence on SERIAL so the debugger
+        # observes the complete record rather than stopping between VALID and
+        # the final publication store.
+        actor_publication_hook = session.add_write_hook(0x7E5E52)
+        # A moving render may be deferred behind the hover PRESENT.  Fence
+        # that already-accepted generation by its backend state transition;
+        # this is a service boundary, not a production wait.
+        backend_idle_hook = session.add_write_hook(
+            0x401013, match_value=1, match_value_mask=0xFF)
         started = False
         title_ack = False
         start_release = None
@@ -708,8 +1178,17 @@ def main() -> int:
         events.append({"stage": "visual_ready", "state": read_scene(session)})
         print("native stage: ready checkpoint", flush=True)
         advance_safe(session, 32)
-        print("native stage: ready settled", flush=True)
+        # The ready gate proves that a PRESENT was accepted and its FIFO was
+        # drained; it does not promise that an incremental backend conversion
+        # has already reached idle.  Fence that existing conversion before
+        # sending cursor input so the observation path cannot hold the input
+        # bridge behind a busy presentation.
+        if read_scene(session)["mode3_state"] != 1:
+            wait_for_backend_idle(session, backend_idle_hook)
+        print("native stage: ready settled", read_scene(session), flush=True)
         capture_native(session, args.output / "01-ready.png")
+        capture_mode3_surface(session, args.output / "01-ready-surface.ppm",
+                              advance_after=False)
         if args.capture_only:
             capture_mode3_surface(session, args.output / "01-ready-surface.ppm")
             tilemap = session.tool("render_tilemap", {"layer": 5, "scale": 1, "format": "base64"})
@@ -756,6 +1235,8 @@ def main() -> int:
                 "cgram_shadow_prefix": list(session.read_memory("snesMemory", 0x41E000, 48)),
                 "surface_reads": surface_reads,
                 "backend_control": list(session.read_memory("snesMemory", 0x401000, 0x80)),
+                "service_progress": read_service_progress(session),
+                "fifo_snapshot": read_event_fifo(session),
                 "dma_state": list(session.read_memory("snesMemory", 0x7E223A, 0x2E)),
                 "nmi_count": int.from_bytes(session.read_memory("snesMemory", 0x7E102E, 2), "little"),
                 "vram_prefix": list(session.read_memory("snesVideoRam", 0, 64)),
@@ -811,50 +1292,135 @@ def main() -> int:
                 f"controller cursor did not reach locker hotspot: x={final_cursor_x}")
         print("native stage: locker hover", flush=True)
         events.append({"stage": "locker_hover", "frame": frame, "state": read_scene(session)})
-        advance_safe(session, 32)
-        print("native stage: hover settled", flush=True)
+        if CAPTURE_NATIVE_ENABLED:
+            advance_safe(session, 32)
+            advance_until(session, lambda s: s["scumm_stack_pointer"] == 0,
+                          128, "settled SCUMM scheduler stack")
+            # Cursor/HUD movement can leave a presentation conversion in
+            # flight. The visual run waits for it; the hook-driven run does
+            # not need an unrelated hover screenshot boundary.
+            advance_until(
+                session,
+                lambda s: (s["mode3_state"] == 1
+                           and s["mode3_event_count"] == 0),
+                2048, "settled video presentation",
+            )
+        elif read_scene(session)["mode3_state"] != 1:
+            # The hook-driven fidelity run must enter the controller only
+            # after the room PRESENT has committed.  Otherwise the authored
+            # walk can finish while that initial full-room conversion is
+            # still in flight, leaving no writable surface for its moving
+            # publication.  This is an observation fence, not a gameplay
+            # delay or production wait.
+            wait_for_backend_idle(session, backend_idle_hook)
+        print("native stage: hover settled", read_scene(session), flush=True)
         capture_native(session, args.output / "02-hover.png")
+        global RESTORE_DEBUG_HOOK
+        RESTORE_DEBUG_HOOK = session.add_exec_hook(0x14863B)
         overlay_before_dialogue = int.from_bytes(
             session.read_memory("snesMemory", 0x41F616, 2), "little")
         tap(session, session.BTN_A)
-        events.append({"stage": "object_selected", "state": read_scene(session)})
+        events.append({"stage": "object_selected", "state": advance_until(
+            session, lambda s: s["mode"] == 1, 32, "object-selection mode")})
         tap(session, session.BTN_Y)
-        events.append({"stage": "verb_selected", "state": read_scene(session)})
-        tap(session, session.BTN_A)
-        events.append({"stage": "open_submitted", "state": read_scene(session)})
+        events.append({"stage": "verb_selected", "state": advance_until(
+            session, lambda s: s["mode"] == 1, 32, "verb-selection mode")})
+        # Object/verb HUD selection can publish its own presentation.  Fence
+        # that already-accepted conversion before submitting Open so the
+        # authored movement's first actor damage request is not rejected by a
+        # still-busy surface.  This is debugger-side observation fencing only;
+        # production movement and presentation timing are unchanged.
+        if read_scene(session)["mode3_state"] != 1:
+            wait_for_backend_idle(session, backend_idle_hook)
+        # Snapshot before submission: the first moving publication can occur
+        # while the sentence-consumed wait observes movement becoming active.
+        baseline_witness = read_publication_witness(session)["serial"]
+        # The authored sentence/mailbox boundary is sampled asynchronously;
+        # retain the established long A edge for submission.  The walking
+        # evidence is captured by frame-boundary observation after the
+        # sentence is consumed, not by shortening the production input edge.
+        # Arm this only at the sentence boundary: standing snapshots emitted
+        # during hover/verb selection must not leave stale notifications in
+        # the debugger queue.  desired_visible is the final field written by
+        # the semantic publisher; hooking desired_select would observe a
+        # partially written snapshot.
+        semantic_moving_hook = session.add_write_hook(
+            0x7E5E4D, match_value=1, match_value_mask=0xFF)
+        action_tap(session, session.BTN_A)
+        semantic_snapshot = wait_for_semantic_moving_snapshot(
+            session, semantic_moving_hook)
+        open_state = read_scene(session)
+        if not open_state["moving1"]:
+            raise RuntimeError(
+                f"semantic moving snapshot fired without authored movement: {open_state}")
+        events.append({"stage": "open_submitted", "state": open_state})
+        events.append({"stage": "semantic_moving_snapshot",
+                       "state": semantic_snapshot})
+        print("semantic moving boundary diagnostics:", {
+            "scene": read_scene(session),
+            "surface_pending_visual": session.read_memory("snesMemory", 0x4010A6, 1)[0],
+            "surface_pending_room": session.read_memory("snesMemory", 0x4010A7, 1)[0],
+            "surface_pending_generation": u16(session.read_memory("snesMemory", 0x4010A8, 2)),
+            "surface_presented_source_x": u16(session.read_memory("snesMemory", 0x4010A4, 2)),
+            "camera_present_count": u16(session.read_memory("snesMemory", 0x4010AC, 2)),
+            "camera_defer_count": u16(session.read_memory("snesMemory", 0x4010B0, 2)),
+            "camera_stale_count": u16(session.read_memory("snesMemory", 0x4010B2, 2)),
+        }, flush=True)
         print("controller open sequence:", events[-4:], flush=True)
-        # Preserve one native frame while the actor is actually walking.  It
-        # is evidence of runtime animation, not a host-composited reference.
-        advance_safe(session, 4)
-        backend_before_walking = session.read_memory("snesMemory", 0x401000, 0x40)
-        baseline_present = int.from_bytes(backend_before_walking[0x1a:0x1c], "little")
-        wait_for_surface_generation(session, baseline_present)
-        dump_mode3_surface(session, args.output / "03-walking-surface.ppm")
-        surface_state = session.read_memory("snesMemory", 0x401080, 0x34)
-        presented_generation = int.from_bytes(surface_state[0x22:0x24], "little")
-        presented_room = int.from_bytes(surface_state[0x20:0x22], "little")
-        pending_visual = surface_state[0x26]
-        (args.output / "03-walking-surface-meta.json").write_text(json.dumps({
-            "rom_sha256": __import__("hashlib").sha256(args.rom.read_bytes()).hexdigest(),
-            "frame_counter": int.from_bytes(session.read_memory("snesMemory", 0x7E2210, 2), "little"),
-            "selected_cooked_frame": 1 + ((int.from_bytes(session.read_memory("snesMemory", 0x7E2210, 2), "little") >> 3) & 1),
-            "state": read_scene(session),
-            "surface_generation": int.from_bytes(surface_state[2:4], "little"),
-            "surface_status": surface_state[4],
-            "surface_presented_room": presented_room,
-            "surface_presented_generation": presented_generation,
-            "surface_pending_visual": pending_visual,
-            "surface_source_x": int.from_bytes(surface_state[0x0c:0x0e], "little"),
-            "surface_source_y": int.from_bytes(surface_state[0x0e:0x10], "little"),
-            "surface_dest_x": int.from_bytes(surface_state[0x10:0x12], "little"),
-            "surface_dest_y": int.from_bytes(surface_state[0x12:0x14], "little"),
-            "backend": list(session.read_memory("snesMemory", 0x401000, 0x40)),
-            "event_queue": list(session.read_memory("snesMemory", 0x7E2000, 0x06)),
-        }, indent=2) + "\n")
-        # The actor is intentionally in flight at this boundary.  The
-        # generation wait above proves this exact surface is committed; take
-        # the screenshot while paused rather than advancing to another pose.
-        capture_native_immediate(session, args.output / "03-walking.png")
+        # The witness hook, not a repeated logical-frame poll, identifies the
+        # first successful in-flight actor publication.  Standing publishes
+        # are ignored; failed PRESENTs never advance the witness serial.
+        # Snapshot before submitting the sentence.  The first movement frame
+        # may publish and increment the witness while the sentence-consumed
+        # wait below is still returning; sampling afterward would erase the
+        # very event the hook is meant to catch.
+        walking_witness = wait_for_moving_publication(
+            session, actor_publication_hook, baseline_witness)
+        walking_state = read_scene(session)
+        events.append({"stage": "walking_intermediate", "state": walking_state,
+                       "publication_witness": walking_witness})
+        backend_commit_hook = session.add_write_hook(0x401010, 0x401011)
+        walking_commit = wait_for_committed_generation(
+            session, backend_commit_hook, walking_witness["present_generation"])
+        # The committed-generation write can precede the normal state=idle
+        # transition by a bounded backend step.  Keep those observations
+        # separate: generation identity is already fenced, and the idle
+        # hook below only establishes that the committed transaction is no
+        # longer locked before capture.
+        session.remove_hook(backend_commit_hook)
+        if walking_commit["backend_state"] != 1 or walking_commit["backend_locked"]:
+            wait_for_backend_idle(session, backend_idle_hook)
+        walking_binding = read_presentation_binding(session)
+        walking_binding["publication_witness"] = walking_witness
+        walking_binding["commit_witness"] = walking_commit
+        # No logical frame is advanced between the exact backend completion
+        # hook and these two captures.
+        capture_native_current(session, args.output / "03-walking.png")
+        # Keep the indexed surface from the same no-advance boundary as the
+        # native screenshot.  This is intermediate evidence: it binds the
+        # actor pixels to the committed generation without making the native
+        # capture depend on a host-rendered replacement.
+        projection = walking_binding["surface_projection"]
+        witness = walking_witness
+        surface_x = witness["x"] - 16 + projection["dest_x"] - projection["source_x"]
+        surface_y = witness["y"] - 55 + projection["dest_y"] - projection["source_y"]
+        # The active room surface is 144 pixels high; retain the visible
+        # portion of the 32x64 actor canvas when its feet extend below it.
+        surface_region = (surface_x, surface_y, 32,
+                          min(64, projection["height"] - surface_y))
+        surface_capture = capture_mode3_surface(
+            session, args.output / "03-walking-surface.ppm",
+            region=surface_region, advance_after=False)
+        events.append({"stage": "walking_presentation", "state": read_scene(session),
+                       "presentation": walking_binding,
+                       "surface_region": surface_region,
+                       "surface_descriptor_capture": surface_capture,
+                       "surface_capture": {
+                           "path": str(args.output / "03-walking-surface.ppm"),
+                           "sha256": hashlib.sha256(
+                               (args.output / "03-walking-surface.ppm").read_bytes()
+                           ).hexdigest(),
+                       }})
         for _ in range(24):
             advance_safe(session, 16)
             state = read_locker_progress(session)
@@ -872,13 +1438,25 @@ def main() -> int:
         capture_native(session, args.output / "03-opened.png", wait_for_quiet=False)
         require(read_scene(session)["room"] == 42,
                 "room changed before controller inspection input")
-        for _ in range(120):
+        # A full-surface actor redraw can still be converting after the
+        # authored locker state has settled.  This is an observation window,
+        # not a production wait: keep stepping complete frames until the
+        # target-neutral text service can hand the HUD back.
+        for _ in range(600):
             if read_scene(session)["mode"] == 3:
                 break
             advance_safe(session, 1)
+        if read_scene(session)["mode"] != 3:
+            print("controller inspect handoff timeout:", {
+                "scene": read_scene(session),
+                "backend": list(session.read_memory("snesMemory", 0x401000, 0x40)),
+                "overlay": list(session.read_memory("snesMemory", 0x41F614, 0x20)),
+                "events": list(session.read_memory("snesMemory", 0x7E2000, 0x06)),
+                "service_progress": read_service_progress(session),
+            }, flush=True)
         require(read_scene(session)["mode"] == 3,
                 "controller did not publish the authored inspect mode after opening")
-        tap(session, session.BTN_A)
+        action_tap(session, session.BTN_A)
         events.append({"stage": "inspect_submitted", "state": read_scene(session)})
         print("native stage: inspect submitted", events[-1]["state"], flush=True)
         print("inspect boundary diagnostics", {
@@ -944,6 +1522,19 @@ def main() -> int:
         tap(session, session.BTN_RIGHT)
         advance_safe(session, 2)
         post_dialogue = read_scene(session)
+        print("post-dialogue input boundary:", {
+            "cursor_before": cursor_before,
+            "cursor_after": post_dialogue["cursor_x"],
+            "mode": post_dialogue["mode"],
+            "talk_active": post_dialogue["talk_active"],
+            "input_held": post_dialogue["input_held"],
+            "input_pressed": post_dialogue["input_pressed"],
+            "controller_diag": post_dialogue["controller_diag"],
+            "hud_dirty": post_dialogue["hud_dirty"],
+            "stack": post_dialogue["scumm_stack_pointer"],
+            "c20": post_dialogue["c20"],
+            "pending": post_dialogue["sentence_api_pending"],
+        }, flush=True)
         require(not post_dialogue["talk_active"],
                 "dialogue remained logically active after completion boundary")
         require(post_dialogue["cursor_x"] > cursor_before,
@@ -952,6 +1543,7 @@ def main() -> int:
         capture_native(session, args.output / "05-post-dialogue.png")
     report = {
         "result": "pass", "rom_sha256": hashlib.sha256(args.rom.read_bytes()).hexdigest(),
+        "build_identity": build_identity_for(args.rom),
         "events": events, "controller_only": True,
         "visual_record": "build/m25a-validator/startup42/room42/room-42.sc5v",
     }
