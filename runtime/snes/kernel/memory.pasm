@@ -739,6 +739,18 @@ SAME_SCUMM_CONTROLLER_HUD_DIRTY           = $7E5FE8 ; u8 overlay refresh request
 SAME_SCUMM_CONTROLLER_SUBMISSIONS         = $7E5FE9 ; u8 controller-origin sentences
 SAME_SCUMM_CONTROLLER_LAST_ACTION         = $7E5FEA ; u8 3=open, 9=inspect
 SAME_SCUMM_CONTROLLER_SCENARIO_REQUESTED  = $7E5FEB ; u8 fixture room-42 handoff
+; Generic source-object interaction scratch.  This is a bounded service
+; interface, not a room-specific hotspot table.  The active-room records at
+; SAME_SCUMM_SETSTATE_LOCAL_RECORDS remain the source-backed metadata.
+SAME_SCUMM_INTERACTION_X                 = $7E5F90 ; s16 room/world cursor x
+SAME_SCUMM_INTERACTION_Y                 = $7E5F92 ; s16 room/world cursor y
+SAME_SCUMM_INTERACTION_OBJECT            = $7E5F94 ; u16 hit object/result
+SAME_SCUMM_INTERACTION_FLAGS             = $7E5F96 ; u8 hit object flags
+SAME_SCUMM_INTERACTION_INDEX             = $7E5F97 ; u8 active record index
+SAME_SCUMM_INTERACTION_LIMIT             = $7E5F98 ; u16 rectangle arithmetic
+SAME_SCUMM_INTERACTION_VERB_FIRST        = $7E5F9A ; u16 verb-cycle first
+SAME_SCUMM_INTERACTION_VERB_AFTER        = $7E5F9C ; u8 verb-cycle cursor state
+SAME_SCUMM_CONTROLLER_INPUT_RAW         = $7E5F8E ; debug-only last raw pressed word
 ; The render scratch occupies the documented diagnostic gap $7E5E10-$7E5E21,
 ; after the opcode trace ($7E5A02-$7E5E01) and before the persistent
 ; scenario breadcrumbs ($7E5F00+).

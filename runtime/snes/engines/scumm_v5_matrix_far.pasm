@@ -831,7 +831,11 @@ ScummV5_DrawBox_FarEntry:
     .a8
     lda #$80
     jsr ScummV5_DrawBox_FetchVow
-    bcs ScummV5_DrawBox_FarEntry__error
+    bcc ScummV5_DrawBox_FarEntry__x1_ok
+    brl ScummV5_DrawBox_FarEntry__error
+ScummV5_DrawBox_FarEntry__x1_ok:
+    sep #$20
+    .a8
     lda #$40
     jsr ScummV5_DrawBox_FetchVow
     bcs ScummV5_DrawBox_FarEntry__error
@@ -4816,7 +4820,9 @@ ScummV5_Talk_Begin_Far__pc_prefix_ready:
     sta.l SAME_SCUMM_TALK_PC_BEFORE
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     lda.l SAME_SCUMM_TALK_KEEP_TEXT
-    beq ScummV5_Talk_Begin_Far__scan_setup
+    bne ScummV5_Talk_Begin_Far__keep_text
+    brl ScummV5_Talk_Begin_Far__scan_setup
+ScummV5_Talk_Begin_Far__keep_text:
     ; No presentation buffer is exposed in this mode.  The full C23 decode
     ; nevertheless supplies a deterministic logical duration and a complete
     ; message ownership interval for waitForMessage.

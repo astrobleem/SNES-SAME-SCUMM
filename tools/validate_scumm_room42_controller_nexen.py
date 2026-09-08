@@ -60,6 +60,80 @@ def u16(raw: bytes, offset: int = 0) -> int:
     return int.from_bytes(raw[offset:offset + 2], "little")
 
 
+def active_room_objects(session) -> list[dict[str, int]]:
+    """Read the source-backed active-room CDHD records copied by room load."""
+    count = session.read_memory("snesMemory", 0x7E5FFC, 1)[0]
+    raw = session.read_memory("snesMemory", 0x7E7000, count * 11)
+    result = []
+    for offset in range(0, len(raw), 11):
+        result.append({
+            "object": u16(raw, offset),
+            "x": int.from_bytes(raw[offset + 2:offset + 4], "little", signed=True),
+            "y": int.from_bytes(raw[offset + 4:offset + 6], "little", signed=True),
+            "width": u16(raw, offset + 6),
+            "height": u16(raw, offset + 8),
+            "flags": raw[offset + 10],
+        })
+    return result
+
+
+def object_center_from_source_records(session, object_id: int) -> tuple[int, int, dict[str, int]]:
+    objects = active_room_objects(session)
+    target = next((item for item in objects if item["object"] == object_id), None)
+    if target is not None:
+        # Choose a point from the source rectangle whose canonical forward
+        # object scan resolves to this object.  Centers are not sufficient:
+        # v5 permits overlapping CDHD rectangles and the first source object
+        # wins.  This remains a source-derived controller target, not a
+        # Fate-specific coordinate.
+        cursor_x = u16(session.read_memory("snesMemory", 0x7E5FE1, 2))
+        cursor_y = u16(session.read_memory("snesMemory", 0x7E5FE3, 2))
+        camera_x = u16(session.read_memory("snesMemory", 0x7E7FB8, 2))
+        camera_y = u16(session.read_memory("snesMemory", 0x7E7FAA, 2))
+        for y in range(target["y"] + target["height"] - 1, target["y"] - 1, -1):
+            screen_y = y - camera_y + 0x64
+            if (screen_y - cursor_y) & 1:
+                continue
+            for x in range(target["x"] + target["width"] - 1, target["x"] - 1, -1):
+                screen_x = x - camera_x
+                if (screen_x - cursor_x) & 1:
+                    continue
+                first = next((item for item in objects
+                              if item["x"] <= x < item["x"] + item["width"]
+                              and item["y"] <= y < item["y"] + item["height"]), None)
+                if first is target:
+                    return x, y, target
+        raise RuntimeError(f"source object {object_id} has no canonical selectable point")
+    raise RuntimeError(f"source object {object_id} is absent from active room metadata")
+
+
+def move_cursor_to_source_object(session, object_id: int, limit: int = 128) -> tuple[dict[str, int], int, int]:
+    """Move the real cursor to a source-derived selectable CDHD point."""
+    target_x, target_y, record = object_center_from_source_records(session, object_id)
+    for _ in range(limit):
+        cursor_x = u16(session.read_memory("snesMemory", 0x7E5FE1, 2))
+        cursor_y = u16(session.read_memory("snesMemory", 0x7E5FE3, 2))
+        camera_x = u16(session.read_memory("snesMemory", 0x7E7FB8, 2))
+        camera_y = u16(session.read_memory("snesMemory", 0x7E7FAA, 2))
+        room_x = cursor_x + camera_x
+        room_y = (cursor_y + camera_y - 0x64) & 0xFFFF
+        if (record["x"] <= room_x < record["x"] + record["width"]
+                and record["y"] <= room_y < record["y"] + record["height"]):
+            return record, room_x, room_y
+        screen_x = target_x - camera_x
+        screen_y = target_y - camera_y + 0x64
+        if cursor_x < screen_x:
+            button = session.BTN_RIGHT
+        elif cursor_x > screen_x:
+            button = session.BTN_LEFT
+        elif cursor_y < screen_y:
+            button = session.BTN_DOWN
+        else:
+            button = session.BTN_UP
+        tap(session, button)
+    raise RuntimeError(f"cursor did not reach source object {object_id}: {record}")
+
+
 def read_scene(session) -> dict[str, int]:
     room = session.read_memory("snesMemory", 0x7FF2BE, 0x42)
     actor = session.read_memory("snesMemory", ACTOR_POSITIONS + 4, 4)
@@ -146,6 +220,15 @@ def read_scene(session) -> dict[str, int]:
         "error": session.read_memory("snesMemory", 0x7E2303, 1)[0],
         "object490_state": state, "mode": ctl[0], "cursor_x": u16(ctl[1:]),
         "cursor_y": u16(ctl[3:]), "verb": ctl[5], "object": u16(ctl[6:]),
+        "interaction": {
+            "x": u16(session.read_memory("snesMemory", 0x7E5F90, 2)),
+            "y": u16(session.read_memory("snesMemory", 0x7E5F92, 2)),
+            "object": u16(session.read_memory("snesMemory", 0x7E5F94, 2)),
+            "flags": session.read_memory("snesMemory", 0x7E5F96, 1)[0],
+            "index": session.read_memory("snesMemory", 0x7E5F97, 1)[0],
+            "limit": u16(session.read_memory("snesMemory", 0x7E5F98, 2)),
+            "local_count": session.read_memory("snesMemory", 0x7E5FFC, 1)[0],
+        },
         "hud_dirty": ctl[8], "submissions": ctl[9], "last_action": ctl[10],
         "controller_diag": ctl[12],
         "controller_diag_room": ctl[13], "controller_diag_phase": ctl[14],
@@ -519,6 +602,19 @@ def advance_until(session, predicate, limit: int, description: str) -> dict:
             "desired_visual_select": session.read_memory("snesMemory", 0x7E5E46, 1)[0],
             "accepted_visual_x": u16(session.read_memory("snesMemory", 0x7E5E10, 2)),
             "accepted_visual_select": session.read_memory("snesMemory", 0x7E5E3C, 1)[0],
+            "controller_diag": session.read_memory("snesMemory", 0x7E5FEC, 4).hex(),
+            "controller_diag_input": session.read_memory("snesMemory", 0x7E5FEF, 1)[0],
+            "raw_pressed": list(session.read_memory("snesMemory", 0x7E5F8E, 2)),
+            "interaction_scratch": list(session.read_memory("snesMemory", 0x7E5F90, 13)),
+            "active_record": session.read_memory("snesMemory", 0x7FF2BE, 1)[0],
+            "verb_object": u16(session.read_memory("snesMemory", 0x7E7EBF, 2)),
+            "verb_id": u16(session.read_memory("snesMemory", 0x7E7EC1, 2)),
+            "verb_result": u16(session.read_memory("snesMemory", 0x7E7EC3, 2)),
+            "controller_object": u16(session.read_memory("snesMemory", 0x7E5FE6, 2)),
+            "active_object_records": [
+                list(session.read_memory("snesMemory", 0x7E7000 + i * 11, 11))
+                for i in range(session.read_memory("snesMemory", 0x7E5FFC, 1)[0])
+            ],
         }
     state = poll()
     for _ in range(limit):
@@ -631,8 +727,13 @@ def wait_for_moving_publication(session, hook_handle: int,
         if (witness["valid"] and witness["serial"] != baseline_serial
                 and witness["moving"] and witness["x"] not in (150, 218)):
             return witness
+        # A write hook may stop on the low-byte/intermediate write that
+        # precedes the committed-generation value.  That is an observation
+        # boundary, not a stalled emulator.  Re-read the generation and keep
+        # waiting for the requested value; only the bounded outer limit is a
+        # failure condition.
         if int(result.get("framesAdvanced", 0)) <= 0:
-            break
+            continue
     raise RuntimeError(
         f"no successful moving actor publication: witness={witness} "
         f"scene={read_scene(session)} "
@@ -1243,53 +1344,77 @@ def main() -> int:
             }, indent=2) + "\n")
             return 0
 
-        # Move the scene cursor into the authored locker hotspot using repeated
-        # ordinary controller taps; no mailbox or game-state writes are made.
-        # Use only ordinary controller taps and adapt to the cursor position;
-        # this avoids a coordinate write while tolerating input-edge
-        # coalescing during the first visible room frames.
-        # The controller bridge advances the cursor by two logical pixels per
-        # accepted edge.  The source-backed start point is 145 and the locker
-        # hotspot begins at 190, so 64 ordinary taps is a bounded replay
-        # budget, not an open-ended retry loop.
-        horizontal_button = session.BTN_RIGHT
+        # Resolve the regression object's source CDHD record from the active
+        # room table, then move the cursor with ordinary controller edges.
+        # The object id identifies the regression action; its rectangle and
+        # center are never duplicated in the controller or validator.
+        locker_x, locker_y, locker_record = object_center_from_source_records(session, 490)
+        locker_left = locker_record["x"]
+        locker_right = locker_left + locker_record["width"]
+        locker_top = locker_record["y"]
+        locker_bottom = locker_top + locker_record["height"]
         cursor_trace = []
-        for _ in range(64):
+        # Cursor motion is a normal controller path; allow for the real
+        # two-pixel edge steps and occasional frame where the input edge is
+        # sampled while the presentation service is busy.
+        for _ in range(128):
             # Keep this polling path narrow: a complete scene snapshot here
             # would issue dozens of MCP memory reads for every two-frame tap.
             cursor_x = u16(session.read_memory("snesMemory", 0x7E5FE1, 2))
-            if 190 <= cursor_x <= 240:
+            cursor_y = u16(session.read_memory("snesMemory", 0x7E5FE3, 2))
+            # Controller coordinates are screen-relative.  The production
+            # hit-test converts them to room/world coordinates using the
+            # active camera projection, so the validator makes the same
+            # conversion instead of comparing the two coordinate spaces.
+            room_x = cursor_x + u16(session.read_memory("snesMemory", 0x7E7FB8, 2))
+            room_y = (cursor_y + u16(session.read_memory("snesMemory", 0x7E7FAA, 2)) - 0x64) & 0xFFFF
+            if locker_left <= room_x < locker_right and locker_top <= room_y < locker_bottom:
                 break
-            if cursor_x > 240:
-                horizontal_button = session.BTN_LEFT
+            target_x = locker_x - u16(session.read_memory("snesMemory", 0x7E7FB8, 2))
+            target_y = locker_y - u16(session.read_memory("snesMemory", 0x7E7FAA, 2)) + 0x64
+            if cursor_x < target_x:
+                button = session.BTN_RIGHT
+            elif cursor_x > target_x:
+                button = session.BTN_LEFT
+            elif cursor_y < target_y:
+                button = session.BTN_DOWN
+            else:
+                button = session.BTN_UP
             before_x = cursor_x
-            tap(session, horizontal_button)
+            tap(session, button)
             after_x = u16(session.read_memory("snesMemory", 0x7E5FE1, 2))
             if len(cursor_trace) < 12:
                 cursor_trace.append({
                     "before": before_x,
                     "after": after_x,
-                    "button": horizontal_button,
+                    "button": button,
                     "held": u16(session.read_memory("snesMemory", 0x7E2200, 2)),
                     "pressed": u16(session.read_memory("snesMemory", 0x7E2204, 2)),
                     "mode": session.read_memory("snesMemory", 0x7E5FE0, 1)[0],
                 })
-            if after_x < before_x:
-                horizontal_button = session.BTN_LEFT
-            elif after_x > before_x:
-                horizontal_button = session.BTN_RIGHT
         final_cursor_x = u16(session.read_memory("snesMemory", 0x7E5FE1, 2))
-        if not (190 <= final_cursor_x <= 240):
+        final_cursor_y = u16(session.read_memory("snesMemory", 0x7E5FE3, 2))
+        final_room_x = final_cursor_x + u16(session.read_memory("snesMemory", 0x7E7FB8, 2))
+        final_room_y = (final_cursor_y + u16(session.read_memory("snesMemory", 0x7E7FAA, 2)) - 0x64) & 0xFFFF
+        if not (locker_left <= final_room_x < locker_right and locker_top <= final_room_y < locker_bottom):
             print("controller input at hover failure:", {
-                "cursor_x": final_cursor_x,
+                "cursor": (final_cursor_x, final_cursor_y),
+                "room_point": (final_room_x, final_room_y),
                 "held": u16(session.read_memory("snesMemory", 0x7E2200, 2)),
                 "pressed": u16(session.read_memory("snesMemory", 0x7E2204, 2)),
-                "diag_input": session.read_memory("snesMemory", 0x7E5FF0, 1)[0],
+                "diag_input": session.read_memory("snesMemory", 0x7E5FEF, 1)[0],
                 "diag": session.read_memory("snesMemory", 0x7E5FEC, 4).hex(),
+                "active_objects": active_room_objects(session),
+                "interaction_scratch": list(session.read_memory("snesMemory", 0x7E5F90, 13)),
+                "raw_pressed": list(session.read_memory("snesMemory", 0x7E5F8E, 2)),
                 "cursor_trace": cursor_trace,
             }, flush=True)
-        require(190 <= final_cursor_x <= 240,
-                f"controller cursor did not reach locker hotspot: x={final_cursor_x}")
+        require(
+            locker_left <= final_room_x < locker_right
+            and locker_top <= final_room_y < locker_bottom,
+            f"controller cursor did not reach source object 490 bounds: "
+            f"screen=({final_cursor_x},{final_cursor_y}) room=({final_room_x},{final_room_y}) record={locker_record}",
+        )
         print("native stage: locker hover", flush=True)
         events.append({"stage": "locker_hover", "frame": frame, "state": read_scene(session)})
         if CAPTURE_NATIVE_ENABLED:
@@ -1411,16 +1536,19 @@ def main() -> int:
         surface_capture = capture_mode3_surface(
             session, args.output / "03-walking-surface.ppm",
             region=surface_region, advance_after=False)
-        events.append({"stage": "walking_presentation", "state": read_scene(session),
-                       "presentation": walking_binding,
-                       "surface_region": surface_region,
-                       "surface_descriptor_capture": surface_capture,
-                       "surface_capture": {
-                           "path": str(args.output / "03-walking-surface.ppm"),
-                           "sha256": hashlib.sha256(
-                               (args.output / "03-walking-surface.ppm").read_bytes()
-                           ).hexdigest(),
-                       }})
+        walking_presentation = {"stage": "walking_presentation",
+                                "state": read_scene(session),
+                                "presentation": walking_binding,
+                                "surface_region": surface_region,
+                                "surface_descriptor_capture": surface_capture}
+        if CAPTURE_NATIVE_ENABLED:
+            walking_presentation["surface_capture"] = {
+                "path": str(args.output / "03-walking-surface.ppm"),
+                "sha256": hashlib.sha256(
+                    (args.output / "03-walking-surface.ppm").read_bytes()
+                ).hexdigest(),
+            }
+        events.append(walking_presentation)
         for _ in range(24):
             advance_safe(session, 16)
             state = read_locker_progress(session)
@@ -1515,6 +1643,25 @@ def main() -> int:
         require(current["error"] == 0, f"SCUMM error after inspection: {current}")
         events.append({"stage": "inspection_complete", "state": current})
         capture_native(session, args.output / "04-dialogue-complete.png")
+        # Genericity witness: after the locker path has completed, select a
+        # different source object from its own CDHD rectangle.  Stop at the
+        # object-selection mode; do not submit its authored verb or mutate
+        # the Fate scenario a second time.
+        second_record, second_room_x, second_room_y = move_cursor_to_source_object(session, 492)
+        action_tap(session, session.BTN_A)
+        second_state = advance_until(
+            session,
+            lambda s: s["mode"] == 1,
+            128,
+            "second source object selection",
+        )
+        second_scene = read_scene(session)
+        require(second_scene["object"] == 492,
+                f"second CDHD object selection resolved incorrectly: {second_scene}")
+        events.append({"stage": "second_object_selected", "state": second_state,
+                       "scene": second_scene,
+                       "source_record": second_record,
+                       "room_point": [second_room_x, second_room_y]})
         # Prove that the real controller path remains live after the authored
         # message releases its wait.  This is an ordinary input edge, not a
         # sentence/mailbox injection, and must produce a fresh HUD layer.

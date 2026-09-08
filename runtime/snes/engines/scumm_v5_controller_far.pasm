@@ -49,6 +49,10 @@ ScummV5_Controller_Frame_Far:
     rep #$20
     .a16
     lda.l SAME_INPUT_PRESSED
+    beq ScummV5_Controller_Frame__raw_input_done
+    sta.l SAME_SCUMM_CONTROLLER_INPUT_RAW
+ScummV5_Controller_Frame__raw_input_done:
+    lda.l SAME_INPUT_PRESSED
     xba
     sep #$20
     .a8
@@ -89,7 +93,7 @@ ScummV5_Controller_Frame__room68:
     rep #$20
     .a16
     lda.l SAME_INPUT_PRESSED
-    and #$0080
+    and #$0080 ; SNES A button in the auto-joypad word
     beq ScummV5_Controller_Frame__room68_phase16
     sep #$20
     .a8
@@ -184,26 +188,23 @@ ScummV5_Controller_Frame__ready:
     lda #$06
     sta.l SAME_SCUMM_CONTROLLER_DIAG
 
-    ; Establish the source-backed scene cursor once at the accepted room-42
-    ; actor checkpoint. The cursor moves from the actor toward the authored
-    ; locker hotspot; it is not a validator mailbox write.
+    ; Establish the cursor at the current source actor position.  Selection
+    ; below is entirely driven by active-room CDHD/VERB metadata.
     lda.l SAME_SCUMM_CONTROLLER_MODE
     bne ScummV5_Controller_Frame__mode_ready
     rep #$20
     .a16
     lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
     bne ScummV5_Controller_Frame__mode_ready16
-    lda #$0091
+    lda.l SAME_SCUMM_C31_POSITIONS+4
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_X
-    lda #$0070
+    lda.l SAME_SCUMM_C31_POSITIONS+6
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_Y
     sep #$20
     .a8
-    lda #$03
+    lda #$00
     sta.l SAME_SCUMM_CONTROLLER_VERB
-    lda #$EA
     sta.l SAME_SCUMM_CONTROLLER_OBJECT
-    lda #$01
     sta.l SAME_SCUMM_CONTROLLER_OBJECT+1
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
@@ -318,41 +319,72 @@ ScummV5_Controller_Frame__mode_select:
     bne ScummV5_Controller_Frame__mode_select_fallback
     jmp ScummV5_Controller_Frame__select_verb
 ScummV5_Controller_Frame__mode_select_fallback:
-    ; A selects the authored object only when the cursor is inside the
-    ; source-backed CDHD hotspot used by object 490.
+    ; A resolves the cursor against the active room's source-backed CDHD
+    ; records, then discovers the object's explicit authored VERB entries.
     rep #$20
     .a16
     lda.l SAME_INPUT_PRESSED
-    and #$0080
+    ora.l SAME_SCUMM_INTERACTION_LIMIT ; fixture diagnostic: retain edge bits
+    sta.l SAME_SCUMM_INTERACTION_LIMIT
+    lda.l SAME_INPUT_PRESSED
+    and #$0080 ; SNES A button in the auto-joypad word
     bne ScummV5_Controller_Frame__cursor_x_low_ok
     jmp ScummV5_Controller_Frame__hud
 ScummV5_Controller_Frame__cursor_x_low_ok:
+    sep #$20
+    .a8
+    lda #$31
+    sta.l SAME_SCUMM_CONTROLLER_DIAG
     rep #$20
     .a16
     lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
-    cmp #$00BE
-    bcs ScummV5_Controller_Frame__cursor_x_low_pass
-    jmp ScummV5_Controller_Frame__hud
-ScummV5_Controller_Frame__cursor_x_low_pass:
-    rep #$20
-    .a16
-    cmp #$00F1
-    bcc ScummV5_Controller_Frame__cursor_x_high_ok
-    jmp ScummV5_Controller_Frame__hud
-ScummV5_Controller_Frame__cursor_x_high_ok:
-    rep #$20
-    .a16
+    clc
+    adc.l SAME_SCUMM_CAMERA_VSCREEN_XSTART
+    sta.l SAME_SCUMM_INTERACTION_X
     lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
-    cmp #$004C
-    bcs ScummV5_Controller_Frame__cursor_y_low_ok
-    jmp ScummV5_Controller_Frame__hud
-ScummV5_Controller_Frame__cursor_y_low_ok:
+    clc
+    adc.l SAME_SCUMM_CAMERA_CURRENT_Y
+    sec
+    sbc #$0064 ; v5 room viewport origin; vertical camera is not scrolled
+    sta.l SAME_SCUMM_INTERACTION_Y
+    jsl ScummV5_Generic_Object_HitTest_Far
+    bcs ScummV5_Controller_Frame__hit_ok
+    sep #$20
+    .a8
+    lda #$32
+    sta.l SAME_SCUMM_CONTROLLER_DIAG
+    lda.l SAME_SCUMM_CONTROLLER_DIAG_INPUT
+    ora #$20
+    sta.l SAME_SCUMM_CONTROLLER_DIAG_INPUT
+    brl ScummV5_Controller_Frame__hud
+ScummV5_Controller_Frame__hit_ok:
+    sep #$20
+    .a8
+    lda #$33
+    sta.l SAME_SCUMM_CONTROLLER_DIAG
+    lda.l SAME_SCUMM_CONTROLLER_DIAG_INPUT
+    ora #$40
+    sta.l SAME_SCUMM_CONTROLLER_DIAG_INPUT
     rep #$20
     .a16
-    cmp #$0080
-    bcc ScummV5_Controller_Frame__cursor_y_high_ok
-    jmp ScummV5_Controller_Frame__hud
-ScummV5_Controller_Frame__cursor_y_high_ok:
+    lda.l SAME_SCUMM_INTERACTION_OBJECT
+    sta.l SAME_SCUMM_CONTROLLER_OBJECT
+    sta.l SAME_SCUMM_VERB_OBJECT
+    jsl ScummV5_Generic_Verb_First_Far
+    bcs ScummV5_Controller_Frame__verb_ok
+    sep #$20
+    .a8
+    lda #$34
+    sta.l SAME_SCUMM_CONTROLLER_DIAG
+    lda.l SAME_SCUMM_CONTROLLER_DIAG_INPUT
+    ora #$10
+    sta.l SAME_SCUMM_CONTROLLER_DIAG_INPUT
+    brl ScummV5_Controller_Frame__hud
+ScummV5_Controller_Frame__verb_ok:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_VERB_RESULT
+    sta.l SAME_SCUMM_CONTROLLER_VERB
     sep #$20
     .a8
     lda #$01
@@ -367,19 +399,20 @@ ScummV5_Controller_Frame__select_verb:
     lda.l SAME_INPUT_PRESSED
     and #$4000
     beq ScummV5_Controller_Frame__select_verb_a
+    lda.l SAME_SCUMM_CONTROLLER_OBJECT
+    sta.l SAME_SCUMM_VERB_OBJECT
+    lda #$0000
+    sta.l SAME_SCUMM_VERB_ID
     sep #$20
     .a8
-    lda.l SAME_SCUMM_OBJECT_STATES+$01EA
-    beq ScummV5_Controller_Frame__verb_open
-    lda #$09
-    sta.l SAME_SCUMM_CONTROLLER_VERB
-    bra ScummV5_Controller_Frame__verb_dirty
-ScummV5_Controller_Frame__verb_open:
+    lda.l SAME_SCUMM_CONTROLLER_VERB
+    sta.l SAME_SCUMM_VERB_ID
+    jsl ScummV5_Generic_Verb_Next_Far
+    bcc ScummV5_Controller_Frame__select_verb_a
     sep #$20
     .a8
-    lda #$03
+    lda.l SAME_SCUMM_VERB_RESULT
     sta.l SAME_SCUMM_CONTROLLER_VERB
-ScummV5_Controller_Frame__verb_dirty:
     sep #$20
     .a8
     lda #$01
@@ -388,7 +421,7 @@ ScummV5_Controller_Frame__select_verb_a:
     rep #$20
     .a16
     lda.l SAME_INPUT_PRESSED
-    and #$0080
+    and #$0080 ; SNES A button in the auto-joypad word
     bne ScummV5_Controller_Frame__select_verb_a_pressed
     jmp ScummV5_Controller_Frame__hud
 ScummV5_Controller_Frame__select_verb_a_pressed:
@@ -396,10 +429,12 @@ ScummV5_Controller_Frame__select_verb_a_pressed:
     .a8
     lda.l SAME_SCUMM_CONTROLLER_VERB
     sta.l SAME_SCUMM_SENTENCE_API_VERB
-    lda #$EA
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_OBJECT
     sta.l SAME_SCUMM_SENTENCE_API_OBJECT1
-    lda #$01
-    sta.l SAME_SCUMM_SENTENCE_API_OBJECT1+1
+    sep #$20
+    .a8
     lda #$00
     sta.l SAME_SCUMM_SENTENCE_API_OBJECT2
     sta.l SAME_SCUMM_SENTENCE_API_OBJECT2+1
@@ -417,9 +452,13 @@ ScummV5_Controller_Frame__select_verb_a_pressed:
     jmp ScummV5_Controller_Frame__hud
 
 ScummV5_Controller_Frame__check_opened:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_OBJECT
+    tax
     sep #$20
     .a8
-    lda.l SAME_SCUMM_OBJECT_STATES+$01EA
+    lda.l SAME_SCUMM_OBJECT_STATES,x
     bne ScummV5_Controller_Frame__opened
     jmp ScummV5_Controller_Frame__hud
 ScummV5_Controller_Frame__opened:
@@ -455,14 +494,30 @@ ScummV5_Controller_Frame__release_ready:
 ScummV5_Controller_Frame__submit_inspect:
     .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     jsl Same_VideoText_CanWrite_Far
-    bcs ScummV5_Controller_Frame__done
+    bcc ScummV5_Controller_Frame__inspect_text_ready
+    brl ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__inspect_text_ready:
     .endif
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_OBJECT
+    sta.l SAME_SCUMM_VERB_OBJECT
+    lda #$0000
+    sta.l SAME_SCUMM_VERB_ID
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_VERB
+    sta.l SAME_SCUMM_VERB_ID
+    jsl ScummV5_Generic_Verb_Next_Far
+    bcc ScummV5_Controller_Frame__done
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_VERB_RESULT
+    sta.l SAME_SCUMM_CONTROLLER_VERB
     sep #$20
     .a8
     lda #$03
     sta.l SAME_SCUMM_CONTROLLER_MODE
-    lda #$09
-    sta.l SAME_SCUMM_CONTROLLER_VERB
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
     jmp ScummV5_Controller_Frame__done
@@ -471,16 +526,18 @@ ScummV5_Controller_Frame__select_inspect:
     rep #$20
     .a16
     lda.l SAME_INPUT_PRESSED
-    and #$0080
+    and #$0080 ; SNES A button in the auto-joypad word
     beq ScummV5_Controller_Frame__hud
     sep #$20
     .a8
-    lda #$09
+    lda.l SAME_SCUMM_CONTROLLER_VERB
     sta.l SAME_SCUMM_SENTENCE_API_VERB
-    lda #$EA
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_OBJECT
     sta.l SAME_SCUMM_SENTENCE_API_OBJECT1
-    lda #$01
-    sta.l SAME_SCUMM_SENTENCE_API_OBJECT1+1
+    sep #$20
+    .a8
     lda #$00
     sta.l SAME_SCUMM_SENTENCE_API_OBJECT2
     sta.l SAME_SCUMM_SENTENCE_API_OBJECT2+1
@@ -1256,7 +1313,13 @@ ScummV5_Controller_RenderLocker_Far:
     beq ScummV5_Controller_RenderLocker__room_ok
     jmp ScummV5_Controller_RenderLocker__done
 ScummV5_Controller_RenderLocker__room_ok:
-    lda.l SAME_SCUMM_OBJECT_STATES+490
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_OBJECT
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_OBJECT_STATES,x
     beq ScummV5_Controller_RenderLocker__state_ok
     jmp ScummV5_Controller_RenderLocker__done
 ScummV5_Controller_RenderLocker__state_ok:

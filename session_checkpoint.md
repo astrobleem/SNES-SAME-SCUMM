@@ -1,5 +1,47 @@
 # SAME / SCUMM v5 session checkpoint
 
+## Current objective: generic room-object interaction (2026-09-08)
+
+- The room-42 graphics/surface/controller milestone is CLOSED at review
+  `review/controller-room42-final`, commit
+  `f95f7e26e6c81fbf2dfaf5517939283128b61c7a`, ROM
+  `9370b4acb6ff649b008c5e4135771b24dc89fb74be798e5bfbc2cbda7aa8702f`.
+  Do not reopen graphics without contradictory regression evidence.
+- Poppy provenance is split deliberately: the accepted historical ROM keeps
+  its recorded toolchain identity. New development uses focused upstream
+  Poppy #376 PR #393, commit
+  `5ab64a4745532d8ef732a2ee694ac9b6dd0e054d`.
+- Generic interaction implementation is target-proven on fresh ROM
+  `build/generic-room42-interaction-fixedpoppy23.sfc`, SHA-256
+  `b97fe25e4d7795004610ff1d6e171fe9e1758b94f319c3739c317e808d26547d`.
+  FULL startup42 reaches room 42/error 0; the controller resolves a source
+  CDHD hit to object 490, discovers authored verb 3, submits the normal
+  `(3,490,0)` sentence, moves to `(218,104)`/walkbox 10, opens the locker,
+  completes inspection dialogue, and selects a second source object 492 from
+  its own CDHD bounds. Target report:
+  `build/generic-room42-interaction-fixedpoppy23-run-normal/report.json`.
+  No production controller path contains a locker rectangle or object-490
+  selection policy. Host synthetic coverage proves miss, half-open edges,
+  camera projection, overlap precedence, parent-state visibility, and
+  authored-verb fallback exclusion. The generic interaction implementation is
+  still dirty and not yet published.
+- Host CDHD hit testing now uses room/world coordinates, half-open
+  rectangles, reverse OBCD order for overlap precedence, and flags bit 7 as
+  non-selectable. Explicit OBCD VERB entries are exposed separately from the
+  `0xFF` fallback. Target generation now emits generic hit-test and first/next
+  authored-verb services over the existing active-room object records.
+- Controller integration is now target-proven through the first authored action:
+  the FULL startup42 target resolves cursor → CDHD object 490 → authored verb 3
+  → normal sentence API `(3,490,0)`, moves to `(218,104)`/walkbox 10, opens
+  object 490, and completes the existing inspection dialogue with error 0.
+  The production selection path contains no locker rectangle or object-490
+  selection policy; the remaining presentation helper reads the selected
+  controller object dynamically.
+- Remaining before publication: consolidate the screened review branch and
+  run/record the publication-facing evidence. The target second-object
+  witness is complete; miss/edge/overlap/camera/verb semantics are covered by
+  copyright-free host fixtures. No graphics/surface/hoist work is reopened.
+
 ## Poppy semantic-address fix (2026-09-08)
 
 - Independent Poppy reproducer and matrix are in `/home/chad/poppy-jsl-address-fix`.

@@ -13,10 +13,59 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
     def test_controller_uses_production_sentence_tuple_and_zero_object2(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         self.assertEqual(source.count("sta.l SAME_SCUMM_SENTENCE_API_PENDING"), 2)
-        self.assertEqual(source.count("sta.l SAME_SCUMM_SENTENCE_API_OBJECT1+1"), 2)
+        self.assertEqual(source.count("sta.l SAME_SCUMM_SENTENCE_API_OBJECT1+1"), 0)
         self.assertEqual(source.count("sta.l SAME_SCUMM_SENTENCE_API_OBJECT2+1"), 2)
         self.assertEqual(source.count("lda #$00\n    sta.l SAME_SCUMM_SENTENCE_API_OBJECT2"), 2)
         self.assertIn("ScummV5_QueueSentence", (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text())
+
+    def test_controller_selection_is_source_driven_not_locker_driven(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        selection = source.split("ScummV5_Controller_Frame__mode_select_fallback:", 1)[1].split(
+            "ScummV5_Controller_Frame__select_verb:", 1
+        )[0]
+        self.assertIn("ScummV5_Generic_Object_HitTest_Far", selection)
+        self.assertIn("ScummV5_Generic_Verb_First_Far", selection)
+        self.assertNotIn("#$01EA", selection)
+        self.assertNotIn("#$00BE", selection)
+        self.assertNotIn("#$00F1", selection)
+        self.assertNotIn("#$004C", selection)
+
+    def test_controller_cycles_authored_verbs_and_uses_selected_object(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        cycle = source.split("ScummV5_Controller_Frame__select_verb:", 1)[1].split(
+            "ScummV5_Controller_Frame__check_opened:", 1
+        )[0]
+        self.assertIn("ScummV5_Generic_Verb_Next_Far", cycle)
+        self.assertIn("SAME_SCUMM_CONTROLLER_OBJECT", cycle)
+        submit = source.split("ScummV5_Controller_Frame__select_verb_a_pressed:", 1)[1].split(
+            "ScummV5_Controller_Frame__check_opened:", 1
+        )[0]
+        self.assertIn("SAME_SCUMM_SENTENCE_API_OBJECT1", submit)
+        self.assertNotIn("#$EA", submit)
+
+    def test_generated_room_metadata_exports_generic_hit_and_verb_services(self) -> None:
+        source = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
+        self.assertIn('"ScummV5_Generic_Object_HitTest_Far:"', source)
+        self.assertIn('"ScummV5_Generic_Verb_First_Far:"', source)
+        self.assertIn('"ScummV5_Generic_Verb_Next_Far:"', source)
+        self.assertIn("SAME_SCUMM_SETSTATE_LOCAL_RECORDS", source)
+
+    def test_generated_hit_test_contract_is_room_pixel_half_open_and_frontmost(self) -> None:
+        source = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
+        block = source.split('"ScummV5_Generic_Object_HitTest_Far:"', 1)[1].split(
+            '"ScummV5_Generic_Verb_First_Far:"', 1
+        )[0]
+        self.assertIn("SAME_SCUMM_SETSTATE_LOCAL_COUNT", block)
+        self.assertIn("SAME_SCUMM_SETSTATE_LOCAL_RECORDS+2", block)
+        self.assertIn("SAME_SCUMM_SETSTATE_LOCAL_RECORDS+6", block)
+        self.assertIn("sta.l SAME_SCUMM_INTERACTION_INDEX", block)
+        self.assertIn('"    iny"', block)
+        self.assertIn("SAME_SCUMM_INTERACTION_OBJECT", block)
+        self.assertNotIn("and #$0002", block)
+        # Canonical v5 hit testing is based on source bounds and visibility;
+        # inventory ownership is not a generic hit-test exclusion.
+        self.assertNotIn("SAME_SCUMM_OBJECT_OWNERS", block)
+        self.assertNotIn("ldy.l", block.lower())
 
     def test_controller_scene_asserts_real_open_and_inspect_lifecycle(self) -> None:
         validator = (ROOT / "tools/validate_scumm_room42_controller_nexen.py").read_text()
