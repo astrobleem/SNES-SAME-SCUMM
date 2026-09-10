@@ -1,0 +1,10 @@
+{
+  "repository": "astrobleem/poppy",
+  "commit": "8ee859b33bad94e3a01e9c78026803e482292801",
+  "dll_sha256": "34514923ea8dc79a4664fa327f583cee8e8daa64e3be47518ae22ba5a2c7608e",
+  "dotnet_sdk": "10.0.301",
+  "historical_rom_dll_sha256": "34514923ea8dc79a4664fa327f583cee8e8daa64e3be47518ae22ba5a2c7608e",
+  "focused_376_source_commit": "5ab64a4745532d8ef732a2ee694ac9b6dd0e054d",
+  "focused_376_dll_sha256": "57a8768599972c15a09ad92b80b9c4af041345bc1aad61d004159f8a7c54b1cf",
+  "focused_376_status": "rejected for SAME compatibility: unresolved generated ScummV5_*_Far symbols"
+}

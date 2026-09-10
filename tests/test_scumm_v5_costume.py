@@ -13,6 +13,7 @@ from same.errors import ResourceError, SaveFormatError
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
 from same.services import HostServices
+from tools.generate_snes_scumm_actor_sprite import cook_pose
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -324,6 +325,23 @@ class ScummV5CostumeTests(unittest.TestCase):
         )
         mirrored = host.engine.inspect_state()["video"]["actors"][0]
         self.assertEqual((mirrored["pixels"], mirrored["bounds"]), (12, [3, 6, 6, 8]))
+
+    def test_snes_actor_cooker_preserves_column_major_and_directional_cels(self) -> None:
+        costume = ScummV5Costume(rectangular_costume(), key="costume.synthetic")
+        cooked = cook_pose(costume, 1, width=32, height=64, facing=180)
+        rows = [
+            list(cooked[(55 + row) * 32 + 16 : (55 + row) * 32 + 20])
+            for row in range(4)
+        ]
+        self.assertEqual(rows, [[1, 5, 9, 13], [2, 6, 10, 14],
+                                 [3, 7, 11, 15], [4, 8, 12, 1]])
+
+    def test_snes_actor_cooker_accepts_source_facing(self) -> None:
+        costume = ScummV5Costume(rectangular_costume(), key="costume.synthetic")
+        right = cook_pose(costume, 1, width=32, height=64, facing=180)
+        left = cook_pose(costume, 1, width=32, height=64, facing=270)
+        self.assertNotEqual(right, left)
+
 
     def test_engine_draws_then_advances_at_actor_speed_and_saves_cursor(self) -> None:
         palette = bytes(component for color in range(3) for component in (color, color, color))

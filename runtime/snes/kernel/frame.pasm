@@ -49,6 +49,11 @@ Same_Frame_Run:
     ; requests generated during this frame.
     jsr Same_Kernel_DrainEvents
     jsr Same_Engine_Frame
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    ; Sample fixture input after the generic SCUMM pass and room lifecycle;
+    ; the sentence API is consumed by the next engine pass.
+    jsl ScummV5_Controller_Frame_Far
+    .endif
     sep #$20
     .a8
     lda #$03
@@ -81,7 +86,7 @@ Same_Frame_Run:
     .endif
     jsr Same_Kernel_DrainEvents
 .include "../generated/video_overlay_frame.inc.pasm"
-.include "../generated/video_backend_frame.inc.pasm"
+    .include "../generated/video_backend_frame.inc.pasm"
     .if SAME_BUILD_SCUMM_ROOM_VISUAL
     jsl ScummV5_Visual_Frame_Far
     .endif
@@ -91,6 +96,11 @@ Same_Frame_Run:
 
 Same_Kernel_DrainEvents:
     php
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_KERNEL_ENTRIES
+    inc
+    sta.l SAME_VIDEO_DIAG_KERNEL_ENTRIES
 Same_Kernel_DrainEvents__next:
     rep #$30
     .a16
@@ -99,6 +109,10 @@ Same_Kernel_DrainEvents__next:
     bcs Same_Kernel_DrainEvents__done
     sep #$20
     .a8
+    lda.l SAME_EVENT_STAGING+SAME_PKT_SERVICE
+    sta.l SAME_VIDEO_DIAG_KERNEL_LAST_SERVICE
+    lda.l SAME_EVENT_STAGING+SAME_PKT_OPCODE
+    sta.l SAME_VIDEO_DIAG_KERNEL_LAST_OPCODE
     lda.l SAME_EVENT_STAGING+SAME_PKT_SERVICE
     cmp #SAME_SERVICE_VIDEO
     beq Same_Kernel_DrainEvents__video
@@ -119,16 +133,6 @@ Same_Kernel_DrainEvents__video:
     sep #$20
     .a8
     jsr Same_Video_Handle
-    .if SAME_VIDEO_OVERLAY_BG2
-    ; The overlay-only pre-camera drain has one bounded post-event consumer.
-    ; Once SET_LAYER is accepted, yield to that consumer immediately; the
-    ; later canonical drain processes any remaining service packets.  This
-    ; preserves FIFO publication while reserving the rest of this frame for
-    ; first-NMI overlay preparation.
-    lda.l SAME_OVERLAY_STATE
-    cmp #SAME_OVERLAY_STATE_PREPARING
-    beq Same_Kernel_DrainEvents__done
-    .endif
     bra Same_Kernel_DrainEvents__next
 Same_Kernel_DrainEvents__audio:
     sep #$20

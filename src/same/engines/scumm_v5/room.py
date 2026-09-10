@@ -198,6 +198,53 @@ class ScummV5Room:
             return None
         return self.box_routes[source][destination]
 
+    def hit_test_object(
+        self,
+        x: int,
+        y: int,
+        *,
+        object_states: Mapping[int, int] | None = None,
+        object_owners: Mapping[int, int] | None = None,
+    ) -> "ScummV5RoomObject | None":
+        """Return the frontmost selectable CDHD containing a room point.
+
+        SCUMM v5 searches local objects in resource order (the first matching
+        record wins).  Parent-state visibility is part of the CDHD semantics;
+        CDHD flag $80 means parent state 1, otherwise the low nibble is the
+        required parent state.  A CDHD flag is not a generic hidden bit.
+        """
+        for item in self.objects:
+            if not item.selectable or not item.contains_point(x, y):
+                continue
+            if object_states is not None and not self._parent_chain_visible(item, object_states):
+                continue
+            if object_owners is not None and object_owners.get(item.object_id, 0):
+                continue
+            return item
+        return None
+
+    def _parent_chain_visible(
+        self,
+        item: "ScummV5RoomObject",
+        object_states: Mapping[int, int],
+    ) -> bool:
+        """Apply the v5 CDHD parent-state chain for one local object."""
+        index = self.objects.index(item) + 1
+        depth = 0
+        while item.parent:
+            if not 1 <= item.parent <= len(self.objects):
+                return False
+            parent = self.objects[item.parent - 1]
+            required = 1 if item.flags == 0x80 else item.flags & 0x0F
+            if object_states.get(parent.object_id, 0) & 0x0F != required:
+                return False
+            item = parent
+            index = item.parent
+            depth += 1
+            if depth > len(self.objects):
+                return False
+        return True
+
     def adjust_point(self, x: int, y: int) -> tuple[tuple[int, int], int]:
         """Apply the v5 walk-box destination adjustment, newest box first."""
         usable = tuple(box for box in reversed(self.walkboxes[1:]) if not box.flags & 0x80)
@@ -325,6 +372,7 @@ class ScummV5RoomObject:
     obcd_room_offset: int = 0
     verb_table_offset: int = 0
     verb_table_length: int = 0
+    object_name: bytes = b""
 
     def verb_entrypoint(self, verb: int) -> int:
         """Return canonical full-header v5 OBCD-relative VERB entrypoint."""
@@ -332,6 +380,35 @@ class ScummV5RoomObject:
             if entry == verb or entry == 0xFF:
                 return offset
         return 0
+
+    @property
+    def authored_verbs(self) -> tuple[int, ...]:
+        """Explicit VERB entries, preserving source order.
+
+        The 0xFF entry is SCUMM's OBCD fallback and is deliberately not
+        presented as a selectable UI verb.  It remains available through
+        :meth:`verb_entrypoint` for script execution.
+        """
+        return tuple(verb for verb, _ in self.verb_entries if verb != 0xFF)
+
+    def contains_point(self, x: int, y: int) -> bool:
+        """Return whether a room/world point is in the CDHD rectangle.
+
+        CDHD coordinates are room coordinates.  SCUMM's rectangle convention
+        is half-open: the left/top edge is included and the right/bottom edge
+        is excluded.  This also makes adjacent object rectangles unambiguous.
+        """
+        return self.x <= x < self.x + self.width and self.y <= y < self.y + self.height
+
+    @property
+    def selectable(self) -> bool:
+        """Whether this CDHD is eligible for generic cursor selection.
+
+        CDHD flags are retained as source metadata.  In v5, bit 7 is the
+        parent-state shorthand, not a generic non-selectable flag; class 32
+        untouchability is runtime class state and is checked by the caller.
+        """
+        return True
 
 
 @dataclass(slots=True)
@@ -801,6 +878,10 @@ def _decode_raw(data: bytes, *, key: str) -> ScummV5Room:
         verb_table_length = 0
         child_offset = _CHUNK_HEADER_SIZE
         verb_chunks = tuple(item for item in children if item.tag == b"VERB")
+        name_chunks = tuple(item for item in children if item.tag == b"OBNA")
+        if len(name_chunks) > 1:
+            raise ResourceError(f"{owner} OBCD {index} contains duplicate OBNA chunks")
+        object_name = name_chunks[0].payload if name_chunks else b""
         if len(verb_chunks) > 1:
             raise ResourceError(f"{owner} OBCD {index} contains duplicate VERB chunks")
         for child in children:
@@ -847,6 +928,7 @@ def _decode_raw(data: bytes, *, key: str) -> ScummV5Room:
                 obcd.offset,
                 verb_table_offset,
                 verb_table_length,
+                object_name,
             )
         )
     for item in objects:
@@ -1209,6 +1291,28 @@ class ScummV5RoomAdapter:
         physical_x = max(destination_x, min(destination_x + width - 1, physical_x))
         physical_y = max(destination_y, min(destination_y + height - 1, physical_y))
         self.context.services.video.move_cursor(physical_x, physical_y)
+
+    def room_point_from_cursor(self, logical_x: int, logical_y: int) -> tuple[int, int]:
+        """Convert a logical cursor point back to the room/world projection."""
+        source_x, source_y, destination_x, destination_y, _width, _height = self._projection
+        return source_x + logical_x - destination_x, source_y + logical_y - destination_y
+
+    def hit_test_cursor(
+        self,
+        logical_x: int,
+        logical_y: int,
+        *,
+        object_states: Mapping[int, int] | None = None,
+        object_owners: Mapping[int, int] | None = None,
+    ) -> ScummV5RoomObject | None:
+        """Resolve a logical cursor point using the active room projection."""
+        if self.room is None:
+            return None
+        return self.room.hit_test_object(
+            *self.room_point_from_cursor(logical_x, logical_y),
+            object_states=object_states,
+            object_owners=object_owners,
+        )
 
     def inspect(self) -> Mapping[str, object]:
         return {

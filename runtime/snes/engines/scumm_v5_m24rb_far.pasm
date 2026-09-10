@@ -61,6 +61,10 @@ ScummV5_Scenario_Fixture_EnsureActor2Room42_Far__done16:
     sep #$20
     .a8
 ScummV5_Scenario_Fixture_EnsureActor2Room42_Far__done:
+    ; Fixture reconciliation is observational/setup work.  It is called from
+    ; engine paths whose callers use carry as the SCUMM success result, so its
+    ; own conditional CMP/ORA flags must never leak into that ABI.
+    clc
     rtl
 .endif
 
@@ -313,7 +317,12 @@ ScummV5_M24RB_Far_CommitNullRoom__retire:
     .a8
     lda.l SAME_SCUMM_C4_SLOT_WHERE,x
     cmp #SCUMM_WIO_ROOM
+    beq ScummV5_M24RB_Far_CommitNullRoom__retire_owned
+    cmp #SCUMM_WIO_LOCAL
     bne ScummV5_M24RB_Far_CommitNullRoom__next
+ScummV5_M24RB_Far_CommitNullRoom__retire_owned:
+    .a8
+    .i16
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
     beq ScummV5_M24RB_Far_CommitNullRoom__next
     lda #$00
@@ -460,6 +469,30 @@ ScummV5_M24RB_Far_ResourceReady__run_exit:
 ScummV5_Scenario_Fixture_InstallActor_Far:
     ; Reusable engine-owned checkpoint setup. The validator never writes actor
     ; table, position, walkbox, or scheduler state.
+    ; Clear the complete ego record before establishing the checkpoint.  The
+    ; synthetic room55 movement fixture must not inherit stale presentation
+    ; or ignoreBoxes bits from the previous room49 scenario.
+    rep #$30
+    .a16
+    .i16
+    ldx #$0000
+ScummV5_Scenario_Fixture_InstallActor_Far__clear_actor:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C14_ACTORS+64,x
+    inx
+    cpx #$0040
+    bcc ScummV5_Scenario_Fixture_InstallActor_Far__clear_actor
+    ; Apply the ordinary engine default to actor 1, including nonzero
+    ; movement speeds (8,2) and ignoreBoxes=0.  This is the same generic
+    ; default path used when a production actor record is first materialized.
+    rep #$30
+    .a16
+    .i16
+    lda #$0040
+    sta.l SAME_SCUMM_C14_BASE
+    jsl ScummV5_PutActor_FarCall_DefaultActor
     sep #$20
     .a8
     lda #$01
@@ -551,7 +584,12 @@ ScummV5_M24RB_Far_CommitRoom:
     tax
     lda.l SAME_SCUMM_C4_SLOT_WHERE,x
     cmp #SCUMM_WIO_ROOM
+    beq ScummV5_M24RB_Far_CommitRoom__parent_owned
+    cmp #SCUMM_WIO_LOCAL
     bne ScummV5_M24RB_Far_CommitRoom__no_parent_abort
+ScummV5_M24RB_Far_CommitRoom__parent_owned:
+    .a8
+    .i16
     lda #SCUMM_VM_STOPPED
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda #$00
@@ -568,7 +606,12 @@ ScummV5_M24RB_Far_CommitRoom__no_parent_abort:
     ; because ordinary global allocations carry the active room as context.
     lda.l SAME_SCUMM_C4_SLOT_WHERE,x
     cmp #SCUMM_WIO_ROOM
+    beq ScummV5_M24RB_Far_CommitRoom__caller_owned
+    cmp #SCUMM_WIO_LOCAL
     bne ScummV5_M24RB_Far_CommitRoom__no_caller_abort
+ScummV5_M24RB_Far_CommitRoom__caller_owned:
+    .a8
+    .i16
     lda #SCUMM_VM_STOPPED
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda #$00
@@ -591,7 +634,12 @@ ScummV5_M24RB_Far_CommitRoom__retire:
     .i16
     lda.l SAME_SCUMM_C4_SLOT_WHERE,x
     cmp #SCUMM_WIO_ROOM
+    beq ScummV5_M24RB_Far_CommitRoom__retire_owned
+    cmp #SCUMM_WIO_LOCAL
     bne ScummV5_M24RB_Far_CommitRoom__retire_next
+ScummV5_M24RB_Far_CommitRoom__retire_owned:
+    .a8
+    .i16
     lda.l SAME_SCUMM_M23A_SLOT_ROOMS,x
     beq ScummV5_M24RB_Far_CommitRoom__retire_next
     cmp.l SAME_SCUMM_M23A_ACTIVE_ROOM
@@ -676,6 +724,41 @@ ScummV5_M24RB_Far_CommitRoom__source_c31_clear:
     lda #$01
     sta.l SAME_SCUMM_C31_INITIALIZED
 ScummV5_M24RB_Far_CommitRoom__source_c31_done:
+    ; A room installation ends every prior room's actor movement lifecycle.
+    ; Preserve positions and walkboxes for authored placement, but invalidate
+    ; all route-control state before the first new-room scheduler pass.  This
+    ; prevents an unrelated stale actor from aborting the movement update
+    ; before a newly authored waitForActor actor is serviced.
+    rep #$30
+    .a16
+    .i16
+    ldx #$0000
+    lda #$FFFF
+ScummV5_M24RB_Far_CommitRoom__clear_movement:
+    rep #$30
+    .a16
+    .i16
+    sta.l SAME_SCUMM_PUT_ACTOR_DEST_X,x
+    inx
+    inx
+    cpx #$0040
+    bcc ScummV5_M24RB_Far_CommitRoom__clear_movement
+    sep #$20
+    .a8
+    ldx #$0000
+    lda #$00
+ScummV5_M24RB_Far_CommitRoom__clear_moving:
+    sep #$20
+    .a8
+    .i16
+    sta.l SAME_SCUMM_C31_MOVING,x
+    sta.l SAME_SCUMM_MOVE_CURRENT_BOX,x
+    lda #$FF
+    sta.l SAME_SCUMM_PUT_ACTOR_DESTBOX,x
+    lda #$00
+    inx
+    cpx #$20
+    bcc ScummV5_M24RB_Far_CommitRoom__clear_moving
     ; The source room-1 ENCD placement is (actor 1, 145, 112).  The startup
     ; scenario begins before that room-entry record, so establish its
     ; source-backed incoming actor state once through the engine-owned setup;
@@ -687,6 +770,23 @@ ScummV5_M24RB_Far_CommitRoom__source_c31_done:
     bne ScummV5_M24RB_Far_CommitRoom__source_actor_ready
     lda #$01
     sta.l SAME_SCUMM_SCENARIO_SOURCE_ACTOR_INIT
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_PRESENT+64
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_VISIBLE+64
+    ; The controlled startup root owns the actor record before room 42's
+    ; ordinary entry scripts run.  Materialize the same generic actor
+    ; defaults used by production actor allocation so movement has the
+    ; authored speed/scale contract instead of inheriting cleared fields.
+    rep #$30
+    .a16
+    .i16
+    lda #$0040
+    sta.l SAME_SCUMM_C14_BASE
+    jsl ScummV5_PutActor_FarCall_DefaultActor
+    sep #$20
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_COSTUME+64
+    lda #$01
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_PRESENT+64
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_VISIBLE+64
     lda #$00
@@ -893,6 +993,76 @@ ScummV5_M24RB_Far_CommitRoom__caller_saved:
     jsr ScummV5_M24RB_Far_Trace
     lda.l SAME_SCUMM_M23A_ENTRY_PROGRAM
     jsr ScummV5_M24RB_Far_BeginRoomScript
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    lda.l SAME_SCUMM_C4_ACTIVE_COUNT
+    sta.l SAME_SCUMM_SCENARIO_M24RB_ALLOC_STATUS1
+    .endif
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    ; BeginRoomScript must own the room-entry slot before the fixture-only,
+    ; source-backed string prerequisite is installed.  This keeps the seed
+    ; outside boot and before the next normal scheduler frame.
+    lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    cmp #$2A
+    bne ScummV5_M24RB_Far_CommitRoom__controller_string_ready
+    lda.l SAME_SCUMM_C8_SIZES+$1E
+    bne ScummV5_M24RB_Far_CommitRoom__controller_string_ready
+    jsl ScummV5_Controller_SeedRoom42SourceStrings_Far
+ScummV5_M24RB_Far_CommitRoom__controller_string_ready:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C4_ACTIVE_COUNT
+    sta.l SAME_SCUMM_SCENARIO_M24RB_ALLOC_STATUS2
+    .endif
+    ; Target-only room55 conformance witness runs after room identity and the
+    ; entry slot are established.  The normal accessor remains unchanged.
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_MATRIX_BOX_COUNT
+    cmp #$40
+    bne ScummV5_M24RB_Far_CommitRoom__accessor_witness_done
+    rep #$30
+    .a16
+    .i16
+    ldx #$0000
+    jsl ScummV5_PutActor_LoadGeometry_Far
+    bcs ScummV5_M24RB_Far_CommitRoom__accessor_witness_fail
+    rep #$20
+    .a16
+    .i16
+    ldx #$0000
+ScummV5_M24RB_Far_CommitRoom__accessor_witness_record0:
+    rep #$20
+    .a16
+    .i16
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK,x
+    cmp #$8300
+    bne ScummV5_M24RB_Far_CommitRoom__accessor_witness_fail
+    inx
+    inx
+    cpx #$0010
+    bcc ScummV5_M24RB_Far_CommitRoom__accessor_witness_record0
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+16
+    cmp #$00FF
+    bne ScummV5_M24RB_Far_CommitRoom__accessor_witness_fail
+    rep #$30
+    .a16
+    .i16
+    ldx #$0040
+    jsl ScummV5_PutActor_LoadGeometry_Far
+    bcc ScummV5_M24RB_Far_CommitRoom__accessor_witness_fail
+    sep #$20
+    .a8
+    lda #$A0
+    sta.l SAME_SCUMM_MATRIX_LAST_SUBOP
+    bra ScummV5_M24RB_Far_CommitRoom__accessor_witness_done
+ScummV5_M24RB_Far_CommitRoom__accessor_witness_fail:
+    sep #$20
+    .a8
+    lda #$A1
+    sta.l SAME_SCUMM_MATRIX_LAST_SUBOP
+ScummV5_M24RB_Far_CommitRoom__accessor_witness_done:
+    sep #$20
+    .a8
+    .endif
     .if SAME_BUILD_SCUMM_ROOM_VISUAL
     jsl ScummV5_RoomVisual_Installed_Far
     .endif

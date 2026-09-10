@@ -33,6 +33,17 @@ Same_Mode3_Reset__clear_control:
     inx
     cpx #SAME_MODE3_CONTROL_SIZE
     bcc Same_Mode3_Reset__clear_control
+    ; Clear the bounded service-pipeline witness in the unused tail of the
+    ; backend reservation.  It is diagnostic state only and never part of the
+    ; SCUMM surface contract.
+    ldx #$0000
+Same_Mode3_Reset__clear_video_diag:
+    .a16
+    .i16
+    sta.l SAME_VIDEO_DIAG_BASE,x
+    inx
+    cpx #$0046
+    bcc Same_Mode3_Reset__clear_video_diag
     .if SAME_BUILD_SCUMM_ROOM_VISUAL
     rep #$30
     .a16
@@ -60,6 +71,12 @@ Same_Mode3_Reset__clear_surface_facade:
     lda #$70
     sta BG1SC
     stz BG12NBA
+    .if SAME_VIDEO_OVERLAY_BG2
+    ; The selected backend owns the overlay character-base policy.  Keep it
+    ; paired with the mode-3 reset rather than requiring an engine write.
+    lda #$70
+    sta BG12NBA
+    .endif
     stz MOSAIC
     stz CGWSEL
     stz CGADSUB
@@ -84,7 +101,7 @@ Same_Mode3_Reset__clear_surface_facade:
 ; machine used after display enable.
 Same_Mode3_Boot_Realize_Far:
     php
-    .if SAME_BUILD_SCUMM_ROOM_VISUAL
+    .if SAME_BUILD_SCUMM_ROOM_VISUAL && !SAME_BUILD_M24RB
     jsl ScummV5_InitialVisual_Bootstrap_Far
     .endif
     rep #$30
@@ -105,6 +122,16 @@ Same_Mode3_Boot_Realize_Far:
     jsl Same_Mode3_Dma_Enqueue_Far
     bcs Same_Mode3_Boot_Realize__error
     jsl Same_Mode3_Video_Commit_Far
+    ; M24R-B starts SCUMM's room lifecycle separately and deliberately does
+    ; not request the legacy initial visual here.  The static tilemap DMA is
+    ; nevertheless complete after this commit; waiting for committed surface
+    ; generation one would manufacture a backend error before any room visual
+    ; can be published.  Room-install/camera publication owns that later
+    ; surface generation.
+    .if SAME_BUILD_M24RB
+    plp
+    rtl
+    .endif
     rep #$20
     .a16
     lda #$4000
@@ -147,11 +174,44 @@ Same_Mode3_Handle_Far:
     .a8
     lda.l SAME_EVENT_STAGING+SAME_PKT_OPCODE
     cmp #SAME_VIDEO_OP_SURFACE_DIRTY
-    beq Same_Mode3_Handle__dirty
+    bne Same_Mode3_Handle__check_palette_diag
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_DIRTY_HANDLES
+    inc
+    sta.l SAME_VIDEO_DIAG_DIRTY_HANDLES
+    sep #$20
+    .a8
+    bra Same_Mode3_Handle__dirty
+Same_Mode3_Handle__check_palette_diag:
+    sep #$20
+    .a8
     cmp #SAME_VIDEO_OP_PALETTE_WRITE
-    beq Same_Mode3_Handle__palette
+    bne Same_Mode3_Handle__check_present_diag
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_PALETTE_HANDLES
+    inc
+    sta.l SAME_VIDEO_DIAG_PALETTE_HANDLES
+    sep #$20
+    .a8
+    bra Same_Mode3_Handle__palette
+Same_Mode3_Handle__check_present_diag:
+    sep #$20
+    .a8
     cmp #SAME_VIDEO_OP_PRESENT
-    beq Same_Mode3_Handle__present
+    bne Same_Mode3_Handle__other
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_PRESENT_HANDLES
+    inc
+    sta.l SAME_VIDEO_DIAG_PRESENT_HANDLES
+    sep #$20
+    .a8
+    bra Same_Mode3_Handle__present
+Same_Mode3_Handle__other:
+    sep #$20
+    .a8
     cmp #SAME_VIDEO_OP_SET_BACKDROP
     bne Same_Mode3_Handle__done
     lda #$02
@@ -171,13 +231,36 @@ Same_Mode3_Handle__done:
 
 Same_Mode3_Step_Far:
     php
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_BACKEND_STEPS
+    inc
+    sta.l SAME_VIDEO_DIAG_BACKEND_STEPS
     jsr Same_Mode3_Step
+    plp
+    rtl
+
+; The selected backend owns a small bounded per-frame conversion budget.  Keep
+; the budget here so the kernel/SCUMM layers only invoke the neutral generated
+; frame hook.
+Same_Mode3_Frame_Far:
+    php
+    jsl Same_Mode3_Step_Far
+    jsl Same_Mode3_Step_Far
+    jsl Same_Mode3_Step_Far
+    jsl Same_Mode3_Step_Far
     plp
     rtl
 
 Same_Mode3_Step:
     sep #$20
     .a8
+    .if SAME_VIDEO_OVERLAY_BG2
+    ; Reassert the selected overlay character base at the backend frame
+    ; boundary; SCUMM never needs to touch this hardware register.
+    lda #$70
+    sta BG12NBA
+    .endif
     lda.l SAME_MODE3_CONTROL_STATE
     cmp #SAME_MODE3_STATE_CONVERTING
     beq Same_Mode3_Step__converting
@@ -1299,6 +1382,11 @@ Same_Mode3_QueueBatch__palette_extend:
 Same_Mode3_QueueBatch__palette_queue:
     .a16
     lda.l SAME_MODE3_WORK_RUN_COUNT
+    ; A pending-bit transition can be observed between the scan and the
+    ; extension test (for example while an earlier palette batch is being
+    ; retired).  Never enqueue a zero-length DMA request or retry the same
+    ; index forever; advance the bounded scan cursor and continue.
+    beq Same_Mode3_QueueBatch__palette_empty_run
     asl
     sta.l SAME_MODE3_WORK_TEMP
     clc
@@ -1308,6 +1396,11 @@ Same_Mode3_QueueBatch__palette_queue:
     jsr Same_Mode3_QueuePaletteRun
     bcc Same_Mode3_QueueBatch__palette_queued
     brl Same_Mode3_QueueBatch__finish
+Same_Mode3_QueueBatch__palette_empty_run:
+    lda.l SAME_MODE3_WORK_INDEX
+    inc
+    sta.l SAME_MODE3_WORK_INDEX
+    brl Same_Mode3_QueueBatch__palette_scan
 Same_Mode3_QueueBatch__palette_queued:
     .a16
     lda.l SAME_MODE3_CONTROL_RECORD_COUNT
@@ -1315,7 +1408,7 @@ Same_Mode3_QueueBatch__palette_queued:
     bcc Same_Mode3_QueueBatch__palette_more
     brl Same_Mode3_QueueBatch__finish
 Same_Mode3_QueueBatch__palette_more:
-    bra Same_Mode3_QueueBatch__palette_scan
+    brl Same_Mode3_QueueBatch__palette_scan
 Same_Mode3_QueueBatch__tile_begin:
     rep #$30
     .a16

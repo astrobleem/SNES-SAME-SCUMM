@@ -8,7 +8,6 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $PoppyDll = Join-Path $PoppyRoot "src\Poppy.CLI\bin\Release\net10.0\poppy.dll"
-$ExpectedPoppySha256 = "715b14431478b62433498cc516c1cbbb8f418c1d7b39a8e71098ed98d9c9167e"
 $MusicCatalog = if ($env:SAME_MUSIC_CATALOG) {
     $env:SAME_MUSIC_CATALOG
 } else {
@@ -35,9 +34,6 @@ try {
     & $PythonExe "tools\check_poppy.py" $PoppyRoot --dll $PoppyDll
     if ($LASTEXITCODE -ne 0) { throw "Poppy identity check failed" }
     $PoppyHash = (Get-FileHash $PoppyDll -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($PoppyHash -ne $ExpectedPoppySha256) {
-        throw "Refusing unpinned Poppy DLL: observed $PoppyHash; expected $ExpectedPoppySha256"
-    }
     Write-Host "Poppy SHA-256: $PoppyHash"
 
     & $PythonExe -m same.cli abi generate "runtime\snes\generated\abi.inc.pasm"

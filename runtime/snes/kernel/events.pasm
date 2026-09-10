@@ -154,6 +154,11 @@ Same_Event_Pop__present:
     lda.l SAME_EVENT_COUNT
     dec
     sta.l SAME_EVENT_COUNT
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_KERNEL_POPS
+    inc
+    sta.l SAME_VIDEO_DIAG_KERNEL_POPS
     plp
     clc
     rts

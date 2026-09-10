@@ -26,22 +26,97 @@ ROOM = (ROOT / "examples/resources/scumm_v5/room0.sc5r").read_bytes()
 
 
 class ScummV5EngineTests(unittest.TestCase):
-    def test_headless_fixture_acknowledges_inline_message_without_changing_talk_abi(self) -> None:
+    def test_headless_fixture_retains_logical_message_lifetime_without_presentation(self) -> None:
         runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        talk_runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
         fixture = runtime.split("ScummV5_Op_Print__text_done:", 1)[1]
-        fixture = fixture.split(".if SAME_BUILD_SCUMM_M23A", 1)[0]
-        fixture = fixture.split(".endif", 1)[0]
-        self.assertIn("sta.l SAME_SCUMM_C23_MESSAGE_COUNT", fixture)
-        self.assertIn("sta.l SAME_SCUMM_TALK_ACTIVE", fixture)
-        self.assertIn("sta.l SAME_SCUMM_TALK_HAVE_MSG", fixture)
+        fixture = fixture.split("ScummV5_Op_Print__text_no_talk:", 1)[0]
+        self.assertNotIn("SAME_SCUMM_C23_MESSAGE_COUNT", fixture.split(".if SAME_BUILD_SCUMM_M23A", 1)[0])
+        self.assertIn("ScummV5_Talk_Begin_Far", fixture)
+        self.assertIn("ScummV5_Talk_FrameBegin_Far", talk_runtime)
+        self.assertIn("ScummV5_Talk_FrameEnd_Far", talk_runtime)
+        self.assertIn("headless fixture may decode", talk_runtime)
+        self.assertIn("SAME_SCUMM_TALK_RAW_LENGTH", talk_runtime)
+        self.assertIn("SAME_SCUMM_TALK_HAVE_MSG", talk_runtime)
 
-        # The acknowledgement is deliberately confined to the scenario
-        # fixture branch; normal M23A talk still enters Talk_Begin and owns
-        # message lifetime through Talk_FrameEnd/Talk_Stop.
+    def test_headless_long_encoded_text_keeps_logical_cursor_and_controls(self) -> None:
+        talk_runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
+        overflow = talk_runtime.split("ScummV5_Talk_StoreTextByte_Far:", 1)[1]
+        overflow = overflow.split("ScummV5_Talk_StoreTextByte_Far__space:", 1)[0]
+        self.assertIn("SAME_BUILD_SCUMM_SCENARIO_FIXTURE", overflow)
+        self.assertIn("lda.l SAME_SCUMM_C23_RAW_INDEX\n    inc\n    sta.l SAME_SCUMM_C23_RAW_INDEX", overflow)
+        self.assertNotIn("beq ScummV5_Talk_StoreTextByte_Far__full", overflow)
+        self.assertIn("SAME_SCUMM_TALK_CONTROL_COUNT", talk_runtime)
+        self.assertIn("SAME_SCUMM_TALK_CONTROL_FIRST_POS", talk_runtime)
+
+    def test_headless_long_talk_begin_preserves_logical_lifetime(self) -> None:
+        talk_runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
+        begin = talk_runtime.split("ScummV5_Talk_Begin_Far__length_nonzero:", 1)[1]
+        begin = begin.split("ScummV5_Talk_Begin_Far__length_valid:", 1)[0]
+        self.assertIn("bra ScummV5_Talk_Begin_Far__length_valid", begin)
+        self.assertIn("SAME_BUILD_SCUMM_SCENARIO_FIXTURE", begin)
+        production = begin.split(".if SAME_BUILD_SCUMM_SCENARIO_FIXTURE", 1)[1]
+        self.assertIn("SAME_SCUMM_TALK_MAX_RAW", production)
+
+    def test_wait_for_message_reuses_far_polling_boundary(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
+        wait = runtime.split("ScummV5_Talk_Wait_FarEntry:", 1)[1]
+        wait = wait.split("ScummV5_Talk_Wait_FarEntry__error16:", 1)[0]
+        self.assertIn("sta.l SAME_SCUMM_TALK_WAIT_PC", wait)
+        self.assertIn("lda.l SAME_SCUMM_TALK_WAIT_PC", wait)
+        self.assertIn("sta.l SAME_SCUMM_PC", wait)
+        self.assertIn("SAME_SCUMM_TALK_ACTIVE", wait)
+
+    def test_talk_continuation_preserves_frame_caller_width_abi(self) -> None:
+        talk_runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
+        continuation = talk_runtime.split("ScummV5_Talk_Continue_Far:", 1)[1]
+        continuation = continuation.split("; A8 kind:", 1)[0]
+        self.assertIn("    php\n", continuation)
+        self.assertIn("    plp\n    rts\n", continuation)
+        self.assertIn("    plp\n    rts\nScummV5_Talk_Continue_Far__error:", continuation)
+
+    def test_scheduler_saves_the_selected_slot_after_nested_execution(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        scheduler = runtime.split("ScummV5_C4_Scheduler_Frame:", 1)[1]
+        scheduler = scheduler.split("ScummV5_C4_Scheduler_Frame__advance:", 1)[0]
+        self.assertIn("jsr ScummV5_Engine_RunSelected", scheduler)
+        self.assertIn("lda.l SAME_SCUMM_C4_SCHED_SLOT", scheduler)
+        self.assertIn("sta.l SAME_SCUMM_C4_CURRENT_SLOT", scheduler)
+
+        # Headless means presentation is optional; the existing talk lifecycle
+        # still owns delay, waitForMessage completion, continuation, and clear
+        # ordering.  The production path must remain the same lifecycle.
         self.assertIn("ScummV5_Talk_Begin_Far", runtime)
-        self.assertIn(".if SAME_BUILD_SCUMM_SCENARIO_FIXTURE\n", runtime)
         talk_path = runtime.split(".if SAME_BUILD_SCUMM_M23A", 1)[1]
         self.assertIn("ScummV5_Talk_Begin_Far", talk_path)
+
+    def test_scheduler_reasserts_byte_index_width_before_each_slot_scan(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        scheduler = runtime.split("ScummV5_C4_Scheduler_Frame__slot_in_range:", 1)[1]
+        scheduler = scheduler.split("ScummV5_C4_Scheduler_Frame__eligible:", 1)[0]
+
+        # A selected slot loads a word-indexed PC into X.  The subsequent
+        # scheduler pass scans byte-indexed status/didexec/freeze tables, so
+        # the index high byte must be cleared on every iteration.  Checking
+        # only the initial LDX would miss the slot-skipping bug after a prior
+        # script used a nonzero word-table index.
+        self.assertIn(
+            "    sep #$10\n"
+            "    .i8\n"
+            "    tax\n",
+            scheduler,
+        )
+
+    def test_sentence_fetch_witness_resets_per_launch(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
+        launch = runtime.split("ScummV5_SentenceProcess_Far__slot_found:", 1)[1]
+        launch = launch.split("    txa\n    sta.l SAME_SCUMM_C4_SCAN_SLOT", 1)[0]
+        self.assertIn(
+            "    lda #$00\n"
+            "    sta.l SAME_SCUMM_SCENARIO_SENTENCE_FETCH_COUNT\n"
+            "    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_PHASE\n",
+            launch,
+        )
 
     def test_scenario_class_overlay_uses_far_c16_lookup(self) -> None:
         generator = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
@@ -74,6 +149,42 @@ class ScummV5EngineTests(unittest.TestCase):
         )
         self.assertLess(bit_done, next_box)
         self.assertLess(next_box, route_dispatch)
+
+    def test_rom_backed_walkbox_accessor_has_one_high_index_path(self) -> None:
+        generator = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
+        memory = (ROOT / "runtime/snes/kernel/memory.pasm").read_text()
+
+        self.assertIn("ScummV5_PutActor_LoadGeometry_Far:", generator)
+        self.assertIn('"    cpx #${count:04X}"', generator)
+        self.assertNotIn("SNES putActor placement capacity is 32", generator)
+        self.assertNotIn("SAME_SCUMM_PUT_ACTOR_BOXES+", runtime)
+        self.assertIn("SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK", runtime)
+        self.assertIn("SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK        = $7FFB65", memory)
+
+    def test_room55_accessor_and_c25_relocation_are_bounded_contracts(self) -> None:
+        generator = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        memory = (ROOT / "runtime/snes/kernel/memory.pasm").read_text()
+
+        # The generated accessor has one active-record dispatch and emits each
+        # immutable navigation table in its own explicit LoROM bank.  These
+        # checks protect the high-index contract without baking Fate data into
+        # the host unit suite.
+        self.assertIn('"ScummV5_PutActor_LoadGeometry_Far:"', generator)
+        self.assertIn('f"    cpx #${count:04X}"', generator)
+        self.assertIn('f".bank {bank}"', generator)
+        self.assertIn("SAME_SCUMM_PUT_ACTOR_BOX_STRIDE           = $0012", memory)
+        self.assertIn(".bank 83", runtime)
+        self.assertIn("ScummV5_C25_FarCall_EmitAudio:", runtime)
+
+    def test_rom_backed_accessor_uses_18_byte_record_stride(self) -> None:
+        generator = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
+        source = generator.split('"    txa", "    asl", "    sta.l SAME_SCUMM_PUT_ACTOR_TEMP0",', 1)[1]
+        shifts = source.split('f"ScummV5_PutActor_LoadGeometry__copy_{index}:"', 1)[0]
+        self.assertEqual(shifts.count('"    asl"'), 3)
+        self.assertNotIn('"    asl", "    asl", "    asl", "    asl"', shifts)
+        self.assertIn('range(0, 0x12, 2)', generator)
 
     def test_movement_direction_conversion_establishes_word_width(self) -> None:
         runtime = (
@@ -1054,6 +1165,23 @@ class ScummV5EngineTests(unittest.TestCase):
             self.assertEqual(replayed[key], expected[key])
         self.assertEqual(saved.schema, 6)
 
+    def test_c14_get_actor_scale_flagged_opcode_families(self) -> None:
+        """$3B/$BB consume the actor byte and return the live X scale."""
+        # Yield once so the test mirrors a normal scheduled script, then run
+        # direct and variable-selected family members on separate ticks.
+        script = bytes((0x80, 0x3B, 0, 0, 1, 0xBB, 1, 0, 2, 0, 0x80))
+        host = self._host(script)
+        host.engine.state.actors[1] = ActorState(scale=(137, 211))
+        host.engine.state.variables[2] = 1
+        host.tick()
+        host.tick()
+        self.assertEqual(host.engine.state.variables[0], 137)
+        # The second family member uses the same canonical handler; this also
+        # proves the first operand was fully consumed rather than leaving its
+        # immediate byte to be interpreted as an opcode.
+        host.tick()
+        self.assertEqual(host.engine.state.variables[1], 137)
+
     def test_c14_actor_ops_fail_closed_on_actor_subop_operands_and_state(self) -> None:
         cases = (
             (bytes((0x13,)), r"ended at offset"),
@@ -1672,6 +1800,7 @@ class ScummV5EngineTests(unittest.TestCase):
         for encoded, operands in (
             (0x0101, (80, 7)),
             (0x0106, (80, 9)),
+            (0x0107, (0x009D, 1, 4, 0x0190)),
             (0x010D, (82, 0, 120)),
             (0x010E, (80, 8)),
             (0x010F, (8, 82)),
@@ -1689,11 +1818,11 @@ class ScummV5EngineTests(unittest.TestCase):
         source = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
         pre_copy, post_copy = source.split("ScummV5_C25_Flush__dispatch:", 1)
         command_present = pre_copy.split("ScummV5_C25_Flush__command_present:", 1)[1]
-        for encoded in ("#$0101", "#$0106", "#$010D", "#$010E", "#$010F"):
+        for encoded in ("#$0101", "#$0106", "#$0107", "#$010D", "#$010E", "#$010F"):
             self.assertNotIn(encoded, command_present)
             self.assertIn(encoded, post_copy)
         self.assertLess(
-            post_copy.index("lda.l SAME_SCUMM_C25_QUEUE,x"),
+            post_copy.index("lda.l SAME_SCUMM_C25_LAST_WORDS"),
             post_copy.index("cmp #$0101"),
         )
         self.assertIn("cmp #(SAME_SCUMM_C25_MAX_WORDS + 1)", command_present)

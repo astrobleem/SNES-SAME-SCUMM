@@ -36,6 +36,9 @@ def main() -> int:
     parser.add_argument("--scumm-title-start-room", type=int, default=0)
     parser.add_argument("--scumm-title-target-room", type=int, default=0)
     parser.add_argument("--scumm-room-visual", action="store_true")
+    parser.add_argument("--scumm-controller-fixture", action="store_true")
+    parser.add_argument("--scumm-controller-behavior-mask", type=lambda value: int(value, 0), default=7)
+    parser.add_argument("--scumm-controller-witness", action="store_true")
     parser.add_argument("--scumm-save-persistence-validator", action="store_true")
     parser.add_argument("--scumm-m23c", action="store_true")
     parser.add_argument("--scumm-m23c-class-control", action="store_true")
@@ -81,6 +84,9 @@ def main() -> int:
         f"SAME_SCUMM_SCENARIO_SOURCE_ACTOR_STATE = ${1 if args.engine == 'scumm_v5' and args.scumm_scenario_source_actor_state else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M25_MOVEMENT = ${1 if args.engine == 'scumm_v5' and args.scumm_m25_movement else 0:02X}\n"
         f"SAME_BUILD_SCUMM_ROOM_VISUAL = ${1 if args.engine == 'scumm_v5' and args.scumm_room_visual else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_CONTROLLER_FIXTURE = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_fixture else 0:02X}\n"
+        f"SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK = ${args.scumm_controller_behavior_mask & 0x07:02X}\n"
+        f"SAME_SCUMM_CONTROLLER_WITNESS = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_witness else 0:02X}\n"
         f"SAME_BUILD_SCUMM_SAVE_PERSISTENCE_VALIDATOR = ${1 if args.engine == 'scumm_v5' and args.scumm_save_persistence_validator else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23C = ${1 if args.engine == 'scumm_v5' and args.scumm_m23c else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23C_CLASS_CONTROL = ${1 if args.engine == 'scumm_v5' and args.scumm_m23c_class_control else 0:02X}\n"

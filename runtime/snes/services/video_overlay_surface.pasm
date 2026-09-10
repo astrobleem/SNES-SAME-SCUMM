@@ -56,6 +56,29 @@ Same_VideoOverlay_ShowTalkSegment_Far:
     plp
     rtl
 Same_VideoOverlay_ShowTalkSegment__available:
+    ; Controller-owned HUD text has its own pending source.  Copy it into the
+    ; established raster input only after the overlay is writable, so a C23
+    ; producer cannot replace the prompt between controller composition and
+    ; rasterization.  Authored talk continues to use SAME_SCUMM_TALK_RAW.
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_TEXT_CONTROLLER_VALID
+    beq Same_VideoOverlay_ShowTalkSegment__talk_source
+    rep #$30
+    .a16
+    .i16
+    ldx #$0000
+Same_VideoOverlay_ShowTalkSegment__controller_copy:
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_TEXT_CONTROLLER_BUFFER,x
+    sta.l SAME_SCUMM_TALK_RAW,x
+    inx
+    cpx #SAME_SCUMM_TALK_MAX_RAW
+    bcc Same_VideoOverlay_ShowTalkSegment__controller_copy
+    lda.l SAME_VIDEO_TEXT_CONTROLLER_LENGTH
+    sta.l SAME_SCUMM_TALK_RAW_LENGTH
+Same_VideoOverlay_ShowTalkSegment__talk_source:
     rep #$30
     .a16
     .i16
@@ -99,7 +122,7 @@ Same_VideoOverlay_ShowTalkSegment__generic:
     rep #$20
     .a16
     and #$00FF
-    tax
+    sta.l SAME_OVERLAY_PRODUCER_COL
     sep #$20
     .a8
     lda.l SAME_SCUMM_TALK_SEGMENT_LENGTH
@@ -110,26 +133,61 @@ Same_VideoOverlay_ShowTalkSegment__glyph:
     beq Same_VideoOverlay_ShowTalkSegment__ready
     rep #$20
     .a16
-    and #$00FF
-    sta.l SAME_OVERLAY_PRODUCER_TEMP
-    lda.l SAME_SCUMM_TALK_SEGMENT_LENGTH
-    and #$00FF
-    sec
-    sbc.l SAME_OVERLAY_PRODUCER_TEMP
-    clc
-    adc.l SAME_SCUMM_TALK_SEGMENT_START
-    and #$00FF
+    lda.l SAME_OVERLAY_PRODUCER_COL
     tax
     sep #$20
     .a8
+    lda.l SAME_SCUMM_TALK_RAW,x
+    cmp #$FF
+    bne Same_VideoOverlay_ShowTalkSegment__plain
+    ; Preserve logical controls without presenting them as glyphs.  The
+    ; fallback path is used for otherwise valid text (for example apostrophe
+    ; metrics not covered by Fast15), so it must share the encoded grammar.
+    inx
+    lda.l SAME_SCUMM_TALK_RAW,x
+    cmp #$01
+    beq Same_VideoOverlay_ShowTalkSegment__control_no_args
+    cmp #$02
+    beq Same_VideoOverlay_ShowTalkSegment__control_no_args
+    cmp #$03
+    beq Same_VideoOverlay_ShowTalkSegment__control_no_args
+    cmp #$08
+    beq Same_VideoOverlay_ShowTalkSegment__control_no_args
+    inx
+    inx
+    inx
+    rep #$20
+    .a16
+    txa
+    sta.l SAME_OVERLAY_PRODUCER_COL
+    bra Same_VideoOverlay_ShowTalkSegment__glyph
+Same_VideoOverlay_ShowTalkSegment__control_no_args:
+    inx
+    rep #$20
+    .a16
+    txa
+    sta.l SAME_OVERLAY_PRODUCER_COL
+    bra Same_VideoOverlay_ShowTalkSegment__glyph
+Same_VideoOverlay_ShowTalkSegment__plain:
+    rep #$20
+    .a16
     lda.l SAME_OVERLAY_PRODUCER_REMAINING
     dec
     sta.l SAME_OVERLAY_PRODUCER_REMAINING
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_TALK_RAW,x
     jsr Same_VideoOverlay_RasterGlyph
     bcc Same_VideoOverlay_ShowTalkSegment__glyph_ok
     jmp Same_VideoOverlay_ShowTalkSegment__visual_error
 Same_VideoOverlay_ShowTalkSegment__glyph_ok:
+    rep #$20
+    .a16
+    lda.l SAME_OVERLAY_PRODUCER_COL
+    inc
+    sta.l SAME_OVERLAY_PRODUCER_COL
+    sep #$20
+    .a8
     bra Same_VideoOverlay_ShowTalkSegment__glyph
 Same_VideoOverlay_ShowTalkSegment__ready:
     rep #$20
@@ -324,6 +382,8 @@ Same_VideoOverlay_RasterSegmentFast15__validate:
     sep #$20
     .a8
     lda.l SAME_SCUMM_TALK_RAW,x
+    cmp #$FF
+    beq Same_VideoOverlay_RasterSegmentFast15__validate_control
     rep #$20
     .a16
     and #$00FF
@@ -351,6 +411,38 @@ Same_VideoOverlay_RasterSegmentFast15__ymax_done:
     lda.l SAME_OVERLAY_PRODUCER_REMAINING
     dec
     sta.l SAME_OVERLAY_PRODUCER_REMAINING
+    jmp Same_VideoOverlay_RasterSegmentFast15__validate
+Same_VideoOverlay_RasterSegmentFast15__validate_control:
+    ; C23 retains encoded controls for logical lifetime/continuation.  They
+    ; are not glyphs, so skip their selector and source-defined arguments
+    ; while validating the printable projection stream.
+    sep #$20
+    .a8
+    .i16
+    inx
+    lda.l SAME_SCUMM_TALK_RAW,x
+    cmp #$01
+    beq Same_VideoOverlay_RasterSegmentFast15__validate_control_no_args
+    cmp #$02
+    beq Same_VideoOverlay_RasterSegmentFast15__validate_control_no_args
+    cmp #$03
+    beq Same_VideoOverlay_RasterSegmentFast15__validate_control_no_args
+    cmp #$08
+    beq Same_VideoOverlay_RasterSegmentFast15__validate_control_no_args
+    inx
+    inx
+    inx
+    rep #$20
+    .a16
+    txa
+    sta.l SAME_OVERLAY_PRODUCER_COL
+    jmp Same_VideoOverlay_RasterSegmentFast15__validate
+Same_VideoOverlay_RasterSegmentFast15__validate_control_no_args:
+    inx
+    rep #$20
+    .a16
+    txa
+    sta.l SAME_OVERLAY_PRODUCER_COL
     bra Same_VideoOverlay_RasterSegmentFast15__validate
 Same_VideoOverlay_RasterSegmentFast15__validated:
     .a16
@@ -382,6 +474,10 @@ Same_VideoOverlay_RasterSegmentFast15__have_glyph:
     sep #$20
     .a8
     lda.l SAME_SCUMM_TALK_RAW,x
+    cmp #$FF
+    bne Same_VideoOverlay_RasterSegmentFast15__glyph_plain
+    jmp Same_VideoOverlay_RasterSegmentFast15__glyph_control
+Same_VideoOverlay_RasterSegmentFast15__glyph_plain:
     sta.l SAME_OVERLAY_PRODUCER_CODE
     rep #$20
     .a16
@@ -450,6 +546,35 @@ Same_VideoOverlay_RasterSegmentFast15__rows_done:
     lda.l SAME_OVERLAY_PRODUCER_REMAINING
     dec
     sta.l SAME_OVERLAY_PRODUCER_REMAINING
+    jmp Same_VideoOverlay_RasterSegmentFast15__glyph
+Same_VideoOverlay_RasterSegmentFast15__glyph_control:
+    sep #$20
+    .a8
+    .i16
+    inx
+    lda.l SAME_SCUMM_TALK_RAW,x
+    cmp #$01
+    beq Same_VideoOverlay_RasterSegmentFast15__glyph_control_no_args
+    cmp #$02
+    beq Same_VideoOverlay_RasterSegmentFast15__glyph_control_no_args
+    cmp #$03
+    beq Same_VideoOverlay_RasterSegmentFast15__glyph_control_no_args
+    cmp #$08
+    beq Same_VideoOverlay_RasterSegmentFast15__glyph_control_no_args
+    inx
+    inx
+    inx
+    txa
+    rep #$20
+    .a16
+    sta.l SAME_OVERLAY_PRODUCER_COL
+    jmp Same_VideoOverlay_RasterSegmentFast15__glyph
+Same_VideoOverlay_RasterSegmentFast15__glyph_control_no_args:
+    inx
+    txa
+    rep #$20
+    .a16
+    sta.l SAME_OVERLAY_PRODUCER_COL
     jmp Same_VideoOverlay_RasterSegmentFast15__glyph
 Same_VideoOverlay_RasterSegmentFast15__complete:
     .a16

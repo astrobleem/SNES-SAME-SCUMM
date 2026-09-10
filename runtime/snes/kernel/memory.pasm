@@ -728,6 +728,120 @@ SAME_SCUMM_M23B_VARIABLES_END            = $7FF900
 ; descriptors. The table is dense because DOBJ declares the legal object
 ; range; local records are generated from the complete cooked ROOM resource.
 SAME_SCUMM_OBJECT_COUNT                   = $7E5FF0 ; u16 declared DOBJ count
+; Fixture-gated controller scene state. This is input/presentation glue, not
+; semantic game state; the sentence API remains the only producer of C20.
+SAME_SCUMM_CONTROLLER_MODE                = $7E5FE0 ; 0 hover, 1 verb, 2 action pending
+SAME_SCUMM_CONTROLLER_CURSOR_X            = $7E5FE1 ; u16 logical scene cursor
+SAME_SCUMM_CONTROLLER_CURSOR_Y            = $7E5FE3 ; u16 logical scene cursor
+SAME_SCUMM_CONTROLLER_VERB                = $7E5FE5 ; u8 selected authored verb
+SAME_SCUMM_CONTROLLER_OBJECT              = $7E5FE6 ; u16 selected authored object
+SAME_SCUMM_CONTROLLER_HUD_DIRTY           = $7E5FE8 ; u8 overlay refresh request
+SAME_SCUMM_CONTROLLER_SUBMISSIONS         = $7E5FE9 ; u8 controller-origin sentences
+SAME_SCUMM_CONTROLLER_LAST_ACTION         = $7E5FEA ; u8 last submitted authored verb
+SAME_SCUMM_CONTROLLER_SCENARIO_REQUESTED  = $7E5FEB ; u8 fixture room-42 handoff
+; Generic source-object interaction scratch.  This is a bounded service
+; interface, not a room-specific hotspot table.  The active-room records at
+; SAME_SCUMM_SETSTATE_LOCAL_RECORDS remain the source-backed metadata.
+SAME_SCUMM_INTERACTION_X                 = $7E5F90 ; s16 room/world cursor x
+SAME_SCUMM_INTERACTION_Y                 = $7E5F92 ; s16 room/world cursor y
+SAME_SCUMM_INTERACTION_OBJECT            = $7E5F94 ; u16 hit object/result
+SAME_SCUMM_INTERACTION_FLAGS             = $7E5F96 ; u8 hit object flags
+SAME_SCUMM_INTERACTION_INDEX             = $7E5F97 ; u8 active record index
+SAME_SCUMM_INTERACTION_LIMIT             = $7E5F98 ; u16 rectangle arithmetic
+SAME_SCUMM_INTERACTION_VERB_FIRST        = $7E5F9A ; u16 verb-cycle first
+SAME_SCUMM_INTERACTION_VERB_AFTER        = $7E5F9C ; u8 verb-cycle cursor state
+SAME_SCUMM_CONTROLLER_TEXT_INDEX         = $7E5F9E ; u16 encoded HUD destination index
+; Generic text-service handoff for controller-owned prompts.  This is kept
+; separate from the logical C23 talk stream because authored text may update
+; that stream after a controller frame has staged a HUD prompt.
+SAME_VIDEO_TEXT_CONTROLLER_BUFFER        = $7E5FA4 ; 32 encoded bytes
+SAME_VIDEO_TEXT_CONTROLLER_LENGTH        = $7E5FC4 ; u8, includes terminator
+SAME_VIDEO_TEXT_CONTROLLER_VALID         = $7E5FC5 ; u8 pending controller text
+SAME_SCUMM_OBJECT_NAME_OBJECT            = $7E5FA0 ; u16 $54 operand scratch
+SAME_SCUMM_OBJECT_NAME_INDEX             = $7E5FA2 ; u8 encoded-name cursor
+SAME_SCUMM_CONTROLLER_INPUT_RAW         = $7E5F8E ; debug-only last raw pressed word
+; The render scratch occupies the documented diagnostic gap $7E5E10-$7E5E21,
+; after the opcode trace ($7E5A02-$7E5E01) and before the persistent
+; scenario breadcrumbs ($7E5F00+).
+; It must not overlap the controller mailbox ($7E5FE0), object-count word
+; ($7E5FF0), setState diagnostics ($7E5FF2-$7E5FFE), or scenario evidence.
+SAME_SCUMM_CONTROLLER_RENDER_X           = $7E5E10 ; s16 last actor x
+SAME_SCUMM_CONTROLLER_RENDER_Y           = $7E5E12 ; s16 last actor y
+SAME_SCUMM_CONTROLLER_RENDER_FRAME       = $7E5E14 ; u8 last cooked frame
+SAME_SCUMM_CONTROLLER_RENDER_ROOM        = $7E5E15 ; u8 last rendered room
+SAME_SCUMM_CONTROLLER_RENDER_VALID       = $7E5E16 ; u8 cached composition valid
+SAME_SCUMM_CONTROLLER_RENDER_SRC         = $7E5E18 ; u16 sprite source cursor
+SAME_SCUMM_CONTROLLER_RENDER_DST         = $7E5E1A ; u16 surface destination cursor
+SAME_SCUMM_CONTROLLER_RENDER_ROW         = $7E5E1C ; u16 current row
+SAME_SCUMM_CONTROLLER_RENDER_COL         = $7E5E1E ; u16 current column
+SAME_SCUMM_CONTROLLER_RENDER_BASE        = $7E5E20 ; u16 surface anchor offset
+SAME_SCUMM_CONTROLLER_RENDER_ROWSRC      = $7E5E22 ; u16 immutable row source
+SAME_SCUMM_CONTROLLER_RENDER_ACTOR_BASE  = $7E5E38 ; u16 captured actor anchor
+SAME_SCUMM_CONTROLLER_RENDER_ACTOR_FRAME = $7E5E3A ; u16 captured pose base
+SAME_SCUMM_CONTROLLER_RENDER_ACTOR_SELECT = $7E5E3C ; u8 0=standing,1=walking
+SAME_SCUMM_CONTROLLER_RENDER_MOVING_SAMPLE = $7E5E3D ; u8 sampled movement
+SAME_SCUMM_CONTROLLER_RENDER_MODE_SAMPLE = $7E5E3E ; u8 sampled controller mode
+SAME_SCUMM_CONTROLLER_RENDER_DEST_SAMPLE = $7E5E40 ; s16 sampled walk target
+; Semantic snapshot published after SCUMM movement and consumed by the late
+; surface phase. The room guard keeps this fixture state inert elsewhere.
+SAME_SCUMM_CONTROLLER_DESIRED_X         = $7E5E42 ; s16
+SAME_SCUMM_CONTROLLER_DESIRED_Y         = $7E5E44 ; s16
+SAME_SCUMM_CONTROLLER_DESIRED_SELECT    = $7E5E46 ; u8 0=standing,1=walking
+SAME_SCUMM_CONTROLLER_DESIRED_DEST      = $7E5E48 ; s16
+SAME_SCUMM_CONTROLLER_DESIRED_FACING    = $7E5E4A ; u16 internal actor angle
+SAME_SCUMM_CONTROLLER_DESIRED_COSTUME   = $7E5E4C ; u8
+SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE   = $7E5E4D ; u8
+SAME_SCUMM_CONTROLLER_RENDER_FACING     = $7E5E4E ; u16 accepted angle
+SAME_SCUMM_CONTROLLER_RENDER_COSTUME    = $7E5E50 ; u8 accepted costume
+SAME_SCUMM_CONTROLLER_RENDER_VISIBLE    = $7E5E51 ; u8 accepted visibility
+; Successful actor-publication witness.  Written only after the actor's
+; complete indexed composition has accepted its PRESENT packet.  It is
+; fixture/debug evidence, not semantic state and is never written on retry.
+SAME_SCUMM_CONTROLLER_WITNESS_SERIAL    = $7E5E52 ; u16
+SAME_SCUMM_CONTROLLER_WITNESS_FRAME     = $7E5E54 ; u16 logical frame
+SAME_SCUMM_CONTROLLER_WITNESS_X         = $7E5E56 ; s16
+SAME_SCUMM_CONTROLLER_WITNESS_Y         = $7E5E58 ; s16
+SAME_SCUMM_CONTROLLER_WITNESS_MOVING    = $7E5E5A ; u8
+SAME_SCUMM_CONTROLLER_WITNESS_DEST_X    = $7E5E5B ; s16
+SAME_SCUMM_CONTROLLER_WITNESS_DEST_Y    = $7E5E5D ; s16
+SAME_SCUMM_CONTROLLER_WITNESS_POSE      = $7E5E5F ; u8 cooked pose
+SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_X  = $7E5E60 ; u16
+SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_Y  = $7E5E62 ; u16
+SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_W  = $7E5E64 ; u16
+SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_H  = $7E5E66 ; u16
+SAME_SCUMM_CONTROLLER_WITNESS_PRESENT   = $7E5E68 ; u16 generation
+SAME_SCUMM_CONTROLLER_WITNESS_VALID     = $7E5E6A ; u8
+SAME_SCUMM_CONTROLLER_RESTORE_INPUT_X   = $7E5E6C ; debug-only u16 raw restore x
+SAME_SCUMM_CONTROLLER_RESTORE_INPUT_Y   = $7E5E6E ; debug-only u16 raw restore y
+SAME_SCUMM_CONTROLLER_RESTORE_INPUT_W   = $7E5E70 ; debug-only u16 raw restore width
+SAME_SCUMM_CONTROLLER_RESTORE_INPUT_H   = $7E5E72 ; debug-only u16 raw restore height
+SAME_SCUMM_CONTROLLER_RESTORE_CALLS     = $7E5E74 ; debug-only u16 restore entries
+SAME_SCUMM_CONTROLLER_RESTORE_AFTER_A   = $7E5E76 ; debug-only u16 after CanWrite A
+SAME_SCUMM_CONTROLLER_RESTORE_AFTER_X   = $7E5E78 ; debug-only u16 after CanWrite X
+SAME_SCUMM_CONTROLLER_RESTORE_CALL_A    = $7E5E7A ; debug-only u16 caller A
+SAME_SCUMM_CONTROLLER_RESTORE_CALL_X    = $7E5E7C ; debug-only u16 caller X
+SAME_SCUMM_CONTROLLER_RESTORE_LOOP_ROW  = $7E5E7E ; debug-only u16 row
+SAME_SCUMM_CONTROLLER_RESTORE_LOOP_COL  = $7E5E80 ; debug-only u16 column
+SAME_SCUMM_CONTROLLER_RESTORE_LOOP_W    = $7E5E82 ; debug-only u16 width
+SAME_SCUMM_CONTROLLER_RESTORE_LOOP_H    = $7E5E84 ; debug-only u16 height
+SAME_SCUMM_CONTROLLER_RESTORE_LOOP_DST  = $7E5E86 ; debug-only u16 destination
+SAME_SCUMM_CONTROLLER_RESTORE_LOOP_SRC  = $7E5E88 ; debug-only u16 source
+SAME_SCUMM_CONTROLLER_RENDER_RETRY       = $7E5E24 ; u8 bounded native-present retry
+SAME_SCUMM_CONTROLLER_CURSOR_RENDER_X    = $7E5E26 ; s16 cached logical x
+SAME_SCUMM_CONTROLLER_CURSOR_RENDER_Y    = $7E5E28 ; s16 cached logical y
+SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID = $7E5E2A ; u8 cached cursor pose
+SAME_SCUMM_CONTROLLER_CURSOR_RENDER_RETRY = $7E5E2B ; u8 bounded native-present retry
+SAME_SCUMM_CONTROLLER_RENDER_SUPPRESS_PRESENT = $7E5E2C ; u8 cursor composite guard
+SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0    = $7E5E2E ; u16 union left
+SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0    = $7E5E30 ; u16 union top
+SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1    = $7E5E32 ; u16 union right
+SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1    = $7E5E34 ; u16 union bottom
+SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_ACTIVE = $7E5E36 ; u8 bounded restore
+SAME_SCUMM_CONTROLLER_STATE_END           = $7E5FEC
+SAME_SCUMM_CONTROLLER_DIAG                = $7E5FEC ; fixture-only gate breadcrumb
+SAME_SCUMM_CONTROLLER_DIAG_ROOM           = $7E5FED
+SAME_SCUMM_CONTROLLER_DIAG_PHASE          = $7E5FEE
+SAME_SCUMM_CONTROLLER_DIAG_INPUT          = $7E5FEF
 SAME_SCUMM_OWNER_INDEX                     = $7E101E ; u16 setOwner scratch
 SAME_SCUMM_SETSTATE_OBJECT                = $7E5FF2 ; u16 operand/trace
 SAME_SCUMM_SETSTATE_VALUE                 = $7E5FF4 ; u8 operand/trace
@@ -766,6 +880,18 @@ SAME_RESET_DIAG_ENGINE_PHASE              = $7E103C ; u8 frame phase
 SAME_RESET_DIAG_COOKIE                    = $7E103D ; u16 reserved signature
 SAME_SCUMM_OBJECT_STATES                  = $7E6000 ; 4096 u8 global states
 SAME_SCUMM_OBJECT_OWNERS                  = $7E8000 ; 2048 u8 mutable owner table
+; Runtime names established by canonical $54/$D4 setObjectName.  A compact
+; fixed record is sufficient for the target-neutral controller HUD while
+; retaining the authored encoded bytes (including controls) until display.
+SAME_SCUMM_OBJECT_NAME_LENGTH             = $7E8800 ; 2048 u8 bounded lengths
+; The target-neutral name cache is bounded to the contiguous gap before C10.
+; $7E9000 + 1024*$20 = $7F1000, leaving C10/C17 and all later state intact.
+; Authored $54 names outside this cache are still decoded/consumed, but are
+; not exposed to the bounded controller HUD.
+SAME_SCUMM_OBJECT_NAMES                   = $7E9000 ; 1024 x 32 encoded bytes
+SAME_SCUMM_OBJECT_NAME_STRIDE             = $0020
+SAME_SCUMM_OBJECT_NAME_COUNT              = $0400
+SAME_SCUMM_OBJECT_NAMES_END               = $7F1000
 SAME_SCUMM_SETSTATE_LOCAL_RECORDS         = $7E7000 ; 200 x 11 bytes
 SAME_SCUMM_SETSTATE_LOCAL_STRIDE          = $000B
 SAME_SCUMM_SETSTATE_LOCAL_MAX             = $00C8
@@ -839,7 +965,10 @@ SAME_SCUMM_TALK_OVERLAY_GENERATION          = $7E7AC8 ; u16
 SAME_SCUMM_TALK_ACTOR_FRAME                 = $7E7ACA ; logical animation frame
 SAME_SCUMM_TALK_CONTINUE_COUNT              = $7E7ACB
 SAME_SCUMM_TALK_PUBLISH_CLEAR               = $7E7ACC
-SAME_SCUMM_TALK_STATE_END                   = $7E7ACD
+SAME_SCUMM_TALK_CONTROL_COUNT              = $7E7ACD
+SAME_SCUMM_TALK_CONTROL_FIRST_POS         = $7E7ACE ; u16
+SAME_SCUMM_TALK_CONTROL_LAST              = $7E7AD0 ; $80 means FF pending
+SAME_SCUMM_TALK_STATE_END                   = $7E7AD1
 SAME_SCUMM_TALK_STATE_SIZE                  = $00AD
 
 ; Canonical v5 $7B/$FB pure stored-walkbox query and bounded diagnostics.
@@ -1142,6 +1271,59 @@ SAME_SCUMM_SCENARIO_C25_ERROR_PENDING2     = $7E5F2C ; u8
 SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE2       = $7E5F2D ; u8
 SAME_SCUMM_SCENARIO_ERROR_RET              = $7E5F2E ; u16, SetError caller return
 SAME_SCUMM_SCENARIO_ERROR_STACK             = $7E5F30 ; 8 bytes at SetError
+SAME_SCUMM_SCENARIO_ERROR_LHS               = $7E5F38 ; u16 decoder reference
+SAME_SCUMM_SCENARIO_ERROR_OPERAND           = $7E5F3A ; u16 decoded operand
+SAME_SCUMM_SCENARIO_ERROR_RESULT            = $7E5F3C ; u16 resolved result
+SAME_SCUMM_SCENARIO_C25_OBS_PENDING         = $7E5F40 ; u8 parser count
+SAME_SCUMM_SCENARIO_C25_OBS_WORDS           = $7E5F41 ; 8 bytes parser words
+SAME_SCUMM_SCENARIO_C25_OBS_FLUSH_COUNT     = $7E5F49 ; u8 copied record count
+SAME_SCUMM_SCENARIO_C25_OBS_FLUSH_WORDS     = $7E5F4A ; 8 bytes copied words
+SAME_SCUMM_SCENARIO_C25_PRODUCER_PROGRAM    = $7E5F52 ; u8 queued producer
+SAME_SCUMM_SCENARIO_C25_PRODUCER_PC         = $7E5F53 ; u16 queued producer PC
+SAME_SCUMM_SCENARIO_C25_PRODUCER_COUNT      = $7E5F55 ; u8 queued word count
+SAME_SCUMM_SCENARIO_C25_PRODUCER_WORDS      = $7E5F56 ; 8 bytes queued words
+SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD  = $7E5F60 ; first 16 bytes of failing record
+SAME_SCUMM_SCENARIO_C25_DISPATCH_COMMAND    = $7E5F80 ; u16 command loaded by flush
+SAME_SCUMM_SCENARIO_C25_DISPATCH_OFFSET     = $7E5F82 ; u16 record offset
+SAME_SCUMM_SCENARIO_C25_DISPATCH_COUNT      = $7E5F84 ; u8 record count
+; Scheduler-save identity witness: shared interpreter context versus the
+; scheduler-selected slot immediately before the continuation is stored.
+SAME_SCUMM_SCENARIO_SAVE_SHARED_PROGRAM    = $7E5F86 ; u8
+SAME_SCUMM_SCENARIO_SAVE_SLOT_PROGRAM      = $7E5F87 ; u8
+SAME_SCUMM_SCENARIO_SAVE_SLOT              = $7E5F88 ; u8
+SAME_SCUMM_SCENARIO_SAVE_SHARED_PC         = $7E5F89 ; u16
+SAME_SCUMM_SCENARIO_SAVE_SLOT_PC           = $7E5F8B ; u16
+; Scheduler handoff trace for the currently published sentence slot.  This is
+; fixture-only observation; it deliberately lives after the error evidence
+; and before the generated object table.
+SAME_SCUMM_SCENARIO_SENTENCE_SCHED_PHASE     = $7E5674 ; u8: 1 before, 2 after run, 3 after save
+SAME_SCUMM_SCENARIO_SENTENCE_SCHED_SLOT      = $7E5675 ; u8
+SAME_SCUMM_SCENARIO_SENTENCE_SCHED_PROGRAM   = $7E5676 ; u8
+SAME_SCUMM_SCENARIO_SENTENCE_SCHED_VM_PC     = $7E5677 ; u16
+SAME_SCUMM_SCENARIO_SENTENCE_SCHED_SLOT_PC   = $7E5679 ; u16
+SAME_SCUMM_SCENARIO_SENTENCE_SCHED_STATUS    = $7E567B ; u8
+SAME_SCUMM_SCENARIO_SENTENCE_SCHED_CURRENT   = $7E567C ; u8
+SAME_SCUMM_SCENARIO_FRAME_STAGE              = $7E567D ; u8 last M23A frame stage
+; Scheduler eligibility trace (fixture-only; reserved diagnostic scratch).
+SAME_SCUMM_SCENARIO_SCHED_SCAN_GATE          = $7E57A4 ; u8 last sentence-slot gate
+SAME_SCUMM_SCENARIO_SCHED_SCAN_SLOT          = $7E57A5 ; u8 last slot visited
+SAME_SCUMM_SCENARIO_SCHED_SCAN_COUNT         = $7E57A6 ; u8 scans in latest pass
+SAME_SCUMM_SCENARIO_SCHED_MATCH_COUNT        = $7E57A7 ; u8 sentence-slot matches
+SAME_SCUMM_SCENARIO_SENTENCE_ALLOC_FRAME     = $7E57A8 ; u16 allocation frame
+SAME_SCUMM_SCENARIO_SENTENCE_ALLOC_C4        = $7E57AA ; u8 C4 count at allocation
+SAME_SCUMM_SCENARIO_FRAME_ENTRY_COUNT        = $7E57AB ; u8 Engine_Frame entries
+SAME_SCUMM_SCENARIO_PREPASS_COUNT            = $7E57AC ; u8 sentence prepass calls
+SAME_SCUMM_SCENARIO_POST_ALLOC_ENTRY         = $7E57AD ; u8 entries after latest allocation
+SAME_SCUMM_SCENARIO_POST_ALLOC_C4            = $7E57AE ; u8 C4 count at latest entry
+SAME_SCUMM_SCENARIO_POST_ALLOC_PHASE         = $7E57AF ; u8 M23A phase at latest entry
+SAME_SCUMM_SCENARIO_FRAME_STAGE_COUNT        = $7E567E ; u8 stage visits
+SAME_SCUMM_SCENARIO_C4_ERROR_ORIGIN          = $7E57B1 ; u8 last C4 subcall
+SAME_SCUMM_SCENARIO_C4_RETURN_P              = $7E57B2 ; u8 processor status immediately after RunSelected
+SAME_SCUMM_SCENARIO_C4_RETURN_SLOT           = $7E57B3 ; u8 scheduler-selected slot
+SAME_SCUMM_SCENARIO_C4_RETURN_PROGRAM        = $7E57B4 ; u8 selected slot program
+SAME_SCUMM_SCENARIO_C4_RETURN_PC             = $7E57B5 ; u16 selected slot PC after RunSelected
+SAME_SCUMM_SCENARIO_C4_RETURN_STATUS         = $7E57B7 ; u8 selected slot VM status
+SAME_SCUMM_SCENARIO_C4_RETURN_ERROR          = $7E57B8 ; u8 SCUMM error at return
 SAME_SCUMM_SCENARIO_C25_ENTRY               = $7E5654 ; u8 entry breadcrumb
 SAME_SCUMM_SCENARIO_C25_STABLE_INDEX        = $7E5655 ; u8
 SAME_SCUMM_SCENARIO_C25_STABLE_OFFSET       = $7E5656 ; u16
@@ -1234,9 +1416,12 @@ SAME_SCUMM_MATRIX_STATE_SIZE              = $0125
 ; Canonical v5 putActor placement state.  Immutable active-room BOXD geometry
 ; is copied from profile-generated data; this is not a pathfinding graph.
 SAME_SCUMM_PUT_ACTOR_STATE                = $7FFB65
-SAME_SCUMM_PUT_ACTOR_BOX_CAPACITY         = $0020
+; Immutable BOXD geometry is generated ROM data.  The former 32-record RAM
+; image is now one bounded working record populated by the generic accessor.
+SAME_SCUMM_PUT_ACTOR_BOX_CAPACITY         = $00FF
 SAME_SCUMM_PUT_ACTOR_BOX_STRIDE           = $0012 ; 8 x s16 coords + u16 scale
-SAME_SCUMM_PUT_ACTOR_BOXES                = $7FFB65 ; 32 x 18-byte BOXD records
+SAME_SCUMM_PUT_ACTOR_BOXES                = $7FFB65 ; compatibility alias
+SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK        = $7FFB65 ; one fetched BOXD record
 SAME_SCUMM_PUT_ACTOR_WALKBOX              = $7FFDA5 ; 32 x u8
 SAME_SCUMM_PUT_ACTOR_DESTBOX              = $7FFDC5 ; 32 x u8
 SAME_SCUMM_PUT_ACTOR_DEST_X               = $7FFDE5 ; 32 x s16; -1 cancels walk

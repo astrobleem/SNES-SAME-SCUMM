@@ -334,6 +334,39 @@ class ScummV5RawRoomTests(unittest.TestCase):
         self.assertGreater(item.verb_table_offset, 0)
         self.assertEqual(item.verb_table_length, 8 + 7 + 4)
 
+    def test_source_object_hit_test_uses_room_coordinates_edges_and_source_order(self) -> None:
+        headers = (
+            struct.pack("<HBBBBBBhhB", 100, 1, 1, 2, 2, 0, 0, 0, 0, 0),
+            struct.pack("<HBBBBBBhhB", 101, 1, 1, 2, 2, 0, 0, 0, 0, 0),
+            struct.pack("<HBBBBBBhhB", 102, 4, 1, 1, 1, 0x80, 1, 0, 0, 0),
+        )
+        room = decode_room(
+            raw_room(bytes((1,)) + bytes(16), object_headers=headers),
+            key="room.synthetic.hit-test",
+        )
+        # CDHD units are strips/cells, so the first two records overlap at
+        # (8, 8); canonical v5 findObject returns the first source record.
+        self.assertEqual(room.hit_test_object(8, 8).object_id, 100)
+        self.assertEqual(room.hit_test_object(7, 7), None)
+        self.assertEqual(room.hit_test_object(24, 8), None)  # right edge
+        self.assertEqual(room.hit_test_object(8, 24), None)  # bottom edge
+        self.assertEqual(room.hit_test_object(32, 8, object_states={100: 0}), None)
+        self.assertEqual(room.hit_test_object(32, 8, object_states={100: 1}).object_id, 102)
+        self.assertEqual(
+            room.hit_test_object(8, 8, object_owners={101: 1}).object_id, 100,
+        )
+
+    def test_authored_verb_directory_excludes_only_the_fallback_entry(self) -> None:
+        header = struct.pack("<HBBBBBBhhB", 100, 1, 1, 1, 1, 0, 0, 0, 0, 0)
+        program = bytes((0x80,))
+        verb = bytes((3,)) + struct.pack("<H", 7) + bytes((0xFF,)) + struct.pack("<H", 8) + bytes((0,))
+        room = decode_room(
+            raw_room(bytes((1,)) + bytes(16), object_payloads=(chunk(b"CDHD", header) + chunk(b"VERB", verb + program + program),)),
+            key="room.synthetic.verbs",
+        )
+        self.assertEqual(room.objects[0].authored_verbs, (3,))
+        self.assertNotIn(0xFF, room.objects[0].authored_verbs)
+
     def test_zigzag_and_major_minor_control_branches(self) -> None:
         zigzag_bits = [
             0,              # 5 -> 5
@@ -462,6 +495,30 @@ class ScummV5RawRoomTests(unittest.TestCase):
         with self.assertRaisesRegex(ResourceError, "contains an invalid route"):
             decode_room(bad_matrix, key="room.bad-box-matrix")
 
+    def test_source_backed_high_index_walkboxes_survive_decode(self) -> None:
+        boxes = tuple(
+            struct.pack(
+                "<hhhhhhhhBBH",
+                index * 4, 0, index * 4 + 3, 0,
+                index * 4 + 3, 7, index * 4, 7,
+                0, index & 0xFF, 0x8000 + index,
+            )
+            for index in range(64)
+        )
+        matrix = b"".join(
+            bytes((index, index, index, 0xFF)) for index in range(64)
+        )
+        room = decode_room(
+            raw_room(bytes((1,)) + bytes(range(64)), height=8,
+                     walkboxes=boxes, box_matrix=matrix),
+            key="room.sixty-four-boxes",
+        )
+        high = room.walkboxes[63]
+        self.assertEqual(high.index, 63)
+        self.assertEqual(high.upper_left, (252, 0))
+        self.assertEqual(high.scale, 0x803F)
+        self.assertEqual(room.next_box(63, 63), 63)
+
     def test_get_actor_walkbox_direct_variable_and_save(self) -> None:
         sentinel = struct.pack("<hhhhhhhhBBH", *([-32000] * 8), 0, 0, 255)
         left = struct.pack("<hhhhhhhhBBH", 0, 0, 7, 0, 7, 7, 0, 7, 0, 0, 255)
@@ -537,7 +594,7 @@ class ScummV5RawRoomTests(unittest.TestCase):
             0x1E, 1, 20, 0, 4, 0,
             0x56, 0, 0, 1,
             0x80,
-            0x3B, 1,
+            0x3B, 1, 0, 1,
             0x56, 1, 0, 1,
             0x7B, 2, 0, 1,
             0x00,
@@ -567,9 +624,8 @@ class ScummV5RawRoomTests(unittest.TestCase):
         actor = host.engine.state.actors[1]
         self.assertEqual(actor.to_dict(), expected_record)
         host.tick()
-        host.tick()
-        self.assertEqual(host.engine.state.variables[1], 0)
-        self.assertEqual(host.engine.state.variables[2], 3)
+        self.assertEqual(host.engine.state.variables[1], 10)
+        self.assertEqual(host.engine.state.variables[2], 2)
         self.assertFalse(host.engine.state.scripts[0].active)
 
     def test_engine_presents_raw_room_on_the_host_viewport(self) -> None:

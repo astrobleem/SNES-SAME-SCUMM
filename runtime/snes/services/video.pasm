@@ -176,14 +176,46 @@ Same_Mode3_Event_Push_Far:
     jsr Same_Event_Push
     rtl
 Same_Mode3_Kernel_DrainEvents_Far:
+    php
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_DIAG_SERVICE_CALLS
+    inc
+    sta.l SAME_VIDEO_DIAG_SERVICE_CALLS
+    sep #$20
+    .a8
+    .if SAME_VIDEO_OVERLAY_BG2
+    lda #$70
+    sta BG12NBA
+    .endif
     jsr Same_Kernel_DrainEvents
+    rep #$20
+    .a16
+    lda.l SAME_EVENT_HEAD
+    sta.l SAME_VIDEO_DIAG_SERVICE_LAST_HEAD
+    lda.l SAME_EVENT_TAIL
+    sta.l SAME_VIDEO_DIAG_SERVICE_LAST_TAIL
+    lda.l SAME_EVENT_COUNT
+    sta.l SAME_VIDEO_DIAG_SERVICE_LAST_COUNT
+Same_Mode3_Kernel_DrainEvents_Far__done:
+    plp
     rtl
+; Neutral alias to the selected backend's synchronous service entry.
+Same_VideoSurface_ServiceEvents_Far = Same_Mode3_Kernel_DrainEvents_Far
 .if SAME_BUILD_SCUMM_ROOM_VISUAL
 ScummV5_Visual_RequestRoom_Far:
+    .if SAME_BUILD_M24RB
+    jsl ScummV5_M23A_RequestRoom_FarEntry
+    .else
     jsr ScummV5_M23A_RequestRoom
+    .endif
     rtl
 ScummV5_Visual_ResourceReady_Far:
+    .if SAME_BUILD_M24RB
+    jsl ScummV5_M23A_ResourceReady_FarEntry
+    .else
     jsr ScummV5_M23A_ResourceReady
+    .endif
     rtl
 .endif
 .endif

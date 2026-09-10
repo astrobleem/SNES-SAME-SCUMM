@@ -136,6 +136,7 @@ Same_Dma_ProcessQueue:
     lda #$0000
     sta.l SAME_DMA_FRAME_BYTES
     lda.l SAME_DMA_CURRENT_SLOT
+    ldy #SAME_DMA_QUEUE_SLOTS
 Same_Dma_ProcessQueue__next:
     rep #$30
     .a16
@@ -148,6 +149,25 @@ Same_Dma_ProcessQueue__next:
     lda.l SAME_DMA_QUEUE+SAME_DMA_SLOT_TYPE,x
     and #SAME_DMA_FLAG_ACTIVE
     bne Same_Dma_ProcessQueue__active
+    ; The producer may have filled a later free slot while the cursor still
+    ; points at an already-consumed slot.  A pending request means the ring
+    ; is not empty; scan the bounded ring instead of treating the first hole
+    ; as completion.  Y is the per-NMI scan budget and is not part of the
+    ; DMA descriptor ABI.
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_DMA_PENDING
+    beq Same_Dma_ProcessQueue__scan_done
+    dey
+    beq Same_Dma_ProcessQueue__scan_done
+    lda.l SAME_DMA_CURRENT_SLOT
+    clc
+    adc #SAME_DMA_QUEUE_SLOT_SIZE
+    and #SAME_DMA_QUEUE_MASK
+    sta.l SAME_DMA_CURRENT_SLOT
+    brl Same_Dma_ProcessQueue__next
+Same_Dma_ProcessQueue__scan_done:
     brl Same_Dma_ProcessQueue__done
 Same_Dma_ProcessQueue__active:
     sep #$20

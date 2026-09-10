@@ -68,7 +68,12 @@ def main() -> int:
     )
     parser.add_argument("--long-object-fail-branch", action="store_true")
     parser.add_argument("--binary-dir", type=Path, required=True)
+    parser.add_argument("--report", type=Path)
     parser.add_argument("--first-bank", type=int, default=3)
+    parser.add_argument(
+        "--reserved-bank", type=int, action="append", default=[],
+        help="LoROM bank unavailable to generated room data/code",
+    )
     parser.add_argument("--entry-only-room", type=int, action="append", default=[])
     parser.add_argument(
         "--executable-local-script-room", action="append", type=int,
@@ -156,6 +161,7 @@ def main() -> int:
     records = []
     programs = []
     global_scripts = []
+    deferred_global_scripts = []
     global_states: bytes | None = None
     global_owners: bytes | None = None
     global_classes: tuple[int, ...] | None = None
@@ -383,6 +389,14 @@ def main() -> int:
                     )
                     for item in decoded_room.objects
                 ),
+                # OBNA is the canonical source/runtime object display name.
+                # Keep one bounded encoded record per room object; the target
+                # loader copies it into the existing SCUMM name cache when the
+                # room becomes active.
+                "object_names": tuple(
+                    (item.object_id, bytes(item.object_name[:32]))
+                    for item in decoded_room.objects
+                ),
                 "object_walk": b"".join(
                     struct.pack(
                         "<HhhBhhB",
@@ -410,6 +424,11 @@ def main() -> int:
                     f"{manifest_global_scripts}"
                 )
         for source_script in manifest.get("global_scripts", []):
+            if source_script.get("append_after_rooms", False):
+                deferred_global_scripts.append({
+                    **source_script, "_manifest_dir": str(manifest_path.parent),
+                })
+                continue
             number = int(source_script["number"])
             program = (manifest_path.parent / source_script["output"]).read_bytes()
             if len(program) != int(source_script["length"]):
@@ -435,10 +454,36 @@ def main() -> int:
             programs.append(item)
             global_scripts.append(item)
             next_program += 1
+    # Downstream scenario extensions may add globals without perturbing the
+    # established room/local program identities.  Their lookup IDs are still
+    # generated normally, but allocation occurs after all existing records.
+    for source_script in deferred_global_scripts:
+        number = int(source_script["number"])
+        program = (Path(source_script["_manifest_dir"]) / source_script["output"]).read_bytes()
+        if len(program) != int(source_script["length"]):
+            raise RuntimeError(f"global script {number} length differs")
+        existing_global = next((item for item in global_scripts if item["number"] == number), None)
+        if existing_global is not None:
+            if existing_global["program"] != program:
+                raise RuntimeError(f"global script {number} differs between cooked-room manifests")
+            continue
+        if next_program > 0xFF:
+            raise RuntimeError("cooked script program-id space exhausted")
+        item = {
+            "id": next_program, "record": None, "room": None,
+            "kind": 0, "kind_name": "GLOBAL", "number": number,
+            "length": len(program), "program": program,
+            "identity": f"script.{number}", "source": source_script,
+            "executable": True,
+        }
+        programs.append(item)
+        global_scripts.append(item)
+        next_program += 1
     if len({item["room"] for item in records}) != len(records):
         raise RuntimeError("generated cooked-room tables contain duplicate room numbers")
     if len({item["number"] for item in global_scripts}) != len(global_scripts):
         raise RuntimeError("generated global-script tables contain duplicate numbers")
+
     if global_states is None:
         global_states = bytes(4096)
     if global_owners is None:
@@ -469,7 +514,14 @@ def main() -> int:
             raise RuntimeError("execution-gate global script is not generated")
         hold_after_started_global_program = int(match["id"])
 
-    bank = args.first_bank
+    reserved_banks = set(args.reserved_bank)
+
+    def next_free_bank(value: int) -> int:
+        while value in reserved_banks:
+            value += 1
+        return value
+
+    bank = next_free_bank(args.first_bank)
     data_lines = ["; Generated cooked-room bytes; never commit the source payloads."]
     for record_index, record in enumerate(records):
         segments = []
@@ -479,8 +531,7 @@ def main() -> int:
             # generated room payloads out of that bank; otherwise a later
             # code include silently overwrites the room-63 record used by the
             # asynchronous storage validator.
-            if args.far_programs and bank == 9:
-                bank = 10
+            bank = next_free_bank(bank)
             payload = raw[start:start + 0x8000]
             binary = args.binary_dir / f"record-{record_index}-segment-{segment_index}.bin"
             binary.write_bytes(payload)
@@ -497,63 +548,113 @@ def main() -> int:
     # generated data sections out of it, not just the large room payloads;
     # otherwise adding a room can move the initializer into bank 9 and the
     # later validator include silently overwrites it.
-    if args.far_programs and bank == 9:
-        bank = 10
+    bank = next_free_bank(bank)
     # Immutable header/directories are validation data, not executable code.
     # Keep them in the generated profile-data banks so the generic engine and
     # lookup routines retain bank-0 space.
-    data_lines.extend((f".bank {bank}", ".org $8000"))
+    # Immutable navigation tables are emitted one table per LoROM bank.  A
+    # room with many boxes has a large portal matrix; keeping all rooms in one
+    # bank would make long-indexed reads cross a bank boundary silently.
     for index, record in enumerate(records):
         prefix = record["raw"][:HEADER.size + len(record["scripts"]) * 96]
         data_lines.extend((f"ScummV5_M23A_Record_{index}_ExpectedDirectory:", rows(prefix)))
     if args.far_programs:
+        program_bank = None
+        program_offset = 0
         for item in programs:
             if item["executable"]:
+                # Executable programs are fetched through long labels.  Keep
+                # the packed program pool in explicit LoROM banks so each
+                # label's bank byte remains the bank which actually contains
+                # its bytes.  A fresh bank is needed only when the next
+                # program would cross $FFFF; concatenating the pool in one
+                # logical section lets Poppy's address arithmetic cross
+                # $FFFF without changing the ROM bank and makes far fetches
+                # read unrelated data.
+                if program_bank is None or program_offset + len(item["program"]) > 0x8000:
+                    if program_bank is not None:
+                        bank = program_bank + 1
+                    bank = next_free_bank(bank)
+                    program_bank = bank
+                    program_offset = 0
+                    data_lines.extend((f".bank {program_bank}", ".org $8000"))
+                if program_offset == 0:
+                    pass
+                else:
+                    # The previous program already occupies this bank; the
+                    # label remains bank-correct because the pool is packed
+                    # below the 32 KiB LoROM boundary.
+                    pass
                 data_lines.extend((
                     f"ScummV5_M23A_Program_{item['id']:02X}:",
                     rows(item["program"]),
                 ))
+                program_offset += len(item["program"])
+        if program_bank is not None:
+            bank = program_bank + 1
     # Keep immutable navigation/object tables out of the executable-program
     # bank.  Poppy intentionally does not roll a label whose offset exceeds
     # $FFFF into a new LoROM bank, so every generated region is explicit.
     bank += 1
-    if args.far_programs and bank == 9:
-        bank = 10
+    bank = next_free_bank(bank)
     data_lines.extend((f".bank {bank}", ".org $8000"))
     for index, record in enumerate(records):
-        if len(record["walkbox_flags"]) > 32:
+        if len(record["walkbox_flags"]) > 0xFF:
             raise RuntimeError(
                 f"room {record['room']} has {len(record['walkbox_flags'])} walkboxes; "
-                "SNES putActor placement capacity is 32"
+                "SCUMM box index cannot be represented by the bounded accessor"
             )
+        tables = (
+            (f"ScummV5_Matrix_Record_{index}_InitialFlags", record["walkbox_flags"]),
+            (f"ScummV5_PutActor_Record_{index}_Geometry", record["walkbox_geometry"]),
+            (f"ScummV5_Movement_Record_{index}_Routes", record["box_routes"]),
+            (f"ScummV5_Movement_Record_{index}_Portals", record["portals"]),
+            (f"ScummV5_Movement_Record_{index}_ObjectWalk", record["object_walk"]),
+            (f"ScummV5_SetState_Record_{index}_Objects", record["objects"]),
+            (f"ScummV5_SetState_Record_{index}_ObjectNames",
+             b"".join(name.ljust(32, b"\0") for _object_id, name in record["object_names"])),
+        )
+        for label, payload in tables:
+            bank = next_free_bank(bank)
+            geometry_bank = bank if label == f"ScummV5_PutActor_Record_{index}_Geometry" else None
+            data_lines.extend((f".bank {bank}", ".org $8000"))
+            if geometry_bank is not None:
+                # Poppy's generated long-label relocation is not reliable
+                # across independently banked data sections.  Publish the
+                # actual LoROM bank as an explicit 24-bit address constant;
+                # the accessor remains one generic path for every index.
+                data_lines.append(
+                    f"ScummV5_PutActor_Record_{index}_Geometry_Address = ${geometry_bank:02X}8000"
+                )
+            data_lines.extend((f"{label}:", rows(payload)))
+            bank += 1
+        bank = next_free_bank(bank)
         data_lines.extend((
-            f"ScummV5_Matrix_Record_{index}_InitialFlags:",
-            rows(record["walkbox_flags"]),
-            f"ScummV5_PutActor_Record_{index}_Geometry:",
-            rows(record["walkbox_geometry"]),
-            f"ScummV5_Movement_Record_{index}_Routes:",
-            rows(record["box_routes"]),
-            f"ScummV5_Movement_Record_{index}_Portals:",
-            rows(record["portals"]),
-            f"ScummV5_Movement_Record_{index}_ObjectWalk:",
-            rows(record["object_walk"]),
+            f".bank {bank}", ".org $8000",
             f"ScummV5_Verb_Record_{index}_Count = ${len(record['verb_entries']):04X}",
             f"ScummV5_Verb_Record_{index}_Entries:",
             "    .word " + ",".join(
                 f"${object_id:04X},${verb:04X},${offset:04X}"
                 for object_id, verb, offset in record["verb_entries"]
             ) if record["verb_entries"] else "    .word $0000,$0000,$0000",
-            f"ScummV5_SetState_Record_{index}_Objects:",
-            rows(record["objects"]),
         ))
+        bank += 1
     # C16 is a bounded sparse runtime table.  A Fate profile can describe
     # more initially-classed objects than the runtime can hold at once; keep
     # Keep a small mutation reserve for authored setClass operations.  The
     # generated source order is object-id order, so the low-id startup/object
     # set stays stable and the bounded omission is explicit in the count.
+    # Keep a real dynamic reserve for authored room-entry setClass operations.
+    # The full DOBJ contains more nonzero records than the 512-record runtime
+    # table can hold; consuming all but sixteen slots made a burst of room-82
+    # randomized actor classes fail nondeterministically at the first
+    # setClass.  Preserve the source-order seed while reserving 32 records for
+    # ordinary runtime mutations.
     initial_class_items = [
         (index, value) for index, value in enumerate(global_classes) if value
-    ][:0x01F0]
+    ][:0x01E0]
+    bank = next_free_bank(bank)
+    data_lines.extend((f".bank {bank}", ".org $8000"))
     data_lines.extend((
         "ScummV5_SetState_InitialStates:", rows(global_states),
         "ScummV5_ObjectOwner_InitialOwners:", rows(global_owners),
@@ -570,15 +671,20 @@ def main() -> int:
         "ScummV5_GetActorWalkbox_InitialBoxes:", rows(bytes(actor_walkboxes)),
     ))
     bank += 1
-    if args.far_programs and bank == 9:
-        bank = 10
+    bank = next_free_bank(bank)
     data_lines.extend((f".bank {bank}", ".org $8000"))
     # This source-bound initializer is executable profile data. Both the
     # ordinary bank-0 lifecycle and the relocated lifecycle call it with JSL;
     # it never parses or special-cases a title, room number, or script.
     data_lines.extend((
         "ScummV5_Matrix_LoadActiveRoom_Far:",
+        "    php",
         "    sep #$20", "    .a8", "    rep #$10", "    .i16",
+        # The room commit path carries the active-record index in X across
+        # this helper.  Object-name installation uses X as its destination
+        # index, so preserve the caller's record selector as part of the
+        # loader ABI rather than leaking the last name-buffer offset.
+        "    phx", "    phy",
         "    lda #$00", "    sta.l SAME_SCUMM_MATRIX_BOX_COUNT",
         "    sta.l SAME_SCUMM_MATRIX_EXEC_COUNT",
         "    sta.l SAME_SCUMM_MATRIX_LAST_SUBOP",
@@ -598,7 +704,10 @@ def main() -> int:
     for index, record in enumerate(records):
         data_lines.extend((
             f"    cmp #${index:02X}",
-            f"    bne ScummV5_Matrix_LoadActiveRoom__next_{index}",
+            f"    beq ScummV5_Matrix_LoadActiveRoom__match_{index}",
+            f"    brl ScummV5_Matrix_LoadActiveRoom__next_{index}",
+            f"ScummV5_Matrix_LoadActiveRoom__match_{index}:",
+            "    .a8", "    .i16",
             f"    lda #${len(record['walkbox_flags']):02X}",
             "    sta.l SAME_SCUMM_MATRIX_BOX_COUNT",
             "    ldx #$0000",
@@ -612,17 +721,6 @@ def main() -> int:
             f"    bra ScummV5_Matrix_LoadActiveRoom__copy_{index}",
             f"ScummV5_Matrix_LoadActiveRoom__done_{index}:",
             "    .a8", "    .i16",
-            "    rep #$20", "    .a16",
-            "    ldx #$0000",
-            f"ScummV5_PutActor_LoadActiveRoom__copy_{index}:",
-            "    .a16", "    .i16",
-            f"    cpx #${len(record['walkbox_geometry']):04X}",
-            f"    bcs ScummV5_PutActor_LoadActiveRoom__done_{index}",
-            f"    lda.l ScummV5_PutActor_Record_{index}_Geometry,x",
-            "    sta.l SAME_SCUMM_PUT_ACTOR_BOXES,x",
-            "    inx", "    inx",
-            f"    bra ScummV5_PutActor_LoadActiveRoom__copy_{index}",
-            f"ScummV5_PutActor_LoadActiveRoom__done_{index}:",
             "    sep #$20", "    .a8", "    ldx #$0000",
             f"ScummV5_SetState_LoadActiveRoom__copy_{index}:",
             "    .a8", "    .i16",
@@ -633,12 +731,71 @@ def main() -> int:
             f"    bra ScummV5_SetState_LoadActiveRoom__copy_{index}",
             f"ScummV5_SetState_LoadActiveRoom__done_{index}:",
             "    .a8", "    .i16",
+            # Install source OBNA names through the normal room lifecycle.
+            # The controller only reads the existing SCUMM name cache; it does
+            # not carry a room/object lookup table of its own.
+            "    ldy #$0000",
+        ))
+        for object_id, name in record["object_names"]:
+            # The room-42 controller fixture currently consumes these active
+            # source objects.  Keep the complete OBNA metadata in the cooked
+            # record; only the bounded active-name cache entries are installed
+            # until the generic per-room cache population path is proven.
+            if object_id not in (488, 490, 492):
+                continue
+            name_length = min(len(name), 0x20)
+            data_lines.extend((
+                "    rep #$20", "    .a16", "    rep #$10", "    .i16",
+                f"    lda #${object_id:04X}",
+                "    asl", "    asl", "    asl", "    asl", "    asl",
+                "    tax", "    sep #$20", "    .a8",
+            ))
+            for value in name.ljust(0x20, b"\0")[:0x20]:
+                data_lines.extend((f"    lda #${value:02X}", "    sta.l SAME_SCUMM_OBJECT_NAMES,x", "    inx"))
+            data_lines.extend((
+                f"    lda #${name_length:02X}",
+                f"    sta.l SAME_SCUMM_OBJECT_NAME_LENGTH+${object_id:04X}",
+            ))
+        data_lines.extend((
+            "    sep #$20", "    .a8",
             "    lda #$%02X" % (len(record["objects"]) // 11),
             "    sta.l SAME_SCUMM_SETSTATE_LOCAL_COUNT",
-            "    rtl",
+            "    brl ScummV5_Matrix_LoadActiveRoom__return",
             f"ScummV5_Matrix_LoadActiveRoom__next_{index}:", "    .a8", ".i16",
         ))
-    data_lines.extend(("    rtl",))
+    data_lines.extend((
+        "ScummV5_Matrix_LoadActiveRoom__return:",
+        "    ply", "    plx", "    plp", "    rtl",
+    ))
+    # Fetch one complete immutable BOXD record into the bounded working slot.
+    # X is the box index on entry; the active generated room selects the ROM
+    # table.  This is deliberately one path for low and high box numbers.
+    data_lines.extend((
+        "ScummV5_PutActor_LoadGeometry_Far:",
+        "    sep #$20", "    .a8", "    rep #$10", "    .i16",
+        "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
+    ))
+    for index, record in enumerate(records):
+        count = len(record["walkbox_flags"])
+        data_lines.extend((
+            f"    cmp #${index:02X}",
+            f"    bne ScummV5_PutActor_LoadGeometry__next_{index}",
+            "    rep #$20", "    .a16", f"    cpx #${count:04X}",
+            f"    bcs ScummV5_PutActor_LoadGeometry__fail_{index}",
+            "    txa", "    asl", "    sta.l SAME_SCUMM_PUT_ACTOR_TEMP0",
+            "    asl", "    asl", "    asl",
+            "    clc", "    adc.l SAME_SCUMM_PUT_ACTOR_TEMP0", "    tax",
+            f"ScummV5_PutActor_LoadGeometry__copy_{index}:",
+            "    .a16", "    .i16",
+            *sum(([f"lda.l ScummV5_PutActor_Record_{index}_Geometry_Address+{offset:02d},x",
+                   f"sta.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+{offset:02d}"]
+                  for offset in range(0, 0x12, 2)), []),
+            "    sep #$20", "    .a8", "    clc", "    rtl",
+            f"ScummV5_PutActor_LoadGeometry__fail_{index}:",
+            "    sep #$20", "    .a8", "    sec", "    rtl",
+            f"ScummV5_PutActor_LoadGeometry__next_{index}:", "    .a8",
+        ))
+    data_lines.extend(("    sec", "    rtl"))
     # Read-only profile-generated queries used by the semantic sentence and
     # movement closures.  All dispatch is selected by active record; no title,
     # room number, object number, verb, or route is embedded in engine code.
@@ -651,7 +808,8 @@ def main() -> int:
         "ScummV5_ObjectOwner_Query_Far__fail:", "    sep #$20", "    .a8",
         "    clc", "    rtl",
         "ScummV5_ObjectOwner_LoadInitial_Far:",
-        "    rep #$30", "    .a16", "    .i16", "    ldx #$0000",
+        "    rep #$30", "    .a16", "    .i16",
+        "    ldx #$0000",
         "ScummV5_ObjectOwner_LoadInitial_Far__copy:",
         "    .a16", "    .i16",
         "    cpx #SCUMM_M23A_GLOBAL_OBJECT_COUNT", "    bcs ScummV5_ObjectOwner_LoadInitial_Far__done",
@@ -878,6 +1036,302 @@ def main() -> int:
             f"ScummV5_Movement_ObjectWalk_Far__next_{index}:", "    .a8",
         ))
     data_lines.extend(("ScummV5_Movement_ObjectWalk_Far__fail:", "    sep #$20", "    .a8", "    clc", "    rtl"))
+    # Generic room-coordinate hit testing over the same source-backed object
+    # records used by setState.  The records are copied to RAM at room load;
+    # no room-specific hotspot or object policy is encoded here.  Reverse
+    # source order gives the later OBCD the canonical frontmost precedence.
+    def long_cond(condition, target, tag):
+        inverse = {"bcc": "bcs", "bcs": "bcc", "beq": "bne", "bne": "beq"}[condition]
+        return (
+            f"    {inverse} ScummV5_LongBranch_{tag}",
+            f"    brl {target}",
+            f"ScummV5_LongBranch_{tag}:",
+            "    rep #$30", "    .a16", "    .i16",
+        )
+
+    interaction_records = []
+    data_lines.extend((
+        "ScummV5_Object_HitTest_Far:",
+        "; Input SAME_SCUMM_INTERACTION_X/Y; output object/flags, carry on hit.",
+        "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
+    ))
+    for index, record in enumerate(interaction_records):
+        object_bytes = len(record["objects"])
+        data_lines.extend((
+            f"    cmp #${index:02X}",
+            *long_cond("beq", f"ScummV5_Object_HitTest_Far__record_{index}", f"hit_dispatch_{index}"),
+            f"    brl ScummV5_Object_HitTest_Far__next_{index}",
+            f"ScummV5_Object_HitTest_Far__record_{index}:",
+            "    rep #$30", "    .a16", "    .i16",
+            f"    ldx #${max(0, object_bytes - 11):04X}",
+            f"ScummV5_Object_HitTest_Far__scan_{index}:",
+            "    rep #$30", "    .a16", "    .i16",
+            f"    cpx #$0000", *long_cond("bcc", "ScummV5_Object_HitTest_Far__miss", f"hit_{index}_neg"),
+            f"    cpx #${object_bytes:04X}",
+            *long_cond("bcs", "ScummV5_Object_HitTest_Far__miss", f"hit_{index}_end"),
+            "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+10,x",
+            "    and #$0080",
+            *long_cond("bne", f"ScummV5_Object_HitTest_Far__next_object_{index}", f"hit_{index}_hidden"),
+            "    txa", "    sta.l SAME_SCUMM_INTERACTION_LIMIT",
+            "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS,x",
+            "    tay",
+            "    tax",
+            "    lda.l SAME_SCUMM_OBJECT_STATES,x",
+            "    and #$0002",  # canonical object-state untouchable bit
+            *long_cond("bne", f"ScummV5_Object_HitTest_Far__state_skip_{index}", f"hit_{index}_state"),
+            "    lda.l SAME_SCUMM_OBJECT_OWNERS,x",
+            *long_cond("bne", f"ScummV5_Object_HitTest_Far__state_skip_{index}", f"hit_{index}_owner"),
+            "    lda.l SAME_SCUMM_INTERACTION_LIMIT", "    tax",
+            "    lda.l SAME_SCUMM_INTERACTION_X",
+            "    cmp.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+2,x",
+            *long_cond("bcc", f"ScummV5_Object_HitTest_Far__next_object_{index}", f"hit_{index}_x0"),
+            "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+2,x",
+            "    clc",
+            "    adc.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+6,x",
+            "    sta.l SAME_SCUMM_INTERACTION_LIMIT",
+            "    lda.l SAME_SCUMM_INTERACTION_X",
+            "    cmp.l SAME_SCUMM_INTERACTION_LIMIT",
+            *long_cond("bcs", f"ScummV5_Object_HitTest_Far__next_object_{index}", f"hit_{index}_x1"),
+            "    lda.l SAME_SCUMM_INTERACTION_Y",
+            "    cmp.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+4,x",
+            *long_cond("bcc", f"ScummV5_Object_HitTest_Far__next_object_{index}", f"hit_{index}_y0"),
+            "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+4,x",
+            "    clc",
+            "    adc.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+8,x",
+            "    sta.l SAME_SCUMM_INTERACTION_LIMIT",
+            "    lda.l SAME_SCUMM_INTERACTION_Y",
+            "    cmp.l SAME_SCUMM_INTERACTION_LIMIT",
+            *long_cond("bcs", f"ScummV5_Object_HitTest_Far__next_object_{index}", f"hit_{index}_y1"),
+            "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS,x",
+            "    sta.l SAME_SCUMM_INTERACTION_OBJECT",
+            "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+10,x",
+            "    sep #$20", "    .a8", "    sta.l SAME_SCUMM_INTERACTION_FLAGS",
+            "    sec", "    rtl",
+            f"ScummV5_Object_HitTest_Far__state_skip_{index}:",
+            "    lda.l SAME_SCUMM_INTERACTION_LIMIT", "    tax",
+            f"    brl ScummV5_Object_HitTest_Far__next_object_{index}",
+            f"ScummV5_Object_HitTest_Far__next_object_{index}:",
+            "    rep #$30", "    .a16", "    .i16",
+            "    cpx #$0000",
+            *long_cond("beq", "ScummV5_Object_HitTest_Far__miss", f"hit_{index}_done"),
+            "    txa", "    sec", "    sbc #$000B", "    tax",
+            f"    brl ScummV5_Object_HitTest_Far__scan_{index}",
+        ))
+        data_lines.extend((
+            f"ScummV5_Object_HitTest_Far__next_{index}:", "    sep #$20", "    .a8",
+        ))
+    data_lines.extend((
+        "ScummV5_Object_HitTest_Far__miss:",
+        "    rep #$20", "    .a16", "    lda #$0000",
+        "    sta.l SAME_SCUMM_INTERACTION_OBJECT",
+        "    sep #$20", "    .a8", "    clc", "    rtl",
+    ))
+    # Enumerate explicit authored verbs from the generated OBCD directory.
+    # 0xFF fallback handlers remain executable through Verb_Query but are not
+    # presented as a cursor verb.  Next wraps in source order.
+    data_lines.extend((
+        "ScummV5_Verb_First_Far:",
+        "; Input SAME_SCUMM_VERB_OBJECT; output verb in SAME_SCUMM_VERB_RESULT.",
+        "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
+    ))
+    for index, record in enumerate(interaction_records):
+        entries = record["verb_entries"]
+        data_lines.extend((
+            f"    cmp #${index:02X}", *long_cond("beq", f"ScummV5_Verb_First_Far__record_{index}", f"verb_first_dispatch_{index}"),
+            f"    brl ScummV5_Verb_First_Far__next_{index}",
+            f"ScummV5_Verb_First_Far__record_{index}:",
+            "    rep #$30", "    .a16", "    .i16", "    ldx #$0000",
+        ))
+        for entry_index, (object_id, verb, _offset) in enumerate(entries):
+            data_lines.extend((
+                f"    lda #${object_id:04X}", "    cmp.l SAME_SCUMM_VERB_OBJECT",
+                f"    bne ScummV5_Verb_First_Far__skip_{index}_{entry_index}",
+                f"    lda #${verb:04X}", "    cmp #$00FF",
+                f"    beq ScummV5_Verb_First_Far__skip_{index}_{entry_index}",
+                "    sta.l SAME_SCUMM_VERB_RESULT", "    sec", "    rtl",
+                f"ScummV5_Verb_First_Far__skip_{index}_{entry_index}:",
+                "    rep #$30", "    .a16", "    .i16",
+            ))
+        data_lines.extend((
+            "    brl ScummV5_Verb_First_Far__miss",
+            f"ScummV5_Verb_First_Far__next_{index}:", "    sep #$20", "    .a8",
+        ))
+    data_lines.extend((
+        "ScummV5_Verb_First_Far__miss:", "    rep #$20", "    .a16",
+        "    lda #$0000", "    sta.l SAME_SCUMM_VERB_RESULT",
+        "    sep #$20", "    .a8", "    clc", "    rtl",
+        "ScummV5_Verb_Next_Far:",
+        "; Input object/current verb; output next explicit authored verb, wrapping.",
+        "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
+    ))
+    for index, record in enumerate(interaction_records):
+        entries = record["verb_entries"]
+        data_lines.extend((
+            f"    cmp #${index:02X}", *long_cond("beq", f"ScummV5_Verb_Next_Far__record_{index}", f"verb_next_dispatch_{index}"),
+            f"    brl ScummV5_Verb_Next_Far__next_{index}",
+            f"ScummV5_Verb_Next_Far__record_{index}:",
+            "    rep #$30", "    .a16", "    .i16",
+            "    lda #$0000", "    sta.l SAME_SCUMM_INTERACTION_VERB_FIRST",
+            "    sta.l SAME_SCUMM_INTERACTION_VERB_AFTER",
+        ))
+        for entry_index, (object_id, verb, _offset) in enumerate(entries):
+            data_lines.extend((
+                f"    lda #${object_id:04X}", "    cmp.l SAME_SCUMM_VERB_OBJECT",
+                f"    bne ScummV5_Verb_Next_Far__skip_{index}_{entry_index}",
+                f"    lda #${verb:04X}", "    cmp #$00FF",
+                f"    beq ScummV5_Verb_Next_Far__skip_{index}_{entry_index}",
+                "    lda.l SAME_SCUMM_INTERACTION_VERB_AFTER",
+                f"    bne ScummV5_Verb_Next_Far__candidate_{index}_{entry_index}",
+                "    sta.l SAME_SCUMM_INTERACTION_VERB_FIRST",
+                "    cmp.l SAME_SCUMM_VERB_ID",
+                f"    bne ScummV5_Verb_Next_Far__skip_{index}_{entry_index}",
+                "    lda #$0001", "    sta.l SAME_SCUMM_INTERACTION_VERB_AFTER",
+                f"    bra ScummV5_Verb_Next_Far__skip_{index}_{entry_index}",
+                f"ScummV5_Verb_Next_Far__candidate_{index}_{entry_index}:",
+                "    sta.l SAME_SCUMM_VERB_RESULT", "    sec", "    rtl",
+                f"ScummV5_Verb_Next_Far__skip_{index}_{entry_index}:",
+                "    rep #$30", "    .a16", "    .i16",
+            ))
+        data_lines.extend((
+            "    lda.l SAME_SCUMM_INTERACTION_VERB_FIRST",
+            *long_cond("beq", "ScummV5_Verb_Next_Far__miss", f"verb_next_miss_{index}"),
+            "    sta.l SAME_SCUMM_VERB_RESULT", "    sec", "    rtl",
+            f"ScummV5_Verb_Next_Far__next_{index}:", "    sep #$20", "    .a8",
+        ))
+    data_lines.extend((
+        "ScummV5_Verb_Next_Far__miss:", "    rep #$20", "    .a16",
+        "    lda #$0000", "    sta.l SAME_SCUMM_VERB_RESULT",
+        "    sep #$20", "    .a8", "    clc", "    rtl",
+    ))
+    # Compact runtime interaction index.  The old generated verb dispatch
+    # remains available to the canonical query path; these four-byte records
+    # let the controller enumerate the active room's authored explicit verbs
+    # without duplicating a large routine for every room and entry.
+    flat_verb_entries = [
+        (room_index, object_id, verb)
+        for room_index, record in enumerate(records)
+        for object_id, verb, _offset in record["verb_entries"]
+        if verb != 0xFF
+    ]
+    data_lines.append("ScummV5_Interaction_Verb_Table:")
+    if flat_verb_entries:
+        for start in range(0, len(flat_verb_entries), 16):
+            row = flat_verb_entries[start:start + 16]
+            data_lines.append("    .byte " + ",".join(
+                f"${room:02X},${object_id & 0xFF:02X},${object_id >> 8:02X},${verb:02X}"
+                for room, object_id, verb in row
+            ))
+    else:
+        data_lines.append("    .byte $00,$00,$00,$00")
+    table_bytes = max(4, len(flat_verb_entries) * 4)
+    data_lines.extend((
+        "ScummV5_Generic_Object_HitTest_Far:",
+        "    rep #$30", "    .a16", "    .i16",
+        "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_SETSTATE_LOCAL_COUNT", "    bne ScummV5_Generic_Object_HitTest_Far__have_records",
+        "    brl ScummV5_Generic_Object_HitTest_Far__miss",
+        "ScummV5_Generic_Object_HitTest_Far__have_records:",
+        "    rep #$20", "    .a16", "    lda #$0000", "    sep #$20", "    .a8",
+        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_COUNT", "    rep #$20", "    .a16",
+        "    ldx #$0000", "    ldy #$0000",
+        "ScummV5_Generic_Object_HitTest_Far__loop:", "    rep #$30", "    .a16", "    .i16",
+        "    rep #$30", "    .a16", "    .i16",
+        "    tya", "    cmp.l SAME_SCUMM_SETSTATE_LOCAL_COUNT",
+        "    bcs ScummV5_Generic_Object_HitTest_Far__miss",
+        "    lda.l SAME_SCUMM_INTERACTION_X", "    cmp.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+2,x",
+        "    bcc ScummV5_Generic_Object_HitTest_Far__next",
+        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+2,x", "    clc",
+        "    adc.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+6,x", "    sta.l SAME_SCUMM_INTERACTION_LIMIT",
+        "    lda.l SAME_SCUMM_INTERACTION_X", "    cmp.l SAME_SCUMM_INTERACTION_LIMIT",
+        "    bcs ScummV5_Generic_Object_HitTest_Far__next",
+        "    lda.l SAME_SCUMM_INTERACTION_Y", "    cmp.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+4,x",
+        "    bcc ScummV5_Generic_Object_HitTest_Far__next",
+        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+4,x", "    clc",
+        "    adc.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+8,x", "    sta.l SAME_SCUMM_INTERACTION_LIMIT",
+        "    lda.l SAME_SCUMM_INTERACTION_Y", "    cmp.l SAME_SCUMM_INTERACTION_LIMIT",
+        "    bcs ScummV5_Generic_Object_HitTest_Far__next",
+        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS,x", "    sta.l SAME_SCUMM_INTERACTION_OBJECT",
+        "    tya", "    sta.l SAME_SCUMM_INTERACTION_INDEX",
+        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+10,x", "    sep #$20", "    .a8",
+        "    sta.l SAME_SCUMM_INTERACTION_FLAGS", "    sec", "    rtl",
+        "ScummV5_Generic_Object_HitTest_Far__next:",
+        "    rep #$30", "    .a16", "    .i16",
+        "    iny", "    txa", "    clc", "    adc #$000B", "    tax",
+        "    brl ScummV5_Generic_Object_HitTest_Far__loop",
+        "ScummV5_Generic_Object_HitTest_Far__miss:", "    rep #$30", "    .a16", "    .i16",
+        "    lda #$0000", "    sta.l SAME_SCUMM_INTERACTION_OBJECT", "    sep #$20", "    .a8", "    clc", "    rtl",
+        "ScummV5_Generic_Object_ValidateSelected_Far:",
+        "    rep #$30", "    .a16", "    .i16",
+        "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_SETSTATE_LOCAL_COUNT",
+        "    bne ScummV5_Generic_Object_ValidateSelected_Far__have_records",
+        "    brl ScummV5_Generic_Object_ValidateSelected_Far__miss",
+        "ScummV5_Generic_Object_ValidateSelected_Far__have_records:",
+        "    rep #$20", "    .a16", "    ldx #$0000", "    ldy #$0000",
+        "ScummV5_Generic_Object_ValidateSelected_Far__loop:",
+        "    rep #$30", "    .a16", "    .i16",
+        "    sep #$20", "    .a8",
+        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_COUNT",
+        "    rep #$20", "    .a16",
+        "    and #$00FF", "    sta.l SAME_SCUMM_INTERACTION_LIMIT",
+        "    tya", "    cmp.l SAME_SCUMM_INTERACTION_LIMIT",
+        "    bcs ScummV5_Generic_Object_ValidateSelected_Far__miss",
+        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS,x",
+        "    cmp.l SAME_SCUMM_CONTROLLER_OBJECT",
+        "    beq ScummV5_Generic_Object_ValidateSelected_Far__found",
+        "    iny", "    txa", "    clc", "    adc #$000B", "    tax",
+        "    brl ScummV5_Generic_Object_ValidateSelected_Far__loop",
+        "ScummV5_Generic_Object_ValidateSelected_Far__found:",
+        "    rep #$30", "    .a16", "    .i16",
+        "    lda.l SAME_SCUMM_CONTROLLER_OBJECT",
+        "    sta.l SAME_SCUMM_INTERACTION_OBJECT",
+        "    tya", "    sta.l SAME_SCUMM_INTERACTION_INDEX",
+        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+10,x",
+        "    sep #$20", "    .a8", "    sta.l SAME_SCUMM_INTERACTION_FLAGS",
+        "    sec", "    rtl",
+        "ScummV5_Generic_Object_ValidateSelected_Far__miss:",
+        "    rep #$30", "    .a16", "    .i16",
+        "    lda #$0000", "    sta.l SAME_SCUMM_INTERACTION_OBJECT",
+        "    sep #$20", "    .a8", "    clc", "    rtl",
+        "ScummV5_Generic_Verb_First_Far:",
+        "    rep #$30", "    .a16", "    .i16",
+    ))
+    for entry_index, (_room, object_id, verb) in enumerate(flat_verb_entries):
+        data_lines.extend((
+            f"    lda #${object_id:04X}", "    cmp.l SAME_SCUMM_INTERACTION_OBJECT",
+            f"    bne ScummV5_Generic_Verb_First_Far__skip_{entry_index}",
+            f"    lda #${verb:04X}", "    cmp #$00FF",
+            f"    beq ScummV5_Generic_Verb_First_Far__skip_{entry_index}",
+            "    sta.l SAME_SCUMM_VERB_RESULT", "    sec", "    rtl",
+            f"ScummV5_Generic_Verb_First_Far__skip_{entry_index}:", "    .a16",
+        ))
+    data_lines.extend((
+        "    sep #$20", "    .a8", "    lda #$00", "    sta.l SAME_SCUMM_VERB_RESULT", "    clc", "    rtl",
+        "ScummV5_Generic_Verb_Next_Far:",
+        "    rep #$30", "    .a16", "    .i16", "    lda #$0000", "    sta.l SAME_SCUMM_INTERACTION_VERB_FIRST",
+        "    lda #$0000", "    sta.l SAME_SCUMM_INTERACTION_VERB_AFTER",
+    ))
+    for entry_index, (_room, object_id, verb) in enumerate(flat_verb_entries):
+        data_lines.extend((
+            f"    lda #${object_id:04X}", "    cmp.l SAME_SCUMM_INTERACTION_OBJECT",
+            f"    bne ScummV5_Generic_Verb_Next_Far__skip_{entry_index}",
+            f"    lda #${verb:04X}", "    cmp #$00FF",
+            f"    beq ScummV5_Generic_Verb_Next_Far__skip_{entry_index}",
+            "    sta.l SAME_SCUMM_INTERACTION_LIMIT",
+            "    lda.l SAME_SCUMM_INTERACTION_VERB_AFTER",
+            f"    bne ScummV5_Generic_Verb_Next_Far__return_{entry_index}",
+            "    lda.l SAME_SCUMM_INTERACTION_LIMIT", "    cmp.l SAME_SCUMM_VERB_ID",
+            f"    bne ScummV5_Generic_Verb_Next_Far__skip_{entry_index}",
+            "    lda #$0001", "    sta.l SAME_SCUMM_INTERACTION_VERB_AFTER",
+            # The matching verb only arms the cycle.  Continue scanning so
+            # the next authored entry is returned; falling through to the
+            # return label would return the current verb again forever.
+            f"    bra ScummV5_Generic_Verb_Next_Far__skip_{entry_index}",
+            f"ScummV5_Generic_Verb_Next_Far__return_{entry_index}:",
+            "    lda.l SAME_SCUMM_INTERACTION_LIMIT", "    sta.l SAME_SCUMM_VERB_RESULT", "    sec", "    rtl",
+            f"ScummV5_Generic_Verb_Next_Far__skip_{entry_index}:", "    .a16",
+        ))
+    data_lines.extend((
+        "    sep #$20", "    .a8", "    lda #$00", "    sta.l SAME_SCUMM_VERB_RESULT", "    clc", "    rtl",
+    ))
     data_lines.extend((
         "ScummV5_Verb_Query_Far:",
         "; Inputs object/verb scratch; output u16 OBCD-relative entry in result.",
@@ -885,9 +1339,6 @@ def main() -> int:
         "    sta.l $7E5465",
         "    rep #$20", "    .a16", "    lda.l SAME_SCUMM_VERB_OBJECT", "    sta.l $7E5466",
         "    lda.l SAME_SCUMM_VERB_ID", "    sta.l $7E5468",
-        # Diagnostic only: use the first generated table, which is always
-        # present even for a one-room scenario fixture.  The actual lookup
-        # below dispatches by active record and never relies on this probe.
         f"    lda.l ScummV5_Verb_Record_0_Entries", "    sta.l $7E546A",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -1062,8 +1513,7 @@ def main() -> int:
         "    sta.l SAME_SCUMM_OBJECT_COUNT+1", "    rtl",
     ))
     bank += 1
-    if args.far_programs and bank == 9:
-        bank = 10
+    bank = next_free_bank(bank)
     # The SAME-owned cold helper closure follows this include. Give it a
     # fresh bank rather than relying on implicit overflow from generated code.
     data_lines.extend((f".bank {bank}", ".org $8000"))
@@ -1318,10 +1768,14 @@ def main() -> int:
     args.data_output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("\n".join(lines) + "\n")
     args.data_output.write_text("\n".join(data_lines) + "\n")
-    print(json.dumps({
+    report = {
         "rooms": [item["room"] for item in records], "programs": len(programs),
         "last_bank": bank, "output": str(args.output), "data": str(args.data_output),
-    }))
+    }
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps(report))
     return 0
 
 

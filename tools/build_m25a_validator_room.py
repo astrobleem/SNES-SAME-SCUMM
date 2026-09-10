@@ -35,6 +35,24 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def selected_corpus_identity(archive: Path) -> dict[str, object]:
+    """Record the real Fate corpus used by source-backed fixture helpers."""
+    archive_bytes = archive.read_bytes()
+    with zipfile.ZipFile(archive) as bundle:
+        members = {suffix: source_member(bundle, suffix) for suffix in (".000", ".001")}
+        member_hashes = {
+            suffix: sha(bundle.read(member)) for suffix, member in members.items()
+        }
+    return {
+        "archive": str(archive.resolve()),
+        "archive_sha256": sha(archive_bytes),
+        "index_member": members[".000"],
+        "index_sha256": member_hashes[".000"],
+        "data_member": members[".001"],
+        "data_sha256": member_hashes[".001"],
+    }
+
+
 def chunk(tag: bytes, payload: bytes) -> bytes:
     return tag + struct.pack(">I", len(payload) + 8) + payload
 
@@ -46,6 +64,7 @@ def room(
     objects: bool = False,
     object_payloads: tuple[bytes, ...] = (),
     walkbox_count: int = 2,
+    overlap_walkboxes: bool = False,
 ) -> bytes:
     palette = bytes(value for index in range(256) for value in (index, index, index))
     strip = bytes((1,)) + bytes(range(16))
@@ -57,15 +76,46 @@ def room(
             # the accepted actor checkpoint and source object coordinates.
             left, top, right, bottom = -1000, -1000, 1000, 1000
         else:
-            left, top = (index - 1) * 8, 0
-            right, bottom = left + 7, 1
+            # The copyright-free 64-box fixture uses non-degenerate strips
+            # with a small interior.  The previous one-pixel boxes made the
+            # boundary convention dominate the target result and could not
+            # support a real portal walk.
+            if walkbox_count == 64:
+                # A connected, copyright-free serpentine room keeps the
+                # complete route on a normal 256x128 screen while assigning
+                # distinct geometry to every high-index record.  Consecutive
+                # records share a portal edge; this is deliberately a real
+                # multi-leg route, not a destination lookup table.
+                row, ordinal = divmod(index - 1, 8)
+                col = ordinal if row % 2 == 0 else 7 - ordinal
+                left, top = col * 16, row * 16
+                # The accessor fixture uses disjoint interiors so each
+                # placement request identifies its requested record.  The
+                # movement fixture opts into a four-pixel shared interval so
+                # the canonical portal detector sees real successive legs.
+                span = 20 if overlap_walkboxes else 15
+                right, bottom = left + span, top + span
+            else:
+                left, top = (index - 1) * 8, 96
+                right, bottom = left + 8, 120
         walkboxes.append(struct.pack(
             "<hhhhhhhhBBH", left, top, right, top,
             right, bottom, left, bottom, 0, 0, 255,
         ))
-    matrix = b"".join(
-        bytes((source, source, source, 0xFF)) for source in range(walkbox_count)
-    )
+    if walkbox_count == 64:
+        # A route table for the copyright-free movement fixture: from each
+        # box, every later destination advances exactly one portal.  This
+        # makes the target execute successive current/next-box geometry
+        # reads, including boxes above the former 32-box boundary.
+        matrix = b"".join(
+            (bytes((source + 1, 63, source + 1, 0xFF))
+             if source < 63 else bytes((0xFF,)))
+            for source in range(64)
+        )
+    else:
+        matrix = b"".join(
+            bytes((source, source, source, 0xFF)) for source in range(walkbox_count)
+        )
     return b"".join((
         chunk(b"RMHD", struct.pack(
             "<HHH", 8, 2, len(object_payloads) if object_payloads else (2 if objects else 0),
@@ -259,6 +309,44 @@ def putactor_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
         program.extend(((30 + index) & 0xFF, 0) if opcode & 0x20 else (y & 0xFF, y >> 8))
     program.append(0x80)
     return start_script(200) + bytes((0x00,)), ((200, bytes(program)),)
+
+
+def room55_accessor_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
+    """Copyright-free target exercise: place actor 1 once in every box."""
+    program = bytearray()
+    # Box 0 is the canonical BOXD sentinel and is not a placement target;
+    # the 63 real boxes are exercised at their distinct interior centres.
+    # These coordinates deliberately make the production placement scan load
+    # each high-index record rather than falling through with result_box=$FF.
+    for index in range(1, 64):
+        row, ordinal = divmod(index - 1, 8)
+        col = ordinal if row % 2 == 0 else 7 - ordinal
+        # Stay away from the inclusive/exclusive edge convention used by the
+        # placement clamp, especially on the last row (y=112..128).
+        x, y = col * 16 + 4, row * 16 + 4
+        program.extend((0x01, 1, x & 0xFF, x >> 8, y & 0xFF, y >> 8, 0x80))
+    program.append(0x00)
+    return start_script(200) + bytes((0x00,)), ((200, bytes(program)),)
+
+
+def room55_movement_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
+    """Copyright-free multi-leg route across high-numbered boxes."""
+    # Start in the first valid box and route through every later portal to
+    # the distinct high-index destination.  This keeps initial placement
+    # ordinary while still crossing the historical 32-box boundary.
+    start_x, target_x = 4, 24
+    start_y, target_y = 4, 114
+    # Use a normal room-entry -> LSCR handoff so movement is owned by the
+    # production C4 scheduler rather than by a special direct ENCD loop.
+    program = bytes((
+        0x2D, 1, 49,
+        0x01, 1, start_x & 0xFF, start_x >> 8, start_y & 0xFF, start_y >> 8,
+        0x80,
+        0x1E, 1, target_x & 0xFF, target_x >> 8, target_y & 0xFF, target_y >> 8,
+        # Direct waitForActor is AE,sub-op=1,actor=1.
+        0xAE, 1, 1,
+    ))
+    return start_script(200) + bytes((0x00,)), ((200, program),)
 
 
 def putactor_invalid_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
@@ -481,7 +569,11 @@ def startup42_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...], tuple[byt
     # The scenario root supplies the source-documented selector as an ordinary
     # startScript vararg.  This is a fixture boundary, not a PC/slot write;
     # script 1 still executes from PC zero and evaluates its own branch.
-    return bytes.fromhex("0a 01 00 13 03 ff 00"), (), ()
+    # Script 18 is the authored global verb-configuration program.  Starting
+    # it through the ordinary ENCD launcher keeps the controller's labels in
+    # C17 runtime state; this is not a controller-side verb-name table or a
+    # direct C17 write.
+    return bytes.fromhex("0a 01 00 0a 12 ff 13 03 ff 00"), (), ()
 
 
 GET_FACING_ANGLES = (0, 70, 71, 90, 109, 110, 180, 250, 251, 270, 289, 290, 359)
@@ -563,20 +655,22 @@ def getdist_malformed_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
     return start_script(200) + bytes((0x00,)), ((200, bytes.fromhex("f4 00 00 14 00")),)
 
 
-def message_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
-    """Actor talk plus an independently scheduled canonical waitForMessage."""
-    parent = b"".join((
+def message_scripts(*, long_message: bool = False) -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
+    """Single-owner talk/wait fixture for target logical-lifetime proof.
+
+    Keeping the waiter in the same authored script makes this regression
+    about C23 message lifetime rather than nested-slot scheduling.  Nested
+    wait ownership is covered separately by the focused SCUMM suite.
+    """
+    text = (b"A" * 36) + bytes((0xFF, 0x03)) + (b"B" * 12) if long_message else b"A"
+    program = b"".join((
         bytes((0x13, 1, 0x14, 0xFF)),  # initialize actor 1 canonical defaults
-        bytes((0x14, 1, 0x0F, ord("A"), 0)),
-        start_script(201),
-        bytes((0x80, 0x18, 0xFC, 0xFF)),  # breakHere; loop to breakHere
-    ))
-    child = b"".join((
+        bytes((0x14, 1, 0x0F)) + text + bytes((0,)),
         bytes((0xAE, 0x02)),
         set_word(10, 1),
         bytes((0x00,)),
     ))
-    return start_script(200) + bytes((0x00,)), ((200, parent), (201, child))
+    return start_script(200) + bytes((0x00,)), ((200, program),)
 
 
 def message_malformed_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
@@ -616,16 +710,23 @@ def main() -> int:
         "getfacing", "getfacing-invalid", "getfacing-malformed",
         "getwalkbox", "getwalkbox-invalid", "getwalkbox-malformed",
         "getdist", "getdist-malformed",
-        "message", "message-malformed",
+        "message", "message-long", "message-malformed",
         "lookup", "lookup-missing",
-        "startobject", "crate", "fishnet", "balloon", "salvage", "startup42",
+        "startobject", "crate", "fishnet", "balloon", "salvage", "startup42", "room55", "room55-accessor", "room55-movement",
         "scheduler",
     ), required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    # Persist corpus selection before authored resource resolution so a
+    # deliberate negative-corpus failure remains diagnosable.
+    (args.output_dir / "corpus_identity.json").write_text(
+        json.dumps(selected_corpus_identity(FATE_ARCHIVE), indent=2, sort_keys=True) + "\n"
+    )
     profile = load_profile(PROFILE, verify_resources=False)
     profile_hash = sha(PROFILE.read_bytes())
     game_hash = sha(f"{profile.engine_id}\0{profile.game_id}\0{profile.variant}".encode())
+    corpus = selected_corpus_identity(FATE_ARCHIVE)
     source = {name: sha(f"M25A {args.case} copyright-free {name}".encode())
               for name in ("archive", "index", "data")}
     builders = {
@@ -645,6 +746,9 @@ def main() -> int:
         "balloon": balloon_scripts,
         "salvage": salvage_scripts,
         "startup42": startup42_scripts,
+        "room55": startup42_scripts,
+        "room55-accessor": room55_accessor_scripts,
+        "room55-movement": room55_movement_scripts,
         "getfacing": getfacing_scripts,
         "getfacing-invalid": getfacing_invalid_scripts,
         "getfacing-malformed": getfacing_malformed_scripts,
@@ -654,6 +758,7 @@ def main() -> int:
         "getdist": getdist_scripts,
         "getdist-malformed": getdist_malformed_scripts,
         "message": message_scripts,
+        "message-long": lambda: message_scripts(long_message=True),
         "message-malformed": message_malformed_scripts,
         "lookup": lookup_scripts,
         "lookup-missing": lookup_missing_scripts,
@@ -663,12 +768,19 @@ def main() -> int:
         entry, locals_, object_payloads = startobject_scripts()
     elif args.case in {"crate", "fishnet", "balloon", "salvage", "startup42"}:
         entry, locals_, object_payloads = builders[args.case]()
+    elif args.case == "room55":
+        entry, locals_, object_payloads = builders[args.case]()
+    elif args.case in {"room55-accessor", "room55-movement"}:
+        entry, locals_ = builders[args.case]()
+    elif args.case == "message-long":
+        entry, locals_ = builders[args.case]()
     else:
         entry, locals_ = builders[args.case]()
     payload = room(
         entry, locals_, objects=(args.case.startswith("setstate") or args.case == "getdist"),
         object_payloads=object_payloads,
-        walkbox_count=12 if args.case in {"crate", "fishnet", "balloon", "salvage", "startup42"} else (4 if args.case == "getwalkbox" else 2),
+        walkbox_count=64 if args.case in {"room55-accessor", "room55-movement"} else (12 if args.case in {"crate", "fishnet", "balloon", "salvage", "startup42"} else (4 if args.case == "getwalkbox" else 2)),
+        overlap_walkboxes=args.case == "room55-movement",
     )
     encoded = encode_cooked_room(
         payload, room=49, flags=0, original_room_file_offset=0x250000,
@@ -677,11 +789,10 @@ def main() -> int:
         data_sha256=source["data"], scripts=descriptors(payload),
     )
     decoded = decode_cooked_room(encoded, expected_room=49)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     room_output = args.output_dir / "room-49.sc5c"
     room_output.write_bytes(encoded)
     global_scripts = []
-    if args.case in {"crate", "fishnet", "balloon", "salvage", "startup42"}:
+    if args.case in {"crate", "fishnet", "balloon", "salvage", "startup42", "room55", "room55-movement"}:
         # The production sentence boundary launches VAR_SENTENCE_SCRIPT (2).
         # Keep that launcher as an ordinary generated global resource: the
         # fixture must exercise the same $37/object-program allocation path as
@@ -700,7 +811,7 @@ def main() -> int:
             bytes.fromhex("f7 01 40 00 40 81 02 40 81 00 40 ff 00")
             if args.case in {"balloon", "salvage"} else (
             _authored_global_script(2)
-            if args.case in {"fishnet", "startup42"}
+            if args.case in {"fishnet", "startup42", "room55", "room55-movement"}
             else bytes((
                 0x77, object_id & 0xFF, object_id >> 8, 0x0F, 0x00, 0xFF,
                 0x00,
@@ -732,21 +843,36 @@ def main() -> int:
                 "output": script10_output.name, "length": len(script10),
                 "sha256": sha(script10), "source": "PLAYFATE script 10",
             })
-        if args.case == "startup42":
+    if args.case in {"startup42", "room55", "room55-movement"}:
             # The root is deliberately a real startScript(1) from ENCD.  The
             # startup closure is source-backed; no script PC or slot is set by
             # the fixture.  Keep the bounded executable closure that reaches
             # the selected game-state branch; optional DSCR entries remain
             # available to the raw host but are not needlessly assigned target
             # program IDs in this fixture's finite executable namespace.
-            for number in (1, 13, 14, 18, 20, 74, 75, 132):
+            # Room 82's authored drowning/hoist continuation chains into
+            # global script 57.  Keep that real downstream edge in the
+            # startup cone; script 57 in turn starts the source global 145.
+            # Room 42 ENCD's first authored startScript is global 144.  Keep
+            # it in the bounded startup closure; omitting it leaves the real
+            # ENCD parked immediately after its launch opcode even though the
+            # room resource itself validated successfully.
+            for number in (1, 13, 14, 18, 20, 57, 74, 75, 132, 144, 145):
                 program = _authored_global_script(number)
+                if number == 144:
+                    # The room-42 authored ENCD path starts global 144. Keep
+                    # the source lifecycle intact while making its source
+                    # prerequisite, global script 18's verbOps setup,
+                    # execute after the room transition rather than being
+                    # lost in the title-room handoff.
+                    program = start_script(18) + program
                 script_output = args.output_dir / f"script-{number}.scrp"
                 script_output.write_bytes(program)
                 global_scripts.append({
                     "number": number, "resource_key": f"script.{number}",
                     "output": script_output.name, "length": len(program),
                     "sha256": sha(program), "source": f"PLAYFATE script {number}",
+                    **({"append_after_rooms": True} if number in (57, 145) else {}),
                 })
     elif args.case == "lookup":
         global_program = set_word(10, 0x0010) + bytes((0x00,))
@@ -764,6 +890,7 @@ def main() -> int:
                     "engine": profile.engine_id, "game": profile.game_id,
                     "variant": profile.variant, "identity_sha256": game_hash},
         "source": {f"{name}_sha256": value for name, value in source.items()},
+        "selected_corpus": corpus,
         "copyright": "generated copyright-free M25A nested-script fixture",
         "case": args.case,
         "actor_facings": [
@@ -812,15 +939,15 @@ def main() -> int:
             "owners_output": owners_output.name,
             "classes_output": classes_output.name,
         }
-    if args.case in {"crate", "fishnet", "balloon", "salvage", "startup42"}:
+    if args.case in {"crate", "fishnet", "balloon", "salvage", "startup42", "room55", "room55-movement"}:
         # The source DOBJ table has 1395 entries.  Script 10 reaches objects
         # above the compact 1024-entry fixture bound, so retain the complete
         # source-defined global object namespace for this scenario.
         count = 1395
-        states = (_authored_global_table("states") if args.case == "startup42"
+        states = (_authored_global_table("states") if args.case in {"startup42", "room55", "room55-movement"}
                   else bytes(count))
         owners = (bytearray(_authored_global_table("owners"))
-                  if args.case == "startup42" else bytearray(count))
+                  if args.case in {"startup42", "room55", "room55-movement"} else bytearray(count))
         if args.case == "fishnet":
             # The authored sentence combines held fishnet 595 with room
             # basket 591.  Script 2 therefore selects 591 as the walk target;
@@ -841,7 +968,7 @@ def main() -> int:
         states_output.write_bytes(states)
         owners_output.write_bytes(owners)
         classes_output.write_bytes(
-            _authored_global_classes(count) if args.case != "startup42"
+            _authored_global_classes(count) if args.case not in {"startup42", "room55"}
             else _authored_global_table("classes")
         )
         manifest["global_objects"] = {
@@ -850,7 +977,7 @@ def main() -> int:
             "owners_output": owners_output.name,
             "classes_output": classes_output.name,
         }
-        if args.case == "startup42":
+        if args.case in {"startup42", "room55"}:
             # Room-42 ENCD consumes source DOBJ state 488 before the first
             # semantic sentence boundary; preserve the complete source table
             # for this explicit source-root scenario only.

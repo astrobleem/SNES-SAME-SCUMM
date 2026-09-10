@@ -13,6 +13,7 @@
 .include "generated/video_backend_constants.inc.pasm"
 .include "generated/video_overlay_constants.inc.pasm"
 .include "kernel/hardware.pasm"
+
 .include "kernel/memory.pasm"
 .if SAME_BUILD_M24RA
 .include "generated/m24ra_tad_layout.inc.pasm"
@@ -331,6 +332,9 @@ Same_Tad_BlankSong:
 .if SAME_BUILD_M24RB
 .include "engines/scumm_v5_m24rb_far.pasm"
 .endif
+.if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+.include "engines/scumm_v5_controller_far.pasm"
+.endif
 ; With M24R-B this follows its bank-9 closure; otherwise it follows generated
 ; room data in that data bank. Either placement keeps the cold handler out of
 ; bank 0 without duplicating its source include.
@@ -350,6 +354,10 @@ ScummV5_M24RB_FarCodeEnd:
 .endif
 .if SAME_BUILD_SCUMM_ROOM_VISUAL
 .include "generated/scumm_v5_room_visuals.inc.pasm"
+.if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+.include "generated/scumm_v5_actor_sprite.inc.pasm"
+.include "generated/scumm_v5_object_sprite.inc.pasm"
+.endif
 .include "services/video_surface.pasm"
 .include "engines/scumm_v5_visual.pasm"
 .endif

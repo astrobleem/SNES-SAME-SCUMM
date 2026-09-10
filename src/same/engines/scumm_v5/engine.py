@@ -708,6 +708,11 @@ class ScummV5Engine(Engine):
             self._handlers[opcode] = self._op_get_actor_room
         for opcode in (0x06, 0x86):
             self._handlers[opcode] = self._op_get_actor_elevation
+        # v5 getActorScale uses the flagged actor-byte operand.  Both opcode
+        # family members share the same semantics; the high bit is an operand
+        # mode flag, not part of the opcode identity.
+        for opcode in (0x3B, 0xBB):
+            self._handlers[opcode] = self._op_get_actor_scale
         for opcode in (0x0F, 0x8F):
             self._handlers[opcode] = self._op_get_object_state
         self._handlers[0xC3] = self._op_get_actor_x
@@ -718,8 +723,9 @@ class ScummV5Engine(Engine):
             self._handlers[opcode] = self._op_walk_actor_to_object
         for opcode in (0x56, 0xD6):
             self._handlers[opcode] = self._op_get_actor_moving
-        for opcode in (0x3B, 0xBB):
-            self._handlers[opcode] = self._op_wait_for_actor
+        # $3B/$BB are getActorScale (above); waitForActor is the distinct
+        # v5 $AE family handled below.  Keeping these families separate is
+        # essential because both opcodes occur in room-local movement loops.
         for opcode in (0x2D, 0x6D, 0xAD, 0xED):
             self._handlers[opcode] = self._op_put_actor_in_room
         for opcode in (0x01, 0x21, 0x41, 0x61, 0x81, 0xA1, 0xC1, 0xE1):
@@ -3397,6 +3403,15 @@ class ScummV5Engine(Engine):
         actor_id = self._var_or_direct_byte(slot, 0x80)
         elevation = self._actor(actor_id).elevation if actor_id < _MAX_ACTORS else 0
         self._write_var(slot, result, elevation)
+        return False
+
+    def _op_get_actor_scale(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Return the actor's current horizontal v5 scale percentage."""
+        del context
+        result = self._result_var(slot)
+        actor_id = self._var_or_direct_byte(slot, 0x80)
+        scale = self._actor(actor_id).scale[0] if actor_id < _MAX_ACTORS else 0
+        self._write_var(slot, result, scale)
         return False
 
     def _op_get_actor_x(self, slot: ScriptSlot, context: EngineContext) -> bool:

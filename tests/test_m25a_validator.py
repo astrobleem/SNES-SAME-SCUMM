@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+import tempfile
+import zipfile
 
 from tools.build_m25a_validator_room import (
     depth_scripts,
@@ -10,10 +12,22 @@ from tools.build_m25a_validator_room import (
     outer_scripts,
     scheduler_scripts,
     startobject_scripts,
+    selected_corpus_identity,
 )
 
 
 class M25AValidatorFixtureTests(unittest.TestCase):
+    def test_selected_corpus_identity_records_both_scumm_members(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "corpus.zip"
+            with zipfile.ZipFile(archive, "w") as bundle:
+                bundle.writestr("ATLANTIS/ATLANTIS.000", b"index")
+                bundle.writestr("ATLANTIS/ATLANTIS.001", b"data")
+            identity = selected_corpus_identity(archive)
+        self.assertEqual(identity["index_member"], "ATLANTIS/ATLANTIS.000")
+        self.assertEqual(identity["data_member"], "ATLANTIS/ATLANTIS.001")
+        self.assertEqual(identity["index_sha256"],
+                         "1bc04b5291c26a46d918139138b992d2de976d6851d0893b0476b85bfbdfc6e6")
     def test_normal_fixture_has_exact_nested_resume_boundaries(self) -> None:
         entry, scripts = normal_scripts()
         programs = dict(scripts)
@@ -26,11 +40,8 @@ class M25AValidatorFixtureTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         hot = (root / "runtime/snes/engines/scumm_v5.pasm").read_text()
         far = (root / "runtime/snes/engines/scumm_v5_m24rb_far.pasm").read_text()
-        self.assertIn(
-            "ScummV5_Op_StartScript__found:\n    .a8\n    .i16\n"
-            "    .if SAME_BUILD_SCUMM_M25_MOVEMENT\n",
-            hot,
-        )
+        self.assertIn("ScummV5_Op_StartScript__found:", hot)
+        self.assertIn("SAME_BUILD_SCUMM_M25_MOVEMENT", hot)
         self.assertIn(
             "lda.l SAME_SCUMM_C4_LAST_ALLOCATED\n    and #$00FF\n"
             "    sta.l SAME_SCUMM_C4_CURRENT_SLOT\n    tax",

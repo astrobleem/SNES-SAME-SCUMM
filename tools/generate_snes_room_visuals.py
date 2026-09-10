@@ -29,6 +29,8 @@ def main() -> int:
     parser.add_argument("--binary-dir", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--first-bank", type=lambda x: int(x, 0), default=16)
+    parser.add_argument("--room", type=int, action="append", dest="rooms",
+                        help="emit only this room from the supplied manifest (repeatable)")
     args = parser.parse_args()
     visuals = []
     for manifest_path in args.manifest:
@@ -36,6 +38,8 @@ def main() -> int:
         for record in manifest.get("records", []):
             spec = record.get("visual")
             if spec is None:
+                continue
+            if args.rooms is not None and int(record["room"]) not in args.rooms:
                 continue
             raw = (manifest_path.parent / spec["output"]).read_bytes()
             visual = decode_room_visual(raw, expected_room=int(record["room"]))

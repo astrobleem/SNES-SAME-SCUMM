@@ -361,6 +361,20 @@ ScummV5_SentenceProcess_Far__slot_scan:
 ScummV5_SentenceProcess_Far__slot_found:
     .a8
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; Start a fresh per-launch execution witness.  A cumulative fetch count
+    ; cannot identify the current sentence instance after a second mailbox
+    ; transaction and made a live PC=0 observation ambiguous.
+    lda #$00
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_FETCH_COUNT
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_PHASE
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_FRAME_COUNT
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_ALLOC_FRAME
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_SCENARIO_C4_CALLS
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_ALLOC_C4
     lda.l SAME_SCUMM_SCENARIO_SENTENCE_ALLOCS
     inc
     sta.l SAME_SCUMM_SCENARIO_SENTENCE_ALLOCS
@@ -542,7 +556,7 @@ ScummV5_M25_MaybeQueueSentence_Far:
     ; mailbox.  The authored M25 producer sentence belongs only to the
     ; transition fixture and must not preempt a focused object scenario.
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
-    bra ScummV5_M25_MaybeQueueSentence_Far__done
+    jmp ScummV5_M25_MaybeQueueSentence_Far__done
     .endif
     .if SAME_BUILD_SCUMM_ROOM_VISUAL
     ; Forced-blank visual bootstrap installs room 49 before the first normal
@@ -817,7 +831,11 @@ ScummV5_DrawBox_FarEntry:
     .a8
     lda #$80
     jsr ScummV5_DrawBox_FetchVow
-    bcs ScummV5_DrawBox_FarEntry__error
+    bcc ScummV5_DrawBox_FarEntry__x1_ok
+    brl ScummV5_DrawBox_FarEntry__error
+ScummV5_DrawBox_FarEntry__x1_ok:
+    sep #$20
+    .a8
     lda #$40
     jsr ScummV5_DrawBox_FetchVow
     bcs ScummV5_DrawBox_FarEntry__error
@@ -2028,7 +2046,43 @@ ScummV5_WalkActorTo_FarEntry__y_fetched:
     rep #$20
     .a16
     sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    ; Canonical v5 walkActorTo preserves the actor's ignore-boxes policy.
+    ; Such actors use a direct final leg; routing their request through the
+    ; room BOXM graph can leave an authored waitForActor permanently active
+    ; when the actor begins on a non-routable presentation box.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    rep #$30
+    .a16
+    .i16
+    and #$00FF
+    xba
+    lsr
+    lsr
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_IGNORE_BOXES,x
+    beq ScummV5_WalkActorTo_FarEntry__follow_boxes
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_X
+    lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_Y
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_BOX
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    tax
+    lda #$FF
+    sta.l SAME_SCUMM_PUT_ACTOR_WALKBOX,x
+    bra ScummV5_WalkActorTo_FarEntry__normalized
+ScummV5_WalkActorTo_FarEntry__follow_boxes:
     jsl ScummV5_PutActor_Adjust_Far
+ScummV5_WalkActorTo_FarEntry__normalized:
     sep #$20
     .a8
     lda #$FF                        ; canonical no-final-direction sentinel
@@ -3959,16 +4013,10 @@ ScummV5_PutActor_FarEntry__placed:
     rep #$20
     .a16
     and #$00FF
-    sta.l SAME_SCUMM_PUT_ACTOR_GEOM_OFFSET
-    asl
-    sta.l SAME_SCUMM_PUT_ACTOR_TEMP0
-    asl
-    asl
-    asl
-    clc
-    adc.l SAME_SCUMM_PUT_ACTOR_TEMP0
     tax
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+16,x
+    jsl ScummV5_PutActor_LoadGeometry_Far
+    bcs ScummV5_PutActor_FarEntry__scale_done
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+16
     sta.l SAME_SCUMM_PUT_ACTOR_TEMP1
     lda.l SAME_SCUMM_PUT_ACTOR_ACTOR
     and #$00FF
@@ -4201,6 +4249,19 @@ ScummV5_PutActor_Adjust_Far__box_present:
     beq ScummV5_PutActor_Adjust_Far__visible_box
     jmp ScummV5_PutActor_Adjust_Far__next
 ScummV5_PutActor_Adjust_Far__visible_box:
+    ; Fetch immutable geometry through the active-room accessor.  This keeps
+    ; high-numbered authored boxes identical to low-numbered boxes.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PUT_ACTOR_SCAN_BOX
+    and #$00FF
+    tax
+    jsl ScummV5_PutActor_LoadGeometry_Far
+    bcc ScummV5_PutActor_Adjust_Far__geometry_ok
+    jmp ScummV5_PutActor_Adjust_Far__next
+ScummV5_PutActor_Adjust_Far__geometry_ok:
+    sep #$20
+    .a8
     rep #$20
     .a16
     lda.l SAME_SCUMM_PUT_ACTOR_SCAN_BOX
@@ -4232,21 +4293,21 @@ ScummV5_PutActor_Adjust_Far__visible_box:
     lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
     eor #$8000
     sta.l SAME_SCUMM_PUT_ACTOR_TEMP0
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+2,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+2
     eor #$8000
     cmp.l SAME_SCUMM_PUT_ACTOR_TEMP0
     bcc ScummV5_PutActor_Adjust_Far__not_above
     beq ScummV5_PutActor_Adjust_Far__not_above
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+2,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+2
     sta.l SAME_SCUMM_PUT_ACTOR_POINT_Y
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK
     sta.l SAME_SCUMM_PUT_ACTOR_XMIN
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+4,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+4
     sta.l SAME_SCUMM_PUT_ACTOR_XMAX
     jmp ScummV5_PutActor_Adjust_Far__clamp_x
 ScummV5_PutActor_Adjust_Far__not_above:
     .a16
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+14,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+14
     eor #$8000
     cmp.l SAME_SCUMM_PUT_ACTOR_TEMP0
     bcc ScummV5_PutActor_Adjust_Far__below
@@ -4255,7 +4316,7 @@ ScummV5_PutActor_Adjust_Far__not_above:
     lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
     eor #$8000
     sta.l SAME_SCUMM_PUT_ACTOR_TEMP0
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK
     eor #$8000
     cmp.l SAME_SCUMM_PUT_ACTOR_TEMP0
     bcc ScummV5_PutActor_Adjust_Far__left1_ok
@@ -4263,7 +4324,7 @@ ScummV5_PutActor_Adjust_Far__not_above:
     bra ScummV5_PutActor_Adjust_Far__side
 ScummV5_PutActor_Adjust_Far__left1_ok:
     .a16
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+12,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+12
     eor #$8000
     cmp.l SAME_SCUMM_PUT_ACTOR_TEMP0
     bcc ScummV5_PutActor_Adjust_Far__left2_ok
@@ -4271,12 +4332,12 @@ ScummV5_PutActor_Adjust_Far__left1_ok:
     bra ScummV5_PutActor_Adjust_Far__side
 ScummV5_PutActor_Adjust_Far__left2_ok:
     .a16
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+4,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+4
     eor #$8000
     cmp.l SAME_SCUMM_PUT_ACTOR_TEMP0
     bcc ScummV5_PutActor_Adjust_Far__side
     beq ScummV5_PutActor_Adjust_Far__side
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+8,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+8
     eor #$8000
     cmp.l SAME_SCUMM_PUT_ACTOR_TEMP0
     bcc ScummV5_PutActor_Adjust_Far__side
@@ -4289,27 +4350,27 @@ ScummV5_PutActor_Adjust_Far__left2_ok:
     sta.l SAME_SCUMM_PUT_ACTOR_POINT_Y
     jmp ScummV5_PutActor_Adjust_Far__distance
 ScummV5_PutActor_Adjust_Far__below:
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+14,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+14
     sta.l SAME_SCUMM_PUT_ACTOR_POINT_Y
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+12,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+12
     sta.l SAME_SCUMM_PUT_ACTOR_XMIN
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+8,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+8
     sta.l SAME_SCUMM_PUT_ACTOR_XMAX
     jmp ScummV5_PutActor_Adjust_Far__clamp_x
 ScummV5_PutActor_Adjust_Far__side:
     lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
     sta.l SAME_SCUMM_PUT_ACTOR_POINT_Y
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK
     sta.l SAME_SCUMM_PUT_ACTOR_ULX
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+12,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+12
     sta.l SAME_SCUMM_PUT_ACTOR_LLX
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+4,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+4
     sta.l SAME_SCUMM_PUT_ACTOR_URX
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+8,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+8
     sta.l SAME_SCUMM_PUT_ACTOR_LRX
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+2,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+2
     sta.l SAME_SCUMM_PUT_ACTOR_TOP
-    lda.l SAME_SCUMM_PUT_ACTOR_BOXES+14,x
+    lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+14
     sta.l SAME_SCUMM_PUT_ACTOR_BOTTOM
 ScummV5_PutActor_Adjust_Far__binary:
     lda.l SAME_SCUMM_PUT_ACTOR_ULX
@@ -4551,6 +4612,13 @@ ScummV5_Talk_Reset_Far__clear:
     inx
     cpx #SAME_SCUMM_TALK_STATE_SIZE
     bcc ScummV5_Talk_Reset_Far__clear
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_TALK_CONTROL_COUNT
+    sta.l SAME_SCUMM_TALK_CONTROL_FIRST_POS
+    sta.l SAME_SCUMM_TALK_CONTROL_FIRST_POS+1
+    sta.l SAME_SCUMM_TALK_CONTROL_LAST
     lda #$FF
     sta.l SAME_SCUMM_TALK_ACTOR
     lda #$04
@@ -4573,6 +4641,36 @@ ScummV5_Talk_StoreTextByte_Far:
     sep #$20
     .a8
     sta.l SAME_SCUMM_C23_SELECTOR
+    lda.l SAME_SCUMM_TALK_CONTROL_LAST
+    bit #$80
+    beq ScummV5_Talk_StoreTextByte_Far__not_pending
+    lda.l SAME_SCUMM_C23_SELECTOR
+    sta.l SAME_SCUMM_TALK_CONTROL_LAST
+    cmp #$03
+    bne ScummV5_Talk_StoreTextByte_Far__not_pending
+    lda.l SAME_SCUMM_TALK_CONTROL_COUNT
+    inc
+    sta.l SAME_SCUMM_TALK_CONTROL_COUNT
+    cmp #$01
+    bne ScummV5_Talk_StoreTextByte_Far__not_pending
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C23_RAW_INDEX
+    dec
+    sta.l SAME_SCUMM_TALK_CONTROL_FIRST_POS
+    sep #$20
+    .a8
+ScummV5_Talk_StoreTextByte_Far__not_pending:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C23_SELECTOR
+    cmp #$FF
+    bne ScummV5_Talk_StoreTextByte_Far__pending_done
+    lda #$80
+    sta.l SAME_SCUMM_TALK_CONTROL_LAST
+ScummV5_Talk_StoreTextByte_Far__pending_done:
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_C23_RAW_INDEX
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     ; Headless scenario validation still consumes the complete source string,
@@ -4580,14 +4678,15 @@ ScummV5_Talk_StoreTextByte_Far:
     ; the decoded length/PC contract while discarding bytes beyond storage.
     cmp #$20
     bcc ScummV5_Talk_StoreTextByte_Far__space
-    cmp #$FF
-    beq ScummV5_Talk_StoreTextByte_Far__full
+    ; Do not classify FF as overflow: it is an encoded control byte and the
+    ; caller will fetch/interpret its selector next.  Advance the logical
+    ; cursor explicitly; incrementing A here used to leave RAW_INDEX at 32
+    ; and made the next continuation look malformed.
+    lda.l SAME_SCUMM_C23_RAW_INDEX
     inc
+    sta.l SAME_SCUMM_C23_RAW_INDEX
     lda.l SAME_SCUMM_C23_SELECTOR
     clc
-    rtl
-ScummV5_Talk_StoreTextByte_Far__full:
-    sec
     rtl
     .else
     cmp #SAME_SCUMM_TALK_MAX_RAW
@@ -4619,10 +4718,19 @@ ScummV5_Talk_StoreTextByte_Far__not_legacy:
 ScummV5_Talk_Begin_Far:
     sep #$20
     .a8
+    lda #$00
+    sta.l SAME_SCUMM_TALK_KEEP_TEXT
     lda.l SAME_SCUMM_C23_RAW_INDEX
     bne ScummV5_Talk_Begin_Far__length_nonzero
     jmp ScummV5_Talk_Begin_Far__error
 ScummV5_Talk_Begin_Far__length_nonzero:
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; C23 has already consumed the complete encoded stream.  The compact
+    ; presentation buffer is intentionally limited to 32 bytes, but headless
+    ; logical ownership is not: KEEP_TEXT below carries the decoded lifetime.
+    ; The byte cursor is the only remaining bound for this fixture ABI.
+    bra ScummV5_Talk_Begin_Far__length_valid
+    .endif
     .a8
     cmp #(SAME_SCUMM_TALK_MAX_RAW + 1)
     bcc ScummV5_Talk_Begin_Far__length_valid
@@ -4638,13 +4746,42 @@ ScummV5_Talk_Begin_Far__length_valid:
     sep #$20
     .a8
     lda.l SAME_SCUMM_TALK_RAW,x
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; A headless fixture may decode a source string larger than the compact
+    ; presentation buffer.  C23 has consumed the complete source stream, so
+    ; retain its logical length and use the encoded length for the bounded
+    ; lifetime calculation instead of validating discarded presentation bytes.
+    lda.l SAME_SCUMM_TALK_RAW_LENGTH
+    cmp #SAME_SCUMM_TALK_MAX_RAW
+    bcc ScummV5_Talk_Begin_Far__stored_terminator
+    lda #$01
+    sta.l SAME_SCUMM_TALK_KEEP_TEXT
+    bra ScummV5_Talk_Begin_Far__actor_check
+ScummV5_Talk_Begin_Far__stored_terminator:
+    lda.l SAME_SCUMM_TALK_RAW_LENGTH
+    dec
+    rep #$30
+    .a16
+    .i16
+    and #$00FF
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_TALK_RAW,x
     beq ScummV5_Talk_Begin_Far__terminated
     jmp ScummV5_Talk_Begin_Far__error
 ScummV5_Talk_Begin_Far__terminated:
+    .endif
+ScummV5_Talk_Begin_Far__actor_check:
     .a8
     lda.l SAME_SCUMM_C23_ACTOR
     cmp #$20
     bcc ScummV5_Talk_Begin_Far__actor_valid
+    ; Canonical v5 print uses actor $FF for system/status-line speech.  It
+    ; has no actor presentation owner, but it remains a real logical message
+    ; and must follow the same lifetime/wait contract as actor speech.
+    cmp #$FF
+    beq ScummV5_Talk_Begin_Far__actor_valid
     jmp ScummV5_Talk_Begin_Far__error
 ScummV5_Talk_Begin_Far__actor_valid:
     sta.l SAME_SCUMM_TALK_ACTOR
@@ -4681,6 +4818,96 @@ ScummV5_Talk_Begin_Far__pc_prefix_ready:
     sec
     sbc.l SAME_SCUMM_PRODUCT
     sta.l SAME_SCUMM_TALK_PC_BEFORE
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_TALK_KEEP_TEXT
+    bne ScummV5_Talk_Begin_Far__keep_text
+    brl ScummV5_Talk_Begin_Far__scan_setup
+ScummV5_Talk_Begin_Far__keep_text:
+    ; No presentation buffer is exposed in this mode.  The full C23 decode
+    ; nevertheless supplies a deterministic logical duration and a complete
+    ; message ownership interval for waitForMessage.
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_TALK_RAW_LENGTH
+    and #$00FF
+    dec
+    sta.l SAME_SCUMM_LOOP
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_TALK_CURSOR
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    ; The controller fixture has a real BG2 presentation owner.  Keep the
+    ; complete decoded length for logical ownership, but raster only the
+    ; printable glyphs which fit in the bounded encoded-byte buffer.  The
+    ; compact buffer may contain FF controls before those glyphs; its display
+    ; segment length is therefore a glyph count, not RAW_LENGTH.  Headless
+    ; fixtures retain the full logical-only path below.
+    rep #$30
+    .a16
+    .i16
+    lda #$0000
+    sta.l SAME_SCUMM_LOOP
+    ldx #$0000
+ScummV5_Talk_Begin_Far__visible_prefix_scan:
+    rep #$20
+    .a16
+    .i16
+    cpx #$0020
+    bcs ScummV5_Talk_Begin_Far__visible_prefix_done
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_TALK_RAW,x
+    beq ScummV5_Talk_Begin_Far__visible_prefix_done
+    cmp #$FF
+    bne ScummV5_Talk_Begin_Far__visible_glyph
+    inx
+    cpx #$0020
+    bcs ScummV5_Talk_Begin_Far__visible_prefix_done
+    lda.l SAME_SCUMM_TALK_RAW,x
+    cmp #$01
+    beq ScummV5_Talk_Begin_Far__visible_control_no_args
+    cmp #$02
+    beq ScummV5_Talk_Begin_Far__visible_control_no_args
+    cmp #$03
+    beq ScummV5_Talk_Begin_Far__visible_control_no_args
+    cmp #$08
+    beq ScummV5_Talk_Begin_Far__visible_control_no_args
+    inx
+    inx
+    inx
+    bra ScummV5_Talk_Begin_Far__visible_prefix_scan
+ScummV5_Talk_Begin_Far__visible_control_no_args:
+    inx
+    bra ScummV5_Talk_Begin_Far__visible_prefix_scan
+ScummV5_Talk_Begin_Far__visible_glyph:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_LOOP
+    inc
+    sta.l SAME_SCUMM_LOOP
+    sep #$20
+    .a8
+    inx
+    bra ScummV5_Talk_Begin_Far__visible_prefix_scan
+ScummV5_Talk_Begin_Far__visible_prefix_done:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_LOOP
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    sta.l SAME_SCUMM_TALK_SEGMENT_GLYPHS
+    lda #$01
+    sta.l SAME_SCUMM_TALK_HAVE_MSG
+    bra ScummV5_Talk_Begin_Far__scan_done_common
+    .else
+    lda #$01
+    sta.l SAME_SCUMM_TALK_HAVE_MSG
+    bra ScummV5_Talk_Begin_Far__scan_done_common
+    .endif
+    .endif
+ScummV5_Talk_Begin_Far__scan_setup:
     ; Parse exactly one display pass. FF 03 is the canonical embedded wait:
     ; retain the complete message and leave CURSOR after the control. Other
     ; controls remain fail-closed until their own semantic milestone.
@@ -4813,6 +5040,19 @@ ScummV5_Talk_Begin_Far__delay_done:
     .a8
     lda #$01
     sta.l SAME_SCUMM_TALK_ACTIVE
+    ; Publish VAR_HAVE_MSG at the same semantic boundary as message ownership.
+    ; The frame-begin mirror remains the canonical steady-state publisher, but
+    ; a waiter scheduled in the same frame must not observe an uninitialized
+    ; zero between Talk_Begin and that mirror.
+    .if SAME_BUILD_SCUMM_M23B
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_TALK_HAVE_MSG
+    and #$00FF
+    sta.l SAME_SCUMM_VARIABLES+(3 * 2)
+    sep #$20
+    .a8
+    .endif
     lda #$04
     sta.l SAME_SCUMM_TALK_ACTOR_FRAME
     lda.l SAME_SCUMM_C23_ACTOR
@@ -4833,12 +5073,12 @@ ScummV5_Talk_Begin_Far__delay_done:
     .a8
     lda #$01
     jsr ScummV5_Talk_RecordEvent_Far
-    .if SAME_VIDEO_OVERLAY_BG2
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     rep #$20
     .a16
     lda.l SAME_FRAME_COUNTER
     sta.l SAME_OVERLAY_TRACE_S0
-    jsl Same_VideoOverlay_ShowTalkSegment_Far
+    jsl Same_VideoText_ShowSegment_Far
     .else
     lda.l SAME_SCUMM_TALK_VISUAL_STATUS
     inc
@@ -4848,6 +5088,24 @@ ScummV5_Talk_Begin_Far__delay_done:
     rtl
 ScummV5_Talk_Begin_Far__error:
     .a8
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$D8
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
+    lda.l SAME_SCUMM_C23_ACTOR
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_INDEX2+5
+    lda.l SAME_SCUMM_C23_RAW_INDEX
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_INDEX2+6
+    lda.l SAME_SCUMM_C23_LAST_SLOT
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_INDEX2+7
+    lda.l SAME_SCUMM_LAST_OPCODE
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_INDEX2+8
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_INDEX2+2
+    sep #$20
+    .a8
+    .endif
     lda #SCUMM_ERR_STRING
     sta.l SAME_SCUMM_ERROR
     lda #SCUMM_VM_ERROR
@@ -4860,6 +5118,22 @@ ScummV5_Talk_FrameBegin_Far:
     .a8
     lda.l SAME_SCUMM_TALK_ACTIVE
     beq ScummV5_Talk_FrameBegin_Far__publish
+    ; A talk segment may be decoded while the prior controller/HUD layer is
+    ; still in flight.  Logical ownership is already active in that case;
+    ; retry only the presentation publish at the normal frame boundary so
+    ; visible dialogue cannot remain stuck on the old HUD prompt.
+    lda.l SAME_SCUMM_TALK_VISUAL_STATUS
+    beq ScummV5_Talk_FrameBegin_Far__delay
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
+    rep #$20
+    .a16
+    lda.l SAME_FRAME_COUNTER
+    sta.l SAME_OVERLAY_TRACE_S0
+    sep #$20
+    .a8
+    jsl Same_VideoText_ShowSegment_Far
+    .endif
+ScummV5_Talk_FrameBegin_Far__delay:
     rep #$20
     .a16
     lda.l SAME_SCUMM_TALK_DELAY
@@ -4945,16 +5219,24 @@ ScummV5_Talk_Stop_Far:
     .a8
     lda.l SAME_SCUMM_TALK_ACTIVE
     beq ScummV5_Talk_Stop_Far__done
-    .if SAME_VIDEO_OVERLAY_BG2
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     rep #$20
     .a16
     lda.l SAME_FRAME_COUNTER
     sta.l SAME_OVERLAY_TRACE_S0
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    ; The controller fixture owns a real BG2 presentation layer.  KEEP_TEXT
+    ; still selects the bounded-prefix logical path, but must not retain stale
+    ; dialogue pixels after the authored message completes.
+    bra ScummV5_Talk_Stop_Far__hide_visual
+    .else
     lda.l SAME_SCUMM_TALK_KEEP_TEXT
     bne ScummV5_Talk_Stop_Far__retain_visual
-    jsl Same_VideoOverlay_Hide_Far
+    .endif
+ScummV5_Talk_Stop_Far__hide_visual:
+    jsl Same_VideoText_Hide_Far
 ScummV5_Talk_Stop_Far__retain_visual:
     .a8
     .else
@@ -4999,6 +5281,12 @@ ScummV5_Talk_Stop_Far__done:
 ; Resume a retained v5 message after FF 03. No blank semantic loop is
 ; introduced: the next segment becomes active in the same frame-end phase.
 ScummV5_Talk_Continue_Far:
+    ; This helper is called from the frame epilogue, whose caller owns the
+    ; processor-width ABI.  The scanner needs a 16-bit X index, but leaving
+    ; that width active corrupts the following frame/scheduler tables when the
+    ; caller entered with an 8-bit index.  Preserve the complete status word
+    ; across the logical continuation, just as a normal leaf helper does.
+    php
     rep #$30
     .a16
     .i16
@@ -5017,8 +5305,41 @@ ScummV5_Talk_Continue_Far__scan:
     lda.l SAME_SCUMM_TALK_RAW,x
     beq ScummV5_Talk_Continue_Far__end
     cmp #$FF
-    bne ScummV5_Talk_Continue_Far__printable
-    jmp ScummV5_Talk_Continue_Far__error
+    beq ScummV5_Talk_Continue_Far__control
+    bra ScummV5_Talk_Continue_Far__printable
+ScummV5_Talk_Continue_Far__control:
+    ; Continue uses the same encoded-text grammar as Talk_Begin.  A
+    ; subsequent FF 03 is a logical segment boundary, not malformed text;
+    ; controls without arguments are consumed in place and the remaining
+    ; control forms carry their canonical two-byte payload.
+    sep #$20
+    .a8
+    .i16
+    inx
+    lda.l SAME_SCUMM_TALK_RAW,x
+    cmp #$03
+    beq ScummV5_Talk_Continue_Far__wait_control
+    cmp #$01
+    beq ScummV5_Talk_Continue_Far__control_no_args
+    cmp #$02
+    beq ScummV5_Talk_Continue_Far__control_no_args
+    cmp #$08
+    beq ScummV5_Talk_Continue_Far__control_no_args
+    inx
+    inx
+    bra ScummV5_Talk_Continue_Far__scan
+ScummV5_Talk_Continue_Far__control_no_args:
+    inx
+    bra ScummV5_Talk_Continue_Far__scan
+ScummV5_Talk_Continue_Far__wait_control:
+    sep #$20
+    .a8
+    .i16
+    inx
+    txa
+    sta.l SAME_SCUMM_TALK_CURSOR
+    lda #$FF
+    bra ScummV5_Talk_Continue_Far__publish
 ScummV5_Talk_Continue_Far__printable:
     inx
     rep #$20
@@ -5035,6 +5356,7 @@ ScummV5_Talk_Continue_Far__end:
     txa
     sta.l SAME_SCUMM_TALK_CURSOR
     lda #$01
+ScummV5_Talk_Continue_Far__publish:
     sta.l SAME_SCUMM_TALK_HAVE_MSG
     lda.l SAME_SCUMM_TALK_SEGMENT_INDEX
     inc
@@ -5072,12 +5394,12 @@ ScummV5_Talk_Continue_Far__delay:
 ScummV5_Talk_Continue_Far__delay_done:
     lda.l SAME_SCUMM_OPERAND
     sta.l SAME_SCUMM_TALK_DELAY
-    .if SAME_VIDEO_OVERLAY_BG2
+    .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     rep #$20
     .a16
     lda.l SAME_FRAME_COUNTER
     sta.l SAME_OVERLAY_TRACE_S0
-    jsl Same_VideoOverlay_ShowTalkSegment_Far
+    jsl Same_VideoText_ShowSegment_Far
     .else
     sep #$20
     .a8
@@ -5087,6 +5409,7 @@ ScummV5_Talk_Continue_Far__delay_done:
     .endif
     sep #$20
     .a8
+    plp
     rts
 ScummV5_Talk_Continue_Far__error:
     .a8
@@ -5094,6 +5417,7 @@ ScummV5_Talk_Continue_Far__error:
     sta.l SAME_SCUMM_ERROR
     lda #SCUMM_VM_ERROR
     sta.l SAME_SCUMM_STATUS
+    plp
     rts
 
 ; A8 kind: 1 start, 2 stop. Each record is kind,actor,chore,u16 generation,
@@ -5169,6 +5493,9 @@ ScummV5_Talk_Wait_FarEntry:
     lda.l SAME_SCUMM_PC
     dec
     sta.l SAME_SCUMM_TALK_WAIT_PC
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_LOCAL0
+    .endif
     jsl ScummV5_Matrix_FarCall_FetchByte
     bcc ScummV5_Talk_Wait_FarEntry__subop
     brl ScummV5_Talk_Wait_FarEntry__error16
@@ -5178,22 +5505,49 @@ ScummV5_Talk_Wait_FarEntry__subop:
     sta.l SAME_SCUMM_C10_SUBOP
     and #$1F
     cmp #$01
-    beq ScummV5_Talk_Wait_FarEntry__actor
+    bne ScummV5_Talk_Wait_FarEntry__subop_not_actor
+    jmp ScummV5_Talk_Wait_FarEntry__actor
+ScummV5_Talk_Wait_FarEntry__subop_not_actor:
+    sep #$20
+    .a8
     cmp #$02
     beq ScummV5_Talk_Wait_FarEntry__message
     brl ScummV5_Talk_Wait_FarEntry__error
 ScummV5_Talk_Wait_FarEntry__message:
-    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
-    ; Scenario fixtures have no interactive talk owner.  Inline text has
-    ; already been decoded by the preceding print, so the authored message
-    ; wait is complete at this headless semantic boundary.
-    bra ScummV5_Talk_Wait_FarEntry__resume16
-    .endif
+    sep #$20
+    .a8
     .if SAME_BUILD_SCUMM_M23B
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$61
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE
+    .endif
+    ; VAR_HAVE_MSG is a published compatibility mirror, but the logical
+    ; owner is C23's talk service.  A waiter scheduled in the same frame as
+    ; Talk_Begin can observe the mirror before its frame-boundary publication;
+    ; consult the authoritative active state so headless mode preserves the
+    ; real message lifetime instead of running through to its continuation.
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    bne ScummV5_Talk_Wait_FarEntry__trace_active
+    lda #$63
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE
+    bra ScummV5_Talk_Wait_FarEntry__trace_active_done
+ScummV5_Talk_Wait_FarEntry__trace_active:
+    sep #$20
+    .a8
+    lda #$62
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE
+ScummV5_Talk_Wait_FarEntry__trace_active_done:
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    .endif
+    bne ScummV5_Talk_Wait_FarEntry__block_active
     rep #$20
     .a16
     lda.l SAME_SCUMM_VARIABLES+(3 * 2)
     beq ScummV5_Talk_Wait_FarEntry__resume16
+ScummV5_Talk_Wait_FarEntry__block_active:
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_TALK_WAIT_PC
     sta.l SAME_SCUMM_PC
     sep #$20
@@ -5285,19 +5639,39 @@ ScummV5_WaitActor_Call_Far__subop_ready:
     sta.l SAME_SCUMM_C10_SUBOP
     and #$1F
     cmp #$01
-    beq ScummV5_WaitActor_Call_Far__actor
+    bne ScummV5_WaitActor_Call_Far__subop_not_actor
+    jmp ScummV5_WaitActor_Call_Far__actor
+ScummV5_WaitActor_Call_Far__subop_not_actor:
+    sep #$20
+    .a8
     cmp #$02
     beq ScummV5_WaitActor_Call_Far__message
     jmp ScummV5_WaitActor_Call_Far__error
 ScummV5_WaitActor_Call_Far__message:
     .a8
     .if SAME_BUILD_SCUMM_M23B
+    ; C23 talk state is authoritative at the same-frame boundary; the
+    ; VAR_HAVE_MSG mirror may not yet have been published when this slot is
+    ; first revisited.
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; Observational breadcrumb: record the exact logical owner value seen by
+    ; the waiter, without changing the production decision or allocating VM
+    ; storage.  This distinguishes a true active-message block from a normal
+    ; release at the opcode boundary.
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_COUNT
+    .endif
+    bne ScummV5_WaitActor_Call_Far__message_block_active
     rep #$20
     .a16
     lda.l SAME_SCUMM_VARIABLES+(3 * 2)
     beq ScummV5_WaitActor_Call_Far__message_release
-    lda.l SAME_SCUMM_TALK_WAIT_PC
-    sta.l SAME_SCUMM_PC
+ScummV5_WaitActor_Call_Far__message_block_active:
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; The common dispatcher performs the single canonical rewind below.
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_WORD0
+    .endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_TALK_WAIT_BLOCK_COUNT
@@ -5305,9 +5679,14 @@ ScummV5_WaitActor_Call_Far__message:
     sta.l SAME_SCUMM_TALK_WAIT_BLOCK_COUNT
     lda #SCUMM_VM_YIELDED
     sta.l SAME_SCUMM_STATUS
-    clc
-    rtl
+    jml ScummV5_Engine_Frame__complete_success
 ScummV5_WaitActor_Call_Far__message_release:
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    sep #$20
+    .a8
+    lda #$42
+    sta.l SAME_SCUMM_SCENARIO_C25_OBS_PENDING
+    .endif
     sep #$20
     .a8
     .endif

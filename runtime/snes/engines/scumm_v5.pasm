@@ -1,7 +1,7 @@
 ; Independent SCUMM v5 semantic nucleus.  The ROM-resident conformance script
 ; is generated from copyright-free fixture bytes and checked against upstream
 ; ScummVM opcode/operand semantics.  This code contains no game, cursor, room,
-; actor, Monkey, PPU, DMA, audio, or storage policy.
+; actor, presentation, audio, or storage policy.
 SCUMM_V5_ENGINE_ID = SAME_ENGINE_SCUMM_V5
 SCUMM_V5_SAVE_SCHEMA = $0001
 SCUMM_V5_MAX_SCRIPT_SLOTS = $0019
@@ -167,7 +167,7 @@ ScummV5_Engine_Boot__clear_c4:
     jsl ScummV5_SetState_Reset_Far
     .endif
     .if SAME_BUILD_SCUMM_M23B
-    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR || SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
     ; Dedicated validator owns its scheduler from cold boot and enters its
     ; copyright-free cooked room through the ordinary loadRoom fixture.
     rep #$30
@@ -223,6 +223,19 @@ ScummV5_Engine_Boot__clear_scenario:
     .a16
     lda #$0000
     sta.l SAME_SCUMM_C1_HOLD_AFTER
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_CONTROLLER_MODE
+    sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    sta.l SAME_SCUMM_CONTROLLER_SUBMISSIONS
+    sta.l SAME_SCUMM_CONTROLLER_LAST_ACTION
+    sta.l SAME_SCUMM_CONTROLLER_SCENARIO_REQUESTED
+    rep #$20
+    .a16
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    .endif
     ; A standalone scenario is a fresh semantic session even when the
     ; emulator preserves WRAM across power/reset.  Do not let an old API
     ; mailbox request launch a sentence before the room checkpoint is ready.
@@ -362,7 +375,7 @@ ScummV5_Engine_Boot__m23b_strings:
     lda #$01
     sta.l SAME_SCUMM_M23B_FIXTURE_APPLIED
     sta.l SAME_SCUMM_M23B_HOLD_AFTER_FLUSH
-    .if SAME_BUILD_SCUMM_M25_MOVEMENT
+    .if SAME_BUILD_SCUMM_M25_MOVEMENT || SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
     ; The movement validation personality advances beyond the already-proven
     ; music flush.  It still enters the complete authentic ENCD at PC zero.
     lda #$00
@@ -476,6 +489,25 @@ ScummV5_Engine_Boot__m23c_clear:
     jsl ScummV5_Talk_Reset_Far
     jsl ScummV5_GetActorWalkbox_Reset_Far
     jsl ScummV5_ObjectOwner_LoadInitial_Far
+    ; Object names are runtime $54 state. Clear only the compact length table
+    ; at boot; the encoded byte backing may remain untouched because a zero
+    ; length makes an entry unavailable to target-neutral clients.
+    sep #$20
+    .a8
+    rep #$10
+    .i16
+    lda #$00
+    ldx #$0000
+ScummV5_Engine_Boot__clear_object_name_lengths:
+    sep #$20
+    .a8
+    .i16
+    sta.l SAME_SCUMM_OBJECT_NAME_LENGTH,x
+    inx
+    cpx #SAME_SCUMM_OBJECT_NAME_COUNT
+    bcc ScummV5_Engine_Boot__clear_object_name_lengths
+    sep #$20
+    .a8
     .endif
     sep #$20
     .a8
@@ -627,14 +659,12 @@ ScummV5_Engine_Frame__scenario_overlay_done:
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && SAME_SCUMM_SCENARIO_SOURCE_ACTOR_STATE
     jsl ScummV5_Scenario_Fixture_EnsureActor2Room42_Far
     .endif
-    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     ; Sentence processing may normalize bit-table state while launching the
     ; global sentence script. Reapply only for the batch proven nonempty
     ; above, after that processing and before scheduler execution.
     jsl ScummV5_ObjectClass_ApplyScenarioOverlay_Far
     jsl ScummV5_Bit_ApplyScenarioOverlay_Far
     jsl ScummV5_ObjectState_ApplyScenarioOverlay_Far
-    .endif
     bcc ScummV5_Engine_Frame__sentence_prepass_done
     jmp ScummV5_Engine_Frame__m23a_error
 ScummV5_Engine_Frame__sentence_prepass_done:
@@ -694,16 +724,37 @@ ScummV5_Engine_Frame__not_blocked:
     lda #SCUMM_V5_SCENARIO_START_ROOM
     jsr ScummV5_RequestRoom
 ScummV5_Engine_Frame__scenario_request_done:
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    ; Labeled controller scenario handoff: after the ordinary room-68 root
+    ; has installed, request room 42 through the normal lifecycle API. This
+    ; fixture startup path does not construct scripts, PCs, sentences, or
+    ; object state.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    cmp #$04
+    bne ScummV5_Engine_Frame__controller_root_done
+    lda.l SAME_SCUMM_M23A_PHASE
+    bne ScummV5_Engine_Frame__controller_root_done
+    lda.l SAME_SCUMM_CONTROLLER_SCENARIO_REQUESTED
+    bne ScummV5_Engine_Frame__controller_root_done
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_SCENARIO_REQUESTED
+    lda #$2A
+    jsr ScummV5_RequestRoom
+ScummV5_Engine_Frame__controller_root_done:
+    .endif
     .endif
     .if SAME_BUILD_SCUMM_M22
     jsr ScummV5_M22_ConsumeBoundary
     .endif
     .if SAME_BUILD_SCUMM_M23A
     .if SAME_BUILD_SCUMM_M23C
-    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
-    ; Dedicated validator owns scheduling; no authentic Fate transition driver.
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    ; Dedicated validator owns scheduling; controller fixture retains the
+    ; authored startup driver so the visible scene follows the real path.
     .else
-    .if SAME_BUILD_SCUMM_M25_MOVEMENT
+    .if SAME_BUILD_SCUMM_M25_MOVEMENT || SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
     ; The accepted interactive path owns its room transition through authentic
     ; bytecode.  The older bounded M23C timing driver remains historical only.
     .else
@@ -760,12 +811,52 @@ ScummV5_Engine_Frame__m23a_continue:
     cmp #$01
     beq ScummV5_Engine_Frame__m23a_run_room_script
     cmp #$02
-    bne ScummV5_Engine_Frame__m23a_driver
+    beq ScummV5_Engine_Frame__m23a_run_room_script
+    jmp ScummV5_Engine_Frame__m23a_driver
 ScummV5_Engine_Frame__m23a_run_room_script:
     ; Room ENCD/EXCD owns scheduler slot zero, but nested startScript calls
     ; temporarily leave the shared interpreter registers pointing at a child.
     ; Reload the lifecycle slot on every pass before running it so a child
     ; return cannot resume the room script at the child's stale PC.
+    ; First preserve a still-matching room-owner context from the preceding
+    ; pass.  This is needed when the direct room path returned through the
+    ; common opcode boundary: the live PC has advanced, but the next frame has
+    ; not yet rehydrated slot zero.  Never save a context whose program/slot
+    ; identity does not match the room owner.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    beq ScummV5_Engine_Frame__m23a_owner_slot_zero
+    jmp ScummV5_Engine_Frame__m23a_rehydrate
+ScummV5_Engine_Frame__m23a_owner_slot_zero:
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    cmp.l SAME_SCUMM_C4_SLOT_PROGRAM
+    beq ScummV5_Engine_Frame__m23a_owner_identity_ok
+    ; If the selector is neutral after an authored room boundary, slot zero
+    ; remains the only valid owner. Recover it only at the outer, non-nested
+    ; lifecycle boundary; other mismatches must still rehydrate without a
+    ; speculative save.
+    sep #$20
+    .a8
+    cmp #$00
+    bne ScummV5_Engine_Frame__m23a_rehydrate
+    lda.l SAME_SCUMM_RETURN_MODE
+    bne ScummV5_Engine_Frame__m23a_rehydrate
+    lda.l SAME_SCUMM_C18_NESTED
+    bne ScummV5_Engine_Frame__m23a_rehydrate
+    lda.l SAME_SCUMM_C4_SLOT_STATUS
+    beq ScummV5_Engine_Frame__m23a_rehydrate
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM
+    sta.l SAME_SCUMM_PROGRAM_SELECT
+    php
+    jsr ScummV5_C4_SaveCurrentSlot
+    plp
+    jmp ScummV5_Engine_Frame__m23a_rehydrate
+ScummV5_Engine_Frame__m23a_owner_identity_ok:
+    php
+    jsr ScummV5_C4_SaveCurrentSlot
+    plp
+ScummV5_Engine_Frame__m23a_rehydrate:
     sep #$20
     .a8
     lda #$00
@@ -807,7 +898,29 @@ ScummV5_Engine_Frame__m23a_room_runnable:
     jmp ScummV5_Engine_RunSelected
 ScummV5_Engine_Frame__m23a_driver:
     .a8
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    ; Room installation has committed by this point.  The labeled controller
+    ; scenario now hands off from the source-backed room-68 root through the
+    ; ordinary room request path.
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    cmp #$04
+    bne ScummV5_Engine_Frame__controller_driver_done
+    lda.l SAME_SCUMM_CONTROLLER_SCENARIO_REQUESTED
+    bne ScummV5_Engine_Frame__controller_driver_done
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_SCENARIO_REQUESTED
+    lda #$2A
+    jsr ScummV5_RequestRoom
+ScummV5_Engine_Frame__controller_driver_done:
+    sep #$20
+    .a8
+    .endif
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$23
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE
+    lda.l SAME_SCUMM_SCENARIO_FRAME_STAGE_COUNT
+    inc
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE_COUNT
     lda.l SAME_SCUMM_SCENARIO_DRIVER_REACHED
     inc
     sta.l SAME_SCUMM_SCENARIO_DRIVER_REACHED
@@ -876,6 +989,11 @@ ScummV5_Engine_Frame__scenario_ready_overlay_done:
     .endif
     jsl ScummV5_SchedulerReady_FarEntry
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$25
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE
+    lda.l SAME_SCUMM_SCENARIO_FRAME_STAGE_COUNT
+    inc
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE_COUNT
     .a8
     lda #$00
     bcc ScummV5_Engine_Frame__scenario_sched_not_ready
@@ -1466,6 +1584,24 @@ ScummV5_Engine_Frame__scenario_not_child_fetch:
     beq ScummV5_Engine_Frame__scenario_sentence_fetch
     jmp ScummV5_Engine_Frame__scenario_fetch_done
 ScummV5_Engine_Frame__scenario_sentence_fetch:
+    .a8
+    .i8
+    ; The fetch path is the unambiguous proof that the sentence-owned slot
+    ; actually executed.  Record it before any nested opcode can alter the
+    ; shared selector; this is intentionally observational only.
+    lda #$11
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_PHASE
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_SLOT
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_PROGRAM
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    dec
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_VM_PC
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_SCENARIO_SENTENCE_FETCH_COUNT
     pha
     inc
@@ -1850,6 +1986,7 @@ ScummV5_Engine_Frame__check_if_class:
     .a8
     lda.l SAME_SCUMM_LAST_OPCODE
     and #$7F
+    ; ifClassOfIs is the $1D family ($1D/$9D); $5D/$DD is setClass.
     cmp #$1D
     bne ScummV5_Engine_Frame__check_set_class
     jmp ScummV5_Op_IfClassOfIs
@@ -2020,10 +2157,16 @@ ScummV5_Engine_Frame__dispatch_actor_elevation:
 ScummV5_Engine_Frame__check_animate_actor_opcode_real2:
     .a8
     lda.l SAME_SCUMM_LAST_OPCODE
+    cmp #$3B
+    beq ScummV5_Engine_Frame__dispatch_actor_scale
+    cmp #$BB
+    beq ScummV5_Engine_Frame__dispatch_actor_scale
     and #$3F
     cmp #$11
     bne ScummV5_Engine_Frame__check_actor_from_pos
     jmp ScummV5_Op_AnimateActor
+ScummV5_Engine_Frame__dispatch_actor_scale:
+    jmp ScummV5_Op_GetActorScale
 ScummV5_Engine_Frame__check_actor_from_pos:
     .a8
     lda.l SAME_SCUMM_LAST_OPCODE
@@ -2090,7 +2233,7 @@ ScummV5_Engine_Frame__dispatch_get_actor_room:
 ScummV5_Engine_Frame__dispatch_get_actor_x:
     .if SAME_BUILD_SCUMM_M23A
     jsl ScummV5_GetActorX_FarEntry
-    jmp ScummV5_Engine_Frame__next
+    jml ScummV5_Engine_Frame__next
     .else
     jmp ScummV5_Engine_Frame__opcode_error
     .endif
@@ -2369,9 +2512,21 @@ ScummV5_M25A_Trace__done:
 
 ScummV5_C4_Scheduler_Frame:
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    sep #$20
+    .a8
+    lda #$20
+    sta.l SAME_SCUMM_SCENARIO_C4_ERROR_ORIGIN
+    lda #$26
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE
+    lda.l SAME_SCUMM_SCENARIO_FRAME_STAGE_COUNT
+    inc
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE_COUNT
     lda.l SAME_SCUMM_SCENARIO_C4_CALLS
     inc
     sta.l SAME_SCUMM_SCENARIO_C4_CALLS
+    lda #$00
+    sta.l SAME_SCUMM_SCENARIO_SCHED_SCAN_COUNT
+    sta.l SAME_SCUMM_SCENARIO_SCHED_MATCH_COUNT
     .endif
     rep #$30
     .a16
@@ -2399,23 +2554,118 @@ ScummV5_C4_Scheduler_Frame__next_slot:
     jmp ScummV5_C4_Scheduler_Frame__complete
 ScummV5_C4_Scheduler_Frame__slot_in_range:
     .a8
+    ; The preceding slot may have loaded a word-indexed PC into X.  The
+    ; scheduler index is a byte slot number here; clear the index high byte
+    ; before every byte-table lookup, not only on the first pass.
+    sep #$10
+    .i8
     tax
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    txa
+    sta.l SAME_SCUMM_SCENARIO_SCHED_SCAN_SLOT
+    lda.l SAME_SCUMM_SCENARIO_SCHED_SCAN_COUNT
+    inc
+    sta.l SAME_SCUMM_SCENARIO_SCHED_SCAN_COUNT
+    .endif
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; Fixture-only capture of the sentence slot's actual eligibility inputs.
+    ; It does not alter scheduler state or VM registers beyond A.
+    lda.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    beq ScummV5_C4_Scheduler_Frame__sentence_gate_trace_done
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    cmp.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    bne ScummV5_C4_Scheduler_Frame__sentence_gate_trace_done
+    lda.l SAME_SCUMM_SCENARIO_SCHED_MATCH_COUNT
+    inc
+    sta.l SAME_SCUMM_SCENARIO_SCHED_MATCH_COUNT
+    lda #$30
+    sta.l SAME_SCUMM_SCENARIO_SCHED_GATE
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_STATUS
+    lda.l SAME_SCUMM_C4_SLOT_DIDEXEC,x
+    sta.l SAME_SCUMM_SCENARIO_SCHED_DIDEXEC
+    lda.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
+    sta.l SAME_SCUMM_SCENARIO_SCHED_FREEZE
+ScummV5_C4_Scheduler_Frame__sentence_gate_trace_done:
+    .a8
+    .endif
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
     bne ScummV5_C4_Scheduler_Frame__status_nonzero
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    cmp.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    bne ScummV5_C4_Scheduler_Frame__status_zero_trace_done
+    lda #$31
+    sta.l SAME_SCUMM_SCENARIO_SCHED_SCAN_GATE
+ScummV5_C4_Scheduler_Frame__status_zero_trace_done:
+    .endif
     jmp ScummV5_C4_Scheduler_Frame__advance
 ScummV5_C4_Scheduler_Frame__status_nonzero:
     .a8
     cmp #SCUMM_VM_STOPPED
     bne ScummV5_C4_Scheduler_Frame__status_not_stopped
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    cmp.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    bne ScummV5_C4_Scheduler_Frame__status_stopped_trace_done
+    lda #$32
+    sta.l SAME_SCUMM_SCENARIO_SCHED_SCAN_GATE
+ScummV5_C4_Scheduler_Frame__status_stopped_trace_done:
+    .endif
     jmp ScummV5_C4_Scheduler_Frame__advance
 ScummV5_C4_Scheduler_Frame__status_not_stopped:
     .a8
     cmp #SCUMM_VM_ERROR
-    beq ScummV5_C4_Scheduler_Frame__advance
+    bne ScummV5_C4_Scheduler_Frame__check_didexec
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    cmp.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    bne ScummV5_C4_Scheduler_Frame__status_error_trace_done
+    lda #$33
+    sta.l SAME_SCUMM_SCENARIO_SCHED_SCAN_GATE
+ScummV5_C4_Scheduler_Frame__status_error_trace_done:
+    .endif
+    jmp ScummV5_C4_Scheduler_Frame__advance
+ScummV5_C4_Scheduler_Frame__check_didexec:
+    .a8
     lda.l SAME_SCUMM_C4_SLOT_DIDEXEC,x
-    bne ScummV5_C4_Scheduler_Frame__advance
+    beq ScummV5_C4_Scheduler_Frame__check_freeze
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    cmp.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    bne ScummV5_C4_Scheduler_Frame__didexec_trace_done
+    lda #$34
+    sta.l SAME_SCUMM_SCENARIO_SCHED_SCAN_GATE
+ScummV5_C4_Scheduler_Frame__didexec_trace_done:
+    .endif
+    jmp ScummV5_C4_Scheduler_Frame__advance
+ScummV5_C4_Scheduler_Frame__check_freeze:
+    .a8
     lda.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
-    bne ScummV5_C4_Scheduler_Frame__advance
+    beq ScummV5_C4_Scheduler_Frame__eligible
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    cmp.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    bne ScummV5_C4_Scheduler_Frame__freeze_trace_done
+    lda #$35
+    sta.l SAME_SCUMM_SCENARIO_SCHED_SCAN_GATE
+ScummV5_C4_Scheduler_Frame__freeze_trace_done:
+    .endif
+    jmp ScummV5_C4_Scheduler_Frame__advance
+ScummV5_C4_Scheduler_Frame__eligible:
+    .a8
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    cmp.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    bne ScummV5_C4_Scheduler_Frame__eligible_trace_done
+    lda #$36
+    sta.l SAME_SCUMM_SCENARIO_SCHED_GATE
+    lda #$36
+    sta.l $7E57A4
+ScummV5_C4_Scheduler_Frame__eligible_trace_done:
+    .a8
+    .endif
+    .i8
     lda #$01
     sta.l SAME_SCUMM_C4_SLOT_DIDEXEC,x
     lda.l SAME_SCUMM_C4_SCHED_SLOT
@@ -2446,16 +2696,162 @@ ScummV5_C4_Scheduler_Frame__status_not_stopped:
     lda #$05
     jsr ScummV5_M25A_Trace
     .endif
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; Capture the sentence owner before entering the shared interpreter.
+    ; Nested execution is allowed to change currentScript, so this is keyed
+    ; to the scheduler-selected sentence slot rather than the transient
+    ; shared context.
+    lda.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    beq ScummV5_C4_Scheduler_Frame__sentence_trace_before_done
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    cmp.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    bne ScummV5_C4_Scheduler_Frame__sentence_trace_before_done
+    lda #$01
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_PHASE
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_SLOT
+    sep #$10
+    .i8
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_PROGRAM
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_VM_PC
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    and #$00FF
+    asl
+    rep #$10
+    .i16
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PC,x
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_SLOT_PC
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_STATUS
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_STATUS
+ScummV5_C4_Scheduler_Frame__sentence_trace_before_done:
+    .a8
+    ; Restore the original scheduler ABI: RunSelected is entered with an
+    ; 8-bit index register after the slot load.
+    sep #$10
+    .i8
+    .endif
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$21
+    sta.l SAME_SCUMM_SCENARIO_C4_ERROR_ORIGIN
+    .endif
     jsr ScummV5_Engine_RunSelected
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; Preserve the exact RunSelected return flags before any observational
+    ; diagnostics.  The post-run slot restore below performs comparisons and
+    ; table lookups which are allowed to change carry; C4 must propagate the
+    ; interpreter's original result, not diagnostic arithmetic.
     php
-    jsr ScummV5_C4_SaveCurrentSlot
+    pla
+    sta.l SAME_SCUMM_SCENARIO_C4_RETURN_P
+    pha
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_SCENARIO_C4_RETURN_SLOT
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    sta.l SAME_SCUMM_SCENARIO_C4_RETURN_PROGRAM
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    sta.l SAME_SCUMM_SCENARIO_C4_RETURN_STATUS
+    lda.l SAME_SCUMM_ERROR
+    sta.l SAME_SCUMM_SCENARIO_C4_RETURN_ERROR
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_SCENARIO_C4_RETURN_PC
+    sep #$20
+    .a8
+    lda #$22
+    sta.l SAME_SCUMM_SCENARIO_C4_ERROR_ORIGIN
+    .endif
+    ; Nested execution may legitimately change the shared current-script
+    ; context while returning to the scheduler.  The scheduler-owned slot
+    ; selected above remains the authoritative owner for saving the yielded
+    ; or stopped result; restore that identity before the common post-run
+    ; save/retirement path so a child cannot leave its parent at PC zero.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    sta.l SAME_SCUMM_C4_CURRENT_SLOT
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    beq ScummV5_C4_Scheduler_Frame__sentence_trace_after_done
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    cmp.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    bne ScummV5_C4_Scheduler_Frame__sentence_trace_after_done
+    lda #$02
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_PHASE
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_CURRENT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_VM_PC
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_STATUS
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_STATUS
+ScummV5_C4_Scheduler_Frame__sentence_trace_after_done:
+    .a8
+    .endif
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; Restore the exact RunSelected flags after observational state capture.
+    ; The saved processor status is still on the stack from immediately after
+    ; RunSelected; the common save/retire path must propagate that result, not
+    ; carry modified by diagnostic comparisons and table indexing.
+    plp
+    .endif
+    php
+    ; Save the scheduler-selected slot, not whichever nested context the
+    ; interpreter left in C4_CURRENT_SLOT.
+    jsr ScummV5_C4_SaveSchedulerSlot
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    beq ScummV5_C4_Scheduler_Frame__sentence_trace_save_done
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    cmp.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
+    bne ScummV5_C4_Scheduler_Frame__sentence_trace_save_done
+    lda #$03
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_PHASE
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    and #$00FF
+    asl
+    rep #$10
+    .i16
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PC,x
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_SLOT_PC
+    sep #$20
+    .a8
+    sep #$10
+    .i8
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    sta.l SAME_SCUMM_SCENARIO_SENTENCE_SCHED_STATUS
+ScummV5_C4_Scheduler_Frame__sentence_trace_save_done:
+    .a8
+    .endif
     ; A slot may reach the exact end of its bounded program without executing
     ; an explicit A0 stop (the common delay/jump-loop completion boundary).
     ; Retire that scheduler-owned identity just as Op_Stop does; otherwise the
     ; status is stopped but the number/count keep a phantom live script.
     jsr ScummV5_C4_RetireStoppedSlot
     plp
-    bcs ScummV5_C4_Scheduler_Frame__error
+    bcc ScummV5_C4_Scheduler_Frame__save_result_ok
+    jmp ScummV5_C4_Scheduler_Frame__error
+ScummV5_C4_Scheduler_Frame__save_result_ok:
     rep #$20
     .a16
     lda.l SAME_SCUMM_SCHED_OPS
@@ -2476,6 +2872,11 @@ ScummV5_C4_Scheduler_Frame__complete:
     lda.l SAME_SCUMM_SCHED_OPS
     sta.l SAME_SCUMM_FRAME_OPS
     .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$2B
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE
+    sta.l SAME_SCUMM_SCENARIO_C4_ERROR_ORIGIN
+    .endif
     jsl ScummV5_SentenceProcess_Far
     bcs ScummV5_C4_Scheduler_Frame__error
     .if SAME_BUILD_SCUMM_ROOM_VISUAL
@@ -2487,13 +2888,34 @@ ScummV5_C4_Scheduler_Frame__complete:
     cmp #$0001
     beq ScummV5_C4_Scheduler_Frame__visual_install_frame
     .endif
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$2C
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE
+    sta.l SAME_SCUMM_SCENARIO_C4_ERROR_ORIGIN
+    .endif
     jsl ScummV5_Movement_UpdateAll_Far
     bcs ScummV5_C4_Scheduler_Frame__error
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    ; Publish a coherent post-movement actor snapshot for the late visual
+    ; service; this does not compose or publish a surface.
+    jsl ScummV5_Controller_PublishActorVisual_Far
+    .endif
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$29
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE
+    .endif
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && SAME_SCUMM_SCENARIO_SOURCE_ACTOR_STATE
     ; Reconcile the source-backed auxiliary actor after the movement pass, so
     ; the fixture checkpoint observes the authored ENCD placement rather than
     ; a transient neutral C31 record.
     jsl ScummV5_Scenario_Fixture_EnsureActor2Room42_Far
+    .endif
+    ; C23 owns logical message completion at the end of the normal scheduler
+    ; pass.  Talk_FrameBegin advances the delay before script execution;
+    ; omitting the matching frame-end phase leaves waitForMessage with an
+    ; active message forever (or makes a fixture appear to need auto-clear).
+    .if SAME_BUILD_SCUMM_M23A
+    jsl ScummV5_Talk_FrameEnd_Far
     .endif
 ScummV5_C4_Scheduler_Frame__visual_install_frame:
     .endif
@@ -2516,6 +2938,10 @@ ScummV5_C4_Scheduler_Frame__stopped:
 ScummV5_C4_Scheduler_Frame__error:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$2A
+    sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE
+    .endif
     lda #$00
     sta.l SAME_SCUMM_RETURN_MODE
     jmp ScummV5_Engine_Frame__error
@@ -2545,6 +2971,68 @@ ScummV5_C4_SaveCurrentSlot:
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     sta.l SAME_SCUMM_SCENARIO_SAVE_STATUS
     .endif
+    rts
+
+; Save the slot selected by the scheduler after RunSelected returns.  This is
+; deliberately separate from SaveCurrentSlot: nested execution owns the
+; shared current-script context, while the scheduler owns the slot whose
+; continuation must survive the frame boundary.
+ScummV5_C4_SaveSchedulerSlot:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    sep #$10
+    .i8
+    tax
+    rep #$30
+    .a16
+    .i16
+    txa
+    and #$00FF
+    asl
+    tax
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; Diagnostic only: prove whether the shared interpreter context still
+    ; belongs to the scheduler-selected slot before saving its continuation.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    sta.l SAME_SCUMM_SCENARIO_SAVE_SHARED_PROGRAM
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    sta.l SAME_SCUMM_SCENARIO_SAVE_SLOT
+    sep #$10
+    .i8
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    sta.l SAME_SCUMM_SCENARIO_SAVE_SLOT_PROGRAM
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_SCENARIO_SAVE_SHARED_PC
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    and #$00FF
+    asl
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PC,x
+    sta.l SAME_SCUMM_SCENARIO_SAVE_SLOT_PC
+    sep #$20
+    .a8
+    .endif
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_C4_SLOT_PC,x
+    lda.l SAME_SCUMM_DELAY
+    sta.l SAME_SCUMM_C4_SLOT_DELAY,x
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    sep #$10
+    .i8
+    tax
+    lda.l SAME_SCUMM_STATUS
+    sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     rts
 
 ScummV5_C4_RetireStoppedSlot:
@@ -4105,7 +4593,9 @@ ScummV5_Op_Wait__operand_ok:
     cmp #$02
     beq ScummV5_Op_Wait__message
     cmp #$03
-    beq ScummV5_Op_Wait__camera
+    bne ScummV5_Op_Wait__not_camera
+    jmp ScummV5_Op_Wait__camera
+ScummV5_Op_Wait__not_camera:
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_Wait__actor:
     sep #$20
@@ -4171,12 +4661,9 @@ ScummV5_Op_Wait__yield:
     sta.l SAME_SCUMM_STATUS
     jmp ScummV5_Engine_Frame__complete_success
 ScummV5_Op_Wait__message:
-    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
-    ; Headless scenario text has no interactive presentation owner.  Once the
-    ; preceding print has decoded its inline text, the authored wait is
-    ; semantically complete and must not retain a dead talk wait state.
-    bra ScummV5_Op_Wait__done
-    .endif
+    ; Headless mode removes only presentation ownership.  Logical message
+    ; lifetime remains owned by the talk service, so the authored wait must
+    ; observe the same active/complete state as production.
     lda.l SAME_SCUMM_TALK_ACTIVE
     bne ScummV5_Op_Wait__yield_simple
     bra ScummV5_Op_Wait__done
@@ -6368,6 +6855,13 @@ ScummV5_QueueSentence__full:
     plp
     rtl
 
+; Bank-safe entry used by the controller fixture. It still enters the same
+; production C20 producer as semantic mailbox callers; no record is built by
+; the controller layer itself.
+ScummV5_QueueSentence_FarEntry:
+    jsr ScummV5_QueueSentence
+    rtl
+
 ScummV5_Op_DoSentence:
     sep #$20
     .a8
@@ -7307,7 +7801,12 @@ ScummV5_M23A_CommitRoom__retire:
     .i16
     lda.l SAME_SCUMM_C4_SLOT_WHERE,x
     cmp #SCUMM_WIO_ROOM
+    beq ScummV5_M23A_CommitRoom__retire_owned
+    cmp #SCUMM_WIO_LOCAL
     bne ScummV5_M23A_CommitRoom__retire_next
+ScummV5_M23A_CommitRoom__retire_owned:
+    .a8
+    .i16
     lda.l SAME_SCUMM_M23A_SLOT_ROOMS,x
     beq ScummV5_M23A_CommitRoom__retire_next
     cmp.l SAME_SCUMM_M23A_ACTIVE_ROOM
@@ -7428,6 +7927,24 @@ ScummV5_M23A_CommitRoom__execute:
     jsr ScummV5_M23A_BeginRoomScript
     .if SAME_BUILD_SCUMM_ROOM_VISUAL
     jsl ScummV5_RoomVisual_Installed_Far
+    .endif
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    ; The resource commit is the first unambiguous point at which the
+    ; source-backed room-68 root is installed.  Hand off the labeled scene
+    ; through the ordinary request API from here, before any presentation or
+    ; input code can observe a half-installed room.
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    cmp #$04
+    bne ScummV5_M23A_CommitRoom__controller_done
+    lda.l SAME_SCUMM_CONTROLLER_SCENARIO_REQUESTED
+    bne ScummV5_M23A_CommitRoom__controller_done
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_SCENARIO_REQUESTED
+    lda #$2A
+    jsr ScummV5_RequestRoom
+ScummV5_M23A_CommitRoom__controller_done:
+    sep #$20
+    .a8
     .endif
     clc
     rts
@@ -7810,21 +8327,6 @@ ScummV5_Op_Print__text_done:
     .a8
     lda.l SAME_SCUMM_C23_RAW_INDEX
     sta.l SAME_SCUMM_C23_LAST_LENGTH
-    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
-    ; Scenario validation has an explicit headless presentation policy.  The
-    ; authored text has already been fully decoded and the VM PC is correct.
-    ; These builds intentionally do not start the presentation/talk lifecycle,
-    ; so they must also acknowledge the corresponding message token.  Leaving
-    ; C23_MESSAGE_COUNT live here makes a later authored waitForMessage yield
-    ; forever despite there being no presentation owner which can retire it.
-    ; This is the generic headless-fixture equivalent of Talk_Begin completion,
-    ; not a room/script-specific bypass.
-    lda #$00
-    sta.l SAME_SCUMM_C23_MESSAGE_COUNT
-    sta.l SAME_SCUMM_TALK_ACTIVE
-    sta.l SAME_SCUMM_TALK_HAVE_MSG
-    jmp ScummV5_Engine_Frame__next
-    .endif
     .if SAME_BUILD_SCUMM_M23A
     lda.l SAME_SCUMM_C23_LAST_SLOT
     bne ScummV5_Op_Print__text_no_talk
@@ -7869,26 +8371,36 @@ ScummV5_Op_Print__text_no_talk:
 ScummV5_Op_Print__text_error:
     jmp ScummV5_Op__error
 
-; v5 $54/$D4 is setObjectName, not print.  The operand is a direct/variable
-; object word followed by an inline encoded string.  The SNES fixture keeps
-; object names in the cooked object/verb resources; this backend-neutral path
-; still consumes the complete authored string so the child PC and nested
-; return contract remain canonical.
+; v5 $54/$D4 is setObjectName, not print. The operand is a direct/variable
+; object word followed by an inline encoded string. Retain that authored
+; encoded name in a bounded runtime table so target-neutral clients can read
+; the same object identity without inventing a room-specific label table.
 ScummV5_Op_SetObjectName:
     sep #$20
     .a8
     lda #$80
     jsr ScummV5_C23_FetchWordParam
     bcs ScummV5_Op_SetObjectName__error
+    rep #$20
+    .a16
+    sta.l SAME_SCUMM_OBJECT_NAME_OBJECT
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_OBJECT_NAME_INDEX
 ScummV5_Op_SetObjectName__string:
     .a8
     jsr ScummV5_FetchByte
     bcs ScummV5_Op_SetObjectName__error
+    jsr ScummV5_StoreObjectNameByte
+    lda.l SAME_SCUMM_FETCH_BYTE
     beq ScummV5_Op_SetObjectName__done
     cmp #$FF
     bne ScummV5_Op_SetObjectName__string
     jsr ScummV5_FetchByte
     bcs ScummV5_Op_SetObjectName__error
+    jsr ScummV5_StoreObjectNameByte
+    lda.l SAME_SCUMM_FETCH_BYTE
     cmp #$01
     beq ScummV5_Op_SetObjectName__string
     cmp #$02
@@ -7899,13 +8411,76 @@ ScummV5_Op_SetObjectName__string:
     beq ScummV5_Op_SetObjectName__string
     jsr ScummV5_FetchByte
     bcs ScummV5_Op_SetObjectName__error
+    jsr ScummV5_StoreObjectNameByte
     jsr ScummV5_FetchByte
     bcs ScummV5_Op_SetObjectName__error
+    jsr ScummV5_StoreObjectNameByte
     bra ScummV5_Op_SetObjectName__string
 ScummV5_Op_SetObjectName__done:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_OBJECT_NAME_OBJECT
+    and #$07FF
+    cmp #SAME_SCUMM_OBJECT_NAME_COUNT
+    bcs ScummV5_Op_SetObjectName__done_no_cache
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_OBJECT_NAME_INDEX
+    inc
+    sta.l SAME_SCUMM_OBJECT_NAME_LENGTH,x
+    jmp ScummV5_Engine_Frame__next
+ScummV5_Op_SetObjectName__done_no_cache:
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_SetObjectName__error:
     jmp ScummV5_Op__error
+
+; Store one encoded byte in object_id * 32. The terminator is retained so
+; clients can preserve canonical control bytes and use the same decoding path.
+ScummV5_StoreObjectNameByte:
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_FETCH_BYTE
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_OBJECT_NAME_OBJECT
+    and #$07FF
+    cmp #SAME_SCUMM_OBJECT_NAME_COUNT
+    bcs ScummV5_StoreObjectNameByte__discard
+    asl
+    asl
+    asl
+    asl
+    asl
+    sta.l SAME_SCUMM_C17_PARAM0
+    clc
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_OBJECT_NAME_INDEX
+    rep #$20
+    .a16
+    and #$00FF
+    adc.l SAME_SCUMM_C17_PARAM0
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_FETCH_BYTE
+    sta.l SAME_SCUMM_OBJECT_NAMES,x
+ScummV5_StoreObjectNameByte__advance:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_OBJECT_NAME_INDEX
+    cmp #$1F
+    bcs ScummV5_StoreObjectNameByte__full
+    inc
+    sta.l SAME_SCUMM_OBJECT_NAME_INDEX
+ScummV5_StoreObjectNameByte__full:
+    rts
+ScummV5_StoreObjectNameByte__discard:
+    sep #$20
+    .a8
+    bra ScummV5_StoreObjectNameByte__advance
 
 ; Canonical v5 $29/$69/$A9/$E9 setOwnerOf.  Owners are mutable runtime
 ; object state, so queries use the WRAM table initialized from the cooked DOBJ
@@ -8148,6 +8723,10 @@ ScummV5_C23_StoreTextByte__space:
 ScummV5_C23_Error:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$D7
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
+    .endif
     lda #SCUMM_ERR_STRING
     jsr ScummV5_SetError
     jmp ScummV5_Op__error
@@ -9227,6 +9806,59 @@ ScummV5_Op_GetActorElevation__write:
     jsr ScummV5_WriteResultValue
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_GetActorElevation__error:
+    jmp ScummV5_Op__error
+
+; Canonical v5 $3B/$BB getActorScale.  The actor operand is a flagged byte;
+; return the current horizontal scale through the normal result reference.
+ScummV5_Op_GetActorScale:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_INITIALIZED
+    bne ScummV5_Op_GetActorScale__actors_ready
+    jsr ScummV5_C14_ResetState
+ScummV5_Op_GetActorScale__actors_ready:
+    rep #$30
+    .a16
+    .i16
+    jsr ScummV5_ReadResultOffset
+    bcs ScummV5_Op_GetActorScale__error
+    sep #$20
+    .a8
+    lda #$80
+    jsr ScummV5_C14_FetchByte
+    bcs ScummV5_Op_GetActorScale__error
+    cmp #$20
+    bcs ScummV5_Op_GetActorScale__zero
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_SCALE_X,x
+    rep #$20
+    .a16
+    and #$00FF
+    sta.l SAME_SCUMM_OPERAND
+    bra ScummV5_Op_GetActorScale__write
+ScummV5_Op_GetActorScale__zero:
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_OPERAND
+ScummV5_Op_GetActorScale__write:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_OPERAND
+    jsr ScummV5_WriteResultValue
+    jmp ScummV5_Engine_Frame__next
+ScummV5_Op_GetActorScale__error:
     jmp ScummV5_Op__error
 
 ScummV5_Op_PutActorInRoom:
@@ -10431,6 +11063,8 @@ ScummV5_C9_AdvanceResult:
     bit #$4000
     bne ScummV5_C9_AdvanceResult__bit
     bmi ScummV5_C9_AdvanceResult__local
+    bit #$2000
+    bne ScummV5_C9_AdvanceResult__global_indexed
     clc
     adc #$0002
     cmp #(SAME_SCUMM_VARIABLE_COUNT * 2)
@@ -10441,6 +11075,27 @@ ScummV5_C9_AdvanceResult:
     jsr ScummV5_SetError
     sec
     rts
+ScummV5_C9_AdvanceResult__global_indexed:
+    ; M23B encodes global variables >= 16 as $2000 | (index * 2).
+    ; Advance the index while retaining that namespace marker; comparing the
+    ; encoded value directly against the byte-offset capacity falsely rejects
+    ; valid ranges such as global 127 -> 128.
+    .a16
+    and #$1FFF
+    clc
+    adc #$0002
+    cmp #(SAME_SCUMM_VARIABLE_COUNT * 2)
+    bcc ScummV5_C9_AdvanceResult__global_indexed_save
+    sep #$20
+    .a8
+    lda #SCUMM_ERR_VARIABLE
+    jsr ScummV5_SetError
+    sec
+    rts
+ScummV5_C9_AdvanceResult__global_indexed_save:
+    .a16
+    ora #$2000
+    bra ScummV5_C9_AdvanceResult__save
 ScummV5_C9_AdvanceResult__local:
     .a16
     and #$003F
@@ -10520,7 +11175,7 @@ ScummV5_Op_SoundKludge__next_word:
     lda #$01
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_Op_SoundKludge__selector_ok:
     .a8
     cmp #$FF
@@ -10533,7 +11188,7 @@ ScummV5_Op_SoundKludge__selector_ok:
     lda #$03
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_Op_SoundKludge__word_room:
     .a8
     jsr ScummV5_FetchWord
@@ -10542,7 +11197,7 @@ ScummV5_Op_SoundKludge__word_room:
     lda #$02
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_Op_SoundKludge__word_ok:
     rep #$20
     .a16
@@ -10561,7 +11216,7 @@ ScummV5_Op_SoundKludge__word_ok:
     lda #$04
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_Op_SoundKludge__variable_ok:
     .a16
     sta.l SAME_SCUMM_OPERAND
@@ -10584,13 +11239,29 @@ ScummV5_Op_SoundKludge__value_ready:
 
 ScummV5_Op_SoundKludge__words_done:
     .a8
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_C25_PENDING_COUNT
+    sta.l SAME_SCUMM_SCENARIO_C25_OBS_PENDING
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C25_PENDING_WORDS
+    sta.l SAME_SCUMM_SCENARIO_C25_OBS_WORDS
+    lda.l SAME_SCUMM_C25_PENDING_WORDS+2
+    sta.l SAME_SCUMM_SCENARIO_C25_OBS_WORDS+2
+    lda.l SAME_SCUMM_C25_PENDING_WORDS+4
+    sta.l SAME_SCUMM_SCENARIO_C25_OBS_WORDS+4
+    lda.l SAME_SCUMM_C25_PENDING_WORDS+6
+    sta.l SAME_SCUMM_SCENARIO_C25_OBS_WORDS+6
+    sep #$20
+    .a8
+    .endif
     lda.l SAME_SCUMM_C25_PENDING_COUNT
     bne ScummV5_Op_SoundKludge__nonempty
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     lda #$05
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_Op_SoundKludge__nonempty:
     rep #$20
     .a16
@@ -10609,12 +11280,39 @@ ScummV5_Op_SoundKludge__queue:
     lda #$06
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_Op_SoundKludge__queue_room:
+    ; Capture the record index before any fixture diagnostics.  The pending
+    ; payload copy below changes A several times; deriving the queue offset
+    ; from that transient value aliases later commands into arbitrary memory.
     rep #$20
     .a16
+    lda.l SAME_SCUMM_C25_QUEUE_COUNT
     and #$00FF
     sta.l SAME_SCUMM_C25_RECORD_OFFSET
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    sta.l SAME_SCUMM_SCENARIO_C25_PRODUCER_PROGRAM
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_SCENARIO_C25_PRODUCER_PC
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C25_PENDING_COUNT
+    sta.l SAME_SCUMM_SCENARIO_C25_PRODUCER_COUNT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C25_PENDING_WORDS
+    sta.l SAME_SCUMM_SCENARIO_C25_PRODUCER_WORDS
+    lda.l SAME_SCUMM_C25_PENDING_WORDS+2
+    sta.l SAME_SCUMM_SCENARIO_C25_PRODUCER_WORDS+2
+    lda.l SAME_SCUMM_C25_PENDING_WORDS+4
+    sta.l SAME_SCUMM_SCENARIO_C25_PRODUCER_WORDS+4
+    lda.l SAME_SCUMM_C25_PENDING_WORDS+6
+    sta.l SAME_SCUMM_SCENARIO_C25_PRODUCER_WORDS+6
+    .endif
+    lda.l SAME_SCUMM_C25_RECORD_OFFSET
     asl
     asl
     asl
@@ -10697,6 +11395,14 @@ ScummV5_Op_SoundKludge__m24rb_continue:
     jmp ScummV5_Engine_Frame__next
 
 ScummV5_C25_Flush:
+.if SAME_BUILD_M24RB && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
+    jsl ScummV5_C25_Flush_Far
+    rts
+ScummV5_C25_Flush_Bank0_Resume:
+    .bank 83
+    .org $8000
+ScummV5_C25_Flush_Far:
+.endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_C25_QUEUE_COUNT
@@ -10766,7 +11472,7 @@ ScummV5_C25_Flush__record_error:
     lda.l SAME_SCUMM_C25_QUEUE,x
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_RECORD+4
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__record_count_ok:
     .a8
     sta.l SAME_SCUMM_C25_LAST_COUNT
@@ -10802,13 +11508,42 @@ ScummV5_C25_Flush__copy_history:
     bra ScummV5_C25_Flush__copy_history
 
 ScummV5_C25_Flush__dispatch:
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C25_LAST_COUNT
+    sta.l SAME_SCUMM_SCENARIO_C25_OBS_FLUSH_COUNT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C25_LAST_WORDS
+    sta.l SAME_SCUMM_SCENARIO_C25_OBS_FLUSH_WORDS
+    lda.l SAME_SCUMM_C25_LAST_WORDS+2
+    sta.l SAME_SCUMM_SCENARIO_C25_OBS_FLUSH_WORDS+2
+    lda.l SAME_SCUMM_C25_LAST_WORDS+4
+    sta.l SAME_SCUMM_SCENARIO_C25_OBS_FLUSH_WORDS+4
+    lda.l SAME_SCUMM_C25_LAST_WORDS+6
+    sta.l SAME_SCUMM_SCENARIO_C25_OBS_FLUSH_WORDS+6
+    .endif
     rep #$30
     .a16
     .i16
+    ; Dispatch the normalized word copied into LAST_WORDS above.  The queue
+    ; record is byte-packed and its transient X/index state is not part of
+    ; the semantic command ABI; using the normalized word also keeps every
+    ; command family on the same width-safe path.
+    lda.l SAME_SCUMM_C25_LAST_WORDS
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    sta.l SAME_SCUMM_SCENARIO_C25_DISPATCH_COMMAND
     lda.l SAME_SCUMM_C25_RECORD_OFFSET
-    inc
-    tax
-    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_DISPATCH_OFFSET
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C25_LAST_COUNT
+    sta.l SAME_SCUMM_SCENARIO_C25_DISPATCH_COUNT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C25_LAST_WORDS
+    .endif
     .if SAME_BUILD_SCUMM_M21
     cmp #$010C
     bne ScummV5_C25_Flush__not_jump_hook
@@ -10817,11 +11552,45 @@ ScummV5_C25_Flush__not_jump_hook:
     .a16
     .endif
     .if SAME_BUILD_SCUMM_M23C
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    sep #$20
+    .a8
+    lda #$D0
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
+    rep #$20
+    .a16
+    .endif
     cmp #$0110
     bne ScummV5_C25_Flush__not_clear_queue
     jmp ScummV5_C25_Flush__clear_imuse_queue
 ScummV5_C25_Flush__not_clear_queue:
+    ; Recognize this encoded command bytewise.  C25 records are byte-packed
+    ; at the queue boundary, so command identity must not depend on the
+    ; caller's accumulator-width annotation or a stale high byte.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C25_LAST_WORDS
+    cmp #$07
+    bne ScummV5_C25_Flush__not_authored_setup
+    lda.l SAME_SCUMM_C25_LAST_WORDS+1
+    cmp #$01
+    bne ScummV5_C25_Flush__not_authored_setup
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    sep #$20
+    .a8
+    lda #$D2
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
+    rep #$20
     .a16
+    .endif
+    jmp ScummV5_C25_Flush__authored_setup
+ScummV5_C25_Flush__not_authored_setup:
+    rep #$20
+    .a16
+    ; The fixture-only marker above is observational, but it changes A.  All
+    ; subsequent command-family comparisons must use the normalized queued
+    ; command again rather than the marker byte.
+    lda.l SAME_SCUMM_C25_LAST_WORDS
     .endif
     ; These three iMUSE setup commands are present in the authentic Fate
     ; room scripts.  They are meaningful to the desktop mixer, but have no
@@ -10849,6 +11618,11 @@ ScummV5_C25_Flush__not_m24rb_priority:
     bne ScummV5_C25_Flush__not_m24rb_speed
     jmp ScummV5_C25_Flush__m24rb_simple
 ScummV5_C25_Flush__not_m24rb_speed:
+    .a16
+    cmp #$0107
+    bne ScummV5_C25_Flush__not_m24rb_setup
+    jmp ScummV5_C25_Flush__m24rb_setup
+ScummV5_C25_Flush__not_m24rb_setup:
     .a16
     cmp #$010D
     bne ScummV5_C25_Flush__not_m24rb_fade
@@ -10902,6 +11676,38 @@ ScummV5_C25_Flush__not_stop_sound:
 ScummV5_C25_Flush__dispatch_stop_all:
     jmp ScummV5_C25_Flush__stop_all
 ScummV5_C25_Flush__dispatch_error:
+    ; C25 command identity is a packed little-endian word.  Keep the
+    ; compatibility trigger recognizable even when a preceding service helper
+    ; returned with a byte-width accumulator; the normalized record remains
+    ; the authority for the command, not the caller's transient P state.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C25_LAST_WORDS
+    ; Keep the packed iMUSE queue-clear command recognizable even if a
+    ; service helper returned through an unexpected accumulator width.  The
+    ; canonical command is still validated by its normal handler below.
+    cmp #$10
+    bne ScummV5_C25_Flush__dispatch_error__not_0110_low
+    lda.l SAME_SCUMM_C25_LAST_WORDS+1
+    cmp #$01
+    bne ScummV5_C25_Flush__dispatch_error__not_0110_low
+    jmp ScummV5_C25_Flush__clear_imuse_queue
+ScummV5_C25_Flush__dispatch_error__not_0110_low:
+    rep #$30
+    .a16
+    lda.l SAME_SCUMM_C25_LAST_WORDS
+    ; The compatibility trigger is likewise recognized from the normalized
+    ; packed word below; reloading restores the compare width after the
+    ; bytewise probes above.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C25_LAST_WORDS
+    cmp #$0E
+    bne ScummV5_C25_Flush__dispatch_error__not_010E_low
+    lda.l SAME_SCUMM_C25_LAST_WORDS+1
+    cmp #$01
+    beq ScummV5_C25_Flush__m24rb_trigger
+ScummV5_C25_Flush__dispatch_error__not_010E_low:
     ; iMUSE command 2/3 are canonical compatibility no-ops in the v5
     ; desktop driver.  Fate emits command 3 during room-42 cutscene setup;
     ; it is a valid one-word command and must not be rejected as an unknown
@@ -10922,7 +11728,7 @@ ScummV5_C25_Flush__dispatch_error:
     lda #$08
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 
 ScummV5_C25_Flush__compat_noop:
     sep #$20
@@ -10959,7 +11765,7 @@ ScummV5_C25_Flush__fallback_error:
     lda #$09
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 .endif
 
 .if SAME_BUILD_M24RB
@@ -10988,16 +11794,45 @@ ScummV5_C25_Flush__m24rb_simple_range_ok:
     sep #$20
     .a8
     jmp ScummV5_C25_Flush__command_done
-ScummV5_C25_Flush__m24rb_trigger:
+ScummV5_C25_Flush__m24rb_setup:
+    ; Fate's room-82 setup uses iMUSE command $0107 as a bounded five-word
+    ; control record.  Its desktop mixer effect has no independent SNES
+    ; state, but the complete authored record must be consumed before the
+    ; subsequent $010E/$010F controls are dispatched.
     sep #$20
     .a8
     lda.l SAME_SCUMM_C25_LAST_COUNT
+    cmp #$05
+    beq ScummV5_C25_Flush__m24rb_setup_valid
+    jmp ScummV5_C25_Flush__m24rb_error
+ScummV5_C25_Flush__m24rb_setup_valid:
+    jmp ScummV5_C25_Flush__command_done
+ScummV5_C25_Flush__m24rb_trigger:
+    sep #$20
+    .a8
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$E1
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
+    .endif
+    lda.l SAME_SCUMM_C25_LAST_COUNT
     cmp #$03
     beq ScummV5_C25_Flush__m24rb_trigger_valid
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$E2
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
+    .endif
     jmp ScummV5_C25_Flush__m24rb_error
 ScummV5_C25_Flush__m24rb_trigger_valid:
     rep #$20
     .a16
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    sep #$20
+    .a8
+    lda #$E3
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
+    rep #$20
+    .a16
+    .endif
     lda.l SAME_SCUMM_C25_LAST_WORDS+4
     cmp #$0100
     bcc ScummV5_C25_Flush__m24rb_trigger_range_ok
@@ -11044,7 +11879,7 @@ ScummV5_C25_Flush__m24rb_deferred_count_ok:
     lda #$01
     sta.l SAME_M24RB_LOGICAL82_STATE
     lda #SAME_M24RB_LAYER_SOUND
-    jsr ScummV5_M23C_SetSfxActive
+    jsl ScummV5_C25_FarCall_SetSfxActive
 ScummV5_C25_Flush__m24rb_deferred_done:
     .a8
     jmp ScummV5_C25_Flush__command_done
@@ -11089,16 +11924,43 @@ ScummV5_C25_Flush__m24rb_error:
     lda #$0A
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 .endif
 
 .if SAME_BUILD_SCUMM_M23C
-ScummV5_C25_Flush__clear_imuse_queue:
+ScummV5_C25_Flush__authored_setup:
+    ; Authored Fate setup uses the five-word iMUSE $0107 control record.
+    ; Keep the complete bounded record consumed even though its desktop
+    ; mixer effect has no separate SNES-side state.
     sep #$20
     .a8
     lda.l SAME_SCUMM_C25_LAST_COUNT
+    cmp #$05
+    beq ScummV5_C25_Flush__authored_setup_valid
+    jml ScummV5_C25_Error
+ScummV5_C25_Flush__authored_setup_valid:
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    sep #$20
+    .a8
+    lda #$D3
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
+    .endif
+    jmp ScummV5_C25_Flush__command_done
+
+ScummV5_C25_Flush__clear_imuse_queue:
+    sep #$20
+    .a8
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$D4
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
+    .endif
+    lda.l SAME_SCUMM_C25_LAST_COUNT
     cmp #$01
     bne ScummV5_C25_Flush__clear_imuse_error
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda #$D5
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
+    .endif
     lda.l SAME_SCUMM_M23C_CLEAR_QUEUE_COUNT
     inc
     sta.l SAME_SCUMM_M23C_CLEAR_QUEUE_COUNT
@@ -11106,10 +11968,10 @@ ScummV5_C25_Flush__clear_imuse_queue:
 ScummV5_C25_Flush__clear_imuse_error:
     .a8
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
-    lda #$0B
+    lda #$D6
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 .endif
 
 ScummV5_C25_Flush__master_volume:
@@ -11122,7 +11984,7 @@ ScummV5_C25_Flush__master_volume:
     lda #$0C
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__master_count_ok:
     rep #$20
     .a16
@@ -11133,7 +11995,7 @@ ScummV5_C25_Flush__master_count_ok:
     lda #$0D
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__master_range_ok:
     asl
     beq ScummV5_C25_Flush__master_scaled
@@ -11146,11 +12008,11 @@ ScummV5_C25_Flush__master_scaled:
     sep #$20
     .a8
     lda #SAME_AUDIO_OP_MASTER_VOLUME
-    jsr ScummV5_C25_EmitAudio
+    jsl ScummV5_C25_FarCall_EmitAudio
     bcs ScummV5_C25_Flush__master_service_error
     jmp ScummV5_C25_Flush__command_done
 ScummV5_C25_Flush__master_service_error:
-    jmp ScummV5_C25_ServiceError
+    jml ScummV5_C25_ServiceError
 
 ScummV5_C25_Flush__start_sound:
     sep #$20
@@ -11162,13 +12024,13 @@ ScummV5_C25_Flush__start_sound:
     lda #$0E
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__start_count_ok:
     .if SAME_BUILD_SCUMM_M21
     sep #$20
     .a8
     lda.l SAME_SCUMM_C25_LAST_WORDS+2
-    jsr Same_Tad_HasRoutes
+    jsl ScummV5_C25_FarCall_HasRoutes
     bcs ScummV5_C25_Flush__start_unrouted
     lda #SAME_AUDIO_OP_MUSIC_PLAY
     sta.l SAME_SCUMM_C25_SELECTOR
@@ -11183,13 +12045,13 @@ ScummV5_C25_Flush__start_count_ok:
     sep #$20
     .a8
     lda.l SAME_SCUMM_C25_LAST_WORDS+2
-    jsr Same_Tad_MapRoute
+    jsl ScummV5_C25_FarCall_MapRoute
     bcc ScummV5_C25_Flush__start_route_resolved
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     lda #$0F
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__start_route_resolved:
     .a8
     sta.l SAME_SCUMM_MUSIC_ROUTE_SONG
@@ -11212,9 +12074,9 @@ ScummV5_C25_Flush__start_emit:
     sep #$20
     .a8
     lda.l SAME_SCUMM_C25_SELECTOR
-    jsr ScummV5_C25_EmitAudio
+    jsl ScummV5_C25_FarCall_EmitAudio
     bcc ScummV5_C25_Flush__start_service_ok
-    jmp ScummV5_C25_ServiceError
+    jml ScummV5_C25_ServiceError
 ScummV5_C25_Flush__start_service_ok:
     .a8
     lda.l SAME_SCUMM_C25_SELECTOR
@@ -11262,9 +12124,11 @@ ScummV5_C25_Flush__m22_generation_ok:
     sep #$20
     .a8
     lda #SAME_AUDIO_OP_SFX_PLAY
-    jsr ScummV5_C25_EmitAudio
-    bcc ScummV5_C25_Flush__command_done
-    jmp ScummV5_C25_ServiceError
+    jsl ScummV5_C25_FarCall_EmitAudio
+    bcs ScummV5_C25_Flush__sfx_play_error
+    jmp ScummV5_C25_Flush__command_done
+ScummV5_C25_Flush__sfx_play_error:
+    jml ScummV5_C25_ServiceError
     .endif
 
 .if SAME_BUILD_SCUMM_M21
@@ -11274,20 +12138,20 @@ ScummV5_C25_Flush__jump_hook:
     lda.l SAME_SCUMM_C25_LAST_COUNT
     cmp #$04
     beq ScummV5_C25_Flush__jump_count_ok
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__jump_count_ok:
     .a8
     rep #$20
     .a16
     lda.l SAME_SCUMM_C25_LAST_WORDS+4
     beq ScummV5_C25_Flush__jump_class_ok
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__jump_class_ok:
     .a16
     lda.l SAME_SCUMM_C25_LAST_WORDS+2
     and #$FF00
     beq ScummV5_C25_Flush__jump_sound_width_ok
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__jump_sound_width_ok:
     .a16
     sep #$20
@@ -11295,7 +12159,7 @@ ScummV5_C25_Flush__jump_sound_width_ok:
     lda.l SAME_SCUMM_C25_LAST_WORDS+2
     cmp.l SAME_SCUMM_ACTIVE_MUSIC
     beq ScummV5_C25_Flush__jump_owner_ok
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__jump_owner_ok:
     .a8
     .if SAME_BUILD_M24RB
@@ -11350,9 +12214,9 @@ ScummV5_C25_Flush__jump_owner_ok:
     sep #$20
     .a8
     lda #SAME_AUDIO_OP_MUSIC_SECTION_SELECT
-    jsr ScummV5_C25_EmitAudio
+    jsl ScummV5_C25_FarCall_EmitAudio
     bcc ScummV5_C25_Flush__m22_section_emitted
-    jmp ScummV5_C25_ServiceError
+    jml ScummV5_C25_ServiceError
 ScummV5_C25_Flush__m22_section_emitted:
     .a8
     lda #$02
@@ -11369,7 +12233,7 @@ ScummV5_C25_Flush__jump_not_section:
     sta.l SAME_SCUMM_CONDITION
     lda #$01
     sta.l SAME_SCUMM_CONDITION+1
-    jsr Same_Event_StageEngine
+    jsl ScummV5_C25_FarCall_StageEngine
     rep #$20
     .a16
     lda.l SAME_SCUMM_OPERAND
@@ -11379,16 +12243,16 @@ ScummV5_C25_Flush__jump_not_section:
     sep #$20
     .a8
     lda.l SAME_SCUMM_C25_LAST_WORDS+2
-    jsr Same_Tad_MapRoute
+    jsl ScummV5_C25_FarCall_MapRoute
     bcc ScummV5_C25_Flush__jump_route_ok
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__jump_route_ok:
     .a8
     sta.l SAME_SCUMM_MUSIC_ROUTE_SONG
     lda #SAME_AUDIO_OP_MUSIC_PLAY
-    jsr ScummV5_C25_EmitAudio
+    jsl ScummV5_C25_FarCall_EmitAudio
     bcc ScummV5_C25_Flush__jump_service_ok
-    jmp ScummV5_C25_ServiceError
+    jml ScummV5_C25_ServiceError
 ScummV5_C25_Flush__jump_service_ok:
     .a8
     lda #$01
@@ -11419,7 +12283,7 @@ ScummV5_C25_Flush__stop_sound:
     lda.l SAME_SCUMM_C25_LAST_COUNT
     cmp #$02
     beq ScummV5_C25_Flush__stop_count_ok
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__stop_count_ok:
     .if SAME_BUILD_SCUMM_M21
     sep #$20
@@ -11449,10 +12313,10 @@ ScummV5_C25_Flush__stop_prepare:
     .else
     lda #SAME_AUDIO_OP_SFX_STOP
     .endif
-    jsr ScummV5_C25_EmitAudio
+    jsl ScummV5_C25_FarCall_EmitAudio
     .if SAME_BUILD_SCUMM_M21
     bcc ScummV5_C25_Flush__stop_service_ok
-    jmp ScummV5_C25_ServiceError
+    jml ScummV5_C25_ServiceError
 ScummV5_C25_Flush__stop_service_ok:
     .a8
     lda.l SAME_SCUMM_C25_SELECTOR
@@ -11476,10 +12340,10 @@ ScummV5_C25_Flush__stop_is_music:
     sta.l SAME_SCUMM_M22_GENERATION_AT_ARM
     .endif
     bcc ScummV5_C25_Flush__command_done
-    jmp ScummV5_C25_ServiceError
+    jml ScummV5_C25_ServiceError
     .else
     bcc ScummV5_C25_Flush__command_done
-    jmp ScummV5_C25_ServiceError
+    jml ScummV5_C25_ServiceError
     .endif
 
 ScummV5_C25_Flush__stop_all:
@@ -11488,7 +12352,7 @@ ScummV5_C25_Flush__stop_all:
     lda.l SAME_SCUMM_C25_LAST_COUNT
     cmp #$01
     beq ScummV5_C25_Flush__stop_all_count_ok
-    jmp ScummV5_C25_Error
+    jml ScummV5_C25_Error
 ScummV5_C25_Flush__stop_all_count_ok:
     rep #$20
     .a16
@@ -11498,9 +12362,9 @@ ScummV5_C25_Flush__stop_all_count_ok:
     sep #$20
     .a8
     lda #SAME_AUDIO_OP_MUSIC_STOP
-    jsr ScummV5_C25_EmitAudio
+    jsl ScummV5_C25_FarCall_EmitAudio
     bcc ScummV5_C25_Flush__stop_all_music_ok
-    jmp ScummV5_C25_ServiceError
+    jml ScummV5_C25_ServiceError
 ScummV5_C25_Flush__stop_all_music_ok:
     rep #$20
     .a16
@@ -11509,9 +12373,9 @@ ScummV5_C25_Flush__stop_all_music_ok:
     sep #$20
     .a8
     lda #SAME_AUDIO_OP_SFX_STOP
-    jsr ScummV5_C25_EmitAudio
+    jsl ScummV5_C25_FarCall_EmitAudio
     bcc ScummV5_C25_Flush__stop_all_sfx_ok
-    jmp ScummV5_C25_ServiceError
+    jml ScummV5_C25_ServiceError
 ScummV5_C25_Flush__stop_all_sfx_ok:
     rep #$20
     .a16
@@ -11520,9 +12384,9 @@ ScummV5_C25_Flush__stop_all_sfx_ok:
     sep #$20
     .a8
     lda #SAME_AUDIO_OP_SPEECH_STOP
-    jsr ScummV5_C25_EmitAudio
+    jsl ScummV5_C25_FarCall_EmitAudio
     bcc ScummV5_C25_Flush__stop_all_speech_ok
-    jmp ScummV5_C25_ServiceError
+    jml ScummV5_C25_ServiceError
 ScummV5_C25_Flush__stop_all_speech_ok:
     .a8
     .if SAME_BUILD_SCUMM_M21
@@ -11560,9 +12424,9 @@ ScummV5_C25_Flush__complete:
     sep #$20
     .a8
     lda #SAME_AUDIO_OP_FLUSH
-    jsr ScummV5_C25_EmitAudio
+    jsl ScummV5_C25_FarCall_EmitAudio
     bcc ScummV5_C25_Flush__complete_emitted
-    jmp ScummV5_C25_ServiceError
+    jml ScummV5_C25_ServiceError
 ScummV5_C25_Flush__complete_emitted:
     .a8
     .if SAME_BUILD_M24RB
@@ -11570,7 +12434,11 @@ ScummV5_C25_Flush__complete_emitted:
     beq ScummV5_C25_Flush__not_frame_end_return
     lda #$00
     sta.l SAME_M24RB_FRAME_END_ACTIVE
+    .if SAME_BUILD_M24RB && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
+    rtl
+    .else
     rts
+    .endif
 ScummV5_C25_Flush__not_frame_end_return:
     .a8
     .endif
@@ -11591,7 +12459,7 @@ ScummV5_C25_Flush__not_frame_end_return:
     sta.l SAME_SCUMM_M23A_HOLD
     lda #SCUMM_VM_YIELDED
     sta.l SAME_SCUMM_STATUS
-    jmp ScummV5_Engine_Frame__complete_success
+    jml ScummV5_Engine_Frame__complete_success
     .endif
 ScummV5_C25_Flush__m23c_target:
     .a8
@@ -11604,14 +12472,14 @@ ScummV5_C25_Flush__m23c_target:
     sta.l SAME_SCUMM_M23A_HOLD
     lda #$07
     sta.l SAME_SCUMM_M23C_PHASE
-    jmp ScummV5_Engine_Frame__next
+    jml ScummV5_Engine_Frame__next
     .else
     sta.l SAME_SCUMM_M23A_HOLD
     lda #$03
     sta.l SAME_SCUMM_M23C_PHASE
     lda #SCUMM_VM_YIELDED
     sta.l SAME_SCUMM_STATUS
-    jmp ScummV5_Engine_Frame__complete_success
+    jml ScummV5_Engine_Frame__complete_success
     .endif
     .endif
     .if SAME_BUILD_SCUMM_M23B
@@ -11624,11 +12492,33 @@ ScummV5_C25_Flush__m23c_target:
     sta.l SAME_SCUMM_M23A_HOLD
     lda #SCUMM_VM_YIELDED
     sta.l SAME_SCUMM_STATUS
-    jmp ScummV5_Engine_Frame__complete_success
+    jml ScummV5_Engine_Frame__complete_success
 ScummV5_C25_Flush__complete_continue:
     .a8
     .endif
-    jmp ScummV5_Engine_Frame__next
+    jml ScummV5_Engine_Frame__next
+
+.if SAME_BUILD_M24RB && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
+    .bank 0
+    .org ScummV5_C25_Flush_Bank0_Resume
+ScummV5_C25_FarCall_EmitAudio:
+    jsr ScummV5_C25_EmitAudio
+    rtl
+ScummV5_C25_FarCall_SetSfxActive:
+    jsr ScummV5_M23C_SetSfxActive
+    rtl
+    .if SAME_BUILD_SCUMM_M21
+ScummV5_C25_FarCall_HasRoutes:
+    jsr Same_Tad_HasRoutes
+    rtl
+ScummV5_C25_FarCall_MapRoute:
+    jsr Same_Tad_MapRoute
+    rtl
+    .endif
+ScummV5_C25_FarCall_StageEngine:
+    jsr Same_Event_StageEngine
+    rtl
+.endif
 
 .if SAME_BUILD_SCUMM_M22
 ; Consume only the token emitted by the compiled score boundary and only for
@@ -11752,6 +12642,65 @@ ScummV5_C25_ServiceError:
 ScummV5_C25_Error:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; Preserve the complete failing queue record.  The last SCUMM opcode can
+    ; belong to the next loop iteration, so C25 diagnostics must identify the
+    ; record actually being flushed rather than infer its producer from PC.
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C25_RECORD_OFFSET
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+1
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+2
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+3
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+4
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+5
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+6
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+7
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+8
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+9
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+10
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+11
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+12
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+13
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+14
+    inx
+    lda.l SAME_SCUMM_C25_QUEUE,x
+    sta.l SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD+15
+    .endif
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     lda #$C2
     sta.l SAME_SCUMM_SCENARIO_C25_ENTRY
@@ -16830,6 +17779,14 @@ ScummV5_SetError:
     sta.l SAME_SCUMM_SCENARIO_ERROR_STACK+6
     lda 8,s
     sta.l SAME_SCUMM_SCENARIO_ERROR_STACK+7
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_LHS
+    sta.l SAME_SCUMM_SCENARIO_ERROR_LHS
+    lda.l SAME_SCUMM_OPERAND
+    sta.l SAME_SCUMM_SCENARIO_ERROR_OPERAND
+    lda.l SAME_SCUMM_RESULT_OFFSET
+    sta.l SAME_SCUMM_SCENARIO_ERROR_RESULT
     .endif
     ; Restore the error code in A for the existing state publication below.
     lda.l SAME_SCUMM_SCENARIO_ERROR_CODE

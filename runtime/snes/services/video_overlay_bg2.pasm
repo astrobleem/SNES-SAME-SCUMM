@@ -50,6 +50,11 @@ Same_Overlay_Bg2_Mono15Pair:
 
 Same_Overlay_Bg2_Reset_Far:
     php
+    sep #$20
+    .a8
+    ; The overlay backend owns its character-base policy from reset onward.
+    lda #$70
+    sta BG12NBA
     rep #$30
     .a16
     .i16
@@ -223,6 +228,9 @@ Same_Overlay_Bg2_Step_Far:
     php
     sep #$20
     .a8
+    ; The selected overlay backend owns its character-base realization.
+    lda #$70
+    sta BG12NBA
     lda.l SAME_OVERLAY_STATE
     cmp #SAME_OVERLAY_STATE_PREPARING
     beq Same_Overlay_Bg2_Step__prepare

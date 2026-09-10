@@ -110,7 +110,7 @@ class ScummV5RoomVisualTests(unittest.TestCase):
     def test_scumm_target_integration_is_hardware_blind(self) -> None:
         integration = (ROOT / "runtime/snes/engines/scumm_v5_visual.pasm").read_text()
         facade = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()
-        self.assertIn("Same_VideoSurface_ComposeRoom_Far", integration)
+        self.assertIn("Same_VideoSurface_RoomInstalled_Far", integration)
         for forbidden in (
             "BGMODE", "BG1SC", "BG12NBA", "VMADD", "CGRAM", "OAM", "DMAP7",
             "$402000", "$410000", "$41E000", "SAME_BWRAM_SURFACE_BASE",
@@ -118,6 +118,15 @@ class ScummV5RoomVisualTests(unittest.TestCase):
             self.assertNotIn(forbidden, integration)
         self.assertIn("SAME_BWRAM_SURFACE_BASE", facade)
         self.assertNotIn("cmp #$31", facade)
+
+    def test_visual_directory_lookup_reloads_room_key_after_stride_math(self) -> None:
+        source = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()
+        start = source.index("Same_VideoSurface_FindVisual:")
+        end = source.index("Same_VideoSurface_ValidateDescriptor:", start)
+        lookup = source[start:end]
+        self.assertIn("sta.l SAME_VIDEO_SURFACE_ROOM", lookup)
+        self.assertGreaterEqual(lookup.count("lda.l SAME_VIDEO_SURFACE_ROOM"), 1)
+        self.assertIn("adc #SAME_VIDEO_SURFACE_DESCRIPTOR_SIZE", lookup)
 
     def test_target_generator_segments_complete_rows_without_crossing_banks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
