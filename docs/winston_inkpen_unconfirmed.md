@@ -1,6 +1,6 @@
 # WINSTON INKPEN: UNCONFIRMED
 
-Documented by Luna  
+Documented by Luna
 Date: 2026-09-09
 
 ## Core concept
