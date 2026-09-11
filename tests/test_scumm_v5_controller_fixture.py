@@ -255,7 +255,6 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
     def test_room_install_resets_visual_cache_but_nonmatching_render_is_inert(self) -> None:
         visual = (ROOT / "runtime/snes/engines/scumm_v5_visual.pasm").read_text()
         controller = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
-        controller = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         install = visual.split("ScummV5_RoomVisual_Installed_Far:", 1)[1].split(
             "    plp", 1)[0]
         self.assertIn("ScummV5_Controller_ResetVisualCache_Far", install)

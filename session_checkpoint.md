@@ -3240,5 +3240,15 @@ historical Poppy DLL SHA
 controller-disabled SCUMM personality also assembled, linted, finalized, and
 passed the ROM audit, producing diagnostic ROM SHA
 `fe4216e5e2cdd23981c0f04718f50d0923976efb7341270d35f686367082000b`.
-Focused controller tests pass 56/56. Target replay acceptance remains to be
-run with the generic capability explicitly enabled; no publication yet.
+Focused controller tests pass 56/56. The capability-split review is accepted
+and published as `review/controller-service` at `39b1cc1`; this branch begins
+the separate standalone generic-controller runtime conformance milestone.
+
+The first standalone fixture milestone is complete locally. A new
+copyright-free profile and cooked-room generator produce one self-contained
+room with one reachable CDHD object (ID 7), OBNA `test console`, authored VERB
+3, and an authored local VerbOps producer (script 200). The host round-trip
+test verifies the object bounds/name, authored verb entrypoint, and script
+identity. No Fate archive or Fate object/script content is used by this
+fixture. Target builder wiring and the cold enabled/disabled runtime replay
+remain in progress.
