@@ -1809,7 +1809,7 @@ def wait_for_overlay_committed(session, limit: int = 256) -> dict:
                        f"committed={committed} next={next_generation}")
 
 
-def settle_native_capture(session, frames: int = 1800) -> None:
+def settle_native_capture(session, frames: int = 1800, room: int | None = 42) -> None:
     """Wait for the real native display planes to converge.
 
     A fixed delay is insufficient after an input-driven redraw: the backend
@@ -1831,7 +1831,7 @@ def settle_native_capture(session, frames: int = 1800) -> None:
         # diagnostic and may describe a later rejected/retried compose while
         # the committed generation is already valid; do not turn that
         # auxiliary byte into a false capture timeout.
-        if (surface_state[0] == 42
+        if ((room is None or surface_state[0] == room)
                 and surface_state[0x26] == 0
                 and int.from_bytes(backend[0x1A:0x1C], "little") > 0
                 and int.from_bytes(event_state[0x04:0x06], "little") == 0

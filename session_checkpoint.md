@@ -2867,3 +2867,356 @@ git diff --check
   `git diff --check` pass. The prior object-492 failure was validator
   expectation drift after the generic cursor re-entry fix, not a runtime
   selection failure.
+
+## 2026-09-10 — Generic controller across room boundaries (in progress)
+
+- Worktree/branch: isolated `/home/chad/SAME-0.2.0/room-boundaries`,
+  `review/controller-mult`; frozen acceptance branch was not modified.
+- Added a generic room-installed interaction reset and removed the generic
+  controller frame’s room-42/room-68 interaction gate. Room-68 startup
+  acknowledgement remains fixture policy. Added static coverage for the
+  room-neutral production path and lifecycle reset.
+- Candidate second room: FULL ATLANTIS room 49. Source-backed candidates
+  include object 591 “very large basket” with authored verbs 8/9/11/90/91,
+  object 592 “salvage boat” with verbs 9/10/90, and object 595 “fish net”
+  with verbs 8/9/11/90/91. The selection rationale and source metadata are in
+  `docs/controller_room_boundaries.md`.
+- Frozen toolchain checks: Poppy DLL
+  `34514923ea8dc79a4664fa327f583cee8e8daa64e3be47518ae22ba5a2c7608e`; frozen
+  Nexen SHA `17d243c404b8ef32bbb1754a5b026584f2ae24cb047f54b9f250a6f4b721650a`.
+- The accepted room-42 replay remains green with the legacy bounded OBNA
+  install path. Expanding generated OBNA installation to every source object
+  changes the generated runtime path and currently prevents startup42 from
+  reaching room 42. This is the active generic loader blocker; no multi-room
+  acceptance or publication claim is made.
+
+## 2026-09-10 — OBNA A/B/C/D matrix
+
+- The first diagnostic attempt was invalidated: it used
+  `SAME_BUILD_M25A_VALIDATOR` instead of the build script’s
+  `SAME_BUILD_SCUMM_M25A_VALIDATOR`, and reused a room-49 visual include for
+  startup42. Those results are not evidence.
+- The corrected matrix used FULL ATLANTIS, the explicit startup42 room-42
+  visual manifest, pinned Poppy, and the frozen Nexen. A (legacy) produced
+  ROM `25db81447a14c112d20ec7e10d5ba1ed45fe3ff8353e50d60b92a804579e5cf4`
+  and reached room 42 phase 0/readiness/error 0. C (generalized installer
+  over the exact legacy set) was byte-identical to A and has the same result.
+- B2 retained the legacy installer on the live path and put the expanded
+  installer after the live return. It still failed to reach the room-68
+  handoff through 1000 completed frames, ending room 0/phase 0/error 0.
+  D (expanded live installer) had the same pre-handoff failure. This proves
+  the first failure family is generated loader layout/relocation sensitivity,
+  not an expanded installer execution/WRAM-count failure.
+- Matrix artifacts and hashes are consolidated in
+  `docs/controller_room_boundaries.md`.
+
+## 2026-09-10 — Layout-preserving active-room names
+
+- The active-room name population routine is now separately banked and no
+  longer shifts the established room-loader control layout. Its copy loop
+  keeps immutable generated source offset separate from active-cache
+  destination offset; the earlier diagnostic version copied only the first
+  byte while retaining the full source length.
+- Fresh FULL/startup42 ROM:
+  `build/room-boundary-fixed5.sfc`, SHA256
+  `8ede6b44908ef57a27a570fad3c50a59df8a7dbd356438d8ccae8d77e3bb9dab`.
+  Build identity:
+  `build/room-boundary-fixed5.build_identity.json`, SHA256
+  `bcdda830dfdc83a5f91f5e49741e6d180cd91a40eb7b3634c4e0d20c9f591cac`.
+- Target room-42 replay passed on this fresh ROM: room 42 phase 0, exact
+  `Open storage locker` and `Push air compressor switch` buffers, both action
+  shapes, object 492, and error 0.
+- Authentic phase-6 room-49 control reaches room 49 but remains in ordinary
+  room-entry phase 2 with SCUMM error 14 before controller readiness. This is
+  a separate lifecycle prerequisite, not evidence against the active-room
+  name cache or room-install reset. No direct room/WRAM write bypass was used;
+  no publication is made from this worktree yet.
+- Validation on the current source: focused controller fixture `54/54` pass;
+  relevant SCUMM/surface/M25A set `248/248` pass; repository-wide Python
+  suite `544` pass, `4` skipped after moving the generated phase-6 room-49
+  artifact that otherwise makes the existing optional Phase6K byte oracle
+  compare against a different generated script set. Python compilation,
+  `git diff --check`, Poppy source/DLL guard, and SA-1/BW-RAM ROM audit all
+  pass for fixed5. No review branch has been published.
+
+## 2026-09-10 — Room-49 error-14 writer localized
+
+- The accepted room-42 state and generic active-room OBNA solution remain
+  preserved; no production interaction/OBNA change was made for this pass.
+- Diagnostic ROM: `df4839a2d017d9889f14304ea8ee86e70bd5047b04ea70f41913f02446103bcb`.
+- The first canonical SCUMM error transition is error `0 -> 14` at
+  `ScummV5_SetError` map `$F5FA`; its caller return resolves to
+  `ScummV5_Op_StringOps__missing` at `$ED41` (return `$ED45`). This is
+  decimal 14 / `$0E`, `SCUMM_ERR_STRING`, not VerbOps.
+- Atomic diagnostic context: room 49, M23A phase 2, global script 144, slot 1,
+  program `$F3`, PC `$0015`, last opcode `$27`, error count 54 in the rerun.
+- C8 resolver state at the same terminal observation: sub-op `$44`, string ID
+  `30`, `C8_SIZES[30] = 0`; the string resource is absent. Program `$F3` and
+  source `script-144.scrp` are byte-identical (61 bytes, generated identity
+  unchanged), so this is a missing prerequisite runtime resource state rather
+  than a cooker/program mapping divergence.
+- Historical M23B room-49 setup seeded source-authored boot strings 30/31 as
+  153-byte resources. The phase-6 scenario boot clears C8 and reaches script
+  144 before that earlier lifecycle has installed string 30. Controller code,
+  OBNA, hit testing, C17, and readiness do not execute before the writer.
+- Classification: interpreter StringOps missing-resource path caused by
+  incomplete phase-6 startup state. No forced phase transition, error clear,
+  controller special case, or validator WRAM patch is permitted. The next
+  implementation step is to restore the authentic source lifecycle/resource
+  mapping generically, then rerun the room-49 boundary.
+- Authored producer audit: FULL ATLANTIS global `script.1` performs `$27 $01`
+  `loadString` at source offsets `$024D` (ID `$1F`/31) and `$02FA` (ID
+  `$1E`/30). Each authored payload is 169 bytes of `$64` followed by a
+  terminator, yielding `C8_SIZES[30] = C8_SIZES[31] = 169`. Global 144/145
+  only read those strings; scripts 18/132 install verb metadata and do not
+  create them. The phase-6 room49 scenario requests room49 directly and omits
+  the boot script-1 lifecycle, so error `$0E` is an incomplete scenario root.
+  The old 153-byte M23B seed remains fixture-only and is not reused.
+## 2026-09-10 — Room49 source-backed string prerequisite target result
+
+The earlier room49 error-14 observation remains a historical witness only. The
+authentic producer audit is closed: FULL ATLANTIS global script 1 performs the
+two `loadString` operations that establish strings 31 and 30 at source offsets
+`$024D` and `$02FA`, respectively. Each authored payload is 169 bytes of
+`$64` followed by its terminator. The direct phase-6 root intentionally omits
+that earlier boot lifecycle, so global 144's `$27/$44` read of string 30 was
+correctly exposing incomplete incoming scenario state.
+
+The chosen correction is fixture-boundary, source-backed incoming state after
+the normal C8 reset during room installation. It is enabled only for the
+phase-6 scenario fixture; no StringOps, controller, OBNA, scheduler, or
+room49 production policy was added. The obsolete cook-time script-prefix and
+boot-global experiments were removed.
+
+Target evidence, using the exact FULL configuration, historical Poppy DLL,
+and frozen Nexen, is:
+
+- ROM `build/room-boundary-room49-source-root-final.sfc`, SHA256
+  `946aebf137d2a65aff2db889fc24db7765b66562643f4ee5b0bae3d1e39a1e31`;
+- report `build/room-boundary-room49-source-root-final-run/report.json`;
+- room 49 reaches M23A phase 0 with error 0;
+- at room49 phase 2 and at completion, `C8_SIZES[30] = 169` and
+  `C8_SIZES[31] = 169`, with both captured prefixes equal to `$64`;
+- lifecycle trace reaches schedule/begin and completes without
+  `SCUMM_ERR_STRING`.
+
+This is the accepted source-backed mid-game-root evidence for resuming the
+multi-room controller proof. The next target step is authentic room49 object
+selection/action validation, followed by the unchanged room42 regression.
+
+The first room49 controller probe then selected object 596 (`path away from
+dock`) from the live CDHD records at source coordinates `(0,0)-(64,48)` and
+resolved authored verb 10. Its active-room OBNA name was present. The direct
+phase-6 root still has empty C17 display names for room49 verbs because the
+earlier VerbOps-authoring lifecycle is not part of that root. This is now the
+next distinct incoming-state prerequisite for native room49 HUD proof, not a
+regression in CDHD hit testing, OBNA loading, or the fixed C8 string state.
+
+## 2026-09-10 — Room49 authenticated C17 VerbOps prerequisite
+
+The missing phase-6 interaction state is now authenticated. FULL global script
+1 starts authored global script 18 at source offset `$060D`; script 18 installs
+the textual VerbOps records and starts global script 132 at `$0167` for the
+remaining VerbOps state. The direct phase-6 root intentionally skips that
+earlier lifecycle.
+
+The fixture now restores the incoming state through the established authored
+script seam: `tools/cook_scumm_v5_rooms.py --prepend-global-script 144 18`
+prepends the encoded `startScript(18)` packet to global 144. No C17 WRAM is
+written directly, and the controller contains no Fate verb IDs or fallback
+names. The fixture is source-backed because the producer and order are the
+FULL authored scripts, not a guessed label table.
+
+Target evidence:
+
+- ROM `dda8be046d3d89f1d7aca0b08eb07324c7680f91aa4a41c744b35b944bb3eabc`;
+- report `build/room-boundary-room49-c17source-final-run/report.json`;
+- room49 reaches phase 0 with error 0 and C8 sizes 169/169;
+- runtime C17 records include `3=Open`, `4=Close`, `8=Use`, `9=Look at`,
+  `10=Walk to`, and `11=Pick up`, with their complete fields captured;
+- object596 is selected from live CDHD, authors verb10, and resolves the
+  active-room OBNA name `path away from dock`.
+
+Native HUD capture and the ordinary room49 action replay remain the next
+acceptance checks; no new controller or C17 policy is justified.
+
+The first native room49 object596 probe reached the text-service boundary with
+the complete source/runtime payload: `Walk to path away from dock`, printable
+length 27, `TALK_VISUAL_STATUS = 0`, and an accepted overlay SET_LAYER
+transaction. The frozen overlay service then failed during generic cell
+encoding: overlay state became ERROR with `pending_cells = 22`,
+`accepted = 2`, `rejected = 0`, and `error_count = 1`; the native capture
+showed the harbor without the HUD. This was a distinct overlay geometry/encode
+failure after C17 publication, not missing C17 state. The later generic fix
+clamps descriptor bounds to the initialized raster; the room-neutral
+native-settle validator was also widened to accept an explicit room instead of
+hard-coding room 42.
+
+The authenticated script-18 name operations are at `$00A7` (verb 3 Open),
+`$00B8` (4 Close), `$00CA` (11 Pick up), `$00DE` (12 Talk to), `$00F2` (9
+Look at), `$0106` (8 Use), `$0116` (6 Push), `$0127` (7 Pull), and `$0138`
+(10 Walk to); each performs the authored NEW/NAME/AT sequence. Script 132 is
+started at script-18 `$0167` and applies KEY sub-op `$12` to IDs `$65..$6E`.
+
+## 2026-09-10 — Room49 overlay geometry correction
+
+The room49 HUD failure was a descriptor-boundary defect, not a capacity
+shortage. The failing text `Walk to path away from dock` produced a raster
+bound `CONTENT_X1 = 156` while the initialized INDEX8 plane is only 80 pixels
+wide. The backend's screen-relative scan therefore visited 11 columns by 2
+rows: 22 unique in-range cells, then attempted another out-of-plane cell while
+the capacity guard ran before source clipping. No duplicate cell accounting or
+staging overflow was involved.
+
+The generic text-service boundary now clamps descriptor content bounds to the
+initialized 80x8 raster (`X0/Y0 >= 0`, `X1 <= 79`, `Y1 <= 7`). The 22-cell
+allocation remains unchanged. Copyright-free overlay tests retain the exact
+22-cell geometry regression and add a source assertion for the descriptor
+clamp.
+
+Target evidence:
+
+- ROM `5d1b408c001f5afbe6ef07dfc6775bb78b7c81181ad85212e703008da0fdfa39`;
+- build uses the historical Poppy DLL and frozen Nexen;
+- room49 C17/OBNA semantic chain remains phase0/error0;
+- overlay current generation equals committed generation 2, state is IDLE,
+  error count is 0, and all 22 cells are accepted;
+- native capture `build/room-boundary-room49-overlay-bounded-run/
+  room49-object596-walkto.png` was inspected and visibly shows
+  `Walk to path away from dock` over the harbor.
+
+Focused controller/overlay unittest validation is `61/61 PASS`. The full
+repository unittest run is `544 PASS, 1 FAIL, 1 SKIP`; the single failure is
+the existing optional Phase6K byte oracle reading the generated room49
+artifact after the phase-6 fixture build changed that artifact's script set,
+not a runtime failure of the overlay correction. Poppy lint, ROM
+assembly/finalization/audit, Python compilation, and `git diff --check` pass
+for the bounded-overlay ROM.
+
+The corrected ROM was rechecked with the frozen Nexen executable
+(`17d243c404b8ef32bbb1754a5b026584f2ae24cb047f54b9f250a6f4b721650a`). The
+phase-6L lifecycle report reaches room 49 phase 0 with error 0 and retains
+the authenticated C8/C17 state. The native room49 object596 capture was
+opened and visually inspected: the source/runtime HUD is rendered as
+`Walk to path away from dock` over the harbor. Its overlay generation is
+committed and idle with no encode error. The separate backdrop-only checker
+is not used as the text acceptance oracle because its Mode-3 terminal-state
+assertion is incompatible with this dynamic-overlay replay; the native text
+capture is the authoritative overlay evidence here.
+
+The same source was rebuilt with the explicit FULL/startup42 contract as
+`build/room-boundary-room42-final.sfc` (SHA256
+`9eed313b43ac0bbaf01a40163c962758ac4e3b1b6b39c7dd5e951df28d7ab546`). The
+cold room42 controller replay passed: Open movement/state effect, canonical
+action release, state-neutral action, object492/Push, post-action input, and
+error 0. Its replay artifact is
+`build/room-boundary-room42-final-run/report.json`.
+
+The Phase6K byte oracle was adjudicated against the closest preserved
+pre-multi-room cooked artifact (`build/m23a-preflight/cooked-a/room-49.sc5c`):
+the baseline has the expected program-211 bytes
+`4c01ffffff 2453033fffffffff`, while the current phase6 generated artifact
+has `020114020f ff0ac09dff0afd07`. The current mismatch is generated-input
+provenance drift from the phase6 fixture artifact, not a change to the
+Phase6K host behavior; the oracle was not weakened.
+
+Room49 cursor/viewport geometry was audited from a cold interactive boundary.
+Initial cursor is `(399,116)`, camera current X/Y is `(160,100)`, and
+`VSCREEN_XSTART=0`. The production left path is an unconditional
+`cursor_x -= 2`; the assembled source/map contain no x=89 clamp. The earlier
+x=89 endpoint came from a lossy long pulse sequence and is not a production
+boundary. No cursor-clamp change was made.
+
+The 640-pixel room visual is projected to the 256-pixel native surface from
+source X 192..447. Object596 CDHD is `(x=0,y=0,width=64,height=48)`, so it is
+off the displayed viewport despite its hit-test projection to cursor-space
+`x=0..63,y=0..47`. The room49 live source enumeration is recorded in
+`docs/controller_room_boundaries.md`; object592 (`salvage boat`, x312..415,
+y56..103) is the selected next action target because it is fully visible and
+offers authored `Look at`/`Walk to` with authenticated C17 names. Objects 591,
+594, and 595 are additional visible source-backed candidates. Object596's
+accepted CDHD/VERB/OBNA and long-HUD evidence is retained, but its action
+replay remains pending an authentic camera/world transition.
+
+The visible-object semantic replay was exercised without production changes.
+From `(399,116)`, six right pulses and eighteen up pulses reached `(411,80)`
+for object592, avoiding overlapping object597. The authentic first A selected
+object592/authored verb9 and entered mode1. The second A entered mode2; the
+ordinary SCUMM lifecycle returned to mode1 with room49 phase0/error0. Six
+ordinary left pulses after completion moved the cursor to `(399,80)` and
+returned the controller to mode0 with selection cleared. Artifact:
+`build/room-boundary-room49-object592-run/report.json`.
+
+Native room49 action proof remains open. The capture attempt was rejected as
+evidence: the frozen runtime remained in backend state4 with 736 pending tiles
+through the bounded convergence wait, and the screenshot was noise. No
+production cursor, controller, or video change was made.
+
+## Room49 backend convergence classification
+
+Generated backend constants identify state `$04` as `WAITING_DMA`. A fresh
+object592 replay sampled only at completed logical-frame fences. Progress was
+normal: at offset 0 the backend was CONVERTING with candidate 256, pending
+640, converted 640; at +16/+32/+48 candidates fell to 192/128/64 and
+converted rose to 704/768/832; at +64 conversion reached candidate 0 and
+converted 896; QUEUEING then drained pending work 896 -> 672 -> 416 -> 160;
+at +128 the backend was IDLE/unlocked with pending 0 and FIFO 0. Backend
+steps rose 161 -> 289 and DMA batches 0 -> 29. This exonerates a backend
+stall and establishes that the earlier state-4 capture was premature.
+
+The same run left the text service holding the exact 20-byte
+`Look at salvage boat` payload and the overlay at generation 2/IDLE. The
+post-convergence native capture still did not visibly show the HUD, so it is
+not accepted as native text evidence yet; that is now a separate overlay
+realization/capture boundary, not a conversion-progress failure. No
+production change was made.
+
+## Room49 overlay realization localization
+
+The committed object592 failure is localized to coordinate realization. The
+text payload was correct (`Look at salvage boat`, 20 bytes), generation 2 was
+accepted and committed, conversion/DMA completed, and the backend was idle and
+unlocked. The committed descriptor was `X=399,Y=84,W=80,H=8`, content bounds
+`0..79` by `0..7`; BG2 therefore computed an off-tilemap column range `49..31`
+and realized no visible cell range. The accepted object596 comparison had the
+same bounded geometry but descriptor `X=51,Y=50` and 22 in-range cells.
+
+The room49 surface crop is source X `192..447` to native X `0..255`. The
+target-neutral overlay boundary was subtracting the virtual-screen center
+offset but not this published source crop. It now also subtracts
+`SAME_VIDEO_SURFACE_SOURCE_X`; cursor room X `411` consequently maps to the
+established text anchor at descriptor X `207`, inside the native domain. This
+is a generic surface-coordinate correction; no controller, Mode3, DMA, C17,
+OBNA, or room/object-specific policy changed.
+
+## 2026-09-10 — Canonical overlay-coordinate rebuild
+
+The prior unresolved-symbol build was an invocation/configuration failure: the
+generated configuration omitted `SAME_BUILD_M24RB=1`, leaving the bank-9 SCUMM
+far closure out while the dispatcher referenced it. The unresolved symbols
+included `ScummV5_C25_FarCall_EmitAudio`,
+`ScummV5_M23A_EndRoomScript_FarEntry`, and generated `ScummV5_C2_Program_*`
+labels. The verified Poppy DLL was source
+`8ee859b33bad94e3a01e9c78026803e482292801`, SHA
+`34514923ea8dc79a4664fa327f583cee8e8daa64e3be47518ae22ba5a2c7608e`.
+
+With the canonical regenerated FULL room49 configuration and M24RB enabled,
+the coordinate-fixed ROM assembled/audited as
+`65f431e5659e0b7ee28e19cae892b0a174e1920ee4ea246dae71c8be1bdb10e5`. Frozen
+Nexen SHA is `17d243c404b8ef32bbb1754a5b026584f2ae24cb047f54b9f250a6f4b721650a`.
+The cold room49 replay selected object592/verb9, committed descriptor X=207,
+and the inspected native capture
+`build/room-boundary-room49-overlay-coordinate-replay/native.png` shows
+`Look at salvage boat`. The second A entered ACTION_PENDING and returned to
+generic selection without object-state mutation; a later D-pad edge cleared
+the stale selection and left room49/error0.
+
+The final rebuilt room42 target is `build/room-boundary-room42-final-rebuilt.sfc`,
+SHA `c7c7edf52c5fa802428dc17c9387126e8708ae9d2f7ea75fd27541bfac9f5372`.
+Its complete cold replay passed with the frozen Nexen and historical Poppy:
+Open/state-changing action, state-neutral action, object492 Push, post-dialogue
+input, and error0. Native captures were inspected. The repository unittest
+suite reports 544 passing, 1 skipped, and the known pre-existing Phase6K
+generated-artifact oracle failure; focused controller/architecture tests report
+58 passing. Python compilation, diff check, Poppy guard/lint, and ROM audit
+pass.

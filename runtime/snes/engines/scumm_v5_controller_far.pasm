@@ -39,6 +39,46 @@ ScummV5_Controller_SeedRoom42SourceStrings_Far__fill:
 
 .endif
 
+; Room installation is the generic lifetime boundary for controller-local
+; interaction state.  It does not inspect room numbers and does not cancel
+; the canonical sentence mailbox; it only prevents a selection, HUD request,
+; or cursor render cache from leaking across the newly installed room.
+ScummV5_Controller_ResetInteractionOnRoomInstall_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_ROOM_READY
+    sta.l SAME_SCUMM_CONTROLLER_MODE
+    sta.l SAME_SCUMM_CONTROLLER_VERB
+    sta.l SAME_SCUMM_CONTROLLER_OBJECT
+    sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    sta.l SAME_SCUMM_INTERACTION_FLAGS
+    sta.l SAME_SCUMM_INTERACTION_INDEX
+    sta.l SAME_SCUMM_INTERACTION_VERB_AFTER
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_RETRY
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_CONTROLLER_OBJECT
+    sta.l SAME_SCUMM_VERB_OBJECT
+    sta.l SAME_SCUMM_INTERACTION_OBJECT
+    sta.l SAME_SCUMM_INTERACTION_X
+    sta.l SAME_SCUMM_INTERACTION_Y
+    sta.l SAME_SCUMM_INTERACTION_VERB_FIRST
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    plp
+    rtl
+
 ScummV5_Controller_Frame_Far:
     php
     rep #$30
@@ -64,23 +104,16 @@ ScummV5_Controller_Frame__raw_input_done:
     sta.l SAME_SCUMM_CONTROLLER_DIAG_ROOM
     lda.l SAME_SCUMM_M23A_PHASE
     sta.l SAME_SCUMM_CONTROLLER_DIAG_PHASE
+    ; The room-68 acknowledgement/request path is fixture policy.  Once it
+    ; has handed off through the ordinary room lifecycle, the controller
+    ; below is generic and may consume any active cooked room's CDHD/VERB
+    ; records.  It must not encode room 42 as the interaction boundary.
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
-    cmp #$2A
-    beq ScummV5_Controller_Frame__room_ok
-    cmp #$44
-    beq ScummV5_Controller_Frame__room_ok
-    plp
-    rtl
-ScummV5_Controller_Frame__room_ok:
-    sep #$20
-    .a8
-    ; The controller build is a labeled room-42 scenario.  Once the normal
-    ; room-68 fixture root has installed, hand off through the ordinary room
-    ; request/lifecycle API; no script slot, PC, mailbox, or object state is
-    ; constructed by this bridge.
     cmp #$44
     beq ScummV5_Controller_Frame__room68
-    jmp ScummV5_Controller_Frame__room42_check
+    .endif
+    jmp ScummV5_Controller_Frame__generic_ready
 ScummV5_Controller_Frame__room68:
     sep #$20
     .a8
@@ -123,13 +156,32 @@ ScummV5_Controller_Frame__room68_request:
     ; Use the existing same-bank far lifecycle entry instead.
     jsl ScummV5_M23A_RequestRoom_FarEntry
     jmp ScummV5_Controller_Frame__done
-ScummV5_Controller_Frame__room42_check:
+ScummV5_Controller_Frame__generic_ready:
     sep #$20
     .a8
-    cmp #$2A
-    beq ScummV5_Controller_Frame__room42
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    ; The established room-installed callback arms interaction service after
+    ; resetting room-local state. This is a lifecycle latch, not a room
+    ; number or fixture-object policy.
+    lda.l SAME_SCUMM_CONTROLLER_ROOM_READY
+    bne ScummV5_Controller_Frame__fixture_armed
     jmp ScummV5_Controller_Frame__done
-ScummV5_Controller_Frame__room42:
+ScummV5_Controller_Frame__fixture_armed:
+    .endif
+    ; Logical room zero is the engine's null-scene sentinel on this v5
+    ; runtime.  It is not a Fate room policy; all installed authored rooms
+    ; remain eligible, including rooms added after the original fixture.
+    lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    bne ScummV5_Controller_Frame__room_identity_ready
+    jmp ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__room_identity_ready:
+    ; A null scene is the engine's generic pre-room sentinel.  Keep the
+    ; controller inert until an authored room record has been installed;
+    ; this is lifecycle state, not a Fate room-number policy.
+    lda.l SAME_SCUMM_C22_NULL_SCENE
+    beq ScummV5_Controller_Frame__scene_ready
+    jmp ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__scene_ready:
     sep #$20
     .a8
     lda #$22

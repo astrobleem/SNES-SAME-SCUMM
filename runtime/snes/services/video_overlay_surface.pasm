@@ -225,6 +225,13 @@ Same_VideoOverlay_ShowTalkSegment__generation_ok:
     sbc.l SAME_SCUMM_CAMERA_VSCREEN_XSTART
     sec
     sbc #$0020
+    ; C23 is expressed in the room/virtual presentation domain, while the
+    ; overlay descriptor is expressed in the visible surface domain.  Apply
+    ; the same published surface crop used by the room compositor here.  A
+    ; room-space cursor near x=411 in a viewport beginning at x=192 must land
+    ; near descriptor x=219 (before the text anchor), not x=411.
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_X
     sta.l SAME_OVERLAY_DESCRIPTOR_X
@@ -246,12 +253,30 @@ Same_VideoOverlay_ShowTalkSegment__width_ready:
     lda #SAME_OVERLAY_PIXELS_SIZE
     sta.l SAME_OVERLAY_DESCRIPTOR_LENGTH
     lda.l SAME_OVERLAY_PRODUCER_BOUND_X0
+    bpl Same_VideoOverlay_ShowTalkSegment__bound_x0_nonnegative
+    lda #$0000
+Same_VideoOverlay_ShowTalkSegment__bound_x0_nonnegative:
+    .a16
     sta.l SAME_OVERLAY_DESCRIPTOR_CONTENT_X0
     lda.l SAME_OVERLAY_PRODUCER_BOUND_Y0
+    bpl Same_VideoOverlay_ShowTalkSegment__bound_y0_nonnegative
+    lda #$0000
+Same_VideoOverlay_ShowTalkSegment__bound_y0_nonnegative:
+    .a16
     sta.l SAME_OVERLAY_DESCRIPTOR_CONTENT_Y0
     lda.l SAME_OVERLAY_PRODUCER_BOUND_X1
+    cmp #SAME_OVERLAY_MAX_WIDTH
+    bcc Same_VideoOverlay_ShowTalkSegment__bound_x1_in_range
+    lda #SAME_OVERLAY_MAX_WIDTH-1
+Same_VideoOverlay_ShowTalkSegment__bound_x1_in_range:
+    .a16
     sta.l SAME_OVERLAY_DESCRIPTOR_CONTENT_X1
     lda.l SAME_OVERLAY_PRODUCER_BOUND_Y1
+    cmp #SAME_OVERLAY_MAX_HEIGHT
+    bcc Same_VideoOverlay_ShowTalkSegment__bound_y1_in_range
+    lda #SAME_OVERLAY_MAX_HEIGHT-1
+Same_VideoOverlay_ShowTalkSegment__bound_y1_in_range:
+    .a16
     sta.l SAME_OVERLAY_DESCRIPTOR_CONTENT_Y1
     sep #$20
     .a8

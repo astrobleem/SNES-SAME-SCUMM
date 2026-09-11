@@ -76,6 +76,10 @@ def main() -> int:
         "--global-script-set",
         help="profile-owned key from options.snes_global_script_sets",
     )
+    parser.add_argument(
+        "--prepend-global-script", type=int, nargs=2, metavar=("TARGET", "SCRIPT"),
+        help="prepend authored startScript(SCRIPT) to global TARGET",
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--executable", action="store_true",
@@ -95,6 +99,9 @@ def main() -> int:
     if policy is None:
         raise RuntimeError("profile has no SCUMM v5 resource policy")
     selected_global_scripts = tuple(args.global_scripts)
+    if args.prepend_global_script is not None and len(args.prepend_global_script) != 2:
+        raise RuntimeError("--prepend-global-script requires TARGET and SCRIPT")
+    prepend_target, prepend_script = args.prepend_global_script or (None, None)
     execution_gate = None
     if args.global_script_set:
         if selected_global_scripts:
@@ -271,6 +278,10 @@ def main() -> int:
     for number in selected_global_scripts:
         key = policy.script_key_template.format(script=number)
         program = provider.read(key)
+        if number == prepend_target:
+            if prepend_script is None:
+                raise RuntimeError("global-script prepend is incomplete")
+            program = bytes((0x0A, prepend_script & 0xFF, 0xFF)) + program
         directory = provider._directories["DSCR"]
         source_room = directory.rooms[number]
         directory_offset = directory.offsets[number]
@@ -298,6 +309,9 @@ def main() -> int:
     manifest = {
         "schema": "same_scumm_v5_cooked_rooms_v1",
         "num_global_scripts": provider.global_script_count,
+        **({"prepended_global_script": {
+            "target": prepend_target, "script": prepend_script,
+        }} if prepend_target is not None else {}),
         "profile": {
             "path": str(args.profile.resolve()), "sha256": profile_hash,
             "engine": profile.engine_id, "game": profile.game_id,

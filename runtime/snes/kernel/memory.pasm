@@ -832,6 +832,10 @@ SAME_SCUMM_CONTROLLER_CURSOR_RENDER_Y    = $7E5E28 ; s16 cached logical y
 SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID = $7E5E2A ; u8 cached cursor pose
 SAME_SCUMM_CONTROLLER_CURSOR_RENDER_RETRY = $7E5E2B ; u8 bounded native-present retry
 SAME_SCUMM_CONTROLLER_RENDER_SUPPRESS_PRESENT = $7E5E2C ; u8 cursor composite guard
+; Set only by the established room-installed callback after the controller
+; lifetime reset has run. This is a generic interaction-service readiness
+; latch, not a room-number or fixture-object selector.
+SAME_SCUMM_CONTROLLER_ROOM_READY       = $7E5E8A ; u8 installed-room latch
 SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0    = $7E5E2E ; u16 union left
 SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0    = $7E5E30 ; u16 union top
 SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1    = $7E5E32 ; u16 union right

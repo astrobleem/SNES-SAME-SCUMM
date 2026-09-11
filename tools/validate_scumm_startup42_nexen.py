@@ -141,6 +141,21 @@ def snap(s):
         "c23_text": {"actor": c23[0x4C], "raw_index": c23[0x30],
                      "last_length": c23[0x31],
                      "raw": list(c23[0x32:0x32 + min(c23[0x30], 16)])},
+        # C8 is the mutable SCUMM string table.  Keep the compact resolver
+        # state with the common SetError evidence so a string-op failure can
+        # be classified from one paused snapshot rather than inferred from
+        # the final VM PC.
+        "c8": {
+            "subop": s.read_memory("snesMemory", 0x7E2EA0, 1)[0],
+            "string_id": s.read_memory("snesMemory", 0x7E2EA1, 1)[0],
+            "second_id": s.read_memory("snesMemory", 0x7E2EA2, 1)[0],
+            "index": s.read_memory("snesMemory", 0x7E2EA3, 1)[0],
+            "value": s.read_memory("snesMemory", 0x7E2EA4, 1)[0],
+            "length": s.read_memory("snesMemory", 0x7E2EA5, 1)[0],
+            "source_base": u16(s.read_memory("snesMemory", 0x7E2EA6, 2)),
+            "dest_base": u16(s.read_memory("snesMemory", 0x7E2EA8, 2)),
+            "string_size": list(s.read_memory("snesMemory", 0x7E2DA0, 0x100)),
+        },
         "talk": {"active": talk[0], "have_msg": talk[1],
                  "raw_length": talk[8], "keep_text": talk[0xA6]},
         # The frame phase is the final byte of the reset-diagnostic block:
@@ -1835,6 +1850,7 @@ def main() -> int:
                       "error_setter", "error_context", "setclass",
                       "c16_diag", "c16_state", "error_site", "c25_error",
                       "c25_error_detail", "c4_return",
+                      "c8",
                       "c25_observation",
                       "c25_producer",
                       "c25_error_record",

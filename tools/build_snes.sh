@@ -178,6 +178,10 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" ]]; then
             # rooms and the complete, source-bound dynamic global closure.
             ROOM49_ROOMS=(49 68 75)
             ROOM49_GLOBAL_ARGS=(--global-script-set phase6la1d)
+            # Phase 6 is a deliberate mid-game root.  Run the authored
+            # VerbOps producer before global 144 through the normal script
+            # API, so C17 state is established without controller-side data.
+            ROOM49_GLOBAL_ARGS+=(--prepend-global-script 144 18)
             ENGINE_SELECTION_ARGS+=(--scumm-title-start-room 75 --scumm-title-target-room 49)
         elif [[ "${SAME_BUILD_SCUMM_PHASE6I:-0}" == "1" ]]; then
             ROOM49_GLOBAL_ARGS=(--global-script-set phase6i)

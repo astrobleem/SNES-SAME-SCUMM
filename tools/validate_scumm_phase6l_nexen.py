@@ -10,10 +10,31 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NEXEN = Path("/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/linux-x64/publish/Nexen")
+C8_SIZES = 0x7E2DA0
+C8_DATA = 0x7E3000
+C17_VERBS = 0x7F6F20
+C17_STRIDE = 0x60
+C17_RECORDS = (3, 4, 6, 7, 8, 9, 10, 11, 12, 90, 91)
 
 
 def u16(raw: bytes, at: int = 0) -> int:
     return int.from_bytes(raw[at:at + 2], "little")
+
+
+def c17_record(session: object, verb_id: int) -> dict[str, object]:
+    raw = session.read_memory("snesMemory", C17_VERBS + verb_id * C17_STRIDE, C17_STRIDE)
+    name_length = raw[0x18]
+    name = list(raw[0x20:0x20 + min(name_length, 0x40)]) if name_length else []
+    return {
+        "present": raw[0x00], "mode": raw[0x01], "color": raw[0x02],
+        "hicolor": raw[0x03], "dimcolor": raw[0x04], "background_color": raw[0x05],
+        "type": raw[0x06], "charset": raw[0x07], "key": raw[0x08],
+        "center": raw[0x09], "left": u16(raw, 0x0A), "top": u16(raw, 0x0C),
+        "original_left": u16(raw, 0x0E), "image_index": u16(raw, 0x10),
+        "image_room": raw[0x12], "image_present": raw[0x13],
+        "image_object": u16(raw, 0x14), "save_id": u16(raw, 0x16),
+        "name_length": name_length, "name": name,
+    }
 
 
 def snapshot(session: object) -> dict[str, object]:
@@ -32,6 +53,10 @@ def snapshot(session: object) -> dict[str, object]:
     sound_pending = session.read_memory("snesMemory", 0x7FD8AC, 1)[0]
     sound_command = session.read_memory("snesMemory", 0x7FD8ED, 1)[0]
     sound_word = session.read_memory("snesMemory", 0x7FD8F1, 1)[0]
+    c8_sizes = session.read_memory("snesMemory", C8_SIZES, 32)
+    c8_30 = session.read_memory("snesMemory", C8_DATA + 30 * 0x100, 16)
+    c8_31 = session.read_memory("snesMemory", C8_DATA + 31 * 0x100, 16)
+    c17 = {str(verb_id): c17_record(session, verb_id) for verb_id in C17_RECORDS}
     return {
         "frame": session.get_state()["frameCount"], "pc": u16(common),
         "status": common[2], "error": common[3], "opcode": common[6],
@@ -52,6 +77,14 @@ def snapshot(session: object) -> dict[str, object]:
                    "moving": moving[1], "walkbox": walkbox[1]},
         "sound_queue": {"count": sound_count, "pending": sound_pending,
                         "word_index": sound_word, "command_index": sound_command},
+        "c8_prerequisite": {
+            "string30_size": c8_sizes[30], "string31_size": c8_sizes[31],
+            "string30_prefix": list(c8_30), "string31_prefix": list(c8_31),
+        },
+        "c17_prerequisite": {
+            "records_base": hex(C17_VERBS), "stride": C17_STRIDE,
+            "verbs": c17,
+        },
         "slots": [{"slot": i, "status": slots[i], "number": numbers[i],
                    "program": programs[i], "pc": u16(pcs, i * 2)}
                   for i in range(25) if slots[i] or numbers[i] or programs[i]],

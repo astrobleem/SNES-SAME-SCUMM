@@ -258,10 +258,45 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         install = visual.split("ScummV5_RoomVisual_Installed_Far:", 1)[1].split(
             "    plp", 1)[0]
         self.assertIn("ScummV5_Controller_ResetVisualCache_Far", install)
+        self.assertIn("ScummV5_Controller_ResetInteractionOnRoomInstall_Far", install)
+        self.assertIn("Same_VideoSurface_RoomInstalled_Far", install)
         mismatch = controller.split("ScummV5_Controller_RenderActor_Far:", 1)[1].split(
             "ScummV5_Controller_RenderActor__room_ok:", 1)[0]
         self.assertNotIn("SAME_SCUMM_CONTROLLER_RENDER_VALID", mismatch)
         self.assertIn("SAME_SCUMM_CONTROLLER_RENDER_ROOM", controller)
+
+    def test_generic_frame_has_no_fate_room_gate_and_has_lifecycle_readiness(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        generic = source.split("ScummV5_Controller_Frame__generic_ready:", 1)[1].split(
+            "ScummV5_Controller_Frame__phase_ok:", 1
+        )[0]
+        self.assertNotIn("cmp #$2A", generic)
+        self.assertNotIn("cmp #$44", generic)
+        self.assertIn("SAME_SCUMM_CONTROLLER_ROOM_READY", generic)
+        self.assertIn("SAME_SCUMM_C22_NULL_SCENE", generic)
+
+    def test_room_install_reset_is_independent_of_actor_visual_mask(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_visual.pasm").read_text()
+        install = source.split("ScummV5_RoomVisual_Installed_Far:", 1)[1].split(
+            "    plp", 1
+        )[0]
+        interaction = install.split(
+            "ScummV5_Controller_ResetInteractionOnRoomInstall_Far", 1
+        )[0]
+        self.assertIn("SAME_BUILD_SCUMM_CONTROLLER_FIXTURE", interaction)
+        self.assertIn("Same_VideoSurface_RoomInstalled_Far", install)
+        self.assertIn("SAME_SCUMM_CONTROLLER_ROOM_READY", install)
+
+    def test_generic_controller_production_path_has_no_room42_object_policy(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        frame = source.split("ScummV5_Controller_Frame_Far:", 1)[1].split(
+            "ScummV5_Controller_Frame__room68:", 1
+        )[0]
+        self.assertNotIn("#$01EA", frame)
+        self.assertNotIn("#$00BE", frame)
+        self.assertNotIn("#$00F1", frame)
+        self.assertNotIn("#$004C", frame)
+        self.assertIn("ScummV5_Generic_Object_HitTest_Far", source)
 
     def test_video_overlay_non_overlay_packets_reach_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -342,6 +377,16 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         self.assertGreaterEqual(block.count("SAME_SCUMM_TALK_RAW"), 4)
         self.assertIn("__validate_control", block)
         self.assertIn("__glyph_control", block)
+
+    def test_overlay_descriptor_clamps_content_to_initialized_raster(self) -> None:
+        source = (ROOT / "runtime/snes/services/video_overlay_surface.pasm").read_text()
+        block = source.split("Same_VideoOverlay_ShowTalkSegment__ready:", 1)[1].split(
+            "Same_VideoOverlay_ShowTalkSegment__visual_error:", 1)[0]
+        self.assertIn("SAME_OVERLAY_MAX_WIDTH-1", block)
+        self.assertIn("SAME_OVERLAY_MAX_HEIGHT-1", block)
+        self.assertIn("SAME_OVERLAY_DESCRIPTOR_CONTENT_X1", block)
+        self.assertIn("SAME_OVERLAY_DESCRIPTOR_CONTENT_Y1", block)
+        self.assertNotIn("SAME_OVERLAY_MAX_CELLS =", block)
 
     def test_cursor_redraw_does_not_restart_full_surface_generation(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()

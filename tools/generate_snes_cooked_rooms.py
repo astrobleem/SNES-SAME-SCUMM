@@ -734,39 +734,76 @@ def main() -> int:
             # Install source OBNA names through the normal room lifecycle.
             # The controller only reads the existing SCUMM name cache; it does
             # not carry a room/object lookup table of its own.
-            "    ldy #$0000",
+            "    jsl ScummV5_Matrix_LoadActiveRoomNames_Far",
         ))
-        for object_id, name in record["object_names"]:
-            # The room-42 controller fixture currently consumes these active
-            # source objects.  Keep the complete OBNA metadata in the cooked
-            # record; only the bounded active-name cache entries are installed
-            # until the generic per-room cache population path is proven.
-            if object_id not in (488, 490, 492):
-                continue
-            name_length = min(len(name), 0x20)
-            data_lines.extend((
-                "    rep #$20", "    .a16", "    rep #$10", "    .i16",
-                f"    lda #${object_id:04X}",
-                "    asl", "    asl", "    asl", "    asl", "    asl",
-                "    tax", "    sep #$20", "    .a8",
-            ))
-            for value in name.ljust(0x20, b"\0")[:0x20]:
-                data_lines.extend((f"    lda #${value:02X}", "    sta.l SAME_SCUMM_OBJECT_NAMES,x", "    inx"))
-            data_lines.extend((
-                f"    lda #${name_length:02X}",
-                f"    sta.l SAME_SCUMM_OBJECT_NAME_LENGTH+${object_id:04X}",
-            ))
         data_lines.extend((
             "    sep #$20", "    .a8",
             "    lda #$%02X" % (len(record["objects"]) // 11),
             "    sta.l SAME_SCUMM_SETSTATE_LOCAL_COUNT",
             "    brl ScummV5_Matrix_LoadActiveRoom__return",
+        ))
+        data_lines.extend((
             f"ScummV5_Matrix_LoadActiveRoom__next_{index}:", "    .a8", ".i16",
         ))
     data_lines.extend((
         "ScummV5_Matrix_LoadActiveRoom__return:",
         "    ply", "    plx", "    plp", "    rtl",
     ))
+    # Populate the bounded active-room object-name cache in a separate bank.
+    # Keeping this generic room-local operation out of the room-loader control
+    # section prevents OBNA growth from relocating its lifecycle branches.
+    name_routine_start = len(data_lines)
+    name_routine_base_bank = bank
+    bank += 1
+    bank = next_free_bank(bank)
+    data_lines.extend((
+        f".bank {bank}", ".org $8000",
+        "ScummV5_Matrix_LoadActiveRoomNames_Far:",
+        "    sep #$20", "    .a8", "    rep #$10", "    .i16",
+        "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
+    ))
+    for index, record in enumerate(records):
+        data_lines.extend((
+            f"    cmp #${index:02X}",
+            f"    beq ScummV5_Matrix_LoadActiveRoomNames__match_{index}",
+            f"    brl ScummV5_Matrix_LoadActiveRoomNames__next_{index}",
+            f"ScummV5_Matrix_LoadActiveRoomNames__match_{index}:", "    .a8", "    .i16",
+            "    ldy #$0000",
+        ))
+        for name_index, (object_id, name) in enumerate(record["object_names"]):
+            if object_id >= 0x0400:
+                continue
+            name_length = min(len(name), 0x20)
+            data_lines.extend((
+                "    sep #$20", "    .a8", "    rep #$10", "    .i16",
+                f"    ldy #${(name_index * 0x20):04X}",
+                f"    ldx #${(object_id << 5):04X}",
+                f"ScummV5_Matrix_LoadActiveRoomNames__copy_{index}_{name_index}:", "    .a8", "    .i16",
+            ))
+            data_lines.extend((
+                "    phx",
+                "    rep #$20", "    .a16", "    tya", "    tax",
+                "    sep #$20", "    .a8",
+                f"    lda.l ScummV5_SetState_Record_{index}_ObjectNames,x",
+                "    plx",
+                "    sta.l SAME_SCUMM_OBJECT_NAMES,x",
+                "    iny", "    inx",
+                f"    cpy #${(name_index + 1) * 0x20:04X}",
+                f"    bcc ScummV5_Matrix_LoadActiveRoomNames__copy_{index}_{name_index}",
+                f"    lda #${name_length:02X}",
+                f"    sta.l SAME_SCUMM_OBJECT_NAME_LENGTH+${object_id:04X}",
+            ))
+        data_lines.extend((
+            "    brl ScummV5_Matrix_LoadActiveRoomNames__done",
+            f"ScummV5_Matrix_LoadActiveRoomNames__next_{index}:", "    .a8", "    .i16",
+        ))
+    data_lines.extend((
+        "ScummV5_Matrix_LoadActiveRoomNames__done:",
+        "    sep #$20", "    .a8", "    rtl",
+    ))
+    name_routine_lines = data_lines[name_routine_start + 2:]
+    del data_lines[name_routine_start:]
+    bank = name_routine_base_bank
     # Fetch one complete immutable BOXD record into the bounded working slot.
     # X is the box index on entry; the active generated room selects the ROM
     # table.  This is deliberately one path for low and high box numbers.
@@ -1517,6 +1554,12 @@ def main() -> int:
     # The SAME-owned cold helper closure follows this include. Give it a
     # fresh bank rather than relying on implicit overflow from generated code.
     data_lines.extend((f".bank {bank}", ".org $8000"))
+
+    # Append the name routine after the established generated data/code
+    # layout has been allocated. Forward JSL references keep the room loader
+    # compact without shifting any existing generated bank.
+    bank = next_free_bank(bank + 1)
+    data_lines.extend((f".bank {bank}", ".org $8000", *name_routine_lines))
 
     lines = [
         "; Generated by tools/generate_snes_cooked_rooms.py.",

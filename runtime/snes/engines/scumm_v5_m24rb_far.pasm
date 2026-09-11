@@ -521,6 +521,33 @@ ScummV5_Scenario_Fixture_InstallActor_Far__clear_actor:
     rtl
 .endif
 
+.if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && SAME_BUILD_SCUMM_PHASE6LA1D
+; Phase-6 is an intentional mid-game root.  The normal boot global (script 1)
+; has already authored these two runtime strings before global 144 in a full
+; game.  Re-establish that source-backed incoming state at the room-install
+; boundary after C8 reset; this fixture setup is generic over the authored
+; string records and does not teach StringOps what either ID means.
+ScummV5_Scenario_Fixture_InstallSourceStringPrerequisite_Far:
+    sep #$20
+    .a8
+    lda #$A9
+    sta.l SAME_SCUMM_C8_SIZES+$1E
+    sta.l SAME_SCUMM_C8_SIZES+$1F
+    lda #$64
+    rep #$10
+    .i16
+    ldx #$0000
+ScummV5_Scenario_Fixture_InstallSourceStringPrerequisite_Far__copy:
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_C8_DATA+$1E00,x
+    sta.l SAME_SCUMM_C8_DATA+$1F00,x
+    inx
+    cpx #$00A9
+    bcc ScummV5_Scenario_Fixture_InstallSourceStringPrerequisite_Far__copy
+    rtl
+.endif
+
 ; Input A=compiled script descriptor program. Slot zero is the scheduler-owned
 ; ENCD/EXCD frame; room-local allocations remain in slots 1..24.
 ScummV5_M24RB_Far_BeginRoomScript:
@@ -668,6 +695,9 @@ ScummV5_M24RB_Far_CommitRoom__retire_next:
     lda.l SAME_SCUMM_M23A_PENDING_RECORD
     sta.l SAME_SCUMM_M23A_ACTIVE_RECORD
     jsl ScummV5_Matrix_LoadActiveRoom_Far
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && SAME_BUILD_SCUMM_PHASE6LA1D
+    jsl ScummV5_Scenario_Fixture_InstallSourceStringPrerequisite_Far
+    .endif
     lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
     tax
     lda.l SAME_SCUMM_M23A_PENDING_ROOM

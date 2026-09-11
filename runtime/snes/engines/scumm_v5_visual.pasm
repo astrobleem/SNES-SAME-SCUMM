@@ -48,6 +48,12 @@ ScummV5_RoomVisual_Installed_Far:
     inc
 ScummV5_RoomVisual_Installed__generation_ok:
     sta.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    ; Room installation is the generic interaction-state lifetime boundary.
+    ; The fixture's room-68 -> room-42 request remains elsewhere; this reset
+    ; deliberately depends only on the established room-installed callback.
+    jsl ScummV5_Controller_ResetInteractionOnRoomInstall_Far
+    .endif
     .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $01)
     ; A room install begins a new actor-surface cache lifetime.  This is a
     ; lifecycle reset, not an actor draw and not a backend operation.
@@ -61,6 +67,10 @@ ScummV5_RoomVisual_Installed__generation_ok:
     ; The surface service owns deferred initial publication if the previous
     ; room still has an in-flight presentation.
     jsl Same_VideoSurface_RoomInstalled_Far
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_ROOM_READY
+    .endif
     plp
     rtl
 
