@@ -1093,8 +1093,15 @@ ScummV5_M24RB_Far_CommitRoom__accessor_witness_done:
     sep #$20
     .a8
     .endif
-    .if SAME_BUILD_SCUMM_ROOM_VISUAL
+    .if SAME_BUILD_SCUMM_ROOM_VISUAL && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl ScummV5_RoomVisual_Installed_Far
+    .endif
+    .if SAME_BUILD_SCUMM_CONTROLLER
+    jsl ScummV5_Controller_ResetInteractionOnRoomInstall_Far
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_ROOM_READY
     .endif
     clc
     rts
@@ -1105,8 +1112,13 @@ ScummV5_M23A_Trace_FarEntry:
     jsr ScummV5_M24RB_Far_Trace
     rtl
 ScummV5_M23C_Driver_FarEntry:
+.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE && !SAME_BUILD_SCUMM_M23C
+    clc
+    rtl
+.else
     jsr ScummV5_M24RB_Far_Driver
     rtl
+.endif
 ScummV5_M23A_RequestRoom_FarEntry:
     jsr ScummV5_M24RB_Far_RequestRoom
     rtl

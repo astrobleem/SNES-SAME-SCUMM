@@ -17,7 +17,7 @@ Same_Storage_Reset:
     rts
 
 Same_Storage_Handle:
- .if SAME_BUILD_SCUMM_M23A
+ .if SAME_BUILD_SCUMM_ROOM_SERVICE
     sep #$20
     .a8
     lda.l SAME_EVENT_STAGING+SAME_PKT_OPCODE

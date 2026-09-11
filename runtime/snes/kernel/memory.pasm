@@ -165,6 +165,7 @@ SAME_SCUMM_C4_SCHED_SLOT            = $7E2B22 ; u8 outer scheduler cursor
 SAME_SCUMM_C4_CHAIN_FLAGS           = $7E2B23 ; u8 inherited startScript flag bits
 SAME_SCUMM_C4_CHAIN_OPS             = $7E2B24 ; u16 replacement operation scratch
 SAME_SCUMM_C4_STATE_END        = $7E2B26 ; rounded for the 16-bit clear loop
+SAME_SCUMM_C4_PARENT_RETURN_MODE    = $7E2B27 ; u8 nested caller return mode
 SAME_SCUMM_C4_STATE_SIZE       = $07A6
 SAME_SCUMM_LOCAL_COUNT         = $0020
 

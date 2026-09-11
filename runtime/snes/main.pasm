@@ -113,15 +113,27 @@ reset_diag_valid:
 
     jsr Same_Kernel_Init
     jsr Same_Engine_Boot
+.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+    ; Standalone conformance root: enter the normal room-request lifecycle
+    ; after engine state is initialized, without writing active-room state.
+    sep #$20
+    .a8
+    lda #$01
+    jsr ScummV5_RequestRoom
+.endif
     ; TAD's one-time IPL upload spans several raw video periods. Boot the
     ; semantic engine first so debugger-visible state is deterministic while
     ; interrupts and display remain disabled during that required transfer.
+    .if !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsr Same_Audio_Reset
+    .endif
     jsr Same_Kernel_DrainEvents
+.if !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 .include "generated/video_backend_boot.inc.pasm"
+.endif
 .include "generated/video_overlay_boot.inc.pasm"
 .if SAME_VIDEO_BACKEND_LEGACY
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl Same_K1_Fixture_QueueInitial_Far
     .else
     jsr Same_K1_Fixture_QueueInitial
@@ -152,7 +164,7 @@ reset_wait_active:
     ; This final fixture is intentionally forced-blank-only.  It is queued
     ; after display enable so K1 can prove NMI defers it during active display.
 .if SAME_VIDEO_BACKEND_LEGACY
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl Same_K1_Fixture_QueueDeferred_Far
     .else
     jsr Same_K1_Fixture_QueueDeferred
@@ -253,7 +265,7 @@ brk_handler:
 .if SAME_BUILD_SCUMM_M22
 .include "generated/music_sections.inc.pasm"
 .endif
-.if SAME_BUILD_SCUMM_M23A
+.if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 .include "generated/scumm_v5_rooms.inc.pasm"
 .endif
 .include "engines/scumm_v5.pasm"
@@ -313,14 +325,14 @@ Same_Tad_AudioData_High:
     .incbin "../../build/fate-audio/fate-tad-bank2.bin"
 Same_Tad_BlankSong:
     .byte $00
-.if SAME_BUILD_SCUMM_M23A
+.if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 .include "generated/scumm_v5_room_data.inc.pasm"
-.if SAME_BUILD_M24RB
+.if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 ; M24R-B1 cold helper closure. Profile room payloads currently occupy banks 3-8;
 ; bank 9 is reserved for validator/lifecycle code and remains below 32 KiB.
 .bank 9
 .org $8000
-.if SAME_BUILD_SCUMM_PHASE6LA1D == $01
+.if SAME_BUILD_SCUMM_PHASE6LA1D == $01 || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 ; Validation-only C2 payload is cold data.  Keep its canonical labels for the
 ; bank-zero fixture dispatcher while placing the cohesive block in bank 9.
 .include "generated/scumm_v5_conformance_far.inc.pasm"
@@ -329,7 +341,7 @@ Same_Tad_BlankSong:
 .if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_PHASE6HB
 .include "generated/scumm_v5_room_validator_far.inc.pasm"
 .endif
-.if SAME_BUILD_M24RB
+.if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 .include "engines/scumm_v5_m24rb_far.pasm"
 .endif
 .if SAME_BUILD_SCUMM_CONTROLLER

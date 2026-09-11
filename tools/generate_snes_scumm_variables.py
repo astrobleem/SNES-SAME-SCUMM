@@ -20,30 +20,37 @@ EXPECTED_MAXS_SHA = {
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--archive", type=Path, required=True)
+    ap.add_argument("--archive", type=Path)
+    ap.add_argument("--synthetic", action="store_true")
     ap.add_argument("--profile", type=Path, required=True)
     ap.add_argument("--include", type=Path, required=True)
     ap.add_argument("--manifest", type=Path, required=True)
     args = ap.parse_args()
 
-    with zipfile.ZipFile(args.archive) as bundle:
-        members = [name for name in bundle.namelist() if name.upper().endswith(".000")]
-        if len(members) != 1:
-            raise RuntimeError("archive must contain one SCUMM .000 member")
-        member = members[0]
-        encoded = bundle.read(member)
-    decoded = bytes(value ^ 0x69 for value in encoded)
-    offset = decoded.find(b"MAXS")
-    if offset < 0 or offset + 8 > len(decoded):
-        raise RuntimeError("authentic MAXS chunk is unavailable")
-    size = struct.unpack_from(">I", decoded, offset + 4)[0]
-    if size != 26 or offset + size > len(decoded):
-        raise RuntimeError(f"unexpected MAXS size {size}")
-    record = decoded[offset:offset + size]
-    digest = hashlib.sha256(record).hexdigest()
-    if digest not in EXPECTED_MAXS_SHA:
-        raise RuntimeError(f"MAXS identity mismatch: {digest}")
-    fields = struct.unpack_from("<9H", record, 8)
+    if args.synthetic:
+        member, offset, digest = "synthetic-controller/MAXS", 0, "synthetic-controller-maxs-v1"
+        fields = (800, 16, 2048, 200, 50, 5, 100, 20, 80)
+    else:
+        if args.archive is None:
+            raise RuntimeError("--archive or --synthetic is required")
+        with zipfile.ZipFile(args.archive) as bundle:
+            members = [name for name in bundle.namelist() if name.upper().endswith(".000")]
+            if len(members) != 1:
+                raise RuntimeError("archive must contain one SCUMM .000 member")
+            member = members[0]
+            encoded = bundle.read(member)
+        decoded = bytes(value ^ 0x69 for value in encoded)
+        offset = decoded.find(b"MAXS")
+        if offset < 0 or offset + 8 > len(decoded):
+            raise RuntimeError("authentic MAXS chunk is unavailable")
+        size = struct.unpack_from(">I", decoded, offset + 4)[0]
+        if size != 26 or offset + size > len(decoded):
+            raise RuntimeError(f"unexpected MAXS size {size}")
+        record = decoded[offset:offset + size]
+        digest = hashlib.sha256(record).hexdigest()
+        if digest not in EXPECTED_MAXS_SHA:
+            raise RuntimeError(f"MAXS identity mismatch: {digest}")
+        fields = struct.unpack_from("<9H", record, 8)
     count = fields[0]
     byte_count = count * 2
     end = BASE + byte_count

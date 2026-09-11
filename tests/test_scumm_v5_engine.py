@@ -87,8 +87,17 @@ class ScummV5EngineTests(unittest.TestCase):
         # still owns delay, waitForMessage completion, continuation, and clear
         # ordering.  The production path must remain the same lifecycle.
         self.assertIn("ScummV5_Talk_Begin_Far", runtime)
-        talk_path = runtime.split(".if SAME_BUILD_SCUMM_M23A", 1)[1]
+        talk_path = runtime.split(".if SAME_BUILD_SCUMM_ROOM_SERVICE", 1)[1]
         self.assertIn("ScummV5_Talk_Begin_Far", talk_path)
+
+    def test_nested_child_uses_slot_return_mode_and_restores_parent_mode(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        nested = runtime.split("ScummV5_C4_RunNestedChild:", 1)[1].split(
+            "ScummV5_C4_RunNestedChild__success:", 1
+        )[0]
+        self.assertIn("SAME_SCUMM_C4_PARENT_RETURN_MODE", nested)
+        self.assertIn("lda #$01\n    sta.l SAME_SCUMM_RETURN_MODE", nested)
+        self.assertIn("sta.l SAME_SCUMM_C18_NESTED", nested)
 
     def test_scheduler_reasserts_byte_index_width_before_each_slot_scan(self) -> None:
         runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()

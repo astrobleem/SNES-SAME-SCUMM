@@ -101,7 +101,7 @@ Same_Mode3_Reset__clear_surface_facade:
 ; machine used after display enable.
 Same_Mode3_Boot_Realize_Far:
     php
-    .if SAME_BUILD_SCUMM_ROOM_VISUAL && !SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_VISUAL && !SAME_BUILD_M24RB && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl ScummV5_InitialVisual_Bootstrap_Far
     .endif
     rep #$30
@@ -128,7 +128,7 @@ Same_Mode3_Boot_Realize_Far:
     ; generation one would manufacture a backend error before any room visual
     ; can be published.  Room-install/camera publication owns that later
     ; surface generation.
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     plp
     rtl
     .endif

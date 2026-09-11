@@ -456,6 +456,8 @@ def main() -> int:
     parser.add_argument("--next-verb", type=int, default=10)
     parser.add_argument("--post-return-object", type=int, choices=(591, 592, 593, 594, 595))
     parser.add_argument("--post-return-verb", type=int, default=3)
+    parser.add_argument("--controlled-room49", action="store_true",
+                        help="use the bounded room-49 controller replay root")
     parser.add_argument("--direct-room49-object", type=int, choices=(591, 592, 593, 594, 595))
     parser.add_argument("--direct-room49-verb", type=int, default=3)
     args = parser.parse_args()

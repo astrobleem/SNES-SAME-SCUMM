@@ -87,10 +87,12 @@ Same_Frame_Run:
     jsr Same_Kernel_DrainEvents
 .include "../generated/video_overlay_frame.inc.pasm"
     .include "../generated/video_backend_frame.inc.pasm"
-    .if SAME_BUILD_SCUMM_ROOM_VISUAL
+    .if SAME_BUILD_SCUMM_ROOM_VISUAL && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl ScummV5_Visual_Frame_Far
     .endif
+    .if !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsr Same_Audio_Process
+    .endif
     plp
     rts
 

@@ -37,6 +37,7 @@ def main() -> int:
     parser.add_argument("--scumm-title-target-room", type=int, default=0)
     parser.add_argument("--scumm-room-visual", action="store_true")
     parser.add_argument("--scumm-controller", action="store_true")
+    parser.add_argument("--scumm-controller-conformance", action="store_true")
     parser.add_argument("--scumm-controller-fixture", action="store_true")
     parser.add_argument("--scumm-controller-behavior-mask", type=lambda value: int(value, 0), default=7)
     parser.add_argument("--scumm-controller-witness", action="store_true")
@@ -76,6 +77,7 @@ def main() -> int:
         f"SAME_BUILD_SCUMM_M21 = ${1 if args.engine == 'scumm_v5' and args.scumm_m21 else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M22 = ${1 if args.engine == 'scumm_v5' and args.scumm_m22 else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23A = ${1 if args.engine == 'scumm_v5' and args.scumm_m23a else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_ROOM_SERVICE = ${1 if args.engine == 'scumm_v5' and (args.scumm_m23a or args.scumm_controller_conformance) else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23B = ${1 if args.engine == 'scumm_v5' and args.scumm_m23b else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23B_NEGATIVE = ${1 if args.engine == 'scumm_v5' and args.scumm_m23b_negative else 0:02X}\n"
         f"SAME_BUILD_SCUMM_PHASE6HB = ${1 if args.engine == 'scumm_v5' and args.scumm_phase6hb else 0:02X}\n"
@@ -86,6 +88,7 @@ def main() -> int:
         f"SAME_BUILD_SCUMM_M25_MOVEMENT = ${1 if args.engine == 'scumm_v5' and args.scumm_m25_movement else 0:02X}\n"
         f"SAME_BUILD_SCUMM_ROOM_VISUAL = ${1 if args.engine == 'scumm_v5' and args.scumm_room_visual else 0:02X}\n"
         f"SAME_BUILD_SCUMM_CONTROLLER = ${1 if args.engine == 'scumm_v5' and (args.scumm_controller or args.scumm_controller_fixture) else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_conformance else 0:02X}\n"
         f"SAME_BUILD_SCUMM_CONTROLLER_FIXTURE = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_fixture else 0:02X}\n"
         f"SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK = ${args.scumm_controller_behavior_mask & 0x07:02X}\n"
         f"SAME_SCUMM_CONTROLLER_WITNESS = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_witness else 0:02X}\n"

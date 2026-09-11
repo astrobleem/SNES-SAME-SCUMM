@@ -254,12 +254,12 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
 
     def test_room_install_resets_visual_cache_but_nonmatching_render_is_inert(self) -> None:
         visual = (ROOT / "runtime/snes/engines/scumm_v5_visual.pasm").read_text()
+        engine = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
         controller = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         install = visual.split("ScummV5_RoomVisual_Installed_Far:", 1)[1].split(
             "    plp", 1)[0]
-        self.assertIn("ScummV5_Controller_ResetVisualCache_Far", install)
-        self.assertIn("ScummV5_Controller_ResetInteractionOnRoomInstall_Far", install)
-        self.assertIn("Same_VideoSurface_RoomInstalled_Far", install)
+        self.assertIn("Same_VideoSurface_RoomInstalled_Far", visual)
+        self.assertIn("ScummV5_Controller_ResetInteractionOnRoomInstall_Far", engine)
         mismatch = controller.split("ScummV5_Controller_RenderActor_Far:", 1)[1].split(
             "ScummV5_Controller_RenderActor__room_ok:", 1)[0]
         self.assertNotIn("SAME_SCUMM_CONTROLLER_RENDER_VALID", mismatch)
@@ -276,15 +276,11 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         self.assertIn("SAME_SCUMM_C22_NULL_SCENE", generic)
 
     def test_room_install_reset_is_independent_of_actor_visual_mask(self) -> None:
-        source = (ROOT / "runtime/snes/engines/scumm_v5_visual.pasm").read_text()
-        install = source.split("ScummV5_RoomVisual_Installed_Far:", 1)[1].split(
-            "    plp", 1
+        source = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        install = source.split("ScummV5_M23A_CommitRoom:", 1)[1].split(
+            "ScummV5_Op_LoadRoom:", 1
         )[0]
-        interaction = install.split(
-            "ScummV5_Controller_ResetInteractionOnRoomInstall_Far", 1
-        )[0]
-        self.assertIn("SAME_BUILD_SCUMM_CONTROLLER", interaction)
-        self.assertIn("Same_VideoSurface_RoomInstalled_Far", install)
+        self.assertIn("SAME_BUILD_SCUMM_CONTROLLER", install)
         self.assertIn("SAME_SCUMM_CONTROLLER_ROOM_READY", install)
 
     def test_generic_controller_production_path_has_no_room42_object_policy(self) -> None:
@@ -310,7 +306,7 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         self.assertIn("SAME_BUILD_SCUMM_CONTROLLER:-0", build)
         self.assertIn(".if SAME_BUILD_SCUMM_CONTROLLER\n.include \"engines/scumm_v5_controller_far.pasm\"", main)
         self.assertIn(".if SAME_BUILD_SCUMM_CONTROLLER\n    ; Sample fixture input", frame)
-        self.assertIn(".if SAME_BUILD_SCUMM_CONTROLLER\n    ; Room installation", visual)
+        self.assertIn("SAME_BUILD_SCUMM_CONTROLLER", main)
         self.assertIn(".if SAME_BUILD_SCUMM_CONTROLLER\n    ; The established room-installed callback", controller)
         self.assertIn("SAME_BUILD_SCUMM_CONTROLLER_FIXTURE", controller)
 

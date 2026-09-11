@@ -78,6 +78,12 @@ fi
 if [[ "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-phase6hb)
 fi
+if [[ "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
+    "$PYTHON" tools/generate_snes_scumm_variables.py \
+        --synthetic --profile examples/profiles/scumm_v5_controller_conformance.json \
+        --include runtime/snes/generated/scumm_v5_variables.inc.pasm \
+        --manifest "${SAME_SNES_OUTPUT:-build/controller-conformance.sfc}.variables.json"
+fi
 if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" == "1" ]]; then
     if [[ "${SAME_SNES_CARRIER:-lorom}" != "sa1_bwram" || "${SAME_SNES_VIDEO_BACKEND:-legacy_backdrop}" != "mode3_surface" ]]; then
         echo "SCUMM room visuals require sa1_bwram + mode3_surface" >&2
@@ -87,6 +93,12 @@ if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" == "1" ]]; then
 fi
 if [[ "${SAME_BUILD_SCUMM_CONTROLLER:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-controller)
+fi
+if [[ "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
+    ENGINE_SELECTION_ARGS+=(--scumm-controller-conformance)
+    if [[ "${SAME_BUILD_SCUMM_CONTROLLER:-0}" == "1" ]]; then
+        ENGINE_SELECTION_ARGS+=(--scumm-controller)
+    fi
 fi
 if [[ "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-controller-fixture)
@@ -110,8 +122,10 @@ if [[ "${SAME_BUILD_SCUMM_M22:-0}" == "1" ]]; then
         audio/fate_s6/m22_sound80/audit.json \
         runtime/snes/generated/music_sections.inc.pasm
 fi
-if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" ]]; then
-    ENGINE_SELECTION_ARGS+=(--scumm-m23a)
+if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
+    if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" ]]; then
+        ENGINE_SELECTION_ARGS+=(--scumm-m23a)
+    fi
     if [[ "${SAME_BUILD_SCUMM_PHASE6L_A1D:-0}" == "1" ]]; then
         ENGINE_SELECTION_ARGS+=(--scumm-phase6la1d)
     fi
@@ -130,6 +144,23 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" ]]; then
             fi
         fi
     fi
+    if [[ "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
+        CONFORMANCE_BUILD="$ROOT/build/controller-conformance"
+        M23A_BUILD="$CONFORMANCE_BUILD"
+        "$PYTHON" tools/build_scumm_controller_conformance.py --output-dir "$CONFORMANCE_BUILD"
+        ROOM_MANIFESTS=(--manifest "$CONFORMANCE_BUILD/manifest.json")
+        ROOM_BINARY_DIR="$CONFORMANCE_BUILD/segments"
+        ROOM_GENERATOR_ARGS+=(--far-programs)
+        mkdir -p "$ROOM_BINARY_DIR"
+        "$PYTHON" tools/generate_snes_room_visuals.py \
+            --manifest "$CONFORMANCE_BUILD/manifest.json" \
+            --output runtime/snes/generated/scumm_v5_room_visuals.inc.pasm \
+            --binary-dir "$CONFORMANCE_BUILD/visual-segments" \
+            --report "${SAME_SNES_OUTPUT:-build/controller-conformance.sfc}.room-visuals.json" \
+            --first-bank 16 --room 1
+        CONFORMANCE_ROOM_GENERATED=1
+        SAME_SCUMM_REUSE_COOKED_ROOM_VISUALS=1
+    else
     M23A_SOURCE="${SAME_FATE_DEMO_ARCHIVE:-/home/chad/fatedemo-box.zip}"
     M23A_BUILD="$ROOT/build/m23a-rooms"
     mkdir -p "$M23A_BUILD/authentic" "$M23A_BUILD/lifecycle" "$M23A_BUILD/segments"
@@ -333,6 +364,7 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" ]]; then
     fi
     if [[ "${SAME_BUILD_SCUMM_M25A_VALIDATOR:-0}" != "1" && "${SAME_BUILD_SCUMM_M23C:-0}" != "1" ]]; then
         ROOM_MANIFESTS+=(--manifest "$M23A_BUILD/lifecycle/manifest.json")
+    fi
     fi
     ROOM_GENERATOR_REPORT="$M23A_BUILD/cooked-rooms.json"
     ROOM_GENERATOR_ARGS+=(--report "$ROOM_GENERATOR_REPORT")

@@ -512,8 +512,17 @@ ScummV5_Controller_Frame__action_pending:
     bne ScummV5_Controller_Frame__done
     lda.l SAME_SCUMM_C19_STACK_POINTER
     bne ScummV5_Controller_Frame__done
+    ; C31 movement is optional for the standalone controller service.  Its
+    ; invalidated state deliberately does not promise cleared movement bytes;
+    ; only an initialized actor-placement service may hold ACTION_PENDING.
+    lda.l SAME_SCUMM_C31_INITIALIZED
+    beq ScummV5_Controller_Frame__action_pending_reentry
+    lda.l SAME_SCUMM_C31_ROOM
+    cmp.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    bne ScummV5_Controller_Frame__action_pending_reentry
     lda.l SAME_SCUMM_C31_MOVING+1
     bne ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__action_pending_reentry:
     ; Do not let a stale selection become the next action. Re-run the generic
     ; source hit-test and authored-verb query at the current cursor.
     jsl ScummV5_Controller_RefreshSelection_Far

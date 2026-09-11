@@ -98,7 +98,7 @@ ScummV5_Engine_Boot:
     sta.l SAME_SCUMM_M22_STALE_COUNT
     sta.l SAME_SCUMM_M22_GENERATION_AT_ARM
     .endif
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     rep #$30
     .a16
     .i16
@@ -145,6 +145,10 @@ ScummV5_Engine_Boot__clear_c4:
     inx
     cpx #SAME_SCUMM_C4_STATE_SIZE
     bcc ScummV5_Engine_Boot__clear_c4
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C4_PARENT_RETURN_MODE
     jsr ScummV5_C7_ResetState
     jsr ScummV5_C8_ResetState
     jsr ScummV5_C10_ResetState
@@ -163,7 +167,7 @@ ScummV5_Engine_Boot__clear_c4:
     jsr ScummV5_C22_ResetState
     jsr ScummV5_C23_ResetState
     jsr ScummV5_C25_ResetState
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_SetState_Reset_Far
     .endif
     .if SAME_BUILD_SCUMM_M23B
@@ -483,7 +487,7 @@ ScummV5_Engine_Boot__m23c_clear:
     .endif
     .endif
     .endif ; SAME_BUILD_SCUMM_M23B
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda #$00
     sta.l SAME_SCUMM_LOAD_EGO_ACTIVE
     jsl ScummV5_Talk_Reset_Far
@@ -621,7 +625,7 @@ ScummV5_Engine_Frame:
     .endif
 ScummV5_Engine_Frame__sentence_api_done:
     .a8
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda.l SAME_SCUMM_ROOM_REQUEST_API_PENDING
     beq ScummV5_Engine_Frame__room_request_done
     lda.l SAME_SCUMM_ROOM_REQUEST_API_ROOM
@@ -635,7 +639,7 @@ ScummV5_Engine_Frame__room_request_done:
     ; its previous boundary.  Once the lifecycle is genuinely idle, consume
     ; it at that same engine-owned boundary before the scheduler eligibility
     ; query; the normal end-of-pass call below remains the no-op second check.
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda.l SAME_SCUMM_M23A_PHASE
     bne ScummV5_Engine_Frame__sentence_prepass_done
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
@@ -673,7 +677,7 @@ ScummV5_Engine_Frame__sentence_prepass_done:
     .endif
     ; Profile-owned title START edge; room loading remains generic.  Input
     ; masks are 16-bit, so keep the accumulator wide through the test.
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     sep #$20
     .a8
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
@@ -701,7 +705,7 @@ ScummV5_Engine_Frame__title_start_done:
     sep #$20
     .a8
     .endif
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_Talk_FrameBegin_Far
     ; A decoded-but-unsupported script-visible semantic leaves the SCUMM VM
     ; quiescent while the outer SAME frame/video lifecycle remains alive.
@@ -748,7 +752,7 @@ ScummV5_Engine_Frame__controller_root_done:
     .if SAME_BUILD_SCUMM_M22
     jsr ScummV5_M22_ConsumeBoundary
     .endif
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     .if SAME_BUILD_SCUMM_M23C
     .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
     ; Dedicated validator owns scheduling; controller fixture retains the
@@ -943,7 +947,7 @@ ScummV5_Engine_Frame__m23a_driver_queue_ok:
     ; legitimately makes SchedulerReady reject a pass.  Sentence ownership is
     ; nevertheless an independent end-of-frame boundary: let C20 allocate its
     ; normal launcher before consulting whether a runnable slot exists.
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     lda.l SAME_SCUMM_SCENARIO_SENTENCE_CALLS
     inc
@@ -1247,7 +1251,7 @@ ScummV5_Engine_Frame__c24_state_ready:
 ScummV5_Engine_Frame__c25_state_ready:
     sep #$20
     .a8
-    .if SAME_BUILD_SCUMM_M23A == 0
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE == 0
     lda.l SAME_SCUMM_FIXTURE_ACTIVE
     cmp #SCUMM_C2_FIXTURE_MATRIX_SET_BOX_FLAGS
     bcc ScummV5_Engine_Frame__matrix_state_ready
@@ -2200,7 +2204,7 @@ ScummV5_Engine_Frame__check_find_object:
     jmp ScummV5_Op_FindObject
 ScummV5_Engine_Frame__check_matrix_ops:
     .a8
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     .if SAME_BUILD_SCUMM_M25_MOVEMENT
     lda.l SAME_SCUMM_LAST_OPCODE
     cmp #$AE
@@ -2231,14 +2235,14 @@ ScummV5_Engine_Frame__dispatch_print:
 ScummV5_Engine_Frame__dispatch_get_actor_room:
     jmp ScummV5_Op_GetActorRoom
 ScummV5_Engine_Frame__dispatch_get_actor_x:
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_GetActorX_FarEntry
     jml ScummV5_Engine_Frame__next
     .else
     jmp ScummV5_Engine_Frame__opcode_error
     .endif
 ScummV5_Engine_Frame__dispatch_get_actor_y:
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_GetActorY_FarEntry
     jmp ScummV5_Engine_Frame__next
     .else
@@ -2273,7 +2277,7 @@ ScummV5_Engine_Frame__outer_error_check:
     sec
     rts
 ScummV5_Engine_Frame__outer_error:
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     ; A fail-closed script opcode halts that script, not the engine-global
     ; dialog clock. The outer frame owner still runs the camera phase.
     jsl ScummV5_Talk_ErrorFrameEnd_Far
@@ -2871,7 +2875,7 @@ ScummV5_C4_Scheduler_Frame__complete:
     .a16
     lda.l SAME_SCUMM_SCHED_OPS
     sta.l SAME_SCUMM_FRAME_OPS
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     lda #$2B
     sta.l SAME_SCUMM_SCENARIO_FRAME_STAGE
@@ -2879,7 +2883,7 @@ ScummV5_C4_Scheduler_Frame__complete:
     .endif
     jsl ScummV5_SentenceProcess_Far
     bcs ScummV5_C4_Scheduler_Frame__error
-    .if SAME_BUILD_SCUMM_ROOM_VISUAL
+    .if SAME_BUILD_SCUMM_ROOM_VISUAL && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     ; The boot visual pre-installs the room that the legacy lifecycle installs
     ; during frame 1. Match that lifecycle's no-movement-update install frame.
     rep #$20
@@ -2914,7 +2918,7 @@ ScummV5_C4_Scheduler_Frame__complete:
     ; pass.  Talk_FrameBegin advances the delay before script execution;
     ; omitting the matching frame-end phase leaves waitForMessage with an
     ; active message forever (or makes a fixture appear to need auto-clear).
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_Talk_FrameEnd_Far
     .endif
 ScummV5_C4_Scheduler_Frame__visual_install_frame:
@@ -3103,6 +3107,8 @@ ScummV5_C4_RunNestedChild:
     sta.l SAME_SCUMM_C4_PARENT_SLOT
     lda.l SAME_SCUMM_STATUS
     sta.l SAME_SCUMM_C4_PARENT_STATUS
+    lda.l SAME_SCUMM_RETURN_MODE
+    sta.l SAME_SCUMM_C4_PARENT_RETURN_MODE
     lda.l SAME_SCUMM_PROGRAM_SELECT
     sta.l SAME_SCUMM_C4_PARENT_PROGRAM
     rep #$20
@@ -3123,6 +3129,10 @@ ScummV5_C4_RunNestedChild:
     sta.l SAME_SCUMM_STATUS
     lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
     sta.l SAME_SCUMM_PROGRAM_SELECT
+    lda #$01
+    sta.l SAME_SCUMM_RETURN_MODE
+    lda #$00
+    sta.l SAME_SCUMM_C18_NESTED
     rep #$30
     .a16
     .i16
@@ -3150,6 +3160,8 @@ ScummV5_C4_RunNestedChild:
     tax
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
     sta.l SAME_SCUMM_STATUS
+    lda.l SAME_SCUMM_C4_PARENT_RETURN_MODE
+    sta.l SAME_SCUMM_RETURN_MODE
     lda.l SAME_SCUMM_C4_PARENT_PROGRAM
     sta.l SAME_SCUMM_PROGRAM_SELECT
     rep #$20
@@ -3160,6 +3172,8 @@ ScummV5_C4_RunNestedChild:
     sta.l SAME_SCUMM_DELAY
     lda.l SAME_SCUMM_C4_PARENT_OPS
     sta.l SAME_SCUMM_FRAME_OPS
+    lda #$00
+    sta.l SAME_SCUMM_C18_NESTED
     plp
     bcc ScummV5_C4_RunNestedChild__success
     sep #$20
@@ -3177,7 +3191,7 @@ ScummV5_C4_RunNestedChild__success:
 ; stack is bounded by the 25-slot scheduler: with one current script, at most
 ; 24 parents can be suspended.  Slot-owned state remains in the slot table;
 ; each frame retains only the parent slot and its accumulated operation count.
-.if SAME_BUILD_M24RB
+.if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 ; M25A keeps the hot opcode dispatcher in bank 0, but the bounded context
 ; switch is a cold startScript helper. The integrated Fate build calls the
 ; coherent far implementation through one proper long-call boundary.
@@ -3492,7 +3506,7 @@ ScummV5_Engine_Shutdown:
 ; Opcode handlers
 ; ---------------------------------------------------------------------------
 ScummV5_Op_MatrixOps:
-    .if SAME_BUILD_SCUMM_M23A == 0
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE == 0
     jsr ScummV5_MatrixOps_Core
     bcc ScummV5_Op_MatrixOps__inline_success
     jmp ScummV5_Op__error
@@ -3500,7 +3514,7 @@ ScummV5_Op_MatrixOps__inline_success:
     jmp ScummV5_Engine_Frame__next
     .endif
 
-.if SAME_BUILD_SCUMM_M23A == 0
+.if SAME_BUILD_SCUMM_ROOM_SERVICE == 0
 ScummV5_MatrixOps_Core:
     sep #$20
     .a8
@@ -3593,7 +3607,7 @@ ScummV5_MatrixOps_Trace__done:
     rts
 .endif
 
-.if SAME_BUILD_SCUMM_M23A == 0
+.if SAME_BUILD_SCUMM_ROOM_SERVICE == 0
 ScummV5_Matrix_ResetFixtureState:
     rep #$30
     .a16
@@ -4650,7 +4664,7 @@ ScummV5_Op_Wait__rewind_direct:
     sbc #$0003
     sta.l SAME_SCUMM_PC
 ScummV5_Op_Wait__yield:
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     ; Match breakHere's established suspension boundary: publish the fully
     ; decoded PC/program context before returning control to C4.
     jsl ScummV5_LoadRoomWithEgo_Postamble_Far
@@ -7255,7 +7269,7 @@ ScummV5_C22_ResetState:
     sta.l SAME_SCUMM_C22_INITIALIZED
     rts
 
-.if SAME_BUILD_SCUMM_M23A
+.if SAME_BUILD_SCUMM_ROOM_SERVICE
 ; The source-bound room builds keep the cold matrix handler in a far ROM bank.
 ; These two adapters preserve the established bank-0 interpreter fetch helpers.
 ScummV5_Matrix_FarCall_FetchByte:
@@ -7339,14 +7353,16 @@ ScummV5_Movement_FarCall_Divide:
     .a16
     .i16
     rtl
-.if SAME_BUILD_M24RB
-; Cold authentic room lifecycle and M24R-B driver are emitted in ROM bank 9.
-; These are ABI adapters for far code calling established bank-0 RTS helpers.
+.if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 ScummV5_M24RB_FarCall_C25Flush:
     jsr ScummV5_C25_Flush
     rtl
 ScummV5_M24RB_FarCall_ClearSfx:
+.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+    clc
+.else
     jsr ScummV5_M23C_ClearSfxActive
+.endif
     rtl
 ScummV5_M24RB_FarCall_ResolveLocal:
     jsr ScummV5_M23A_ResolveLocalScript
@@ -7928,6 +7944,13 @@ ScummV5_M23A_CommitRoom__execute:
     .if SAME_BUILD_SCUMM_ROOM_VISUAL
     jsl ScummV5_RoomVisual_Installed_Far
     .endif
+    .if SAME_BUILD_SCUMM_CONTROLLER
+    jsl ScummV5_Controller_ResetInteractionOnRoomInstall_Far
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_ROOM_READY
+    .endif
     .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
     ; The resource commit is the first unambiguous point at which the
     ; source-backed room-68 root is installed.  Hand off the labeled scene
@@ -7971,7 +7994,7 @@ ScummV5_Op_LoadRoom__operand_ok:
     lda.l SAME_SCUMM_C12_MAPPER,x
 ScummV5_Op_LoadRoom__resolved:
     .a8
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     .if SAME_BUILD_M24RB
     jsl ScummV5_M23A_RequestRoom_FarEntry
     .else
@@ -8272,7 +8295,7 @@ ScummV5_Op_Print__text_loop:
     bcc ScummV5_Op_Print__text_first_fetched
     jmp ScummV5_Op_Print__text_error
 ScummV5_Op_Print__text_first_fetched:
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_Talk_StoreTextByte_Far
     .else
     jsr ScummV5_C23_StoreTextByte
@@ -8289,7 +8312,7 @@ ScummV5_Op_Print__text_first_stored:
     bcc ScummV5_Op_Print__text_control_fetched
     jmp ScummV5_Op_Print__text_error
 ScummV5_Op_Print__text_control_fetched:
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_Talk_StoreTextByte_Far
     .else
     jsr ScummV5_C23_StoreTextByte
@@ -8312,7 +8335,7 @@ ScummV5_Op_Print__text_args:
     .i16
     jsr ScummV5_FetchByte
     bcs ScummV5_Op_Print__text_error
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_Talk_StoreTextByte_Far
     .else
     jsr ScummV5_C23_StoreTextByte
@@ -8327,7 +8350,7 @@ ScummV5_Op_Print__text_done:
     .a8
     lda.l SAME_SCUMM_C23_RAW_INDEX
     sta.l SAME_SCUMM_C23_LAST_LENGTH
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda.l SAME_SCUMM_C23_LAST_SLOT
     bne ScummV5_Op_Print__text_no_talk
     jsl ScummV5_Talk_Begin_Far
@@ -8690,7 +8713,7 @@ ScummV5_C23_FetchWordParam__direct:
 ScummV5_C23_FetchWordParam__done:
     rts
 
-.if SAME_BUILD_SCUMM_M23A
+.if SAME_BUILD_SCUMM_ROOM_SERVICE
 .else
 ScummV5_C23_StoreTextByte:
     sep #$20
@@ -9242,7 +9265,7 @@ ScummV5_Op_AnimateActor__store:
     jsr ScummV5_C14_BaseX
     lda.l SAME_SCUMM_FETCH_BYTE
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_ActorFacing_ObserveAnimate_Far
     .endif
     jmp ScummV5_Engine_Frame__next
@@ -11395,7 +11418,7 @@ ScummV5_Op_SoundKludge__m24rb_continue:
     jmp ScummV5_Engine_Frame__next
 
 ScummV5_C25_Flush:
-.if SAME_BUILD_M24RB && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
+.if (SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE) && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
     jsl ScummV5_C25_Flush_Far
     rts
 ScummV5_C25_Flush_Bank0_Resume:
@@ -11562,7 +11585,15 @@ ScummV5_C25_Flush__not_jump_hook:
     .endif
     cmp #$0110
     bne ScummV5_C25_Flush__not_clear_queue
+    .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+    jmp ScummV5_C25_Flush__clear_imuse_queue_conformance
+    .else
+    .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+    jmp ScummV5_C25_Flush__clear_imuse_queue_conformance
+    .else
     jmp ScummV5_C25_Flush__clear_imuse_queue
+    .endif
+    .endif
 ScummV5_C25_Flush__not_clear_queue:
     ; Recognize this encoded command bytewise.  C25 records are byte-packed
     ; at the queue boundary, so command identity must not depend on the
@@ -11691,7 +11722,11 @@ ScummV5_C25_Flush__dispatch_error:
     lda.l SAME_SCUMM_C25_LAST_WORDS+1
     cmp #$01
     bne ScummV5_C25_Flush__dispatch_error__not_0110_low
+    .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+    jmp ScummV5_C25_Flush__clear_imuse_queue_conformance
+    .else
     jmp ScummV5_C25_Flush__clear_imuse_queue
+    .endif
 ScummV5_C25_Flush__dispatch_error__not_0110_low:
     rep #$30
     .a16
@@ -11706,7 +11741,14 @@ ScummV5_C25_Flush__dispatch_error__not_0110_low:
     bne ScummV5_C25_Flush__dispatch_error__not_010E_low
     lda.l SAME_SCUMM_C25_LAST_WORDS+1
     cmp #$01
-    beq ScummV5_C25_Flush__m24rb_trigger
+    beq ScummV5_C25_Flush__trigger_dispatch
+    bra ScummV5_C25_Flush__dispatch_error__not_010E_low
+ScummV5_C25_Flush__trigger_dispatch:
+    .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+    jmp ScummV5_C25_Flush__m24rb_trigger_conformance
+    .else
+    jmp ScummV5_C25_Flush__m24rb_trigger
+    .endif
 ScummV5_C25_Flush__dispatch_error__not_010E_low:
     ; iMUSE command 2/3 are canonical compatibility no-ops in the v5
     ; desktop driver.  Fate emits command 3 during room-42 cutscene setup;
@@ -12498,15 +12540,20 @@ ScummV5_C25_Flush__complete_continue:
     .endif
     jml ScummV5_Engine_Frame__next
 
-.if SAME_BUILD_M24RB && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
+.if (SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE) && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
     .bank 0
     .org ScummV5_C25_Flush_Bank0_Resume
 ScummV5_C25_FarCall_EmitAudio:
     jsr ScummV5_C25_EmitAudio
     rtl
 ScummV5_C25_FarCall_SetSfxActive:
+.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+    clc
+    rtl
+.else
     jsr ScummV5_M23C_SetSfxActive
     rtl
+.endif
     .if SAME_BUILD_SCUMM_M21
 ScummV5_C25_FarCall_HasRoutes:
     jsr Same_Tad_HasRoutes
@@ -12518,6 +12565,15 @@ ScummV5_C25_FarCall_MapRoute:
 ScummV5_C25_FarCall_StageEngine:
     jsr Same_Event_StageEngine
     rtl
+.endif
+
+.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+; The conformance room has no authored audio controls. Keep the shared C25
+; dispatch linkable without enabling the M23C scenario service.
+ScummV5_C25_Flush__clear_imuse_queue_conformance:
+    jmp ScummV5_C25_Flush__command_done
+ScummV5_C25_Flush__m24rb_trigger_conformance:
+    jmp ScummV5_C25_Flush__command_done
 .endif
 
 .if SAME_BUILD_SCUMM_M22
@@ -13729,7 +13785,7 @@ ScummV5_Op_Stop:
     jmp ScummV5_C19_Error
 ScummV5_Op_Stop__cutscene_clear:
     .a8
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda.l SAME_SCUMM_C4_CURRENT_SLOT
     bne ScummV5_Op_Stop__c4_slot
     lda.l SAME_SCUMM_M23A_PHASE
@@ -13811,7 +13867,7 @@ ScummV5_Op_Stop__complete:
 ScummV5_Op_BreakHere:
     sep #$20
     .a8
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_LoadRoomWithEgo_Postamble_Far
     .endif
     lda #SCUMM_VM_YIELDED
@@ -14611,7 +14667,7 @@ ScummV5_Op_StartScript__alloc_trace_done:
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda.l SAME_SCUMM_CONDITION
     sta.l SAME_SCUMM_C4_SLOT_NUMBER,x
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda.l SAME_SCUMM_CONDITION
     .if SCUMM_V5_NUM_GLOBAL_SCRIPTS == $0100
     jsr ScummV5_M23A_ResolveGlobalScript
@@ -14734,7 +14790,7 @@ ScummV5_Op_StartScript__program13:
 ScummV5_Op_StartScript__program_ready:
     .a8
     sta.l SAME_SCUMM_FETCH_BYTE
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_SlotMarkOrdinaryScript_Far
     .endif
     sep #$10
@@ -14750,7 +14806,7 @@ ScummV5_Op_StartScript__program_ready:
     .i16
     lda.l SAME_SCUMM_FETCH_BYTE
     sta.l SAME_SCUMM_C4_SLOT_PROGRAM,x
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
     sta.l SAME_SCUMM_M23A_SLOT_ROOMS,x
     .endif
@@ -14859,7 +14915,7 @@ ScummV5_Op_StartScript__run_nested:
 ScummV5_Op_StartScript__nested_ok:
     sep #$20
     .a8
-    .if SAME_BUILD_SCUMM_M23A && SCUMM_V5_HOLD_AFTER_STARTED_GLOBAL_ENABLED
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE && SCUMM_V5_HOLD_AFTER_STARTED_GLOBAL_ENABLED
     lda.l SAME_SCUMM_C4_LAST_ALLOCATED
     tax
     lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
@@ -15111,7 +15167,7 @@ ScummV5_Op_IsScriptRunning:
     .a8
     lda.l SAME_SCUMM_RETURN_MODE
     bne ScummV5_Op_IsScriptRunning__c5
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda.l SAME_SCUMM_M23A_PHASE
     cmp #$02
     beq ScummV5_Op_IsScriptRunning__c5
@@ -16521,7 +16577,7 @@ ScummV5_GetProgramSize:
     sep #$20
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsr ScummV5_M23A_GetProgramSize
     bcs ScummV5_GetProgramSize__m23a
     sep #$20
@@ -16534,7 +16590,7 @@ ScummV5_GetProgramSize:
     .a16
     lda #SCUMM_C2_PROGRAM_EXTENDED_SIZE
     rts
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
 ScummV5_GetProgramSize__m23a:
     rts
     .endif
@@ -16965,7 +17021,7 @@ ScummV5_GetProgramSize__c31_put_actor_in_room:
 ScummV5_GetProgramSize__c32_put_actor_at_object:
     .a8
     cmp #SCUMM_C2_FIXTURE_C32_PUT_ACTOR_AT_OBJECT
-    .if SAME_BUILD_SCUMM_M23A == 0
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE == 0
     bne ScummV5_GetProgramSize__matrix_set_box_flags
     .else
     .if SAME_BUILD_SCUMM_M19
@@ -16978,7 +17034,7 @@ ScummV5_GetProgramSize__c32_put_actor_at_object:
     .a16
     lda #SCUMM_C2_PROGRAM_C32_PUT_ACTOR_AT_OBJECT_SIZE
     rts
-    .if SAME_BUILD_SCUMM_M23A == 0
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE == 0
 ScummV5_GetProgramSize__matrix_set_box_flags:
     .a8
     cmp #SCUMM_C2_FIXTURE_MATRIX_SET_BOX_FLAGS
@@ -17131,7 +17187,7 @@ ScummV5_GetProgramSize__m22_load:
 ScummV5_GetProgramSize__m22_lifetime:
     .a8
     cmp #SCUMM_C2_FIXTURE_M22_HOOK8_LIFETIME
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     bne ScummV5_GetProgramSize__m23a_room49
     .else
     bne ScummV5_GetProgramSize__c1
@@ -17140,7 +17196,7 @@ ScummV5_GetProgramSize__m22_lifetime:
     .a16
     lda #SCUMM_C2_PROGRAM_M22_HOOK8_LIFETIME_SIZE
     rts
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
 ScummV5_GetProgramSize__m23a_room49:
     .a8
     cmp #SCUMM_C2_FIXTURE_M23A_AUTH_ROOM49
@@ -17202,7 +17258,7 @@ ScummV5_FetchSelectedByteAtX:
     sep #$20
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsr ScummV5_M23A_FetchProgramByte
     bcc ScummV5_FetchSelectedByteAtX__m23a
     sep #$20
@@ -17213,7 +17269,7 @@ ScummV5_FetchSelectedByteAtX:
     bne ScummV5_FetchSelectedByteAtX__unknown
     lda.l ScummV5_C2_Program_extended,x
     rts
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
 ScummV5_FetchSelectedByteAtX__m23a:
     rts
     .endif
@@ -17538,7 +17594,7 @@ ScummV5_FetchSelectedByteAtX__c31_put_actor_in_room:
 ScummV5_FetchSelectedByteAtX__c32_put_actor_at_object:
     .a8
     cmp #SCUMM_C2_FIXTURE_C32_PUT_ACTOR_AT_OBJECT
-    .if SAME_BUILD_SCUMM_M23A == 0
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE == 0
     bne ScummV5_FetchSelectedByteAtX__matrix_set_box_flags
     .else
     .if SAME_BUILD_SCUMM_M19
@@ -17549,7 +17605,7 @@ ScummV5_FetchSelectedByteAtX__c32_put_actor_at_object:
     .endif
     lda.l ScummV5_C2_Program_c32_put_actor_at_object,x
     rts
-    .if SAME_BUILD_SCUMM_M23A == 0
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE == 0
 ScummV5_FetchSelectedByteAtX__matrix_set_box_flags:
     .a8
     cmp #SCUMM_C2_FIXTURE_MATRIX_SET_BOX_FLAGS
@@ -17670,14 +17726,14 @@ ScummV5_FetchSelectedByteAtX__m22_load:
 ScummV5_FetchSelectedByteAtX__m22_lifetime:
     .a8
     cmp #SCUMM_C2_FIXTURE_M22_HOOK8_LIFETIME
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     bne ScummV5_FetchSelectedByteAtX__m23a_room49
     .else
     bne ScummV5_FetchSelectedByteAtX__c1
     .endif
     lda.l ScummV5_C2_Program_m22_hook8_lifetime,x
     rts
-    .if SAME_BUILD_SCUMM_M23A
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
 ScummV5_FetchSelectedByteAtX__m23a_room49:
     .a8
     cmp #SCUMM_C2_FIXTURE_M23A_AUTH_ROOM49
