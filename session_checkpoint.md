@@ -3271,7 +3271,11 @@ enabled/disabled runtime acceptance remains represented by ROMs
 `350abfa2d76fd0c5291661197eef9490d6f11297bde862a7436e99ca809274ff`.
 
 The screened work is published on
-`review/controller-standalone-conformance-final`, commit `53990eb`.
+`review/controller-standalone-conformance-final`.
+
+Substantive acceptance commit:
+`d0360bad75aca2cac6a46b01076bd6a6439eb2de`.
+Any subsequent branch HEAD is documentation-only.
 No ROMs, captures, savestates, or copyrighted payloads were committed.
 
 The diagnostic matrix classified the defect as generic nested-script
