@@ -223,7 +223,7 @@ ScummV5_Engine_Boot__clear_scenario:
     .a16
     lda #$0000
     sta.l SAME_SCUMM_C1_HOLD_AFTER
-    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    .if SAME_BUILD_SCUMM_CONTROLLER
     sep #$20
     .a8
     sta.l SAME_SCUMM_CONTROLLER_MODE

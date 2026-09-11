@@ -49,7 +49,7 @@ Same_Frame_Run:
     ; requests generated during this frame.
     jsr Same_Kernel_DrainEvents
     jsr Same_Engine_Frame
-    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    .if SAME_BUILD_SCUMM_CONTROLLER
     ; Sample fixture input after the generic SCUMM pass and room lifecycle;
     ; the sentence API is consumed by the next engine pass.
     jsl ScummV5_Controller_Frame_Far

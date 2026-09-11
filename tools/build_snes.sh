@@ -85,6 +85,9 @@ if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" == "1" ]]; then
     fi
     ENGINE_SELECTION_ARGS+=(--scumm-room-visual)
 fi
+if [[ "${SAME_BUILD_SCUMM_CONTROLLER:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" == "1" ]]; then
+    ENGINE_SELECTION_ARGS+=(--scumm-controller)
+fi
 if [[ "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-controller-fixture)
     ENGINE_SELECTION_ARGS+=(--scumm-controller-behavior-mask "${SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK:-7}")

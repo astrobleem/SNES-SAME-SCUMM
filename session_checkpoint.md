@@ -3220,3 +3220,25 @@ suite reports 544 passing, 1 skipped, and the known pre-existing Phase6K
 generated-artifact oracle failure; focused controller/architecture tests report
 58 passing. Python compilation, diff check, Poppy guard/lint, and ROM audit
 pass.
+
+## 2026-09-10 — generic controller capability split
+
+Work continues from frozen `review/controller-room-boundaries-final` commit
+`b80f6e45c5cc4057ed51554dfdb8bb71c606d503` in isolated branch
+`controller-service`; the frozen branch is untouched. Generic controller
+service lifecycle and source-driven interaction are now enabled by
+`SAME_BUILD_SCUMM_CONTROLLER`, with `SAME_BUILD_SCUMM_CONTROLLER_FIXTURE`
+implying it. The room-install reset and room-ready latch are capability-owned;
+room68 handoff, C8/C17 scenario seeding, actor/object visual fixture code, and
+capture behavior remain fixture-only.
+
+The fixture-enabled room49 personality assembled and passed Poppy lint and the
+SA-1/BW-RAM audit, producing ROM SHA
+`65f431e5659e0b7ee28e19cae892b0a174e1920ee4ea246dae71c8be1bdb10e5` with the
+historical Poppy DLL SHA
+`34514923ea8dc79a4664fa327f583cee8e8daa64e3be47518ae22ba5a2c7608e`. A
+controller-disabled SCUMM personality also assembled, linted, finalized, and
+passed the ROM audit, producing diagnostic ROM SHA
+`fe4216e5e2cdd23981c0f04718f50d0923976efb7341270d35f686367082000b`.
+Focused controller tests pass 56/56. Target replay acceptance remains to be
+run with the generic capability explicitly enabled; no publication yet.

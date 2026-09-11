@@ -1,7 +1,8 @@
-; Fixture-gated controller presentation/input bridge for the source-backed
-; Fate room-42 locker scene. It consumes the normal SAME input latch, performs
-; a small source-backed hotspot/verb selection, and publishes through the
-; ordinary SCUMM sentence mailbox. It never writes C20 or game state directly.
+; Generic SCUMM controller presentation/input bridge. It consumes the normal
+; SAME input latch, performs source-backed hotspot/verb selection, and
+; publishes through the ordinary SCUMM sentence mailbox. Fixture-only startup
+; and visual hooks remain explicitly gated below. It never writes C20 or game
+; state directly.
 
 .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
 ; The labeled room-68 -> room-42 scenario starts after the earlier authored
@@ -159,7 +160,7 @@ ScummV5_Controller_Frame__room68_request:
 ScummV5_Controller_Frame__generic_ready:
     sep #$20
     .a8
-    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    .if SAME_BUILD_SCUMM_CONTROLLER
     ; The established room-installed callback arms interaction service after
     ; resetting room-local state. This is a lifecycle latch, not a room
     ; number or fixture-object policy.
@@ -756,6 +757,7 @@ ScummV5_Controller_ResetVisualCache_Far:
     plp
     rtl
 
+.if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
 ; Compose the source-backed costume.2 stand/walk pose over the indexed room
 ; surface.  This is deliberately a surface compositor: actor state selects
 ; the cooked pose, while the existing surface service retains palette and
@@ -1524,6 +1526,8 @@ ScummV5_Controller_DrawCursor__transparent:
     bcc ScummV5_Controller_DrawCursor__row
     rtl
 
+.endif
+
 ; Render the engine cursor in the indexed surface.  This is the generic
 ; source-independent SCUMM arrow used when the source corpus has no separate
 ; cursor resource; its logical position is the same coordinate consumed by
@@ -1577,7 +1581,9 @@ ScummV5_Controller_RenderCursor__changed_deferred:
     .a8
     lda.l SAME_SCUMM_CONTROLLER_RENDER_VALID
     bne ScummV5_Controller_RenderCursor__actor_ready
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
     jsl ScummV5_Controller_RenderActor_Far
+    .endif
 ScummV5_Controller_RenderCursor__actor_ready:
 
     rep #$30

@@ -255,6 +255,7 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
     def test_room_install_resets_visual_cache_but_nonmatching_render_is_inert(self) -> None:
         visual = (ROOT / "runtime/snes/engines/scumm_v5_visual.pasm").read_text()
         controller = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        controller = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         install = visual.split("ScummV5_RoomVisual_Installed_Far:", 1)[1].split(
             "    plp", 1)[0]
         self.assertIn("ScummV5_Controller_ResetVisualCache_Far", install)
@@ -283,7 +284,7 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         interaction = install.split(
             "ScummV5_Controller_ResetInteractionOnRoomInstall_Far", 1
         )[0]
-        self.assertIn("SAME_BUILD_SCUMM_CONTROLLER_FIXTURE", interaction)
+        self.assertIn("SAME_BUILD_SCUMM_CONTROLLER", interaction)
         self.assertIn("Same_VideoSurface_RoomInstalled_Far", install)
         self.assertIn("SAME_SCUMM_CONTROLLER_ROOM_READY", install)
 
@@ -297,6 +298,22 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         self.assertNotIn("#$00F1", frame)
         self.assertNotIn("#$004C", frame)
         self.assertIn("ScummV5_Generic_Object_HitTest_Far", source)
+
+    def test_controller_capability_is_separate_from_fixture(self) -> None:
+        selection = (ROOT / "tools/generate_snes_engine_selection.py").read_text()
+        build = (ROOT / "tools/build_snes.sh").read_text()
+        main = (ROOT / "runtime/snes/main.pasm").read_text()
+        frame = (ROOT / "runtime/snes/kernel/frame.pasm").read_text()
+        visual = (ROOT / "runtime/snes/engines/scumm_v5_visual.pasm").read_text()
+        controller = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        self.assertIn("--scumm-controller", selection)
+        self.assertIn("SAME_BUILD_SCUMM_CONTROLLER =", selection)
+        self.assertIn("SAME_BUILD_SCUMM_CONTROLLER:-0", build)
+        self.assertIn(".if SAME_BUILD_SCUMM_CONTROLLER\n.include \"engines/scumm_v5_controller_far.pasm\"", main)
+        self.assertIn(".if SAME_BUILD_SCUMM_CONTROLLER\n    ; Sample fixture input", frame)
+        self.assertIn(".if SAME_BUILD_SCUMM_CONTROLLER\n    ; Room installation", visual)
+        self.assertIn(".if SAME_BUILD_SCUMM_CONTROLLER\n    ; The established room-installed callback", controller)
+        self.assertIn("SAME_BUILD_SCUMM_CONTROLLER_FIXTURE", controller)
 
     def test_video_overlay_non_overlay_packets_reach_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

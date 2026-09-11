@@ -332,7 +332,7 @@ Same_Tad_BlankSong:
 .if SAME_BUILD_M24RB
 .include "engines/scumm_v5_m24rb_far.pasm"
 .endif
-.if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+.if SAME_BUILD_SCUMM_CONTROLLER
 .include "engines/scumm_v5_controller_far.pasm"
 .endif
 ; With M24R-B this follows its bank-9 closure; otherwise it follows generated
