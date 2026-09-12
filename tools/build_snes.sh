@@ -151,6 +151,9 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
         ROOM_MANIFESTS=(--manifest "$CONFORMANCE_BUILD/manifest.json")
         ROOM_BINARY_DIR="$CONFORMANCE_BUILD/segments"
         ROOM_GENERATOR_ARGS+=(--far-programs)
+        if [[ "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
+            ROOM_GENERATOR_ARGS+=(--far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
+        fi
         mkdir -p "$ROOM_BINARY_DIR"
         "$PYTHON" tools/generate_snes_room_visuals.py \
             --manifest "$CONFORMANCE_BUILD/manifest.json" \
@@ -357,7 +360,7 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
         fi
         if [[ "${SAME_BUILD_SCUMM_M23C:-0}" == "1" ]]; then
             ROOM_GENERATOR_ARGS+=(--entry-exit-room 49 --entry-only-room 63)
-            if [[ "${SAME_BUILD_M24RB:-0}" == "1" || "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" ]]; then
+            if [[ "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" ]]; then
                 ROOM_GENERATOR_ARGS+=(--far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
             fi
         fi

@@ -10,13 +10,44 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ScummV5ControllerFixtureTests(unittest.TestCase):
-    def test_controller_uses_production_sentence_tuple_and_zero_object2(self) -> None:
+    def test_controller_uses_production_sentence_tuple_and_supports_secondary_object(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
-        self.assertEqual(source.count("sta.l SAME_SCUMM_SENTENCE_API_PENDING"), 1)
+        self.assertGreaterEqual(source.count("sta.l SAME_SCUMM_SENTENCE_API_PENDING"), 2)
         self.assertEqual(source.count("sta.l SAME_SCUMM_SENTENCE_API_OBJECT1+1"), 0)
-        self.assertEqual(source.count("sta.l SAME_SCUMM_SENTENCE_API_OBJECT2+1"), 1)
-        self.assertEqual(source.count("lda #$00\n    sta.l SAME_SCUMM_SENTENCE_API_OBJECT2"), 1)
+        self.assertIn("ScummV5_Controller_Frame__select_secondary:", source)
+        self.assertIn("ScummV5_Controller_Frame__select_secondary_ready:", source)
+        self.assertIn("sta.l SAME_SCUMM_SENTENCE_API_OBJECT2", source)
         self.assertIn("ScummV5_QueueSentence", (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text())
+
+    def test_secondary_selection_uses_source_hit_and_preserves_one_object_path(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        secondary = source.split("ScummV5_Controller_Frame__select_secondary:", 1)[1].split(
+            "ScummV5_Controller_Frame__select_secondary_ready:", 1
+        )[0]
+        self.assertIn("ScummV5_Generic_Object_HitTest_Far", secondary)
+        self.assertIn("SAME_SCUMM_INTERACTION_OBJECT", secondary)
+        self.assertIn("SAME_SCUMM_SENTENCE_API_OBJECT2", secondary)
+        self.assertIn("lda #$04", secondary)
+        self.assertIn("and #$0040", source)
+        self.assertIn("cmp #$03", source)
+        self.assertIn("cmp #$04", source)
+
+    def test_secondary_object_is_cleared_at_room_and_cursor_lifecycle_boundaries(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        reset = source.split("ScummV5_Controller_ResetInteractionOnRoomInstall_Far:", 1)[1].split(
+            "ScummV5_Controller_Frame_Far:", 1
+        )[0]
+        invalidate = source.split(
+            "ScummV5_Controller_InvalidateSelectionOnCursorMove_Far:", 1
+        )[1].split("ScummV5_Controller_InvalidateSelectionOnCursorMove__done:", 1)[0]
+        self.assertIn("sta.l SAME_SCUMM_SENTENCE_API_OBJECT2", reset)
+        self.assertIn("__secondary", invalidate)
+        self.assertIn("sta.l SAME_SCUMM_SENTENCE_API_OBJECT2", invalidate)
+        self.assertIn("ScummV5_Controller_Frame__action_pending_reentry", source)
+        reentry = source.split("ScummV5_Controller_Frame__action_pending_reentry:", 1)[1].split(
+            "ScummV5_Controller_Frame__hud:", 1
+        )[0]
+        self.assertIn("sta.l SAME_SCUMM_SENTENCE_API_OBJECT2", reentry)
 
     def test_controller_selection_is_source_driven_not_locker_driven(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
@@ -309,6 +340,38 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         self.assertIn("SAME_BUILD_SCUMM_CONTROLLER", main)
         self.assertIn(".if SAME_BUILD_SCUMM_CONTROLLER\n    ; The established room-installed callback", controller)
         self.assertIn("SAME_BUILD_SCUMM_CONTROLLER_FIXTURE", controller)
+
+    def test_conformance_room_service_far_capability_is_generated_from_its_own_inputs(self) -> None:
+        generator = ROOT / "tools/generate_snes_engine_selection.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "active_engine.inc.pasm"
+            subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--scumm-controller-conformance", "--output", str(output),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            config = output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn("SAME_BUILD_SCUMM_M23A = $00", config)
+            self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE = $01", config)
+            self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = $01", config)
+            self.assertIn("SAME_BUILD_M24RB = $00", config)
+
+            output_m24rb = Path(tmp) / "m24rb-active_engine.inc.pasm"
+            subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--m24rb", "--output", str(output_m24rb),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            config_m24rb = output_m24rb.with_name("build_config.inc.pasm").read_text()
+            self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = $01", config_m24rb)
 
     def test_video_overlay_non_overlay_packets_reach_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

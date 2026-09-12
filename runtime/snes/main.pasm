@@ -327,7 +327,7 @@ Same_Tad_BlankSong:
     .byte $00
 .if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 .include "generated/scumm_v5_room_data.inc.pasm"
-.if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 ; M24R-B1 cold helper closure. Profile room payloads currently occupy banks 3-8;
 ; bank 9 is reserved for validator/lifecycle code and remains below 32 KiB.
 .bank 9
@@ -338,10 +338,10 @@ Same_Tad_BlankSong:
 .include "generated/scumm_v5_conformance_far.inc.pasm"
 .endif
 .endif
-.if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_PHASE6HB
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR || SAME_BUILD_SCUMM_PHASE6HB
 .include "generated/scumm_v5_room_validator_far.inc.pasm"
 .endif
-.if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 .include "engines/scumm_v5_m24rb_far.pasm"
 .endif
 .if SAME_BUILD_SCUMM_CONTROLLER

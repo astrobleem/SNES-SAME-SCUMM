@@ -3261,6 +3261,58 @@ source line `8ee859b33bad94e3a01e9c78026803e482292801`. The frozen Nexen
 executable is SHA-256
 `17d243c404b8ef32bbb1754a5b026584f2ae24cb047f54b9f250a6f4b721650a`.
 
+## 2026-09-11 — Recovered accepted startup42 control personality
+
+The accepted-control worktree at `d0360bad75aca2cac6a46b01076bd6a6439eb2de`
+was rebuilt from the complete explicit environment recorded by
+`room-boundaries/build/room-boundary-room42-final.build_identity.json`.
+The recovered personality is startup42 with `SAME_BUILD_M24RB=1`,
+`SAME_BUILD_SCUMM_M23A/B/C=1`, `SAME_BUILD_SCUMM_PHASE6L_A1D=1`,
+`SAME_BUILD_SCUMM_M25A_VALIDATOR=1`, scenario/controller fixture and room
+visual enabled, `SAME_SCUMM_SCENARIO_START_ROOM=42`, SA-1 BWRAM,
+`mode3_surface`/`bg2_index4`, ROM size `0x0C`, FULL
+`/home/chad/ATLANTIS.zip`, and the pinned Poppy/Nexen identities below.
+No M20/M21/M22, Phase6HB, movement, or controller-conformance flags are set.
+
+Control artifacts: ROM
+`/tmp/fate-accepted-control/build/accepted-startup42-control.sfc`, SHA-256
+`6f38708b8c794a610e4d585c942e31da864771f444c514e6d3a3662086085172`;
+`build_config.inc.pasm` SHA-256
+`aa1e200f11bd610093e170460ee2ecb19b9e6a6f0ffdb2bde829860abc4f563a`;
+room directory `5183a5c1c6676e5db397eae63a1889b18893782835d2a723c6b8ce3f25d8770c`;
+room data `edec37a2b841e80f3e98d0c2aed876a06c4910f979ceb9734d35925c72647f55`.
+The control passes assembly, bank-0 slack, Poppy lint, ROM audit, and frozen
+Nexen startup42/room42 replay.
+
+The current branch was rebuilt with the same personality and identical room
+record inputs: ROM `build/current-two-object-startup42-ab.sfc`, SHA-256
+`f30c6f9fe651b60f2afc452e298d8c0b3a4822e4456288ed77a1f3c3f0e5e1ca`.
+One historical cold replay recorded `SCUMM_ERR_STRING` (14) at frame 14 with
+C4 error origin 19 before readiness, while a nearby diagnostic build reached
+the same boundary with error 0. That observation is retained as historical
+evidence only: the later determinism audit reproduced both error-free and
+error-14 outcomes with the identical ROM and frozen Nexen, and found origin 19
+to be stale/random diagnostic state. It is not a proven A/B divergence and no
+production fix was made. The earlier bank-overlap/unresolved-C25 result was an
+invalid build personality and is superseded by this recovered control.
+
+## 2026-09-11 — two-object sentence lifecycle trace
+
+The frozen Nexen ran standalone ROM
+`127874619c29db909250268204a11e9fd0e299645daee12db25b0646998f323f`.
+The ordered trace from the final object-2 A edge is:
+
+`SENTENCE_API (3,7,8)` → `mode 4→2` → `QueueSentence` → `C20 (3,7,8)` →
+`SentenceProcess` slot allocation → authored `StartObject` → `SetVarRange` →
+`VAR[5]=1` at the generated table address `$7E080A` → normal retirement →
+`mode 2→1`.
+
+The completed-frame result is mode 1, object1 7, object2 cleared, pending/C20
+empty, phase 0, error 0, and VAR[5]=1. No production defect was found. The
+earlier missing-effect report was a validator observation bug: it read the
+historical `$7FF500` table instead of this profile's generated `$7E0800`
+table. Corrected artifact: `build/two-object-replay-final-2/report.json`.
+
 ## 2026-09-11 — Multi-room controller milestone CLOSED / PUBLISHED
 
 Final exact-tree gates passed. Room42 replay is recorded at
@@ -3378,3 +3430,99 @@ tests remain 257/257; the repository suite remains 547 pass, 1 skip, and the
 known Phase6K generated-byte oracle drift. Poppy guard/lint, Python compile,
 SA-1 ROM audit, and `git diff --check` pass. Nexen SHA remains
 `17d243c404b8ef32bbb1754a5b026584f2ae24cb047f54b9f250a6f4b721650a`.
+
+## 2026-09-11 — frame-14 error determinism audit
+
+The historical frame-14 `SCUMM_ERR_STRING` observation is not a reproducible
+source-level regression under a fixed initial machine state. The surviving
+record identifies the current ROM (`f30c6f9fe651b60f2afc452e298d8c0b3a4822e4456288ed77a1f3c3f0e5e1ca`),
+the error write at frame 14, the `StringOps $27/$44 getStringChar` path, and
+`C8_SIZES[30] == 0`, but does not preserve the complete original command line,
+validator arguments, working directory, input artifact, process-reuse state,
+save/SRAM paths, savestate status, or environment. Those fields remain
+unknown; the old record cannot be reconstructed as an exact invocation.
+
+The historical `C4 origin = 19` is stale diagnostic state. Current source has
+no legitimate origin-19 writer; the legal C4 origin writes are `$20`, `$21`,
+`$22`, `$29`, `$2B`, and `$2C`. Nexen's SNES settings show
+`RamPowerOnState = Random`. Its `reset_emulator(power=true)` performs a full
+power-cycle/frame-counter reset, but does not impose deterministic zeroed
+WRAM. The C4 diagnostic area is not guaranteed to be initialized before the
+first relevant scheduler write, so an observed 19 can survive from random or
+previous WRAM and must not be interpreted as a current call origin. No
+savestate was supplied to the current direct probes; no persistent SRAM/save
+input was part of the recorded historical invocation, and those historical
+details are unknown.
+
+Using the exact frozen Nexen executable
+`/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/linux-x64/publish/Nexen`
+(SHA-256
+`17d243c404b8ef32bbb1754a5b026584f2ae24cb047f54b9f250a6f4b721650a`) and the
+exact current ROM, 64 independent fresh-process, power-cycle probes were run
+with the canonical error write hook over the first 24 frames: 52 had error 0
+and 12 reached error 14. The failures are therefore intermittent under the
+random/uninitialized power-on state, not deterministic evidence against the
+two-object source delta. Seven same-process power-reset repetitions completed
+with zero observed failures; this is a small process-reuse control, not proof
+that reuse is equivalent to a fresh process.
+
+The first actual error path remains `ScummV5_Op_StringOps__missing` for
+`$27/$44`, with string 30 unallocated. The temporary validator-only attempt to
+capture a trace ring at the error write was removed after the audit; no Nexen,
+Mesen, or production source change was made. The current source correlation is
+therefore recorded as: the two-object controller delta was present during one
+observed failure, but causality is UNPROVEN because the identical current ROM
+also passes and the failure varies with initial emulator state.
+
+Conclusion: the old frame-14 result is **HARNESS/INITIAL-RAM-STATE DEPENDENT,
+not a valid deterministic production regression**. It is not suitable for
+production A/B or source-hunk reversion. The next valid project step is to
+continue the known-good two-object controller validation, using an explicitly
+fingerprinted deterministic reset/input baseline for any future failure.
+
+## 2026-09-11 — accepted-ROM randomized-power-on control
+
+The accepted controller ROM was run with the identical frozen Nexen, fresh
+process per trial, `reset_emulator(power=true)`, no savestate, the same
+controlled-script-1/startup42 path, the same 24-frame window, and the same
+canonical error write hook. Across 64 accepted-ROM trials, all 64 were
+error-free; no `SCUMM_ERR_STRING` write occurred, so there is no accepted-ROM
+failure signature to report. Initial WRAM fingerprints differed between
+trials, confirming that the randomized-power-on condition was exercised.
+
+This is the required A/B control against accepted ROM
+`6f38708b8c794a610e4d585c942e31da864771f444c514e6d3a3662086085172` versus
+current ROM
+`f30c6f9fe651b60f2afc452e298d8c0b3a4822e4456288ed77a1f3c3f0e5e1ca`, whose
+matching campaign produced 12 failures in 64 trials with the established
+`StringOps $27/$44`, string 30, `C8_SIZES[30] == 0` signature. The accepted
+control is clean; therefore the two-object delta is **not exonerated** for
+this randomized-power-on failure class. No production change was made. The
+next step is to localize the current-vs-accepted dependency under a captured
+failing initial-state condition before proposing any fix.
+
+## 2026-09-11 — generic two-object controller milestone
+
+The historical startup control was recovered, the intermittent randomized-WRAM
+failure was reduced to a deterministic zero-fill oracle, and the root cause was
+isolated to a wrong-bank `ValidateRecord` JSR. The caller now uses
+`SAME_BUILD_SCUMM_ROOM_SERVICE_FAR || SAME_BUILD_SCUMM_PHASE6HB`; far-validator
+generation and ROM inclusion use the same capability closure. Startup regression
+validation is closed: deterministic zero-fill 5/5 and native randomized-WRAM
+64/64, versus 12/64 on the unfixed tree.
+
+The standalone controller-conformance build uses M24RB=0 with the generalized
+far room-service closure and produces ROM
+`c0bda67b488e7263c3d92efa192373e69e0f30dce5e140529cdb24b6fa90bff9`.
+The authentic controller replay passes: room 1 phase 0, mode sequence
+`0 -> 1 -> 3 -> 4 -> 2 -> 1`, sentence `(verb=3, object1=7, object2=8)`
+published and consumed exactly once, authored action sets `VAR[5]=1`, object2,
+C20, and API pending state clear, and error 0. Replay artifact:
+`build/two-object-fixed-closure-replay-rerun/report.json`.
+
+Final focused gates pass: controller fixture 59/59, conformance fixture 1/1,
+SCUMM engine 128/128. The full Fate rebuild is byte-identical to the validated
+ROM `416810a9b6617ebc4c6f93a43e6e18ad505db0f7820be54c49f075a910538e48`, so its
+existing startup evidence remains valid. Pinned Poppy, ROM audit, Python
+compilation, and `git diff --check` pass. The known Phase6K generated-artifact
+drift remains adjudicated and unchanged.

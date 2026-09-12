@@ -731,7 +731,7 @@ SAME_SCUMM_M23B_VARIABLES_END            = $7FF900
 SAME_SCUMM_OBJECT_COUNT                   = $7E5FF0 ; u16 declared DOBJ count
 ; Fixture-gated controller scene state. This is input/presentation glue, not
 ; semantic game state; the sentence API remains the only producer of C20.
-SAME_SCUMM_CONTROLLER_MODE                = $7E5FE0 ; 0 hover, 1 verb, 2 action pending
+SAME_SCUMM_CONTROLLER_MODE                = $7E5FE0 ; 0 hover,1 verb,2 action,3 secondary hover,4 secondary selected
 SAME_SCUMM_CONTROLLER_CURSOR_X            = $7E5FE1 ; u16 logical scene cursor
 SAME_SCUMM_CONTROLLER_CURSOR_Y            = $7E5FE3 ; u16 logical scene cursor
 SAME_SCUMM_CONTROLLER_VERB                = $7E5FE5 ; u8 selected authored verb

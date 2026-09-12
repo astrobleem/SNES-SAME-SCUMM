@@ -762,7 +762,7 @@ ScummV5_Engine_Frame__controller_root_done:
     ; The accepted interactive path owns its room transition through authentic
     ; bytecode.  The older bounded M23C timing driver remains historical only.
     .else
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23C_Driver_FarEntry
     .else
     jsr ScummV5_M23C_Driver
@@ -781,7 +781,7 @@ ScummV5_Engine_Frame__controller_root_done:
     beq ScummV5_Engine_Frame__m23a_failed
     bra ScummV5_Engine_Frame__m23a_hold_check
 ScummV5_Engine_Frame__m23a_ready:
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_ResourceReady_FarEntry
     .else
     jsr ScummV5_M23A_ResourceReady
@@ -3191,7 +3191,7 @@ ScummV5_C4_RunNestedChild__success:
 ; stack is bounded by the 25-slot scheduler: with one current script, at most
 ; 24 parents can be suspended.  Slot-owned state remains in the slot table;
 ; each frame retains only the parent slot and its accumulated operation count.
-.if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 ; M25A keeps the hot opcode dispatcher in bank 0, but the bounded context
 ; switch is a cold startScript helper. The integrated Fate build calls the
 ; coherent far implementation through one proper long-call boundary.
@@ -7282,7 +7282,7 @@ ScummV5_PutActor_FarCall_FetchWordParam:
     jsr ScummV5_C10_FetchWordParam
     rtl
 ScummV5_LoadRoomWithEgo_FarCall_RequestRoom:
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_RequestRoom_FarEntry
     .else
     jsr ScummV5_M23A_RequestRoom
@@ -7290,7 +7290,7 @@ ScummV5_LoadRoomWithEgo_FarCall_RequestRoom:
     rtl
 ScummV5_RequestRoom:
     ; A=u8 room ID; delegate to the established M23A request lifecycle.
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_RequestRoom_FarEntry
     .else
     jsr ScummV5_M23A_RequestRoom
@@ -7353,7 +7353,7 @@ ScummV5_Movement_FarCall_Divide:
     .a16
     .i16
     rtl
-.if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 ScummV5_M24RB_FarCall_C25Flush:
     jsr ScummV5_C25_Flush
     rtl
@@ -7995,7 +7995,7 @@ ScummV5_Op_LoadRoom__operand_ok:
 ScummV5_Op_LoadRoom__resolved:
     .a8
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_RequestRoom_FarEntry
     .else
     jsr ScummV5_M23A_RequestRoom
@@ -11418,7 +11418,7 @@ ScummV5_Op_SoundKludge__m24rb_continue:
     jmp ScummV5_Engine_Frame__next
 
 ScummV5_C25_Flush:
-.if (SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE) && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
     jsl ScummV5_C25_Flush_Far
     rts
 ScummV5_C25_Flush_Bank0_Resume:
@@ -12540,7 +12540,7 @@ ScummV5_C25_Flush__complete_continue:
     .endif
     jml ScummV5_Engine_Frame__next
 
-.if (SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE) && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
     .bank 0
     .org ScummV5_C25_Flush_Bank0_Resume
 ScummV5_C25_FarCall_EmitAudio:
@@ -13795,7 +13795,7 @@ ScummV5_Op_Stop__cutscene_clear:
     beq ScummV5_Op_Stop__m23a_entry_complete
     bra ScummV5_Op_Stop__m23a_not_room_script
 ScummV5_Op_Stop__m23a_exit_complete:
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_EndRoomScript_FarEntry
     jsl ScummV5_M23A_CommitRoom_FarEntry
     .else
@@ -13806,7 +13806,7 @@ ScummV5_Op_Stop__m23a_exit_complete:
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_Stop__m23a_entry_complete:
     .a8
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_EndRoomScript_FarEntry
     lda #$0A
     jsl ScummV5_M23A_Trace_FarEntry

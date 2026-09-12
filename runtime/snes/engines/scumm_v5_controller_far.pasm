@@ -65,6 +65,7 @@ ScummV5_Controller_ResetInteractionOnRoomInstall_Far:
     rep #$20
     .a16
     lda #$0000
+    sta.l SAME_SCUMM_SENTENCE_API_OBJECT2
     sta.l SAME_SCUMM_CONTROLLER_OBJECT
     sta.l SAME_SCUMM_VERB_OBJECT
     sta.l SAME_SCUMM_INTERACTION_OBJECT
@@ -350,9 +351,100 @@ ScummV5_Controller_Frame__down_done:
 ScummV5_Controller_Frame__mode_not_2:
     sep #$20
     .a8
+    cmp #$03
+    beq ScummV5_Controller_Frame__select_secondary
+    cmp #$04
+    beq ScummV5_Controller_Frame__select_secondary_ready
     cmp #$01
-    bne ScummV5_Controller_Frame__mode_select_fallback
+    beq ScummV5_Controller_Frame__mode_select_verb
+    jmp ScummV5_Controller_Frame__mode_select_fallback
+ScummV5_Controller_Frame__mode_select_verb:
     jmp ScummV5_Controller_Frame__select_verb
+
+; Mode 3 is a generic secondary-object hover state.  B explicitly requests
+; this state from a selected verb; one-object verbs remain unchanged and A
+; submits them directly.  The active-room source hit-test remains the only
+; source of object identity.
+ScummV5_Controller_Frame__select_secondary:
+    rep #$20
+    .a16
+    lda.l SAME_INPUT_PRESSED
+    and #$0080
+    bne ScummV5_Controller_Frame__select_secondary_press
+    jmp ScummV5_Controller_Frame__hud
+ScummV5_Controller_Frame__select_secondary_press:
+    sep #$20
+    .a8
+    lda #$31
+    sta.l SAME_SCUMM_CONTROLLER_DIAG
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    clc
+    adc.l SAME_SCUMM_CAMERA_VSCREEN_XSTART
+    sta.l SAME_SCUMM_INTERACTION_X
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    clc
+    adc.l SAME_SCUMM_CAMERA_CURRENT_Y
+    sec
+    sbc #$0064
+    sta.l SAME_SCUMM_INTERACTION_Y
+    jsl ScummV5_Generic_Object_HitTest_Far
+    bcc ScummV5_Controller_Frame__secondary_miss
+    sep #$20
+    .a8
+    lda #$33
+    sta.l SAME_SCUMM_CONTROLLER_DIAG
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_INTERACTION_OBJECT
+    sta.l SAME_SCUMM_SENTENCE_API_OBJECT2
+    sep #$20
+    .a8
+    lda #$04
+    sta.l SAME_SCUMM_CONTROLLER_MODE
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    jmp ScummV5_Controller_Frame__hud
+ScummV5_Controller_Frame__secondary_miss:
+    sep #$20
+    .a8
+    lda #$32
+    sta.l SAME_SCUMM_CONTROLLER_DIAG
+    jmp ScummV5_Controller_Frame__hud
+
+ScummV5_Controller_Frame__select_secondary_ready:
+    rep #$20
+    .a16
+    lda.l SAME_INPUT_PRESSED
+    and #$0080
+    bne ScummV5_Controller_Frame__select_secondary_submit
+    jmp ScummV5_Controller_Frame__hud
+ScummV5_Controller_Frame__select_secondary_submit:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_VIDEO_TEXT_CONTROLLER_VALID
+    lda.l SAME_SCUMM_CONTROLLER_VERB
+    sta.l SAME_SCUMM_SENTENCE_API_VERB
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_OBJECT
+    sta.l SAME_SCUMM_SENTENCE_API_OBJECT1
+    lda #$01
+    sta.l SAME_SCUMM_SENTENCE_API_PENDING
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_SUBMISSIONS
+    inc
+    sta.l SAME_SCUMM_CONTROLLER_SUBMISSIONS
+    lda.l SAME_SCUMM_CONTROLLER_VERB
+    sta.l SAME_SCUMM_CONTROLLER_LAST_ACTION
+    lda #$02
+    sta.l SAME_SCUMM_CONTROLLER_MODE
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    jmp ScummV5_Controller_Frame__hud
 ScummV5_Controller_Frame__mode_select_fallback:
     ; A resolves the cursor against the active room's source-backed CDHD
     ; records, then discovers the object's explicit authored VERB entries.
@@ -405,6 +497,8 @@ ScummV5_Controller_Frame__hit_ok:
     lda.l SAME_SCUMM_INTERACTION_OBJECT
     sta.l SAME_SCUMM_CONTROLLER_OBJECT
     sta.l SAME_SCUMM_VERB_OBJECT
+    lda #$0000
+    sta.l SAME_SCUMM_SENTENCE_API_OBJECT2
     jsl ScummV5_Generic_Verb_First_Far
     bcs ScummV5_Controller_Frame__verb_ok
     sep #$20
@@ -429,6 +523,25 @@ ScummV5_Controller_Frame__verb_ok:
     jmp ScummV5_Controller_Frame__hud
 
 ScummV5_Controller_Frame__select_verb:
+    rep #$20
+    .a16
+    lda.l SAME_INPUT_PRESSED
+    and #$0040 ; B enters generic secondary-object selection
+    beq ScummV5_Controller_Frame__select_verb_cycle
+    sep #$20
+    .a8
+    lda #$03
+    sta.l SAME_SCUMM_CONTROLLER_MODE
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_SENTENCE_API_OBJECT2
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    jmp ScummV5_Controller_Frame__hud
+ScummV5_Controller_Frame__select_verb_cycle:
     rep #$20
     .a16
     lda.l SAME_INPUT_PRESSED
@@ -526,6 +639,10 @@ ScummV5_Controller_Frame__action_pending_reentry:
     ; Do not let a stale selection become the next action. Re-run the generic
     ; source hit-test and authored-verb query at the current cursor.
     jsl ScummV5_Controller_RefreshSelection_Far
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_SENTENCE_API_OBJECT2
     jmp ScummV5_Controller_Frame__done
 
 ScummV5_Controller_Frame__hud:
@@ -585,6 +702,8 @@ ScummV5_Controller_RefreshSelection_Far:
     bcc ScummV5_Controller_RefreshSelection__clear
     lda.l SAME_SCUMM_CONTROLLER_OBJECT
     sta.l SAME_SCUMM_VERB_OBJECT
+    lda #$0000
+    sta.l SAME_SCUMM_SENTENCE_API_OBJECT2
     jsl ScummV5_Generic_Verb_First_Far
     bcc ScummV5_Controller_RefreshSelection__clear
     sep #$20
@@ -627,6 +746,10 @@ ScummV5_Controller_InvalidateSelectionOnCursorMove_Far:
     sep #$20
     .a8
     lda.l SAME_SCUMM_CONTROLLER_MODE
+    cmp #$03
+    beq ScummV5_Controller_InvalidateSelectionOnCursorMove__secondary
+    cmp #$04
+    beq ScummV5_Controller_InvalidateSelectionOnCursorMove__secondary
     cmp #$01
     bne ScummV5_Controller_InvalidateSelectionOnCursorMove__done
     lda #$00
@@ -638,6 +761,20 @@ ScummV5_Controller_InvalidateSelectionOnCursorMove_Far:
     sta.l SAME_SCUMM_CONTROLLER_OBJECT
     sta.l SAME_SCUMM_CONTROLLER_OBJECT+1
     sta.l SAME_SCUMM_VERB_OBJECT
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    jmp ScummV5_Controller_InvalidateSelectionOnCursorMove__done
+ScummV5_Controller_InvalidateSelectionOnCursorMove__secondary:
+    sep #$20
+    .a8
+    lda #$03
+    sta.l SAME_SCUMM_CONTROLLER_MODE
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_SENTENCE_API_OBJECT2
     sep #$20
     .a8
     lda #$01

@@ -8,7 +8,7 @@ ScummV5_InitialVisual_Bootstrap_Far:
     sep #$20
     .a8
     lda #SCUMM_V5_INITIAL_VISUAL_ROOM
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_RequestRoom_FarEntry
     .else
     jsl ScummV5_Visual_RequestRoom_Far
@@ -20,7 +20,7 @@ ScummV5_InitialVisual_Bootstrap_Far:
     lda.l SAME_SCUMM_M23A_PHASE
     cmp #$05
     bne ScummV5_InitialVisual_Bootstrap__done
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_ResourceReady_FarEntry
     .else
     jsl ScummV5_Visual_ResourceReady_Far

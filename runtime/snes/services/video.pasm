@@ -204,14 +204,14 @@ Same_Mode3_Kernel_DrainEvents_Far__done:
 Same_VideoSurface_ServiceEvents_Far = Same_Mode3_Kernel_DrainEvents_Far
 .if SAME_BUILD_SCUMM_ROOM_VISUAL
 ScummV5_Visual_RequestRoom_Far:
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_RequestRoom_FarEntry
     .else
     jsr ScummV5_M23A_RequestRoom
     .endif
     rtl
 ScummV5_Visual_ResourceReady_Far:
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_ResourceReady_FarEntry
     .else
     jsr ScummV5_M23A_ResourceReady

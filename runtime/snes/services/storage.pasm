@@ -32,7 +32,7 @@ Same_Storage_Handle:
     jsr ScummV5_M23A_FindRoom
     bcs Same_Storage_Handle__m23a_failed
     sta.l SAME_SCUMM_M23A_PENDING_RECORD
-    .if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_PHASE6HB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR || SAME_BUILD_SCUMM_PHASE6HB
     jsl ScummV5_M23A_ValidateRecord_FarEntry
     .else
     jsr ScummV5_M23A_ValidateRecord
@@ -48,7 +48,7 @@ Same_Storage_Handle:
     inc
     sta.l SAME_SCUMM_M23A_VALIDATION_COUNT
     lda #$02
-    .if SAME_BUILD_M24RB
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_Trace_FarEntry
     .else
     jsr ScummV5_M23A_Trace

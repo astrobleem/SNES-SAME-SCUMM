@@ -26,14 +26,18 @@ def chunk(tag: bytes, payload: bytes) -> bytes:
 
 
 def object_payload() -> bytes:
-    # One original object: CDHD bounds (48, 56)-(104, 96), OBNA, and verb 3.
+    # Two original objects: a selectable primary and a separate secondary.
+    # CDHD coordinates are encoded in 8-pixel units by the room format.
     cdhd = struct.pack("<HBBBBBBhhB", 7, 1, 1, 7, 5, 0, 0, 48, 56, 0)
     # The ordinary action has one observable fixture-local effect, then STOPs
     # normally.  Completion is still determined by sentence/script retirement,
     # never by this variable.
     verb_program = bytes.fromhex("26 05 00 01 01 00")
     verb = bytes((3, 12, 0, 0)) + verb_program
-    return chunk(b"CDHD", cdhd) + chunk(b"OBNA", b"test console") + chunk(b"VERB", verb)
+    primary = chunk(b"OBCD", chunk(b"CDHD", cdhd) + chunk(b"OBNA", b"test console") + chunk(b"VERB", verb))
+    secondary_cdhd = struct.pack("<HBBBBBBhhB", 8, 12, 1, 7, 5, 0, 0, 128, 56, 0)
+    secondary = chunk(b"OBCD", chunk(b"CDHD", secondary_cdhd) + chunk(b"OBNA", b"test panel"))
+    return primary + secondary
 
 
 def room() -> bytes:
@@ -47,11 +51,11 @@ def room() -> bytes:
     sentence_script = bytes((0x26, 0x21, 0x00, 0x01, 0x02))
     local_script = bytes((200,)) + sentence_script + verb_ops + b"\0"
     return b"".join((
-        chunk(b"RMHD", struct.pack("<HHH", 8, 2, 1)),
+        chunk(b"RMHD", struct.pack("<HHH", 8, 2, 2)),
         chunk(b"TRNS", struct.pack("<H", 255)), chunk(b"CLUT", palette),
         chunk(b"BOXD", struct.pack("<H", 1) + walkbox), chunk(b"BOXM", b"\xff"),
         chunk(b"RMIM", chunk(b"RMIH", b"\0\0") + chunk(b"IM00", smap)),
-        chunk(b"OBCD", object_payload()), chunk(b"ENCD", entry), chunk(b"EXCD", b"\0"),
+        object_payload(), chunk(b"ENCD", entry), chunk(b"EXCD", b"\0"),
         *(() if not local_script else (chunk(b"LSCR", local_script),)),
     ))
 

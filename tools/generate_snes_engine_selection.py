@@ -78,6 +78,7 @@ def main() -> int:
         f"SAME_BUILD_SCUMM_M22 = ${1 if args.engine == 'scumm_v5' and args.scumm_m22 else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23A = ${1 if args.engine == 'scumm_v5' and args.scumm_m23a else 0:02X}\n"
         f"SAME_BUILD_SCUMM_ROOM_SERVICE = ${1 if args.engine == 'scumm_v5' and (args.scumm_m23a or args.scumm_controller_conformance) else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = ${1 if args.engine == 'scumm_v5' and (args.m24rb or args.scumm_controller_conformance) else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23B = ${1 if args.engine == 'scumm_v5' and args.scumm_m23b else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23B_NEGATIVE = ${1 if args.engine == 'scumm_v5' and args.scumm_m23b_negative else 0:02X}\n"
         f"SAME_BUILD_SCUMM_PHASE6HB = ${1 if args.engine == 'scumm_v5' and args.scumm_phase6hb else 0:02X}\n"
