@@ -1173,7 +1173,14 @@ ScummV5_GetActorPosition_FarEntry__zero:
     lda #$0000
     bra ScummV5_GetActorPosition_FarEntry__write
 ScummV5_GetActorPosition_FarEntry__missing:
+    ; Movement_ObjectWalk_Far returns in 8-bit accumulator mode on failure.
+    ; Restore the word-result ABI before loading/storing the v5 -1 sentinel.
     .a16
+    rep #$20
+    ; Do not cache an unresolved object ID: the paired X/Y query must retry
+    ; resolution instead of reading stale coordinates from the previous hit.
+    lda #$0000
+    sta.l SAME_SCUMM_MOVE_OBJECT
     lda #$FFFF
 ScummV5_GetActorPosition_FarEntry__write:
     jsl ScummV5_GetActorFacing_FarCall_WriteResult

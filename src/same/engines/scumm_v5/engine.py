@@ -715,8 +715,15 @@ class ScummV5Engine(Engine):
             self._handlers[opcode] = self._op_get_actor_scale
         for opcode in (0x0F, 0x8F):
             self._handlers[opcode] = self._op_get_object_state
-        self._handlers[0xC3] = self._op_get_actor_x
-        self._handlers[0xA3] = self._op_get_actor_y
+        # getActorX/Y share the result-word + var-or-direct-word selector
+        # grammar.  Bit 7 selects variable versus literal object ID; it does
+        # not select a different operation.  Keep both direct and variable
+        # aliases registered so host and SNES execute the same complete v5
+        # opcode families.
+        for opcode in (0x43, 0xC3):
+            self._handlers[opcode] = self._op_get_actor_x
+        for opcode in (0x23, 0xA3):
+            self._handlers[opcode] = self._op_get_actor_y
         for opcode in (0x1E, 0x3E, 0x5E, 0x7E, 0x9E, 0xBE, 0xDE, 0xFE):
             self._handlers[opcode] = self._op_walk_actor_to
         for opcode in (0x36, 0x76, 0xB6, 0xF6):

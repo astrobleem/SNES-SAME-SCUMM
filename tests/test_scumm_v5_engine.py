@@ -1252,6 +1252,62 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
         self.assertEqual(host.engine.state.variables[1], 137)
 
+    def test_get_actor_position_direct_and_variable_word_forms(self) -> None:
+        """X/Y queries decode a word literal or a word variable reference."""
+        cases = (
+            (0x43, 0x1234, 0x0007),  # direct getActorX
+            (0x23, 0x2345, 0x0007),  # direct getActorY
+            (0xC3, 0x1234, 0x000B),  # variable getActorX, Var[11] = actor 7
+            (0xA3, 0x2345, 0x000B),  # variable getActorY, Var[11] = actor 7
+        )
+        for opcode, expected, selector in cases:
+            with self.subTest(opcode=f"${opcode:02X}"):
+                script = bytes((opcode, 10, 0, selector & 0xFF, selector >> 8, 0x00))
+                host = self._host(script)
+                host.engine.state.actors[7] = ActorState(position=(0x1234, 0x2345))
+                host.engine.state.actors[11] = ActorState(position=(0x5678, 0x6789))
+                host.engine.state.variables[11] = 7
+                host.tick()
+
+                self.assertEqual(host.engine.state.variables[10], expected)
+                self.assertEqual(host.engine.state.scripts[0].pc, len(script))
+                self.assertFalse(host.engine.state.scripts[0].active)
+
+    def test_get_actor_position_operand_errors_remain_deterministic(self) -> None:
+        truncated_direct = self._host(bytes((0x43, 10, 0, 7)))
+        with self.assertRaisesRegex(EngineExecutionError, "ended at offset 3 while reading 2 bytes"):
+            truncated_direct.tick()
+
+        invalid_variable = self._host(bytes((0xC3, 10, 0, 0x20, 0x40, 0x00)))
+        with self.assertRaisesRegex(EngineExecutionError, "local variable 32 is outside"):
+            invalid_variable.tick()
+
+    def test_get_actor_position_missing_object_is_minus_one_for_all_forms(self) -> None:
+        """A missing object is a valid query result, not an operand failure."""
+        script = bytes.fromhex(
+            "43 00 00 07 04 "  # direct getActorX(object 1031) -> Var[0]
+            "23 01 00 07 04 "  # direct getActorY(object 1031) -> Var[1]
+            "c3 02 00 0b 00 "  # variable getActorX(Var[11]) -> Var[2]
+            "a3 03 00 0b 00 "  # variable getActorY(Var[11]) -> Var[3]
+            "00"
+        )
+        host = self._host(script)
+        host.engine.state.variables[11] = 1031
+        host.tick()
+
+        self.assertEqual(host.engine.state.variables[:4], [-1, -1, -1, -1])
+        self.assertEqual(host.engine.state.scripts[0].pc, len(script))
+        self.assertFalse(host.engine.state.scripts[0].active)
+
+    def test_snes_actor_position_missing_path_restores_word_abi(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
+        handler = runtime.split(
+            "ScummV5_GetActorPosition_FarEntry__missing:", 1
+        )[1].split("ScummV5_GetActorPosition_FarEntry__write:", 1)[0]
+        self.assertIn("rep #$20", handler)
+        self.assertIn("lda #$0000\n    sta.l SAME_SCUMM_MOVE_OBJECT", handler)
+        self.assertIn("lda #$FFFF", handler)
+
     def test_c14_actor_ops_fail_closed_on_actor_subop_operands_and_state(self) -> None:
         cases = (
             (bytes((0x13,)), r"ended at offset"),
