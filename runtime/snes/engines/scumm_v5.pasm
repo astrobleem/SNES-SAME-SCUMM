@@ -117,6 +117,8 @@ ScummV5_Engine_Boot__clear_m23a:
     lda #$FF
     sta.l SAME_SCUMM_M23A_ACTIVE_RECORD
     sta.l SAME_SCUMM_M23A_PENDING_RECORD
+    lda #$00
+    sta.l SAME_SCUMM_M23A_RETURN_VALID
     .endif
     rep #$30
     .a16
@@ -7632,6 +7634,8 @@ ScummV5_M24RB_ScheduleLocal__found:
     sta.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
     sta.l SAME_SCUMM_C4_SLOT_FREEZE_RESISTANT,x
     sta.l SAME_SCUMM_C4_SLOT_RECURSIVE,x
+    lda #SCUMM_WIO_LOCAL
+    sta.l SAME_SCUMM_C4_SLOT_WHERE,x
     lda.l SAME_SCUMM_C4_ACTIVE_COUNT
     inc
     sta.l SAME_SCUMM_C4_ACTIVE_COUNT
@@ -7655,6 +7659,62 @@ ScummV5_M24RB_ScheduleLocal__error:
 .endif
 .endif
 .endif
+
+; Install room zero as the canonical resource-less null scene. Preserve globals,
+; retire room-owned activations, and clear transition ownership exactly as the
+; far room service does without issuing a Storage READ for a nonexistent room.
+ScummV5_M23A_CommitNullRoom:
+    sep #$20
+    .a8
+    jsr ScummV5_C20_ResetState
+    rep #$10
+    .i16
+    ldx #$0000
+ScummV5_M23A_CommitNullRoom__retire:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C4_SLOT_WHERE,x
+    cmp #SCUMM_WIO_ROOM
+    beq ScummV5_M23A_CommitNullRoom__retire_owned
+    cmp #SCUMM_WIO_LOCAL
+    bne ScummV5_M23A_CommitNullRoom__next
+ScummV5_M23A_CommitNullRoom__retire_owned:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    beq ScummV5_M23A_CommitNullRoom__next
+    lda #$00
+    sta.l SAME_SCUMM_C4_SLOT_STATUS,x
+    sta.l SAME_SCUMM_C4_SLOT_NUMBER,x
+    sta.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    sta.l SAME_SCUMM_M23A_SLOT_ROOMS,x
+ScummV5_M23A_CommitNullRoom__next:
+    rep #$10
+    .i16
+    inx
+    cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcc ScummV5_M23A_CommitNullRoom__retire
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C4_SLOT_STATUS
+    sta.l SAME_SCUMM_C4_SLOT_NUMBER
+    sta.l SAME_SCUMM_C4_SLOT_PROGRAM
+    sta.l SAME_SCUMM_C4_SLOT_WHERE
+    sta.l SAME_SCUMM_M23A_SLOT_ROOMS
+    sta.l SAME_SCUMM_M23A_PENDING_RECORD
+    sta.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    sta.l SAME_SCUMM_C22_CURRENT_ROOM
+    lda #$FF
+    sta.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    lda #$01
+    sta.l SAME_SCUMM_C22_NULL_SCENE
+    lda #$00
+    sta.l SAME_SCUMM_M23A_PHASE
+    sta.l SAME_SCUMM_M23A_HOLD
+    sta.l SAME_SCUMM_M23A_CURRENT_KIND
+    sta.l SAME_SCUMM_M23A_RETURN_VALID
+    rts
 
 ; Input A=logical room. Acquisition is asynchronous through SAME Storage READ;
 ; only the storage service validates profile-owned generated data.
@@ -7685,6 +7745,45 @@ ScummV5_M23A_RequestRoom:
     sta.l SAME_SCUMM_M23A_RETURN_PC
     sep #$20
     .a8
+    ; Match CommitRoom's ownership rule: room/local requesters do not
+    ; survive installation of the requested room, while preserved global
+    ; continuations still restore exactly once.
+    lda #$01
+    sta.l SAME_SCUMM_M23A_RETURN_VALID
+    ; A second room request can be emitted while the first transaction is
+    ; still being committed.  The outgoing room-local continuation must not
+    ; be revalidated by that later request.
+    lda.l SAME_SCUMM_M23A_PHASE
+    cmp #$04
+    beq ScummV5_M23A_RequestRoom__return_not_survivable
+    cmp #$05
+    beq ScummV5_M23A_RequestRoom__return_not_survivable
+    rep #$10
+    .i16
+    ldx #$0000
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    beq ScummV5_M23A_RequestRoom__return_not_survivable
+    tax
+    sep #$10
+    .i8
+    lda.l SAME_SCUMM_C4_SLOT_WHERE,x
+    cmp #SCUMM_WIO_ROOM
+    beq ScummV5_M23A_RequestRoom__return_not_survivable
+    cmp #SCUMM_WIO_LOCAL
+    bne ScummV5_M23A_RequestRoom__return_valid
+ScummV5_M23A_RequestRoom__return_not_survivable:
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_M23A_RETURN_VALID
+    sta.l SAME_SCUMM_M23A_RETURN_PROGRAM
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_M23A_RETURN_PC
+    sep #$20
+    .a8
+ScummV5_M23A_RequestRoom__return_valid:
+    .a8
     lda #$04
     sta.l SAME_SCUMM_M23A_PHASE
     lda.l SAME_SCUMM_M23A_REQUEST_COUNT
@@ -7692,6 +7791,14 @@ ScummV5_M23A_RequestRoom:
     sta.l SAME_SCUMM_M23A_REQUEST_COUNT
     lda #$01
     jsr ScummV5_M23A_Trace
+    lda.l SAME_SCUMM_M23A_PENDING_ROOM
+    bne ScummV5_M23A_RequestRoom__queue
+    jsr ScummV5_M23A_CommitNullRoom
+    clc
+    rts
+ScummV5_M23A_RequestRoom__queue:
+    sep #$20
+    .a8
     jsr Same_Event_StageEngine
     lda #SAME_SERVICE_STORAGE
     sta.l SAME_EVENT_STAGING+SAME_PKT_SERVICE
@@ -13787,7 +13894,10 @@ ScummV5_Op_Stop__cutscene_clear:
     .a8
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda.l SAME_SCUMM_C4_CURRENT_SLOT
-    bne ScummV5_Op_Stop__c4_slot
+    beq ScummV5_Op_Stop__m23a_check_phase
+    jmp ScummV5_Op_Stop__c4_slot
+ScummV5_Op_Stop__m23a_check_phase:
+    .a8
     lda.l SAME_SCUMM_M23A_PHASE
     cmp #$01
     beq ScummV5_Op_Stop__m23a_exit_complete
@@ -13819,6 +13929,17 @@ ScummV5_Op_Stop__m23a_entry_complete:
     sta.l SAME_SCUMM_M23A_PHASE
     sta.l SAME_SCUMM_M23A_CURRENT_KIND
     sta.l SAME_SCUMM_RETURN_MODE
+    lda.l SAME_SCUMM_M23A_RETURN_VALID
+    beq ScummV5_Op_Stop__m23a_no_return_near
+    jmp ScummV5_Op_Stop__m23a_restore_return
+ScummV5_Op_Stop__m23a_no_return_near:
+    jmp ScummV5_Op_Stop__m23a_no_return
+ScummV5_Op_Stop__m23a_restore_return:
+    .a8
+    ; Consume a surviving continuation before restoring it.  This prevents a
+    ; later room completion from reusing the same driver return context.
+    lda #$00
+    sta.l SAME_SCUMM_M23A_RETURN_VALID
     lda.l SAME_SCUMM_M23A_RETURN_PROGRAM
     sta.l SAME_SCUMM_PROGRAM_SELECT
     rep #$20
@@ -13830,6 +13951,24 @@ ScummV5_Op_Stop__m23a_entry_complete:
     lda #SCUMM_VM_RUNNING
     sta.l SAME_SCUMM_STATUS
     jmp ScummV5_Engine_Frame__next
+ScummV5_Op_Stop__m23a_no_return:
+    .a8
+    ; The outgoing room/local activation was retired at CommitRoom.  Its
+    ; continuation bytes are stale data, not a caller to resurrect.
+    lda #$00
+    sta.l SAME_SCUMM_M23A_RETURN_VALID
+    sta.l SAME_SCUMM_M23A_RETURN_PROGRAM
+    sta.l SAME_SCUMM_PROGRAM_SELECT
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_M23A_RETURN_PC
+    sta.l SAME_SCUMM_PC
+    sep #$20
+    .a8
+    lda #SCUMM_VM_STOPPED
+    sta.l SAME_SCUMM_STATUS
+    jmp ScummV5_Engine_Frame__complete_success
 ScummV5_Op_Stop__m23a_error:
     jmp ScummV5_Op__error
 ScummV5_Op_Stop__m23a_not_room_script:

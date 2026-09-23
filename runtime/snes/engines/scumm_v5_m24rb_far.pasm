@@ -279,6 +279,8 @@ ScummV5_M24RB_Far_ScheduleLocal__found:
     sta.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
     sta.l SAME_SCUMM_C4_SLOT_FREEZE_RESISTANT,x
     sta.l SAME_SCUMM_C4_SLOT_RECURSIVE,x
+    lda #SCUMM_WIO_LOCAL
+    sta.l SAME_SCUMM_C4_SLOT_WHERE,x
     lda.l SAME_SCUMM_C4_ACTIVE_COUNT
     inc
     sta.l SAME_SCUMM_C4_ACTIVE_COUNT
@@ -357,6 +359,7 @@ ScummV5_M24RB_Far_CommitNullRoom__next:
     sta.l SAME_SCUMM_M23A_PHASE
     sta.l SAME_SCUMM_M23A_HOLD
     sta.l SAME_SCUMM_M23A_CURRENT_KIND
+    sta.l SAME_SCUMM_M23A_RETURN_VALID
     rts
 
 ; Input A=logical room. Acquisition is asynchronous through SAME Storage READ;
@@ -387,6 +390,44 @@ ScummV5_M24RB_Far_RequestRoom:
     lda.l SAME_SCUMM_PC
     sta.l SAME_SCUMM_M23A_RETURN_PC
     sep #$20
+    .a8
+    ; Room/local requesters are retired by CommitRoom.  Their saved driver
+    ; continuation must not be restored into the newly installed room;
+    ; preserved non-room-owned activations retain the normal continuation.
+    lda #$01
+    sta.l SAME_SCUMM_M23A_RETURN_VALID
+    ; Once a room transaction is pending, a later request must not replace
+    ; the outgoing local requester's invalidation with a new continuation.
+    lda.l SAME_SCUMM_M23A_PHASE
+    cmp #$04
+    beq ScummV5_M24RB_Far_RequestRoom__return_not_survivable
+    cmp #$05
+    beq ScummV5_M24RB_Far_RequestRoom__return_not_survivable
+    rep #$10
+    .i16
+    ldx #$0000
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    beq ScummV5_M24RB_Far_RequestRoom__return_not_survivable
+    tax
+    sep #$10
+    .i8
+    lda.l SAME_SCUMM_C4_SLOT_WHERE,x
+    cmp #SCUMM_WIO_ROOM
+    beq ScummV5_M24RB_Far_RequestRoom__return_not_survivable
+    cmp #SCUMM_WIO_LOCAL
+    bne ScummV5_M24RB_Far_RequestRoom__return_valid
+ScummV5_M24RB_Far_RequestRoom__return_not_survivable:
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_M23A_RETURN_VALID
+    sta.l SAME_SCUMM_M23A_RETURN_PROGRAM
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_M23A_RETURN_PC
+    sep #$20
+    .a8
+ScummV5_M24RB_Far_RequestRoom__return_valid:
     .a8
     lda #$04
     sta.l SAME_SCUMM_M23A_PHASE

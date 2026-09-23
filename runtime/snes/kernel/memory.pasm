@@ -677,6 +677,7 @@ SAME_SCUMM_M23A_EXIT_PROGRAM             = $7FF2CE
 SAME_SCUMM_M23A_CURRENT_KIND             = $7FF2CF
 SAME_SCUMM_M23A_CHECKSUM                 = $7FF2D0 ; compact record sum
 SAME_SCUMM_M23A_BYTE                     = $7FF2D2 ; zero-extended sum byte
+SAME_SCUMM_M23A_RETURN_VALID             = $7FF2D3 ; u8, saved continuation survives room commit
 SAME_SCUMM_M23A_DESCRIPTOR_CHECKSUM      = $7FF2D4
 SAME_SCUMM_M23A_LIFECYCLE_COUNT          = $7FF2D6
 SAME_SCUMM_M23A_LIFECYCLE                = $7FF2D7 ; 14 ordered phase codes
