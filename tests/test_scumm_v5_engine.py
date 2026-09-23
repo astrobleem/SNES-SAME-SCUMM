@@ -3084,6 +3084,28 @@ class ScummV5EngineTests(unittest.TestCase):
                 self.assertTrue(restored[3]["freeze_resistant"])
         self.assertTrue(all(not item["active"] for item in state["scripts"]))
 
+    def test_is_script_running_is_valid_in_outer_room_lifecycle_context(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        handler = runtime.split("ScummV5_Op_IsScriptRunning:", 1)[1].split(
+            "ScummV5_Op__error:", 1
+        )[0]
+
+        # IsScriptRunning is a normal v5 query, including when room EXCD/ENCD
+        # bytecode is executed by the outer room-service frame (return mode 0).
+        # Keep the slot-zero exclusion below, but do not turn a legal query
+        # into SCUMM_ERR_SCRIPT based on host/scheduler call context.
+        self.assertNotIn("SAME_SCUMM_RETURN_MODE", handler)
+        self.assertNotIn("SAME_SCUMM_M23A_PHASE", handler)
+        self.assertNotIn("SCUMM_ERR_SCRIPT", handler)
+        self.assertIn("ScummV5_ReadResultOffset", handler)
+        self.assertIn("ScummV5_FetchVarOrDirectByte", handler)
+
+        host = self._host(bytes((0x68, 0x00, 0x00, 3, 0x00)))
+        host.tick()
+        state = host.engine.inspect_state()
+        self.assertEqual(state["variables"].get("0", 0), 0)
+        self.assertFalse(state["scripts"][0]["active"])
+
     def test_c6_chain_script_handoff_reuses_slot_and_never_resumes_caller(self) -> None:
         main = (ROOT / "examples/resources/scumm_v5/c6_scheduler.scrp").read_bytes()
         children = {

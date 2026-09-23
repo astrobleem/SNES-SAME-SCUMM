@@ -15316,19 +15316,6 @@ ScummV5_Op_FreezeScripts__c20_error:
     jmp ScummV5_Op__error
 
 ScummV5_Op_IsScriptRunning:
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_RETURN_MODE
-    bne ScummV5_Op_IsScriptRunning__c5
-    .if SAME_BUILD_SCUMM_ROOM_SERVICE
-    lda.l SAME_SCUMM_M23A_PHASE
-    cmp #$02
-    beq ScummV5_Op_IsScriptRunning__c5
-    .endif
-    lda #SCUMM_ERR_SCRIPT
-    jsr ScummV5_SetError
-    jmp ScummV5_Op__error
-ScummV5_Op_IsScriptRunning__c5:
     rep #$30
     .a16
     .i16
