@@ -183,10 +183,16 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
             fi
             mkdir -p "$M25A_BUILD/room42"
             COOKED_STARTUP_ROOMS=(1 42 55 68 75 82 24)
+            COOKED_STARTUP_GLOBAL_ARGS=()
+            if [[ -n "${SAME_SCUMM_STARTUP_GLOBAL_SCRIPTS:-}" ]]; then
+                IFS=',' read -r -a STARTUP_GLOBAL_SCRIPTS <<< "${SAME_SCUMM_STARTUP_GLOBAL_SCRIPTS}"
+                COOKED_STARTUP_GLOBAL_ARGS+=(--global-scripts "${STARTUP_GLOBAL_SCRIPTS[@]}")
+            fi
             "$PYTHON" tools/cook_scumm_v5_rooms.py \
                 --archive "$M23A_SOURCE" \
                 --profile examples/profiles/templates/fate_of_atlantis_demo.json \
                 --rooms "${COOKED_STARTUP_ROOMS[@]}" \
+                "${COOKED_STARTUP_GLOBAL_ARGS[@]}" \
                 --executable \
                 $([[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" == "1" ]] && echo --visuals "${COOKED_STARTUP_ROOMS[@]}") \
                 --output-dir "$M25A_BUILD/room42"
@@ -252,6 +258,30 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
             --output-dir "$M23A_BUILD/lifecycle"
     fi
     ROOM_GENERATOR_ARGS=()
+    if [[ -n "${SAME_SCUMM_APPEND_GLOBAL_SCRIPTS:-}" ]]; then
+        IFS=',' read -r -a APPEND_GLOBAL_SCRIPTS <<< "${SAME_SCUMM_APPEND_GLOBAL_SCRIPTS}"
+        for global_script in "${APPEND_GLOBAL_SCRIPTS[@]}"; do
+            ROOM_GENERATOR_ARGS+=(--append-global-script "$global_script")
+        done
+    fi
+    if [[ -n "${SAME_SCUMM_APPEND_EXECUTABLE_LOCALS:-}" ]]; then
+        IFS=',' read -r -a APPEND_EXECUTABLE_LOCALS <<< "${SAME_SCUMM_APPEND_EXECUTABLE_LOCALS}"
+        for local_script in "${APPEND_EXECUTABLE_LOCALS[@]}"; do
+            ROOM_GENERATOR_ARGS+=(--append-executable-local "$local_script")
+        done
+    fi
+    if [[ -n "${SAME_SCUMM_EXTRA_EXECUTABLE_LOCALS:-}" ]]; then
+        IFS=',' read -r -a EXTRA_EXECUTABLE_LOCALS <<< "${SAME_SCUMM_EXTRA_EXECUTABLE_LOCALS}"
+        for local_script in "${EXTRA_EXECUTABLE_LOCALS[@]}"; do
+            ROOM_GENERATOR_ARGS+=(--executable-local "$local_script")
+        done
+    fi
+    if [[ -n "${SAME_SCUMM_APPEND_LATE_GLOBAL_SCRIPTS:-}" ]]; then
+        IFS=',' read -r -a APPEND_LATE_GLOBAL_SCRIPTS <<< "${SAME_SCUMM_APPEND_LATE_GLOBAL_SCRIPTS}"
+        for global_script in "${APPEND_LATE_GLOBAL_SCRIPTS[@]}"; do
+            ROOM_GENERATOR_ARGS+=(--append-late-global-script "$global_script")
+        done
+    fi
     if [[ "${SAME_BUILD_SCUMM_M25A_VALIDATOR:-0}" == "1" ]]; then
         if [[ "${SAME_BUILD_SCUMM_SCENARIO_FIXTURE:-0}" == "1" ]]; then
             if [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "fishnet" ]]; then
@@ -368,6 +398,37 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
     if [[ "${SAME_BUILD_SCUMM_M25A_VALIDATOR:-0}" != "1" && "${SAME_BUILD_SCUMM_M23C:-0}" != "1" ]]; then
         ROOM_MANIFESTS+=(--manifest "$M23A_BUILD/lifecycle/manifest.json")
     fi
+    fi
+    if [[ -n "${SAME_SCUMM_OMIT_EXECUTABLE_LOCALS:-}" ]]; then
+        IFS=',' read -r -a OMIT_EXECUTABLE_LOCALS <<< "${SAME_SCUMM_OMIT_EXECUTABLE_LOCALS}"
+        declare -A OMIT_LOCAL_SET=() OMIT_LOCAL_SEEN=()
+        for local_script in "${OMIT_EXECUTABLE_LOCALS[@]}"; do
+            if [[ ! "$local_script" =~ ^[0-9]+:[0-9]+$ || -n "${OMIT_LOCAL_SET[$local_script]:-}" ]]; then
+                echo "Invalid or duplicate omitted executable local: $local_script" >&2
+                exit 1
+            fi
+            OMIT_LOCAL_SET[$local_script]=1
+        done
+        FILTERED_ROOM_GENERATOR_ARGS=()
+        for ((arg_index = 0; arg_index < ${#ROOM_GENERATOR_ARGS[@]}; arg_index++)); do
+            if [[ "${ROOM_GENERATOR_ARGS[$arg_index]}" == "--executable-local" &&
+                  $((arg_index + 1)) -lt ${#ROOM_GENERATOR_ARGS[@]} ]]; then
+                local_script="${ROOM_GENERATOR_ARGS[$((arg_index + 1))]}"
+                if [[ -n "${OMIT_LOCAL_SET[$local_script]:-}" ]]; then
+                    OMIT_LOCAL_SEEN[$local_script]=1
+                    arg_index=$((arg_index + 1))
+                    continue
+                fi
+            fi
+            FILTERED_ROOM_GENERATOR_ARGS+=("${ROOM_GENERATOR_ARGS[$arg_index]}")
+        done
+        for local_script in "${OMIT_EXECUTABLE_LOCALS[@]}"; do
+            if [[ -z "${OMIT_LOCAL_SEEN[$local_script]:-}" ]]; then
+                echo "Omitted executable local was not selected by this build: $local_script" >&2
+                exit 1
+            fi
+        done
+        ROOM_GENERATOR_ARGS=("${FILTERED_ROOM_GENERATOR_ARGS[@]}")
     fi
     ROOM_GENERATOR_REPORT="$M23A_BUILD/cooked-rooms.json"
     ROOM_GENERATOR_ARGS+=(--report "$ROOM_GENERATOR_REPORT")

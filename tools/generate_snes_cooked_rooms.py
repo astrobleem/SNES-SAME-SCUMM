@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import struct
 
@@ -14,6 +15,42 @@ from same.engines.scumm_v5.room import decode_room
 
 
 KIND = {"ENCD": 1, "EXCD": 2, "LSCR": 3}
+
+PRIMARY_PROGRAM_IDS = tuple(range(0xD0, 0x100))
+OVERFLOW_PROGRAM_IDS = tuple(range(0xCF, 0x4D, -1))
+
+
+def reserved_program_ids() -> set[int]:
+    """Reserve every built-in personality, not just the active build."""
+    from generate_engine_fixtures import poppy_fixture_include, scumm_c2_fixtures
+    text = poppy_fixture_include(b"", scumm_c2_fixtures())
+    return {0} | {
+        int(value, 16)
+        for name, value in re.findall(r"(SCUMM_C2_FIXTURE_\w+) = \$([0-9A-F]+)", text)
+        if name != "SCUMM_C2_FIXTURE_COUNT"
+    }
+
+
+class ProgramIdAllocator:
+    """Keep historical IDs first; overflow uses a separately checked pool."""
+
+    def __init__(self, *, pool=None, reserved=None):
+        self.pool = tuple(PRIMARY_PROGRAM_IDS + OVERFLOW_PROGRAM_IDS if pool is None else pool)
+        reserved = reserved_program_ids() if reserved is None else set(reserved)
+        if len(set(self.pool)) != len(self.pool):
+            raise RuntimeError("duplicate generated program ID in allocation pool")
+        if any(not isinstance(value, int) or not 0 <= value <= 0xFF for value in self.pool):
+            raise RuntimeError("generated program ID is not an unsigned byte")
+        if set(self.pool) & reserved:
+            raise RuntimeError("generated program pool collides with reserved selector")
+        self.index = 0
+
+    def allocate(self) -> int:
+        if self.index == len(self.pool):
+            raise RuntimeError("cooked script program-id space exhausted")
+        value = self.pool[self.index]
+        self.index += 1
+        return value
 
 
 def rows(data: bytes, indent: str = "    ") -> str:
@@ -83,6 +120,18 @@ def main() -> int:
     parser.add_argument("--entry-exit-room", type=int, action="append", default=[])
     parser.add_argument("--executable-local", action="append", default=[], metavar="ROOM:SCRIPT")
     parser.add_argument(
+        "--append-global-script", type=int, action="append", default=[],
+        help="allocate selected manifest globals after all previously ordered programs",
+    )
+    parser.add_argument(
+        "--append-late-global-script", type=int, action="append", default=[],
+        help="allocate selected manifest globals after appended local programs",
+    )
+    parser.add_argument(
+        "--append-executable-local", action="append", default=[], metavar="ROOM:SCRIPT",
+        help="allocate selected local scripts after ordinary programs and appended globals",
+    )
+    parser.add_argument(
         "--executable-local-object", action="append", default=[],
         metavar="ROOM:OBJECT",
         help="make one OBCD descriptor in an entry-only room executable",
@@ -151,6 +200,19 @@ def main() -> int:
     }
     if any(len(item) != 2 for item in executable_locals):
         raise RuntimeError("--executable-local requires ROOM:SCRIPT")
+    append_executable_locals = []
+    for raw in args.append_executable_local:
+        parts = raw.split(":")
+        if len(parts) != 2:
+            raise RuntimeError("--append-executable-local requires ROOM:SCRIPT")
+        item = tuple(int(value) for value in parts)
+        if item in append_executable_locals:
+            raise RuntimeError(f"duplicate appended executable local {item[0]}:{item[1]}")
+        if item in executable_locals:
+            raise RuntimeError(
+                f"local script selected as both ordinary and appended: {item[0]}:{item[1]}"
+            )
+        append_executable_locals.append(item)
     executable_local_objects = {
         tuple(int(value) for value in item.split(":"))
         for item in args.executable_local_object
@@ -162,6 +224,7 @@ def main() -> int:
     programs = []
     global_scripts = []
     deferred_global_scripts = []
+    deferred_local_scripts = []
     global_states: bytes | None = None
     global_owners: bytes | None = None
     global_classes: tuple[int, ...] | None = None
@@ -170,7 +233,7 @@ def main() -> int:
     actor_facings: tuple[int, ...] | None = None
     actor_positions: tuple[tuple[int, int], ...] | None = None
     actor_walkboxes: tuple[int, ...] | None = None
-    next_program = 0xD0
+    program_ids = ProgramIdAllocator()
     for manifest_path in args.manifest:
         manifest = json.loads(manifest_path.read_text())
         if manifest.get("schema") != "same_scumm_v5_cooked_rooms_v1":
@@ -279,6 +342,7 @@ def main() -> int:
                         decoded.room in args.executable_local_room
                         or decoded.room in args.executable_local_script_room
                         or (decoded.room, script.number) in executable_locals
+                        or (decoded.room, script.number) in append_executable_locals
                         or script.kind in {"ENCD", "EXCD"}
                         or decoded.room not in args.entry_only_room
                     )
@@ -288,10 +352,8 @@ def main() -> int:
                 # dormant local scripts.
                 if not executable:
                     continue
-                if next_program > 0xFF:
-                    raise RuntimeError("cooked script program-id space exhausted")
                 item = {
-                    "id": next_program, "record": record_index, "room": decoded.room,
+                    "id": None, "record": record_index, "room": decoded.room,
                     "kind": KIND[script.kind], "kind_name": script.kind,
                     "number": script.number, "length": len(script.program),
                     "program": script.program, "identity": script.identity,
@@ -301,9 +363,12 @@ def main() -> int:
                     # ENCD/EXCD selection remains governed by room lifecycle.
                     "executable": executable,
                 }
-                programs.append(item)
+                if (decoded.room, script.number) in append_executable_locals:
+                    deferred_local_scripts.append(item)
+                else:
+                    item["id"] = program_ids.allocate()
+                    programs.append(item)
                 script_records.append(item)
-                next_program += 1
             source_objects = {
                 int(item["object_id"]): item for item in source_record.get("objects", [])
             }
@@ -331,11 +396,6 @@ def main() -> int:
                     and not selected_object
                 ):
                     continue
-                if next_program > 0xFF:
-                    raise RuntimeError(
-                        f"cooked object-program id space exhausted at room {decoded.room} "
-                        f"object {item.object_id} (next id {next_program:#x})"
-                    )
                 source = source_objects.get(item.object_id)
                 if source is not None:
                     if (
@@ -348,7 +408,7 @@ def main() -> int:
                             f"room {decoded.room} object {item.object_id} OBCD provenance differs"
                         )
                 program_item = {
-                    "id": next_program, "record": record_index, "room": decoded.room,
+                    "id": program_ids.allocate(), "record": record_index, "room": decoded.room,
                     "kind": 4, "kind_name": "OBCD", "number": item.object_id,
                     "length": len(item.obcd), "program": item.obcd,
                     "identity": f"room.{decoded.room}/object.{item.object_id}/OBCD",
@@ -358,7 +418,6 @@ def main() -> int:
                 }
                 programs.append(program_item)
                 object_programs.append(program_item)
-                next_program += 1
             records.append({
                 "room": decoded.room, "flags": decoded.flags, "raw": raw,
                 "checksum": decoded.compact_checksum, "scripts": script_records,
@@ -424,9 +483,10 @@ def main() -> int:
                     f"{manifest_global_scripts}"
                 )
         for source_script in manifest.get("global_scripts", []):
-            if source_script.get("append_after_rooms", False):
+            if source_script.get("append_after_rooms", False) or int(source_script["number"]) in args.append_global_script or int(source_script["number"]) in args.append_late_global_script:
                 deferred_global_scripts.append({
                     **source_script, "_manifest_dir": str(manifest_path.parent),
+                    "_late_append": int(source_script["number"]) in args.append_late_global_script,
                 })
                 continue
             number = int(source_script["number"])
@@ -442,10 +502,8 @@ def main() -> int:
                         f"global script {number} differs between cooked-room manifests"
                     )
                 continue
-            if next_program > 0xFF:
-                raise RuntimeError("cooked script program-id space exhausted")
             item = {
-                "id": next_program, "record": None, "room": None,
+                "id": program_ids.allocate(), "record": None, "room": None,
                 "kind": 0, "kind_name": "GLOBAL", "number": number,
                 "length": len(program), "program": program,
                 "identity": f"script.{number}", "source": source_script,
@@ -453,11 +511,15 @@ def main() -> int:
             }
             programs.append(item)
             global_scripts.append(item)
-            next_program += 1
     # Downstream scenario extensions may add globals without perturbing the
     # established room/local program identities.  Their lookup IDs are still
     # generated normally, but allocation occurs after all existing records.
+    # Stable partition: explicitly appended globals follow historical deferred
+    # globals as well as room programs. No title/script identity policy here.
+    deferred_global_scripts.sort(key=lambda item: int(item["number"]) in args.append_global_script)
     for source_script in deferred_global_scripts:
+        if source_script.get("_late_append", False):
+            continue
         number = int(source_script["number"])
         program = (Path(source_script["_manifest_dir"]) / source_script["output"]).read_bytes()
         if len(program) != int(source_script["length"]):
@@ -467,10 +529,8 @@ def main() -> int:
             if existing_global["program"] != program:
                 raise RuntimeError(f"global script {number} differs between cooked-room manifests")
             continue
-        if next_program > 0xFF:
-            raise RuntimeError("cooked script program-id space exhausted")
         item = {
-            "id": next_program, "record": None, "room": None,
+            "id": program_ids.allocate(), "record": None, "room": None,
             "kind": 0, "kind_name": "GLOBAL", "number": number,
             "length": len(program), "program": program,
             "identity": f"script.{number}", "source": source_script,
@@ -478,7 +538,39 @@ def main() -> int:
         }
         programs.append(item)
         global_scripts.append(item)
-        next_program += 1
+    requested_locals = {(item["room"], item["number"]): item for item in deferred_local_scripts}
+    if len(requested_locals) != len(deferred_local_scripts):
+        raise RuntimeError("duplicate appended executable local in input manifests")
+    for room, number in append_executable_locals:
+        item = requested_locals.get((room, number))
+        if item is None:
+            raise RuntimeError(f"appended executable local absent from input manifests: {room}:{number}")
+        item["id"] = program_ids.allocate()
+        programs.append(item)
+
+    for source_script in deferred_global_scripts:
+        if not source_script.get("_late_append", False):
+            continue
+        number = int(source_script["number"])
+        program = (Path(source_script["_manifest_dir"]) / source_script["output"]).read_bytes()
+        if len(program) != int(source_script["length"]):
+            raise RuntimeError(f"global script {number} length differs")
+        existing_global = next((item for item in global_scripts if item["number"] == number), None)
+        if existing_global is not None:
+            if existing_global["program"] != program:
+                raise RuntimeError(f"global script {number} differs between cooked-room manifests")
+            continue
+        item = {
+            "id": program_ids.allocate(), "record": None, "room": None,
+            "kind": 0, "kind_name": "GLOBAL", "number": number,
+            "length": len(program), "program": program,
+            "identity": f"script.{number}", "source": source_script,
+            "executable": True,
+        }
+        programs.append(item)
+        global_scripts.append(item)
+    if set(args.append_global_script + args.append_late_global_script) - {item["number"] for item in global_scripts}:
+        raise RuntimeError("appended global script absent from input manifests")
     if len({item["room"] for item in records}) != len(records):
         raise RuntimeError("generated cooked-room tables contain duplicate room numbers")
     if len({item["number"] for item in global_scripts}) != len(global_scripts):
@@ -1592,6 +1684,16 @@ def main() -> int:
             for item in records
         ),
     ]
+    if len(programs) > len(PRIMARY_PROGRAM_IDS):
+        # FIRST is allocation-first, not numeric minimum. These constants are
+        # diagnostic only; resolvers below use explicit identities. Keep the
+        # historical <=48 output byte-for-byte unchanged.
+        lines.extend((
+            "; PROGRAM_FIRST is allocation-first; PROGRAM_COUNT is cardinality, not a range.",
+            f"SCUMM_M23A_PROGRAM_MIN = ${min(item['id'] for item in programs):02X}",
+            f"SCUMM_M23A_PROGRAM_MAX = ${max(item['id'] for item in programs):02X}",
+            "; PROGRAM_IDS_IN_ALLOCATION_ORDER = " + ",".join(f"${item['id']:02X}" for item in programs),
+        ))
     for record_index, record in enumerate(records):
         locals_ = record["executable_locals"]
         lines.extend((

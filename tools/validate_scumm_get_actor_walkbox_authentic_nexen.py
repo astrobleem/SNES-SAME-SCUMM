@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 
 from same.engines.scumm_v5.cooked_room import decode_cooked_room
+from generate_snes_cooked_rooms import PRIMARY_PROGRAM_IDS, OVERFLOW_PROGRAM_IDS
 from validate_scumm_m25_authentic_next_nexen import snapshot
 
 
@@ -168,7 +169,9 @@ def main() -> int:
             terminal["query"]["next_program"]
             if terminal["query"]["next_seen"] else terminal["engine"]["program"]
         )
-        program_index = next_program - 0xD0
+        allocation_order = PRIMARY_PROGRAM_IDS + OVERFLOW_PROGRAM_IDS
+        require(next_program in allocation_order, f"not a generated program ID: {next_program:#x}")
+        program_index = allocation_order.index(next_program)
         # Generated ordering is room-49 descriptors, its two requested global
         # scripts, room-63 descriptors, then global 151.
         program_map = list(cooked.scripts) + [None, None] + list(cooked63.scripts) + [None]

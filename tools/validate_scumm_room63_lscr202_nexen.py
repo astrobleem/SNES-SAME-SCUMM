@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 
 from same.engines.scumm_v5.cooked_room import decode_cooked_room
+from generate_snes_cooked_rooms import PRIMARY_PROGRAM_IDS, OVERFLOW_PROGRAM_IDS
 from validate_scumm_m23c_nexen import reset, snapshot
 from validate_scumm_m25_authentic_next_nexen import snapshot as core_snapshot
 
@@ -52,7 +53,8 @@ def main() -> int:
             "authentic LSCR 202 prefix differs")
     # Program IDs follow the deterministic generator order: room 49, globals
     # 144/145, room 63, then global 151.
-    program = 0xD0 + len(room49.scripts) + 2 + list(room63.scripts).index(script)
+    allocation_order = PRIMARY_PROGRAM_IDS + OVERFLOW_PROGRAM_IDS
+    program = allocation_order[len(room49.scripts) + 2 + list(room63.scripts).index(script)]
     require(program == 0xEA, f"authentic LSCR 202 generated program differs: {program:#x}")
 
     sys.path.insert(0, "/home/chad/Mesen2/python")
