@@ -14896,7 +14896,14 @@ ScummV5_Op_StartScript__m23c_start_recorded:
     .a8
     .endif
     lda.l SAME_SCUMM_C4_CHAIN_MODE
-    beq ScummV5_Op_StartScript__run_nested
+    bne ScummV5_Op_StartScript__run_without_parent
+    ; Nonrecursive StopNumber may have killed this caller before allocation
+    ; reused its slot. Shared STATUS still belongs to that old activation;
+    ; the new slot's RUNNING status cannot establish parent survival.
+    lda.l SAME_SCUMM_STATUS
+    cmp #SCUMM_VM_STOPPED
+    bne ScummV5_Op_StartScript__run_nested
+ScummV5_Op_StartScript__run_without_parent:
     jsr ScummV5_C4_RunAllocatedNoParent
     php
     sep #$20
