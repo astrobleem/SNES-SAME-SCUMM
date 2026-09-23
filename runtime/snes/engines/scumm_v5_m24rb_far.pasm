@@ -838,7 +838,10 @@ ScummV5_M24RB_Far_CommitRoom__clear_moving:
     sep #$20
     .a8
     lda.l SAME_SCUMM_SCENARIO_SOURCE_ACTOR_INIT
-    bne ScummV5_M24RB_Far_CommitRoom__source_actor_ready
+    beq ScummV5_M24RB_Far_CommitRoom__source_actor_init
+    brl ScummV5_M24RB_Far_CommitRoom__source_actor_ready
+ScummV5_M24RB_Far_CommitRoom__source_actor_init:
+    .a8
     lda #$01
     sta.l SAME_SCUMM_SCENARIO_SOURCE_ACTOR_INIT
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_PRESENT+64
@@ -879,6 +882,12 @@ ScummV5_M24RB_Far_CommitRoom__clear_moving:
     ; object 488 is in its source-defined initial state; seed only the
     ; engine-owned actor record and neutral movement state here so that ENCD
     ; can perform that normal placement.
+    rep #$30
+    .a16
+    .i16
+    lda #$0080
+    sta.l SAME_SCUMM_C14_BASE
+    jsl ScummV5_PutActor_FarCall_DefaultActor
     sep #$20
     .a8
     lda #$1C
