@@ -11398,7 +11398,14 @@ ScummV5_Op_SoundKludge__nonempty:
     lda.l SAME_SCUMM_C25_PENDING_WORDS
     cmp #$FFFF
     bne ScummV5_Op_SoundKludge__queue
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
+    ; This opcode is already a tail path into the engine-frame dispatcher.
+    ; Enter the far flush body directly; the returning bank-0 wrapper is for
+    ; callers that really do return (notably M24RB frame-end service).
+    jml ScummV5_C25_Flush_Far
+    .else
     jmp ScummV5_C25_Flush
+    .endif
 
 ScummV5_Op_SoundKludge__queue:
     sep #$20

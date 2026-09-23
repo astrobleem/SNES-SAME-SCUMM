@@ -1961,6 +1961,19 @@ class ScummV5EngineTests(unittest.TestCase):
         diagnostic = dispatch_error.split("SAME_SCUMM_SCENARIO_C25_ERROR_SITE", 1)[1]
         self.assertIn("sep #$20", diagnostic[:160].lower())
 
+    def test_far_room_service_sound_flush_uses_frame_tail_transfer(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        body = source.split("ScummV5_Op_SoundKludge__nonempty:", 1)[1].split(
+            "ScummV5_Op_SoundKludge__queue:", 1
+        )[0]
+        self.assertIn(
+            ".if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR && !SAME_BUILD_SCUMM_M20"
+            " && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22",
+            body,
+        )
+        self.assertIn("jml ScummV5_C25_Flush_Far", body)
+        self.assertIn(".else\n    jmp ScummV5_C25_Flush\n    .endif", body)
+
     def test_c25_emit_audio_unconditionally_restores_byte_accumulator_abi(self) -> None:
         # Same_Event_Push runs in word mode.  C25 callers resume with byte
         # opcodes in every build flavor, including M21-disabled startup42;
