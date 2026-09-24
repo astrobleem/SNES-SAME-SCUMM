@@ -134,3 +134,62 @@ action remains unauthenticated. Asset redistribution permissions also remain
 unresolved. These technical, gameplay, and publication conclusions are
 separate; this follow-up does not make the PR merge-ready by asserting a
 broader scope.
+
+### Native acceptance follow-up — 2026-09-24
+
+The clean-source control builds were repeated from tracked commit
+`85395427969b3120df3aaac85af2cd2addc6c761` in an isolated checkout with a
+clean tracked worktree and generated copyright-free M24R-A test audio. The
+bounded StartObject, long-replacement, continuation, null-room, actor-query,
+and far pending-request images assemble, pass Poppy lint, and pass the ROM
+audit. These are native-build results only: no CPU execution result is
+claimed for those newly built images.
+
+Nexen's verified executable is
+`/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/linux-x64/publish/Nexen`,
+SHA-256 `17d243c404b8ef32bbb1754a5b026584f2ae24cb047f54b9f250a6f4b721650a`.
+The bounded validator launches it as
+`Nexen --mcp --mcp-port=<port> <ROM>` from the checkout. Its MCP runner log
+shows `InitializeEmu`, `LoadRom`, `DebugWorkspaceManager.Load`, and
+`McpServer on port 45725` (StartObject) or `McpServer on port 45761` (pending
+request). The Python client then fails in `McpSession._connect` while calling
+`socket.create_connection(("127.0.0.1", port))`: after its 15-second retry
+window it reports `OSError: [Errno 1] Operation not permitted`. This is an
+execution-sandbox loopback-connect denial, not connection refused, a port
+collision, endpoint-family mismatch, or a ROM/launcher failure. No repeated
+retry is being treated as evidence. Native execution must be run by an
+authorized host-terminal runner that permits loopback TCP to `127.0.0.1`,
+using the exact built ROM and its adjacent `.map`, `.lst`, and
+`.build_identity.json`; do not expose Nexen on a public bind address.
+
+R1 therefore remains **implemented and native-build-tested, but native
+execution-unverified**. The long fixture is configured to count 260 operations
+before same-object replacement, but only the native report can establish that
+the live FRAME_OPS high byte crossed the boundary and that the fresh slot,
+entry, arguments, stack, and error assertions passed.
+
+R2 remains **far-route native coverage unavailable; genuine near-route build
+and execution blocked**. The actual near build was attempted with
+`SAME_BUILD_M24RB=0`, generated `SAME_BUILD_SCUMM_ROOM_SERVICE_FAR=0`,
+`SAME_BUILD_SCUMM_M23A=1`, `SAME_BUILD_SCUMM_M23B=0`,
+`SAME_BUILD_SCUMM_M23C=0`, and the pending-request validator fixture. It does
+select `ScummV5_M23A_RequestRoom` and the near transaction helper, but assembly
+does not produce a ROM: emitted bank-0 bytes extend through `$101B1` and
+overlap the fixed `$FFC0/$FFE0` header/vector sections; unresolved symbols
+include `ScummV5_M23A_CheckPendingRequest`,
+`ScummV5_C25_Flush__clear_imuse_queue`,
+`ScummV5_C25_Flush__m24rb_trigger`, `ScummV5_C25_FarCall_EmitAudio`,
+`ScummV5_M23A_GetProgramSize_Far`, and
+`ScummV5_M23A_EndRoomScript_FarEntry`. The build also identifies unconditional
+far matrix/camera module inclusion in the M23A top-level source path. The
+near-labelled historical image is rejected because its build identity has
+M24RB enabled. No near native pass is claimed; resolving the actual profile
+dependency/size closure is still required before that matrix can run.
+
+In the restricted Codex runner, Nexen's loopback endpoint cannot be used, and
+the genuine near implementation cannot currently be assembled into the
+diagnostic image. Keep both findings open. The external action needed for R1
+and any buildable far controls is to run their existing validators from an
+authorized host terminal with loopback access. R2 additionally needs a
+supported near-only build profile (or an architectural correction that
+preserves the production near implementation); a far image is not a substitute.
