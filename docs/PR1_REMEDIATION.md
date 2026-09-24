@@ -9,14 +9,14 @@ the PR is ready to merge while the audio rights evidence below is unresolved.
 
 | # | Disposition | Baseline evidence | Correction and regression | Evidence class / remaining limit |
 | ---: | --- | --- | --- | --- |
-| 1 | Fixed | Static WRAM width/lifetime conflict: the validity byte shared the upper byte of a 16-bit storage scratch word. | Moved M23A return metadata to separately allocated bytes at `$7FF467-$7FF469`; added width-aware layout/lifetime test. | Native Nexen storage-transaction controls pass for invalid room-local (`5cf65d9421031bed525cc93a74d815319740df9a242316d59685cebc03def4cb`) and surviving global (`800b59ff19d805a9458c4db6ce5364bd04d5faa37faf05930bcc10f46b0c7162`) continuations. |
+| 1 | Fixed | Static WRAM width/lifetime conflict: the validity byte shared the upper byte of a 16-bit storage scratch word. | Moved M23A return metadata to separately allocated bytes at `$7FF467-$7FF469`; added width-aware layout/lifetime test. | Clean-source Nexen storage-transaction controls pass for invalid room-local (`f00cf1e31d3931f075c59b4cc02747a55da687a41e53ff02d2bcb1ca587ae059`) and surviving global (`6c8a128061df080dfcc2723f91321c670b0d670a5ef8c07df7d474a8b6fa8a0d`) continuations. |
 | 2 | Fixed | Host decoder showed the launcher consumed `$0A $12` as Global1's word argument `$120A`. | Launcher now uses complete encoded calls; `tests/test_startup42_launcher.py` decodes all operations, arguments, and boundaries. | Host decoder regression; this launcher remains a controlled fixture, not original-game startup. |
 | 3 | Partial; endpoint claim withdrawn | Build graph selected a synthetic logical room49 that restarted startup; a separate phase-6 fixture transformed Global144. | Bootstrap carrier moved to explicitly checked room254; authentic room49 included in the resource selection; transformed Global144 now has synthetic identity and separate original/transformed hashes and source body. | The corrected cold bootstrap replay is real Nexen execution but stops at room68 phase1 with error 0 before the room42 action. The full original-game route and room0 endpoint have not been reproven. See “Authenticity boundary.” |
-| 4 | Fixed | Native slot/context inspection showed valid M23A returns restored code location without the owning C4 activation. | Restore surviving caller through the slot/context loader; outgoing room-local callers remain invalid. | Native Nexen global control `800b59ff19d805a9458c4db6ce5364bd04d5faa37faf05930bcc10f46b0c7162` preserves distinctive local state and resumes exactly once; local-requester control `5cf65d9421031bed525cc93a74d815319740df9a242316d59685cebc03def4cb` remains retired. |
-| 5 | Fixed | Host reproduction showed an old local ran after resource-less room0 and EXCD did not run. | Null-room transition now shares outgoing exit/retirement lifecycle while skipping destination resource acquisition. | Host behavioral regression and native Nexen control pass: EXCD once, local retired, global preserved, no room0 storage read (`9bcae4e0c3ee75e4da2c77ef381ed293a4adc996f41e9763d76c648afee730ab`). |
-| 6 | Fixed | Native allocation/handoff analysis exposed same-object replacement reusing a dead caller slot. | StartObject now dispatches replacement without saving a stopped caller as parent. | Native Nexen self-replacement `6d6538010d86f202b9933f0462f4de520101b1632f414d83230cc620481f66b4` and distinct-object nesting `89f23e9412d95c90dc45ff49e0dee847979768ac0b343b756d11f83fff3ee8ca` pass; ordinary StartObject control `e23e34e8e613e9fc47201b3cafc0a5ffbe6941771401e0689545a6150f737da2` passes. StartScript controls remain green. |
-| 7 | Fixed | Native call-contract audit found operand-error exits could abandon a live JSL return frame. | Actor-query return/error convention is balanced without weakening the four-form word-selector grammar. | Native Nexen malformed/truncated operand cases report intended errors with balanced stack and correct return: `1fcaf47f58cb647a6e1cf6590687aad85f98fd1e5acea793e9bda0f66678d623`, `07a7796a192aa1dd917683ad32f5762dee72f72d594ecff6b0dd900e8baffdd8`, `349457a1ac4edaed1608738cab2a232bf4917645bae0704cf86f362c14db2535`. Four-form success matrix remains covered. |
-| 8 | Fixed; near-route native coverage remains open | Near/far request paths could overwrite a phase4/5 accepted request before deciding how to handle a second request. | Decide before mutating; same-target requests coalesce, a conflicting VM request fails explicitly, and external conflicting targets remain serialized. | The historical bounded Nexen report for `7b86caca5ffd0cbceb22cb34cfd1a0523821481ae5d6305d5b88293121cc539f` proves the far implementation only. Its “near” label was incorrect: that ROM identity has M24RB enabled and invokes the far guard. See the independent re-review follow-up below; the near native matrix is not claimed. |
+| 4 | Fixed | Native slot/context inspection showed valid M23A returns restored code location without the owning C4 activation. | Restore surviving caller through the slot/context loader; outgoing room-local callers remain invalid. | Clean-source Nexen global control `6c8a128061df080dfcc2723f91321c670b0d670a5ef8c07df7d474a8b6fa8a0d` preserves distinctive local state and resumes exactly once; local-requester control `f00cf1e31d3931f075c59b4cc02747a55da687a41e53ff02d2bcb1ca587ae059` remains retired. |
+| 5 | Fixed | Host reproduction showed an old local ran after resource-less room0 and EXCD did not run. | Null-room transition now shares outgoing exit/retirement lifecycle while skipping destination resource acquisition. | Host behavioral regression and clean-source native Nexen control pass: EXCD once, local retired, global preserved, no room0 storage read (`3a31729dd54483eeee2285623c7e5818f93fd871efcc08f646388154d62f815f`). |
+| 6 | Fixed | Native allocation/handoff analysis exposed same-object replacement reusing a dead caller slot. | StartObject now dispatches replacement without saving a stopped caller as parent; no-parent slot index is explicitly zero-extended. | Clean-source Nexen long case `4d4265b25135b6030dd62463ddfe0a26fe5fe21c441eee886b59a0bd4ab3cdce` observed 261 live counted operations at handoff, a nonzero high byte, slot index X=1, authored verb entry/argument, no old-tail resume, balanced JSL/RTL stack, and error 0. Short self-replacement `7bda2238b4550bfa9ebfc69ca78192f7592410125e844c3853309ee98f7cb9b7`, distinct-object nesting `fb60fdefce7a44a098cee40dd21bf3f39f08ad99269abb700d9abc689fc0da3b`, and ordinary StartObject `bdf43e1ae4bde0394b33ce10988f689543a5e9066d6fe3af6bb9c85874a961d2` also pass. StartScript replacement `d797f6f309b901ae16c94f2b6bc050871222369a9159357d995b1224d87d55e3` passes. `chainScript` remains covered by the host scheduler regression; this campaign did not claim a separate native chainScript fixture. |
+| 7 | Fixed | Native call-contract audit found operand-error exits could abandon a live JSL return frame. | Actor-query return/error convention is balanced without weakening the four-form word-selector grammar. | Clean-source Nexen malformed result/truncated result/truncated selector cases pass with intended errors, balanced stack, and correct return: `actor-position-errors/evidence.json` under the final-source build record. The four-form success matrix ROM is `ec7743e9b96f9651e63bd0358db2cccde49eca17ff5cc588197f54a06f1572d1`. |
+| 8 | Fixed; near and far native matrices pass | Near/far request paths could overwrite a phase4/5 accepted request before deciding how to handle a second request. | Decide before mutating; same-target requests coalesce, a conflicting public request is serialized until the accepted transaction completes, and a conflicting direct VM request is rejected with error 13 while preserving the accepted transaction. | Fresh-power-on Nexen controls execute all four required combinations (phase 4/5 × same/conflicting public target) on both actual implementations. Near ROM `ff83404a304f94d3229f2ac681e7cf25a8017bb35063fe32e826ccb293a1d530` hits bank-0 `ScummV5_M23A_RequestRoom` at `$BACF` (5 hits per non-direct case); far ROM `a5136a2261fbeb651e152d0798277d6d7f678bc53a381bca557bc2652119319c` hits `ScummV5_M23A_RequestRoom_FarEntry` in bank 9. Direct conflicting-call rejection is additionally tested at phase 4/5. All reports preserve pending target/continuation, verify event/read ordering and completion, and bind to ROM identity. |
 | 9 | Fixed | Clean export reproduced missing generated include and mandatory machine-local archive failures. | `make generate` supplies lint/test generated inputs; original-data tests use configurable opt-in corpus selection and fail when an explicitly supplied archive is invalid. | Clean exported tree passed `make test`; optional corpus absence is reported as skips. The default suite does not depend on `/home/chad`. |
 | 10 | Fixed | ROM-specific symbol lookup could silently fall back to an unrelated shared map. | Build identity binds ROM, map, and listing hashes; ROM-aware lookup rejects missing/mismatched identity rather than accepting the shared map. | Two-pair, absent, and mismatched-map tests pass. Native addresses must be regenerated from the exact tested build identity. |
 
@@ -76,13 +76,11 @@ Poppy/.NET prerequisites, and the distinction between host tests, source-path
 evaluation, and Nexen execution are documented in `BUILDING.md` and the
 individual validator targets.
 
-On this remediation tree, `make test` passed 729 tests with 7 optional-data
-skips. An isolated export at `/tmp/same-pr1-clean-final.Q6zU63`, assembled from
-the base archive, tracked diff, and explicit source-fixture list, passed `make
-test` with 729 tests and 8 skips and `make validate` with Poppy lint passing
-for 38 files and 2,218 global labels. The one additional skip is a
-user-generated authentic-room record unavailable in the export. Python
-compilation, `bash -n tools/build_snes.sh`, and the working-diff check also pass.
+On the clean-source final control build, `make test` passed 741 tests with 8
+optional-corpus skips. `make validate` passed Poppy lint (38 source files,
+2,219 global labels). Changed Python compilation, `bash -n tools/build_snes.sh`,
+and `git diff --check` also passed. Exact final-commit reruns are recorded in
+the Native acceptance follow-up below.
 
 ## Publication and asset provenance
 
@@ -102,22 +100,23 @@ scope stated above.
 
 ## Independent re-review follow-up
 
-This follow-up is intentionally not a blanket native-acceptance claim.
-The original remediation reports were generated against dirty `a389ae8`
-builds. Their ROM identities do not match builds containing the R1 correction,
-so those native results are not reused as evidence for the corrected source.
+This section supersedes the earlier R1/R2 “native execution pending” status
+below. The native controls were rebuilt from clean tracked source at commit
+`ea7621680b7a44c41c81066536c0f19178f150ea` and executed on the verified Nexen
+binary. A final documentation-only commit is being followed by a clean-source
+rebuild and ROM-hash comparison so the reports remain explicitly bound to the
+final source tree.
 
 | Finding | Current disposition | Correction / regression | Evidence and remaining limit |
 | ---: | --- | --- | --- |
-| R1 — no-parent slot index width | Corrected in source; native acceptance pending | `ScummV5_C4_RunAllocatedNoParent` now masks the byte slot into a 16-bit accumulator before `TAX`. The long same-object fixture executes 260 counted operations before replacing the activation; its native validator checks the high-byte boundary, entry/arguments, old-tail non-resumption, no-parent state, and the JSL/RTL stack delta. | Long-case build, Poppy lint, assembly and ROM audit pass (`1bfc111108bcbf405e3ed66909fc363016c5e5dde72a256211179f984e9ef1d3`). Nexen execution could not connect to its local control socket (`Errno 1: Operation not permitted`); the built test is not reported as a native runtime pass. The source-driven StartScript handoff model also now models M/X widths for the `$0100` counter case. |
-| R2 — genuine near RequestRoom coverage | Partial; no near native pass | Pending-request validator resolves the route-specific RequestRoom entry and rejects a route label inconsistent with the ROM build identity before hooks are installed. The pending Make target is explicitly far-only instead of producing two mislabeled copies. | The former `pending-near` image records `M24RB=1`; requesting `--route near` now fails closed before emulator startup. A true near-only M23A/M25A build attempt (`M24RB=0`, `M23A=1`, `M23B/C=0`) failed assembly: bank 0 exceeded its header boundary and near/far symbols were unresolved. The rebuilt far ROM audits successfully (`3d55021473edcfde5c9f03012db648fe809421a24bc71ede08e80aad155cd86f`), but its Nexen execution is also blocked by the socket restriction. The required real near-route native matrix remains open. |
+| R1 — no-parent slot index width | Fixed; native execution pass | `ScummV5_C4_RunAllocatedNoParent` zero-extends the byte slot index before `TAX`. The long same-object fixture exceeds 255 operations without yielding and checks entry/arguments, no-parent state, old-tail non-resumption, and the JSL/RTL stack contract. | Fresh-power-on Nexen observed `FRAME_OPS=261` at replacement, X=`$0001` at descriptor access, authored replacement verb and `$BEEF` local0, old-tail sentinel 0, balanced native stack, and SCUMM error 0. ROM SHA `4d4265b25135b6030dd62463ddfe0a26fe5fe21c441eee886b59a0bd4ab3cdce`. |
+| R2 — genuine near RequestRoom coverage | Fixed; near and far native matrices pass | Added a minimal near-only pending diagnostic personality that includes the production near M23A RequestRoom and real storage/event transaction path. Build identity disables M24RB and far room service; the validator resolves a route-specific symbol and requires a hit. | The actual near entry `ScummV5_M23A_RequestRoom` (bank 0, CPU `$BACF`) was hit five times per serialized same/conflict run. The far entry `ScummV5_M23A_RequestRoom_FarEntry` was separately exercised in bank 9. Both routes pass phase4/phase5 same-target and conflicting-target public request cases, plus direct conflicting-call rejection. Near ROM SHA `ff83404a304f94d3229f2ac681e7cf25a8017bb35063fe32e826ccb293a1d530`; far ROM SHA `a5136a2261fbeb651e152d0798277d6d7f678bc53a381bca557bc2652119319c`. |
 | R3 — path-cached ROM/map identity | Fixed | ROM, map, listing, and identity are revalidated for each acceptance lookup; parsed symbols are cached only by verified map content. Same-process regressions replace the map and ROM at the same paths, delete the ROM, invalidate identity, and install a new matching tuple without `cache_clear`. | `tests.test_snes_rom_symbol_identity` passes; invalid tuples fail before symbol hooks are resolved. |
 | R4 — unknown conditional symbol merge | Fixed | The include linter now evaluates conditional blocks against branch-local symbol environments and merges equal values while retaining conflicts or one-sided assignments as unknown. | `tests.test_poppy_source` covers differing and identical branch assignments, later conditions, one-sided assignments, nested conditions, fail-closed possible includes, and known true/false cases. |
 
-The full documented `make test` run after these changes passed 739 tests with 7
-optional-corpus skips. `make validate` passed, including Poppy lint (38 source
-files, 2,217 global labels). These are host/source and static-build results;
-they do not replace the blocked R1/R2 native execution.
+The clean documented suite passes 741 tests with 8 optional-corpus skips;
+`make validate` passes. These host/source checks supplement, and are separate
+from, the Nexen execution results above.
 
 The clean-export assembly attempt exposed one additional build-graph defect:
 Poppy resolves paths for feature-gated includes before processing their `.if`
@@ -135,61 +134,58 @@ unresolved. These technical, gameplay, and publication conclusions are
 separate; this follow-up does not make the PR merge-ready by asserting a
 broader scope.
 
-### Native acceptance follow-up — 2026-09-24
+### Final-source native acceptance — 2026-09-24
 
-The clean-source control builds were repeated from tracked commit
-`85395427969b3120df3aaac85af2cd2addc6c761` in an isolated checkout with a
-clean tracked worktree and generated copyright-free M24R-A test audio. The
-bounded StartObject, long-replacement, continuation, null-room, actor-query,
-and far pending-request images assemble, pass Poppy lint, and pass the ROM
-audit. These are native-build results only: no CPU execution result is
-claimed for those newly built images.
+The controls were built and executed from a clean tracked checkout of
+`ea7621680b7a44c41c81066536c0f19178f150ea`. The detailed report JSONs include
+the exact ROM SHA, build-identity SHA, native symbol map/listing SHA, generated
+input hashes, and clean Git identity. The follow-up source commit updates this
+document only; the final-source linkage record compares clean rebuild ROM
+hashes after that commit before reusing these runtime observations.
 
-Nexen's verified executable is
+The native runner is the verified Nexen executable at
 `/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/linux-x64/publish/Nexen`,
 SHA-256 `17d243c404b8ef32bbb1754a5b026584f2ae24cb047f54b9f250a6f4b721650a`.
-The bounded validator launches it as
-`Nexen --mcp --mcp-port=<port> <ROM>` from the checkout. Its MCP runner log
-shows `InitializeEmu`, `LoadRom`, `DebugWorkspaceManager.Load`, and
-`McpServer on port 45725` (StartObject) or `McpServer on port 45761` (pending
-request). The Python client then fails in `McpSession._connect` while calling
-`socket.create_connection(("127.0.0.1", port))`: after its 15-second retry
-window it reports `OSError: [Errno 1] Operation not permitted`. This is an
-execution-sandbox loopback-connect denial, not connection refused, a port
-collision, endpoint-family mismatch, or a ROM/launcher failure. No repeated
-retry is being treated as evidence. Native execution must be run by an
-authorized host-terminal runner that permits loopback TCP to `127.0.0.1`,
-using the exact built ROM and its adjacent `.map`, `.lst`, and
-`.build_identity.json`; do not expose Nexen on a public bind address.
+It launched each cartridge with its loopback MCP endpoint, the validator
+connected to `127.0.0.1`, reset to fresh power, executed the bounded fixture,
+read CPU/WRAM state, and closed the owned emulator session. No alternate
+emulator or public bind was used. Copyright-free M24R-A test audio was built
+from the pinned toolchain source commit `822164b09cb3d4750bd4c1960a430dc35b6ae04a`;
+no private Fate archive was used by these controls.
 
-R1 therefore remains **implemented and native-build-tested, but native
-execution-unverified**. The long fixture is configured to count 260 operations
-before same-object replacement, but only the native report can establish that
-the live FRAME_OPS high byte crossed the boundary and that the fresh slot,
-entry, arguments, stack, and error assertions passed.
+The genuine near profile was independently assembled with `SAME_BUILD_M24RB=0`,
+`SAME_BUILD_SCUMM_ROOM_SERVICE_FAR=0`, `SAME_BUILD_SCUMM_M23A=1`,
+`SAME_BUILD_SCUMM_M23B=0`, `SAME_BUILD_SCUMM_M23C=0`, and
+`SAME_BUILD_SCUMM_M25A_PENDING_ONLY=1`. Its build identity reports those values,
+the actual native breakpoint resolves to bank-0
+`ScummV5_M23A_RequestRoom`, and fresh-power Nexen execution hits that entry.
+The far profile separately resolves and hits
+`ScummV5_M23A_RequestRoom_FarEntry` in bank 9. For each route, phase4 and phase5
+were tested with a repeated target and a conflicting target. Same-target
+requests coalesce without a second storage read. Conflicting public requests
+remain pending while the accepted target completes, then are retried and
+complete in order. Direct conflicting calls reject with error 13 without
+mutating the accepted pending target/continuation or queuing another read.
+The production near implementation and transaction/event path are therefore
+native-tested; this is not a far-wrapper alias or a source-only guard test.
 
-R2 remains **far-route native coverage unavailable; genuine near-route build
-and execution blocked**. The actual near build was attempted with
-`SAME_BUILD_M24RB=0`, generated `SAME_BUILD_SCUMM_ROOM_SERVICE_FAR=0`,
-`SAME_BUILD_SCUMM_M23A=1`, `SAME_BUILD_SCUMM_M23B=0`,
-`SAME_BUILD_SCUMM_M23C=0`, and the pending-request validator fixture. It does
-select `ScummV5_M23A_RequestRoom` and the near transaction helper, but assembly
-does not produce a ROM: emitted bank-0 bytes extend through `$101B1` and
-overlap the fixed `$FFC0/$FFE0` header/vector sections; unresolved symbols
-include `ScummV5_M23A_CheckPendingRequest`,
-`ScummV5_C25_Flush__clear_imuse_queue`,
-`ScummV5_C25_Flush__m24rb_trigger`, `ScummV5_C25_FarCall_EmitAudio`,
-`ScummV5_M23A_GetProgramSize_Far`, and
-`ScummV5_M23A_EndRoomScript_FarEntry`. The build also identifies unconditional
-far matrix/camera module inclusion in the M23A top-level source path. The
-near-labelled historical image is rejected because its build identity has
-M24RB enabled. No near native pass is claimed; resolving the actual profile
-dependency/size closure is still required before that matrix can run.
+The long StartObject case runs 261 counted operations before replacement, with
+the operation counter's high byte live at the no-parent handoff. Native state
+proves X was `$0001` at slot descriptor access, the allocated replacement
+reused slot 1 and began at its authored verb entry with local0 `$BEEF`, the old
+continuation sentinel remained zero, the nested/no-parent adapters had the
+expected call counts, native stack deltas balanced, and SCUMM error remained
+zero. Short self-replacement, ordinary and different-object nesting,
+StartScript self-replacement, global/local room continuation, storage validity,
+null-room lifecycle, and actor-position success/error controls also pass on
+Nexen. `chainScript` remains covered by the host scheduler regression; no
+separate native chainScript case is claimed here.
 
-In the restricted Codex runner, Nexen's loopback endpoint cannot be used, and
-the genuine near implementation cannot currently be assembled into the
-diagnostic image. Keep both findings open. The external action needed for R1
-and any buildable far controls is to run their existing validators from an
-authorized host terminal with loopback access. R2 additionally needs a
-supported near-only build profile (or an architectural correction that
-preserves the production near implementation); a far image is not a substitute.
+Clean-source validation: `make test` — 741 passed, 8 optional-corpus skips;
+`make validate` — PASS; changed Python compilation — PASS; Bash syntax — PASS;
+`git diff --check` — PASS; Poppy lint — PASS; assembly and ROM audits — PASS.
+The complete commands, tool identities, per-control reports, map/build
+identities, and ROM-to-source linkage comparison are in the companion evidence
+archive. These bounded conformance controls do not establish the full original
+Fate gameplay path. Corrected gameplay observation still did not reach room42
+readiness, and asset redistribution permissions remain unresolved.
