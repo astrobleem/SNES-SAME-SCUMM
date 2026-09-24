@@ -1,10 +1,12 @@
 PYTHON ?= python3
 PYTHONPATH := $(CURDIR)/src
 TAD_COMPILER ?= $(or $(wildcard $(CURDIR)/../terrific-audio-driver/target/release/tad-compiler),tad-compiler)
+M25A_TAD_PREBUILT_DIR ?= $(CURDIR)/build/profile-music/m24ra
+M25A_MUSIC_CATALOG ?= $(CURDIR)/audio/m24ra/catalog.json
 
 .PHONY: all fixtures generate fate-audio test validate demo package adventure-package \
 	engine-demo audio simulate snes s5-snes h0 k1 c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 c11 c12 c13 c14 c15 c16 c17 c18 c19 c20 c21 c22 c23 c24 c25 c26 c28 c29 c30 c31 c32 c33 c34 c35 c36 c37 c38 c39 c40 c41 c42 s1 s2 s3 s4 s5 s6-preflight s6-tad s6-auditions \
-	m4 m5-build m5 m6 m7-build m7 m8-build m8 m9-build m9 m10-build m10 m11-build m11 m12-build m12 m13-build m13 m14-build m14 m15-build m15 m16-build m16 m17-build m17 m18-build m18 m19-build m19 m20-build m20 m21-build m21 m22-build m22 m23a-build m23a m23b-build m23b m23c-build m23c m24ra-build m24ra m24rb-build m24rb m25a-validator-build m25a-validator m25a-startscript-replacement m25a-startobject-normal m25a-startobject-control m25a-startobject-replacement m25a-startobject-long-replacement m25a-global-room-continuation m25a-local-room-continuation m25a-actor-position-errors-build m25a-actor-position-errors m25a-actor-position-success-build m25a-actor-position-success m25a-null-room-lifecycle-build m25a-null-room-lifecycle m25a-pending-room-request-build m25a-pending-room-request-near-build m25a-pending-room-request clean
+	m4 m5-build m5 m6 m7-build m7 m8-build m8 m9-build m9 m10-build m10 m11-build m11 m12-build m12 m13-build m13 m14-build m14 m15-build m15 m16-build m16 m17-build m17 m18-build m18 m19-build m19 m20-build m20 m21-build m21 m22-build m22 m23a-build m23a m23b-build m23b m23c-build m23c m24ra-build m24ra m24rb-build m24rb m25a-validator-audio m25a-validator-build m25a-validator m25a-startscript-replacement m25a-startobject-normal m25a-startobject-control m25a-startobject-replacement m25a-startobject-long-replacement m25a-global-room-continuation m25a-local-room-continuation m25a-actor-position-errors-build m25a-actor-position-errors m25a-actor-position-success-build m25a-actor-position-success m25a-null-room-lifecycle-build m25a-null-room-lifecycle m25a-pending-room-request-build m25a-pending-room-request-near-build m25a-pending-room-request clean
 
 all: fixtures generate test validate demo
 
@@ -727,10 +729,16 @@ m24rb: test validate m24rb-build
 		--sustain-rom build/same-m24rb-sustain.sfc --loop-rom build/same-m24rb-loop.sfc \
 		--output build/m24rb-nexen
 
-m25a-validator-build:
+m25a-validator-audio:
+	$(PYTHON) tools/build_m24ra_tad_toolchain.py --output build/toolchain/tad-m24ra
+	$(PYTHON) tools/build_m24ra_fixture.py \
+		--compiler build/toolchain/tad-m24ra/target/release/tad-compiler \
+		--output build/profile-music/m24ra
+
+m25a-validator-build: m25a-validator-audio
 	@for case in normal depth missing outer; do \
-		SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-		SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+		SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+		SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 		SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 		SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 		SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -753,9 +761,9 @@ m25a-validator: m25a-validator-build
 		--missing-manifest build/m25a-validator/missing/manifest.json \
 		--outer-manifest build/m25a-validator/outer/manifest.json
 
-m25a-startobject-replacement:
-	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+m25a-startobject-replacement: m25a-validator-audio
+	SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+	SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -770,9 +778,9 @@ m25a-startobject-replacement:
 		--rom build/m25a-validator/startobject-replacement/m25a-startobject-replacement.sfc \
 		--output build/m25a-validator/startobject-replacement/evidence.json
 
-m25a-startobject-long-replacement:
-	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+m25a-startobject-long-replacement: m25a-validator-audio
+	SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+	SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -787,9 +795,9 @@ m25a-startobject-long-replacement:
 		--rom build/m25a-validator/startobject-long-replacement/m25a-startobject-long-replacement.sfc \
 		--output build/m25a-validator/startobject-long-replacement/evidence.json
 
-m25a-startobject-control:
-	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+m25a-startobject-control: m25a-validator-audio
+	SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+	SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -804,9 +812,9 @@ m25a-startobject-control:
 		--rom build/m25a-validator/startobject-nested/m25a-startobject-nested.sfc \
 		--output build/m25a-validator/startobject-nested/evidence.json
 
-m25a-startobject-normal:
-	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+m25a-startobject-normal: m25a-validator-audio
+	SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+	SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -821,9 +829,9 @@ m25a-startobject-normal:
 		--rom build/m25a-validator/startobject/m25a-startobject.sfc \
 		--output build/m25a-validator/startobject/evidence.json
 
-m25a-startscript-replacement:
-	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+m25a-startscript-replacement: m25a-validator-audio
+	SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+	SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -838,9 +846,9 @@ m25a-startscript-replacement:
 		--manifest build/m25a-validator/startscript-replacement/manifest.json \
 		--output build/m25a-validator/startscript-replacement/evidence.json
 
-m25a-global-room-continuation:
-	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+m25a-global-room-continuation: m25a-validator-audio
+	SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+	SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -855,9 +863,9 @@ m25a-global-room-continuation:
 		--manifest build/m25a-validator/global-room-continuation/manifest.json \
 		--output build/m25a-validator/global-room-continuation/evidence.json
 
-m25a-local-room-continuation:
-	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+m25a-local-room-continuation: m25a-validator-audio
+	SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+	SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -872,10 +880,10 @@ m25a-local-room-continuation:
 		--manifest build/m25a-validator/local-room-continuation/manifest.json \
 		--output build/m25a-validator/local-room-continuation/evidence.json
 
-m25a-actor-position-errors-build:
+m25a-actor-position-errors-build: m25a-validator-audio
 	@for case in actor-position-result-truncated actor-position-result-invalid actor-position-selector-truncated; do \
-		SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-		SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+		SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+		SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 		SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 		SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 		SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -894,9 +902,9 @@ m25a-actor-position-errors: m25a-actor-position-errors-build
 		--truncated-selector-rom build/m25a-validator/actor-position-selector-truncated/m25a-actor-position-selector-truncated.sfc \
 		--output build/m25a-validator/actor-position-errors/evidence.json
 
-m25a-actor-position-success-build:
-	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+m25a-actor-position-success-build: m25a-validator-audio
+	SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+	SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -913,9 +921,9 @@ m25a-actor-position-success: m25a-actor-position-success-build
 		--manifest build/m25a-validator/actor-position-success/manifest.json \
 		--output build/m25a-validator/actor-position-success/evidence.json
 
-m25a-null-room-lifecycle-build:
-	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+m25a-null-room-lifecycle-build: m25a-validator-audio
+	SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+	SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -935,9 +943,9 @@ m25a-null-room-lifecycle: m25a-null-room-lifecycle-build
 # The currently supported bounded native room-request profile uses the banked
 # RequestRoom implementation. The validator accepts a near ROM only when its
 # build identity and actual near-entry breakpoint prove that route.
-m25a-pending-room-request-build:
-	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+m25a-pending-room-request-build: m25a-validator-audio
+	SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+	SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
@@ -947,9 +955,9 @@ m25a-pending-room-request-build:
 	SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/pending-far/m25a-pending-far.sfc \
 	tools/build_snes.sh
 
-m25a-pending-room-request-near-build:
-	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+m25a-pending-room-request-near-build: m25a-validator-audio
+	SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+	SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=0 SAME_BUILD_M24RB=0 \
 	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=0 SAME_BUILD_SCUMM_M23C=0 \
@@ -983,10 +991,10 @@ m25a-pending-room-request: m25a-pending-room-request-build m25a-pending-room-req
 # Missing body-requiring starts must fail visibly in both namespaces.
 # The authentic-path validator also rejects any reached mapping error, rather
 # than treating a low final error byte as proof of executable closure.
-m25a-lookup-missing-build:
+m25a-lookup-missing-build: m25a-validator-audio
 	@for case in lookup-missing global-lookup-missing; do \
-		SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
-		SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+		SAME_TAD_PREBUILT_DIR=$(M25A_TAD_PREBUILT_DIR) \
+		SAME_MUSIC_CATALOG=$(M25A_MUSIC_CATALOG) \
 		SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 		SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
 		SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
