@@ -38,6 +38,50 @@ def write_pair(rom: Path, symbol_address: int) -> None:
 
 
 class RomSymbolIdentityTests(unittest.TestCase):
+    def test_same_path_artifact_replacements_are_revalidated_without_cache_clear(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "target.sfc"
+            other = Path(directory) / "other.sfc"
+            first.write_bytes(b"rom A")
+            other.write_bytes(b"rom B")
+            write_pair(first, 0x8123)
+            write_pair(other, 0x9456)
+            self.assertEqual(
+                mapped_cpu_address_for_rom(first, "Same_Main_Loop", bank=0), 0x008123)
+
+            # Replacing the map beside the same ROM path must be checked, not
+            # hidden by a successful pathname-cached lookup.
+            other.with_suffix(".map").replace(first.with_suffix(".map"))
+            with self.assertRaisesRegex(RuntimeError, "map SHA mismatch"):
+                verified_symbol_map_for_rom(first)
+
+            # Installing a newly matching tuple at those exact paths returns
+            # its own symbols rather than the earlier parsed mapping.
+            write_pair(first, 0x8333)
+            self.assertEqual(
+                mapped_cpu_address_for_rom(first, "Same_Main_Loop", bank=0), 0x008333)
+
+            # Replacing only the ROM invalidates the adjacent build identity.
+            first.write_bytes(b"substituted ROM")
+            with self.assertRaisesRegex(RuntimeError, "ROM SHA does not match"):
+                verified_symbol_map_for_rom(first)
+
+            # Missing artifacts fail closed even after a prior successful
+            # resolution, and a changed identity cannot reuse old symbols.
+            write_pair(first, 0x8444)
+            first.unlink()
+            with self.assertRaisesRegex(RuntimeError, "artifact missing"):
+                verified_symbol_map_for_rom(first)
+            first.write_bytes(b"rom C")
+            write_pair(first, 0x8555)
+            identity_path = first.with_suffix(".build_identity.json")
+            identity_path.write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "invalid ROM build identity"):
+                verified_symbol_map_for_rom(first)
+            write_pair(first, 0x8666)
+            self.assertEqual(
+                mapped_cpu_address_for_rom(first, "Same_Main_Loop", bank=0), 0x008666)
+
     def test_two_roms_resolve_only_their_own_bound_maps(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             first = Path(directory) / "first.sfc"
@@ -46,26 +90,10 @@ class RomSymbolIdentityTests(unittest.TestCase):
             second.write_bytes(b"rom B")
             write_pair(first, 0x8123)
             write_pair(second, 0x9456)
-            self.assertEqual(
-                mapped_cpu_address_for_rom(first, "Same_Main_Loop", bank=0), 0x008123)
-            self.assertEqual(
-                mapped_cpu_address_for_rom(second, "Same_Main_Loop", bank=0), 0x009456)
-            self.assertEqual(
-                mapped_cpu_address_for_rom(
-                    first, "ScummV5_Matrix_LoadActiveRoom_Far", bank=110),
-                0x6E8123,
-            )
-            self.assertEqual(
-                mapped_cpu_address_for_rom(
-                    first, "ScummV5_Matrix_LoadActiveRoom_Far", bank=0),
-                0x008123,
-            )
-
-            # A map from the other image cannot be silently substituted.
-            second.with_suffix(".map").replace(first.with_suffix(".map"))
-            verified_symbol_map_for_rom.cache_clear()
-            with self.assertRaisesRegex(RuntimeError, "map SHA mismatch"):
-                verified_symbol_map_for_rom(first)
+            self.assertEqual(mapped_cpu_address_for_rom(first, "Same_Main_Loop", bank=0), 0x008123)
+            self.assertEqual(mapped_cpu_address_for_rom(second, "Same_Main_Loop", bank=0), 0x009456)
+            self.assertEqual(mapped_cpu_address_for_rom(
+                first, "ScummV5_Matrix_LoadActiveRoom_Far", bank=110), 0x6E8123)
 
     def test_missing_or_rom_mismatched_artifacts_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

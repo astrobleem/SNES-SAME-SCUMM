@@ -52,6 +52,88 @@ class PoppySourceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "missing-then.inc.pasm"):
                 include_closure(main)
 
+    def test_unknown_branch_assignments_merge_before_later_conditions(self) -> None:
+        cases = (
+            ("different", "CHOSEN = $01", "CHOSEN = $00", True),
+            ("identical-true", "CHOSEN = $01", "CHOSEN = $01", True),
+            ("identical-false", "CHOSEN = $00", "CHOSEN = $00", False),
+        )
+        for name, then_assignment, else_assignment, missing_expected in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                main = root / "main.pasm"
+                main.write_text(
+                    ".if UNRESOLVED_FLAG\n"
+                    f"    {then_assignment}\n"
+                    ".else\n"
+                    f"    {else_assignment}\n"
+                    ".endif\n"
+                    ".if CHOSEN\n"
+                    '    .include "missing.pasm"\n'
+                    ".endif\n",
+                    encoding="utf-8",
+                )
+                if missing_expected:
+                    with self.assertRaisesRegex(RuntimeError, "missing.pasm"):
+                        include_closure(main)
+                else:
+                    self.assertEqual(include_closure(main), [main.resolve()])
+
+    def test_single_branch_assignment_remains_unknown_after_merge(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            main = root / "main.pasm"
+            main.write_text(
+                ".if UNRESOLVED_FLAG\n"
+                "    CHOSEN = $00\n"
+                ".endif\n"
+                ".if CHOSEN\n"
+                '    .include "possibly-active.pasm"\n'
+                ".endif\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "possibly-active.pasm"):
+                include_closure(main)
+
+    def test_nested_unknown_branches_merge_possible_symbols(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            main = root / "main.pasm"
+            main.write_text(
+                ".if OUTER_UNKNOWN\n"
+                "    .if INNER_UNKNOWN\n"
+                "        CHOSEN = $00\n"
+                "    .else\n"
+                "        CHOSEN = $00\n"
+                "    .endif\n"
+                ".else\n"
+                "    CHOSEN = $00\n"
+                ".endif\n"
+                ".if CHOSEN\n"
+                '    .include "inactive.pasm"\n'
+                ".endif\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(include_closure(main), [main.resolve()])
+
+            main.write_text(
+                ".if OUTER_UNKNOWN\n"
+                "    .if INNER_UNKNOWN\n"
+                "        CHOSEN = $00\n"
+                "    .else\n"
+                "        CHOSEN = $01\n"
+                "    .endif\n"
+                ".else\n"
+                "    CHOSEN = $00\n"
+                ".endif\n"
+                ".if CHOSEN\n"
+                '    .include "possibly-active.pasm"\n'
+                ".endif\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "possibly-active.pasm"):
+                include_closure(main)
+
     def test_static_lint(self) -> None:
         result = subprocess.run(
             [sys.executable, str(ROOT / "tools/lint_poppy.py"), str(ROOT / "runtime/snes/main.pasm")],

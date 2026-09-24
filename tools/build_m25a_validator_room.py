@@ -255,6 +255,32 @@ def startobject_replacement_scripts() -> tuple[
     return entry, (), objects
 
 
+def startobject_long_replacement_scripts() -> tuple[
+    bytes, tuple[tuple[int, bytes], ...], tuple[bytes, ...]
+]:
+    """Cross the 8-bit operation-count boundary before same-object replacement."""
+    def start_object(object_id: int, verb: int, *arguments: int) -> bytes:
+        encoded = bytearray((0x37, object_id & 0xFF, object_id >> 8, verb))
+        for argument in arguments:
+            encoded.extend((0, argument & 0xFF, argument >> 8))
+        encoded.append(0xFF)
+        return bytes(encoded)
+
+    # These are real setVar bytecodes, not native budget manipulation. They
+    # execute without yielding and take FRAME_OPS past $00FF before verb 10
+    # replaces itself with verb 8.
+    counted = b"".join(
+        set_word(30, 0x5000 + index) for index in range(260)
+    )
+    old_verb = counted + start_object(100, 8, 0xBEEF) \
+        + set_word(11, 0xDEAD) + bytes((0x00,))
+    new_verb = bytes((0x9A, 10, 0, 0, 0x40, 0x80, 0x00))
+    entry = set_word(10, 0) + set_word(11, 0) + start_object(100, 10) \
+        + bytes((0x00,))
+    objects = (object_resource(100, ((10, old_verb), (8, new_verb))),)
+    return entry, (), objects
+
+
 def startobject_nested_scripts() -> tuple[
     bytes, tuple[tuple[int, bytes], ...], tuple[bytes, ...]
 ]:
@@ -865,7 +891,8 @@ def main() -> int:
         "getdist", "getdist-malformed",
         "message", "message-long", "message-malformed",
         "lookup", "lookup-missing", "global-lookup-missing",
-        "startobject", "startobject-replacement", "startobject-nested",
+        "startobject", "startobject-replacement", "startobject-long-replacement",
+        "startobject-nested",
         "global-room-continuation",
         "local-room-continuation",
         "null-room-lifecycle",
@@ -938,6 +965,8 @@ def main() -> int:
         entry, locals_, object_payloads = startobject_scripts()
     elif args.case == "startobject-replacement":
         entry, locals_, object_payloads = startobject_replacement_scripts()
+    elif args.case == "startobject-long-replacement":
+        entry, locals_, object_payloads = startobject_long_replacement_scripts()
     elif args.case == "startobject-nested":
         entry, locals_, object_payloads = startobject_nested_scripts()
     elif args.case == "global-room-continuation":

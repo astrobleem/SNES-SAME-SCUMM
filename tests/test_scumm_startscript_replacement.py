@@ -50,7 +50,9 @@ class StartScriptReplacementTests(unittest.TestCase):
         # Execute the actual load/transfer prefix up to RunSelected. The old
         # shared interpreter is stopped at $002D; slot1 is its replacement.
         memory = {
-            'SAME_SCUMM_FRAME_OPS': 12,
+            # Reproduce the reviewed case: the 16-bit operation counter's
+            # high byte is nonzero before the byte-sized slot is loaded.
+            'SAME_SCUMM_FRAME_OPS': 0x0100,
             'SAME_SCUMM_C4_LAST_ALLOCATED': 1,
             'SAME_SCUMM_C4_SLOT_STATUS': {1: 1},
             'SAME_SCUMM_C4_SLOT_PROGRAM': {1: program},
@@ -60,28 +62,52 @@ class StartScriptReplacementTests(unittest.TestCase):
             'SAME_SCUMM_PC': 0x2D,
         }
         a = x = 0
+        a_width = 16
+        x_width = 16
+        first_tax_x = None
         for line in body.split('    jsr ScummV5_Engine_RunSelected', 1)[0].splitlines():
-            parts = line.strip().split(maxsplit=1)
-            if not parts or parts[0].startswith('.') or parts[0] in ('rep', 'sep'):
+            line = line.split(';', 1)[0].strip()
+            parts = line.split(maxsplit=1)
+            if not parts or parts[0].startswith('.'):
                 continue
             op = parts[0]
-            if op == 'lda.l':
+            if op == 'rep':
+                mask = int(parts[1].removeprefix('#$'), 16)
+                if mask & 0x20:
+                    a_width = 16
+                if mask & 0x10:
+                    x_width = 16
+            elif op == 'sep':
+                mask = int(parts[1].removeprefix('#$'), 16)
+                if mask & 0x20:
+                    a_width = 8
+                if mask & 0x10:
+                    x_width = 8
+            elif op == 'lda.l':
                 operand = parts[1]
-                a = memory[operand[:-2]][x] if operand.endswith(',x') else memory[operand]
+                value = memory[operand[:-2]][x] if operand.endswith(',x') else memory[operand]
+                a = ((a & 0xFF00) | (value & 0xFF)) if a_width == 8 else value & 0xFFFF
             elif op == 'sta.l':
-                memory[parts[1]] = a
+                if a_width == 8:
+                    memory[parts[1]] = (memory.get(parts[1], 0) & 0xFF00) | (a & 0xFF)
+                else:
+                    memory[parts[1]] = a & 0xFFFF
             elif op == 'tax':
-                x = a
+                x = a & (0xFF if x_width == 8 else 0xFFFF)
+                if first_tax_x is None:
+                    first_tax_x = x
             elif op == 'and':
-                a &= int(parts[1][2:], 16)
+                mask = int(parts[1].removeprefix('#$'), 16)
+                a &= mask if a_width == 16 else (0xFF00 | (mask & 0xFF))
             elif op == 'asl':
-                a <<= 1
+                a = (a << 1) & (0xFFFF if a_width == 16 else 0xFF)
             else:
                 self.fail(f'unmodelled no-parent instruction: {line}')
         self.assertEqual(memory['SAME_SCUMM_PROGRAM_SELECT'], program)
         self.assertEqual(memory['SAME_SCUMM_PC'], 0)
         self.assertEqual(memory['SAME_SCUMM_STATUS'], 1)
         self.assertEqual(memory['SAME_SCUMM_C4_SLOT_PC'][2], 0)
+        self.assertEqual(first_tax_x, 1)
 
     def test_primary_handoff(self):
         self.check_replacement_handoff(0xD0)

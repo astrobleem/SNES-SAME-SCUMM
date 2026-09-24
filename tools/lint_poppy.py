@@ -42,7 +42,7 @@ REQUIRED_LABELS = {
 }
 
 
-def _conditional_value(expression: str, symbols: dict[str, int]) -> bool | None:
+def _conditional_value(expression: str, symbols: dict[str, int | None]) -> bool | None:
     """Evaluate the small boolean subset used to guard source includes.
 
     Unknown expressions are kept active so lint fails closed on missing inputs.
@@ -60,7 +60,11 @@ def _conditional_value(expression: str, symbols: dict[str, int]) -> bool | None:
         if token in {"and", "or", "not"}:
             return token
         if token in symbols:
-            return str(symbols[token])
+            symbol_value = symbols[token]
+            if symbol_value is None:
+                unknown = True
+                return token
+            return str(symbol_value)
         if token in {"True", "False"}:
             return token
         unknown = True
@@ -84,65 +88,115 @@ def _conditional_value(expression: str, symbols: dict[str, int]) -> bool | None:
 
 
 def include_closure(main: Path) -> list[Path]:
-    visited: set[Path] = set()
+    ordered_set: set[Path] = set()
     ordered: list[Path] = []
-    symbols: dict[str, int] = {}
+    active_paths: set[Path] = set()
 
-    def visit(path: Path) -> None:
+    def parse_block(lines: list[str], start: int, path: Path,
+                    nested: bool = False) -> tuple[list[tuple], int, str | None]:
+        nodes: list[tuple] = []
+        index = start
+        while index < len(lines):
+            code = lines[index].split(";", 1)[0].strip()
+            lowered = code.lower()
+            if lowered in {".else", ".endif"} or lowered.startswith(".elseif "):
+                if not nested:
+                    raise RuntimeError(f"unmatched {lowered} in {path}:{index + 1}")
+                marker = (".elseif " + code[8:].strip()
+                          if lowered.startswith(".elseif ") else lowered)
+                return nodes, index, marker
+            if lowered.startswith(".if "):
+                conditional, next_index = parse_if(
+                    lines, code[4:].strip(), index + 1, path
+                )
+                nodes.append(conditional)
+                index = next_index
+                continue
+            include = re.match(r'^\.include\s+"([^"]+)"', code, re.IGNORECASE)
+            if include:
+                nodes.append(("include", include.group(1)))
+            else:
+                definition = re.match(
+                    r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\$([0-9A-Fa-f]+)\b",
+                    code,
+                )
+                if definition:
+                    nodes.append(("assign", definition.group(1),
+                                  int(definition.group(2), 16)))
+            index += 1
+        return nodes, index, None
+
+    def parse_if(lines: list[str], expression: str, body_start: int,
+                 path: Path) -> tuple[tuple, int]:
+        then_nodes, marker, terminator = parse_block(
+            lines, body_start, path, nested=True
+        )
+        else_nodes: list[tuple] = []
+        if terminator == ".else":
+            else_nodes, marker, terminator = parse_block(
+                lines, marker + 1, path, nested=True
+            )
+        elif terminator.startswith(".elseif "):
+            nested_conditional, next_index = parse_if(
+                lines, terminator[8:].strip(), marker + 1, path
+            )
+            # The recursive .elseif parser consumes the shared .endif.
+            return ("if", expression, then_nodes, [nested_conditional]), next_index
+        if terminator != ".endif":
+            raise RuntimeError(f"unterminated .if in {path}:{body_start}")
+        return ("if", expression, then_nodes, else_nodes), marker + 1
+
+    def merge_environments(left: dict[str, int | None],
+                           right: dict[str, int | None]) -> dict[str, int | None]:
+        merged: dict[str, int | None] = {}
+        for name in left.keys() | right.keys():
+            left_value = left.get(name)
+            right_value = right.get(name)
+            merged[name] = left_value if left_value == right_value else None
+        return merged
+
+    def evaluate(nodes: list[tuple], path: Path,
+                 symbols: dict[str, int | None]) -> dict[str, int | None]:
+        for node in nodes:
+            if node[0] == "assign":
+                _, name, value = node
+                symbols[name] = value
+            elif node[0] == "include":
+                visit(path.parent / node[1], symbols)
+            else:
+                _, expression, then_nodes, else_nodes = node
+                result = _conditional_value(expression, symbols)
+                if result is True:
+                    evaluate(then_nodes, path, symbols)
+                elif result is False:
+                    evaluate(else_nodes, path, symbols)
+                else:
+                    then_symbols = evaluate(then_nodes, path, dict(symbols))
+                    else_symbols = evaluate(else_nodes, path, dict(symbols))
+                    symbols.clear()
+                    symbols.update(merge_environments(then_symbols, else_symbols))
+        return symbols
+
+    def visit(path: Path, symbols: dict[str, int | None]) -> None:
         path = path.resolve()
-        if path in visited:
+        if path in active_paths:
             return
         if not path.is_file():
             raise RuntimeError(f"missing include: {path}")
-        visited.add(path)
-        ordered.append(path)
-        text = path.read_text(encoding="utf-8")
-        active = {True}
-        branches: list[tuple[set[bool], bool | None]] = []
-        for line in text.splitlines():
-            code = line.split(";", 1)[0].strip()
-            if code.lower().startswith(".if "):
-                condition = _conditional_value(code[4:], symbols)
-                branches.append((active, condition))
-                if condition is True:
-                    active = set(active)
-                elif condition is False or True not in active:
-                    active = {False}
-                else:
-                    # Unknown conditions are conservatively treated as
-                    # potentially active, so missing includes on either side
-                    # remain visible to lint.
-                    active = {False, True}
-                continue
-            if code.lower() == ".else":
-                if not branches:
-                    continue
-                parent, condition = branches[-1]
-                if condition is False:
-                    active = set(parent)
-                elif condition is True or True not in parent:
-                    active = {False}
-                else:
-                    active = {False, True}
-                continue
-            if code.lower() == ".endif":
-                if branches:
-                    parent, _condition = branches.pop()
-                    active = parent
-                continue
-            if True not in active:
-                continue
-            definition = re.match(
-                r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\$([0-9A-Fa-f]+)\b",
-                code,
-            )
-            if definition:
-                symbols[definition.group(1)] = int(definition.group(2), 16)
-            include = re.match(r'^\.include\s+"([^"]+)"', code, re.IGNORECASE)
-            if include:
-                visit(path.parent / include.group(1))
+        if path not in ordered_set:
+            ordered_set.add(path)
+            ordered.append(path)
+        active_paths.add(path)
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            nodes, end, terminator = parse_block(lines, 0, path)
+            if end != len(lines) or terminator is not None:
+                raise RuntimeError(f"invalid conditional structure in {path}")
+            evaluate(nodes, path, symbols)
+        finally:
+            active_paths.remove(path)
 
-    visit(main)
+    visit(main, {})
     return ordered
 
 

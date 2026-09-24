@@ -14,6 +14,7 @@ from tools.build_m25a_validator_room import (
     scheduler_scripts,
     startobject_scripts,
     startobject_replacement_scripts,
+    startobject_long_replacement_scripts,
     require_fixture_room_is_unbound,
     selected_corpus_identity,
 )
@@ -133,6 +134,46 @@ class M25AValidatorFixtureTests(unittest.TestCase):
         self.assertIn(bytes((0x37, 100, 0, 8, 0, 0xEF, 0xBE, 0xFF)), encoded)
         self.assertIn(bytes((0x9A, 10, 0, 0, 0x40, 0x80, 0x00)), encoded)
         self.assertIn(bytes((0x1A, 11, 0, 0xAD, 0xDE)), encoded)
+
+    def test_startobject_long_replacement_crosses_operation_counter_boundary(self) -> None:
+        from build_m25a_validator_room import set_word
+
+        entry, scripts, objects = startobject_long_replacement_scripts()
+        counted_operations = b"".join(
+            set_word(30, 0x5000 + index) for index in range(260)
+        )
+        self.assertEqual(scripts, ())
+        self.assertEqual(len(objects), 1)
+        self.assertIn(counted_operations, objects[0])
+        self.assertIn(bytes((0x37, 100, 0, 8, 0, 0xEF, 0xBE, 0xFF)), objects[0])
+        self.assertIn(bytes((0x1A, 11, 0, 0xAD, 0xDE)), objects[0])
+
+    def test_no_parent_slot_index_is_zero_extended_before_tax(self) -> None:
+        """Source contract supplement; native execution is the Make target."""
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        helper = source.split("ScummV5_C4_RunAllocatedNoParent:\n", 1)[1].split(
+            "ScummV5_C4_RunAllocatedNoParent_FarEntry:", 1
+        )[0]
+        required = (
+            "lda.l SAME_SCUMM_FRAME_OPS\n"
+            "    sta.l SAME_SCUMM_C4_CHAIN_OPS\n"
+            "    sep #$20\n"
+            "    .a8\n"
+            "    lda.l SAME_SCUMM_C4_LAST_ALLOCATED\n"
+            "    sta.l SAME_SCUMM_C4_CURRENT_SLOT\n"
+            "    ; LAST_ALLOCATED is a byte, but this helper's caller may leave X 16-bit.\n"
+            "    ; Zero-extend A before TAX so FRAME_OPS' high byte cannot become the slot.\n"
+            "    rep #$30\n"
+            "    .a16\n"
+            "    .i16\n"
+            "    and #$00FF\n"
+            "    tax\n"
+            "    sep #$20\n"
+            "    .a8\n"
+            "    lda.l SAME_SCUMM_C4_SLOT_STATUS,x"
+        )
+        self.assertIn(required, helper)
 
     def test_startobject_nested_fixture_checks_distinct_activation_return(self) -> None:
         from build_m25a_validator_room import startobject_nested_scripts

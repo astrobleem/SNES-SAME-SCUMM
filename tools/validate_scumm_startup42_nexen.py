@@ -83,17 +83,27 @@ def room42_sentence_ready(state: dict, expected_room: int = 42) -> bool:
     )
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 @lru_cache(maxsize=8)
+def _parse_verified_map(map_sha256: str, map_text: str) -> dict[str, int]:
+    """Cache parsing by verified content, never by a mutable pathname."""
+    symbols: dict[str, int] = {}
+    for line in map_text.splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and fields[0] == ";":
+            try:
+                symbols[fields[2]] = int(fields[1].lstrip("$"), 16)
+            except ValueError:
+                continue
+    return symbols
+
+
 def verified_symbol_map_for_rom(rom: Path) -> tuple[Path, dict[str, int]]:
-    """Load symbols only from a map/listing identity bound to this ROM."""
+    """Validate the current ROM/map/listing tuple and return its symbols.
+
+    This is an acceptance-session boundary, not an instruction callback.
+    Deliberately do not cache by pathname: artifacts can be replaced or
+    removed in place between acceptance sessions.
+    """
     rom = rom.resolve()
     map_path = rom.with_suffix(".map")
     listing_path = rom.with_suffix(".lst")
@@ -104,6 +114,12 @@ def verified_symbol_map_for_rom(rom: Path) -> tuple[Path, dict[str, int]]:
                 f"acceptance symbols unavailable: required ROM-bound artifact missing: {artifact}"
             )
     try:
+        # Read the tuple once so the map we parse is exactly the byte snapshot
+        # whose digest is checked below; do not validate one file version and
+        # then parse a replacement from the same pathname.
+        rom_bytes = rom.read_bytes()
+        map_bytes = map_path.read_bytes()
+        listing_bytes = listing_path.read_bytes()
         identity = json.loads(identity_path.read_text(encoding="utf-8"))
         identity_rom = identity["rom"]["sha256"]
         symbol_identity = identity["native_symbols"]
@@ -111,23 +127,20 @@ def verified_symbol_map_for_rom(rom: Path) -> tuple[Path, dict[str, int]]:
         listing_identity = symbol_identity["listing"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise RuntimeError(f"invalid ROM build identity {identity_path}: {exc}") from exc
-    if identity_rom != _sha256(rom):
+    if identity_rom != hashlib.sha256(rom_bytes).hexdigest():
         raise RuntimeError(f"build identity ROM SHA does not match {rom}")
-    for artifact, recorded in ((map_path, map_identity), (listing_path, listing_identity)):
+    for artifact, content, recorded in (
+        (map_path, map_bytes, map_identity),
+        (listing_path, listing_bytes, listing_identity),
+    ):
         if recorded.get("name") != artifact.name:
             raise RuntimeError(
                 f"build identity names {recorded.get('name')!r}, expected adjacent {artifact.name!r}"
             )
-        if recorded.get("sha256") != _sha256(artifact):
+        if recorded.get("sha256") != hashlib.sha256(content).hexdigest():
             raise RuntimeError(f"build identity {artifact.name} SHA mismatch for {rom}")
-    symbols: dict[str, int] = {}
-    for line in map_path.read_text().splitlines():
-        fields = line.split()
-        if len(fields) >= 3 and fields[0] == ";":
-            try:
-                symbols[fields[2]] = int(fields[1].lstrip("$"), 16)
-            except ValueError:
-                continue
+    map_sha = hashlib.sha256(map_bytes).hexdigest()
+    symbols = _parse_verified_map(map_sha, map_bytes.decode("utf-8"))
     return map_path, symbols
 
 

@@ -35,6 +35,7 @@ FIXTURE_READY = 0x7E5601
 CURRENT_PROGRAM = 0x7E2362
 CURRENT_PC = 0x7E2300
 CURRENT_STATUS = 0x7E2302
+FRAME_OPS = 0x7E230A
 
 
 def u16(raw: bytes, offset: int = 0) -> int:
@@ -48,13 +49,15 @@ def main() -> int:
     parser.add_argument("--nexen", type=Path, default=DEFAULT_NEXEN)
     parser.add_argument("--port", type=int, default=45725)
     parser.add_argument(
-        "--case", choices=("normal", "replacement", "nested"), default="normal"
+        "--case", choices=("normal", "replacement", "replacement-long", "nested"),
+        default="normal"
     )
     parser.add_argument(
         "--trace", action="store_true",
         help="retain compact per-frame slot/context observations for diagnosis",
     )
     args = parser.parse_args()
+    replacement_case = args.case in {"replacement", "replacement-long"}
     if not args.nexen.is_file() or not os.access(args.nexen, os.X_OK):
         raise RuntimeError("Nexen unavailable")
     sys.path.insert(0, "/home/chad/Mesen2/python")
@@ -75,16 +78,72 @@ def main() -> int:
             args.rom.resolve(), "ScummV5_M25A_RunNestedChildFar", bank=0))
         replacement_adapter = session.add_exec_hook(mapped_cpu_address_for_rom(
             args.rom.resolve(), "ScummV5_C4_RunAllocatedNoParent_FarEntry", bank=0))
+        replacement_adapter_address = mapped_cpu_address_for_rom(
+            args.rom.resolve(), "ScummV5_C4_RunAllocatedNoParent_FarEntry", bank=0)
+        complete_success_address = mapped_cpu_address_for_rom(
+            args.rom.resolve(), "ScummV5_Engine_Frame__complete_success", bank=0)
         adapter_hits = {nested_adapter: 0, replacement_adapter: 0}
+        replacement_frame_ops: list[int] = []
+        replacement_call_stack: dict[str, int] | None = None
         replacement_yield = None
         timeline = []
         for frame in range(1, 180):
-            session.run_frames(1)
+            if replacement_case and replacement_call_stack is None:
+                until_adapter = session.run_until(
+                    max_frames=1, hook_handle=replacement_adapter
+                )
+            else:
+                session.run_frames(1)
             for event in session.drain_notifications(0.01):
                 if event.get("method") == "notifications/mesen/hookFired":
                     handle = event.get("params", {}).get("handle")
                     if handle in adapter_hits:
                         adapter_hits[handle] += 1
+                        if handle == replacement_adapter:
+                            replacement_frame_ops.append(int.from_bytes(
+                                session.read_memory("snesMemory", FRAME_OPS, 2),
+                                "little",
+                            ))
+            if replacement_case and replacement_call_stack is None:
+                stop_reason = until_adapter.get("reason")
+                if until_adapter.get("hit") or stop_reason in ("hook", "hookFired"):
+                    entry_cpu = session.get_cpu_state("Snes")
+                    entry_address = ((entry_cpu.get("k", 0) & 0xFF) << 16) \
+                        | (entry_cpu.get("pc", 0) & 0xFFFF)
+                    if entry_address == replacement_adapter_address:
+                        entry_frame_ops = int.from_bytes(
+                            session.read_memory("snesMemory", FRAME_OPS, 2),
+                            "little",
+                        )
+                        replacement_frame_ops.append(entry_frame_ops)
+                        return_hook = session.add_exec_hook(complete_success_address)
+                        try:
+                            until_return = session.run_until(
+                                max_frames=1, hook_handle=return_hook
+                            )
+                            return_cpu = session.get_cpu_state("Snes")
+                        finally:
+                            session.remove_hook(return_hook)
+                        return_address = ((return_cpu.get("k", 0) & 0xFF) << 16) \
+                            | (return_cpu.get("pc", 0) & 0xFFFF)
+                        if (not until_return.get("hit")
+                                and until_return.get("reason") not in ("hook", "hookFired")):
+                            raise RuntimeError(
+                                "replacement no-parent adapter did not reach the "
+                                f"normal frame-completion handoff: {until_return}")
+                        if return_address != complete_success_address:
+                            raise RuntimeError(
+                                "replacement frame handoff stopped at the wrong "
+                                f"address: {return_cpu}; expected ${complete_success_address:06X}")
+                        replacement_call_stack = {
+                            "adapter_address": entry_address,
+                            "adapter_sp": entry_cpu.get("sp", -1),
+                            "frame_ops": entry_frame_ops,
+                            "completion_address": return_address,
+                            "completion_sp": return_cpu.get("sp", -1),
+                            "sp_delta": (return_cpu.get("sp", 0)
+                                         - entry_cpu.get("sp", 0)) & 0xFFFF,
+                        }
             variables = session.read_memory("snesMemory", VARIABLES, 32)
             error = session.read_memory("snesMemory", ERROR, 1)[0]
             start_count = session.read_memory("snesMemory", START_OBJECT + 12, 1)[0]
@@ -125,7 +184,7 @@ def main() -> int:
                 })
             if not ready:
                 continue
-            if args.case == "replacement":
+            if replacement_case:
                 values = [u16(variables, index * 2) for index in (10, 11)]
                 if error or values[1] == 0xDEAD:
                     break
@@ -170,7 +229,7 @@ def main() -> int:
                  for index in range(0, len(trace_raw), 4)]
         scenario_child = session.read_memory("snesMemory", 0x7E5607, 7)
         locals_raw = session.read_memory("snesMemory", 0x7E2448, 25 * 64)
-        if args.case == "replacement" and replacement_yield is not None:
+        if replacement_case and replacement_yield is not None:
             for _ in range(5):
                 session.run_frames(1)
                 final_status = session.read_memory(
@@ -199,7 +258,8 @@ def main() -> int:
         "pc": u16(pcs, index * 2),
     } for index in range(25) if status[index] != 0]
     observed = [u16(variables, index * 2) for index in range(10, 14)]
-    if args.case == "replacement":
+    if replacement_case:
+        observed_frame_ops = max(replacement_frame_ops, default=0)
         assertions = {
             "fresh_verb_received_argument": observed[0] == 0xBEEF,
             "old_verb_continuation_did_not_run": observed[1] == 0,
@@ -212,6 +272,17 @@ def main() -> int:
             "initial_child_uses_nested_adapter_once": adapter_hits[nested_adapter] == 1,
             "replacement_uses_no_parent_far_adapter_once": (
                 adapter_hits[replacement_adapter] == 1
+            ),
+            "replacement_after_256_native_operations": (
+                args.case != "replacement-long" or observed_frame_ops >= 256
+            ),
+            "far_no_parent_call_frame_balanced": (
+                replacement_call_stack is not None
+                and replacement_call_stack["adapter_address"]
+                == replacement_adapter_address
+                and replacement_call_stack["completion_address"]
+                == complete_success_address
+                and replacement_call_stack["sp_delta"] == 3
             ),
             "replacement_local_argument_preserved": (
                 replacement_yield is not None
@@ -238,7 +309,9 @@ def main() -> int:
                 f"adapter_hits={adapter_hits}"
             )
         report = {
-            "gate": "M25-startObject-same-activation-replacement-SNES",
+            "gate": ("M25-startObject-long-operation-same-activation-replacement-SNES"
+                     if args.case == "replacement-long"
+                     else "M25-startObject-same-activation-replacement-SNES"),
             "result": "pass", "fresh_power_on": True, "debugger_writes": 0,
             "rom_sha256": hashlib.sha256(args.rom.read_bytes()).hexdigest(),
             "frame": frame, "global10_argument_result": observed[0],
@@ -247,6 +320,9 @@ def main() -> int:
             "replacement_entry_offset": u16(start, 4),
             "replaced_slot": start[22],
             "replacement_yield": replacement_yield,
+            "frame_ops_at_replacement_adapter": replacement_frame_ops,
+            "max_frame_ops_at_replacement_adapter": observed_frame_ops,
+            "replacement_call_stack": replacement_call_stack,
             "scenario_child": list(scenario_child), "slots": slots,
             "native_adapter_hits": {
                 "nested": adapter_hits[nested_adapter],

@@ -321,7 +321,7 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
                 ROOM_GENERATOR_ARGS+=(--executable-local-room 49 --executable-local-object 49:593 --far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
             elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "salvage" ]]; then
                 ROOM_GENERATOR_ARGS+=(--executable-local-room 49 --executable-local-object 49:592 --far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
-            elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "startobject-replacement" ]]; then
+            elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "startobject-replacement" || "${SAME_M25A_VALIDATOR_CASE:-}" == "startobject-long-replacement" ]]; then
                 ROOM_GENERATOR_ARGS+=(--executable-local-room 49 --executable-local-object 49:100 --far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
             elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "global-room-continuation" ]]; then
                 ROOM_GENERATOR_ARGS+=(--entry-only-room 49 --entry-only-room 50 --far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
@@ -329,7 +329,9 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
                 ROOM_GENERATOR_ARGS+=(--entry-only-room 49 --entry-only-room 50 --executable-local 49:200 --far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
             elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "pending-room-request" ]]; then
                 ROOM_GENERATOR_ARGS+=(--entry-only-room 49 --entry-only-room 50 --entry-only-room 51)
-                ROOM_GENERATOR_ARGS+=(--far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
+                if [[ "${SAME_BUILD_M24RB:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
+                    ROOM_GENERATOR_ARGS+=(--far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
+                fi
             elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "startup42" || "${SAME_M25A_VALIDATOR_CASE:-}" == "room55" ]]; then
                 # The startup root executes authored ENCD scripts which start
                 # room-local scripts in rooms 68, 75, 1, and 42.  Keep the

@@ -3519,7 +3519,15 @@ ScummV5_C4_RunAllocatedNoParent:
     .a8
     lda.l SAME_SCUMM_C4_LAST_ALLOCATED
     sta.l SAME_SCUMM_C4_CURRENT_SLOT
+    ; LAST_ALLOCATED is a byte, but this helper's caller may leave X 16-bit.
+    ; Zero-extend A before TAX so FRAME_OPS' high byte cannot become the slot.
+    rep #$30
+    .a16
+    .i16
+    and #$00FF
     tax
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
     sta.l SAME_SCUMM_STATUS
     lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
@@ -7631,14 +7639,8 @@ ScummV5_M25A_InjectPendingRequest__direct_origin:
     sta.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
 ScummV5_M25A_InjectPendingRequest__invoke_route:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
-    lda.l SAME_SCUMM_PENDING_DIAG_INJECT_ROUTE
-    beq ScummV5_M25A_InjectPendingRequest__near
     lda.l SAME_SCUMM_ROOM_REQUEST_API_ROOM
     jsl ScummV5_M23A_RequestRoom_FarEntry
-    bra ScummV5_M25A_InjectPendingRequest__request_done
-ScummV5_M25A_InjectPendingRequest__near:
-    lda.l SAME_SCUMM_ROOM_REQUEST_API_ROOM
-    jsl ScummV5_M23A_CheckPendingRequest_FarEntry
     .else
     lda.l SAME_SCUMM_ROOM_REQUEST_API_ROOM
     jsr ScummV5_M23A_RequestRoom

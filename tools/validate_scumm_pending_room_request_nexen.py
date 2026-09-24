@@ -47,6 +47,23 @@ def require(ok: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
+def require_request_route_identity(identity: dict, route: str) -> None:
+    """Reject a near/far label inconsistent with the ROM's build identity."""
+    environment = identity.get("explicit_environment")
+    require(isinstance(environment, dict),
+            "ROM build identity has no explicit build environment")
+    m24rb = environment.get("SAME_BUILD_M24RB")
+    controller_far = environment.get("SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE", "0")
+    require(m24rb in {"0", "1"}, "ROM identity omits SAME_BUILD_M24RB")
+    require(controller_far in {"0", "1"},
+            "ROM identity has invalid controller-conformance selection")
+    compiled_route = "far" if m24rb == "1" or controller_far == "1" else "near"
+    require(route == compiled_route,
+            f"requested {route} route does not match ROM build identity "
+            f"(compiled route is {compiled_route}; M24RB={m24rb}, "
+            f"controller-conformance={controller_far})")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rom", type=Path, required=True)
@@ -60,6 +77,22 @@ def main() -> int:
     args = parser.parse_args()
     require(args.rom.is_file() and args.manifest.is_file(), "ROM or manifest missing")
     require(args.nexen.is_file() and os.access(args.nexen, os.X_OK), "Nexen unavailable")
+    from validate_scumm_startup42_nexen import (
+        mapped_cpu_address_for_rom,
+        verified_symbol_map_for_rom,
+    )
+    verified_symbol_map_for_rom(args.rom.resolve())
+    identity_path = args.rom.resolve().with_suffix(".build_identity.json")
+    identity_bytes = identity_path.read_bytes()
+    identity = json.loads(identity_bytes)
+    require_request_route_identity(identity, args.route)
+    identity_sha256 = hashlib.sha256(identity_bytes).hexdigest()
+    request_symbol = ("ScummV5_M23A_RequestRoom_FarEntry"
+                      if args.route == "far" else "ScummV5_M23A_RequestRoom")
+    request_bank = 9 if args.route == "far" else 0
+    request_entry = mapped_cpu_address_for_rom(
+        args.rom.resolve(), request_symbol, bank=request_bank
+    )
     manifest = json.loads(args.manifest.read_text())
     require(manifest.get("case") == "pending-room-request", "wrong fixture case")
     require(manifest.get("room_provenance", "").startswith("synthetic fixture"),
@@ -85,6 +118,15 @@ def main() -> int:
         session.tool("reset_emulator", {"power": True})
         session.pause()
         require(session.get_state()["frameCount"] == 0, "cold power reset failed")
+        request_entry_handle = session.add_exec_hook(request_entry)
+        request_entry_hits = 0
+
+        def collect_entry_hits() -> None:
+            nonlocal request_entry_hits
+            for event in session.drain_notifications(0.01):
+                if (event.get("method") == "notifications/mesen/hookFired"
+                        and event.get("params", {}).get("handle") == request_entry_handle):
+                    request_entry_hits += 1
 
         def snap() -> dict[str, int]:
             return {
@@ -123,6 +165,7 @@ def main() -> int:
             # before the following engine tick has been serviced. Advancing
             # two increments guarantees a complete scheduler/service interval.
             session.run_frames(2)
+            collect_entry_hits()
             state = snap()
             timeline.append(state)
             return state
@@ -131,6 +174,7 @@ def main() -> int:
         # engine's public one-byte host request mailbox as the test stimulus.
         for _ in range(60):
             session.run_frames(1)
+            collect_entry_hits()
             state = snap()
             if state["room"] == 49 and state["phase"] == 0:
                 break
@@ -242,6 +286,8 @@ def main() -> int:
                 "gate": "M23A-pending-room-request-serialization",
                 "result": "pass", "evidence_kind": "fresh-power-on-Nexen-native-execution",
                 "route": args.route, "request_route": args.route,
+                "build_identity_sha256": identity_sha256,
+                "build_environment": identity["explicit_environment"],
                 "request_phase": args.phase, "mode": args.mode,
                 "rom_sha256": hashlib.sha256(args.rom.read_bytes()).hexdigest(),
                 "native_decision_records": decisions,
@@ -265,6 +311,10 @@ def main() -> int:
                     f"room transaction failed while serialized: {state}; "
                     f"timeline={timeline}; cpu={session.get_cpu_state()}")
         final = snap()
+        collect_entry_hits()
+        require(request_entry_hits >= 2,
+                f"actual {args.route} RequestRoom entry was not observed for both requests: "
+                f"symbol={request_symbol} bank={request_bank} hits={request_entry_hits}")
         require(final["room"] == expected_room and final["phase"] == 0
                 and final["api_pending"] == 0,
                 f"serialized room request did not complete: {final}; "
@@ -288,6 +338,12 @@ def main() -> int:
         "result": "pass", "evidence_kind": "fresh-power-on-Nexen-native-execution",
         "route": args.route,
         "request_route": args.route,
+        "request_entry_symbol": request_symbol,
+        "request_entry_bank": request_bank,
+        "request_entry_cpu_address": request_entry,
+        "request_entry_hits": request_entry_hits,
+        "build_identity_sha256": identity_sha256,
+        "build_environment": identity["explicit_environment"],
         "request_phase": args.phase,
         "first_request_after_push": first_queued,
         "native_decision_records": decisions,
