@@ -2290,7 +2290,7 @@ ScummV5_Engine_Frame__dispatch_get_actor_room:
     jmp ScummV5_Op_GetActorRoom
 ScummV5_Engine_Frame__dispatch_get_actor_x:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
-    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_M25A_PENDING_ONLY
     rep #$30
     .a16
     .i16
@@ -2301,7 +2301,7 @@ ScummV5_Engine_Frame__dispatch_get_actor_x:
     .a8
     .endif
     jsl ScummV5_GetActorX_FarEntry
-    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_M25A_PENDING_ONLY
     rep #$30
     .a16
     .i16
@@ -2320,7 +2320,7 @@ ScummV5_Engine_Frame__dispatch_get_actor_x:
     .endif
 ScummV5_Engine_Frame__dispatch_get_actor_y:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
-    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_M25A_PENDING_ONLY
     rep #$30
     .a16
     .i16
@@ -2331,7 +2331,7 @@ ScummV5_Engine_Frame__dispatch_get_actor_y:
     .a8
     .endif
     jsl ScummV5_GetActorY_FarEntry
-    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_M25A_PENDING_ONLY
     rep #$30
     .a16
     .i16
@@ -3514,6 +3514,9 @@ ScummV5_C4_RunAllocatedNoParent:
     rep #$20
     .a16
     lda.l SAME_SCUMM_FRAME_OPS
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_M25A_PENDING_ONLY
+    sta.l SAME_SCUMM_START_OBJECT_FRAME_OPS
+    .endif
     sta.l SAME_SCUMM_C4_CHAIN_OPS
     sep #$20
     .a8
@@ -3526,6 +3529,10 @@ ScummV5_C4_RunAllocatedNoParent:
     .i16
     and #$00FF
     tax
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_M25A_PENDING_ONLY
+    txa
+    sta.l SAME_SCUMM_START_OBJECT_SLOT_INDEX
+    .endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
@@ -3558,7 +3565,25 @@ ScummV5_C4_RunAllocatedNoParent:
 ; Bank-0 return adapter for cold far handlers. The far caller uses JSL/RTL;
 ; this adapter owns that long frame and delegates the existing near helper.
 ScummV5_C4_RunAllocatedNoParent_FarEntry:
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_M25A_PENDING_ONLY
+    php
+    rep #$30
+    .a16
+    .i16
+    tsc
+    sta.l SAME_SCUMM_START_OBJECT_ADAPTER_SP
+    plp
+    .endif
     jsr ScummV5_C4_RunAllocatedNoParent
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_M25A_PENDING_ONLY
+    php
+    rep #$30
+    .a16
+    .i16
+    tsc
+    sta.l SAME_SCUMM_START_OBJECT_ADAPTER_RETURN_SP
+    plp
+    .endif
     rtl
 
 ; Stop every live global/local script with the requested number. A8 holds the
@@ -7673,7 +7698,7 @@ ScummV5_M25A_InjectPendingRequest__restore:
 
 ; Near-profile phase-4/5 transaction policy. Far builds keep this bounded
 ; helper in the banked room-service section to preserve bank-zero space.
-.if !SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR == 0
 ScummV5_M23A_CheckPendingRequest:
     sep #$20
     .a8
@@ -12240,8 +12265,9 @@ ScummV5_C25_Flush__dispatch_error:
     .a8
     lda.l SAME_SCUMM_C25_LAST_WORDS
     ; Keep the packed iMUSE queue-clear command recognizable even if a
-    ; service helper returned through an unexpected accumulator width.  The
-    ; canonical command is still validated by its normal handler below.
+    ; service helper returned through an unexpected accumulator width. This
+    ; compatibility dispatch exists only when M23C owns that command.
+.if SAME_BUILD_SCUMM_M23C
     cmp #$10
     bne ScummV5_C25_Flush__dispatch_error__not_0110_low
     lda.l SAME_SCUMM_C25_LAST_WORDS+1
@@ -12252,6 +12278,9 @@ ScummV5_C25_Flush__dispatch_error:
     .else
     jmp ScummV5_C25_Flush__clear_imuse_queue
     .endif
+.else
+    bra ScummV5_C25_Flush__dispatch_error__not_0110_low
+.endif
 ScummV5_C25_Flush__dispatch_error__not_0110_low:
     rep #$30
     .a16
@@ -12261,6 +12290,7 @@ ScummV5_C25_Flush__dispatch_error__not_0110_low:
     ; bytewise probes above.
     sep #$20
     .a8
+    .if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     lda.l SAME_SCUMM_C25_LAST_WORDS
     cmp #$0E
     bne ScummV5_C25_Flush__dispatch_error__not_010E_low
@@ -12273,6 +12303,9 @@ ScummV5_C25_Flush__trigger_dispatch:
     jmp ScummV5_C25_Flush__m24rb_trigger_conformance
     .else
     jmp ScummV5_C25_Flush__m24rb_trigger
+    .endif
+    .else
+    bra ScummV5_C25_Flush__dispatch_error__not_010E_low
     .endif
 ScummV5_C25_Flush__dispatch_error__not_010E_low:
     ; iMUSE command 2/3 are canonical compatibility no-ops in the v5
@@ -13068,9 +13101,12 @@ ScummV5_C25_Flush__complete_continue:
 .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     .bank 0
     .org ScummV5_C25_Flush_Bank0_Resume
+.endif
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR || SAME_BUILD_SCUMM_ROOM_SERVICE
 ScummV5_C25_FarCall_EmitAudio:
     jsr ScummV5_C25_EmitAudio
     rtl
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 ScummV5_C25_FarCall_SetSfxActive:
 .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     clc
@@ -13079,6 +13115,7 @@ ScummV5_C25_FarCall_SetSfxActive:
     jsr ScummV5_M23C_SetSfxActive
     rtl
 .endif
+
     .if SAME_BUILD_SCUMM_M21
 ScummV5_C25_FarCall_HasRoutes:
     jsr Same_Tad_HasRoutes
@@ -13089,6 +13126,18 @@ ScummV5_C25_FarCall_MapRoute:
     .endif
 ScummV5_C25_FarCall_StageEngine:
     jsr Same_Event_StageEngine
+    rtl
+.endif
+.endif
+.if SAME_BUILD_SCUMM_ROOM_SERVICE && SAME_BUILD_SCUMM_ROOM_SERVICE_FAR == 0
+; The cold lifecycle helper remains banked in near profiles too. These
+; adapters give it balanced long-call entry points while the actual near
+; M23A routines retain their RTS contract in bank zero.
+ScummV5_M23A_NearGetProgramSize_FarEntry:
+    jsr ScummV5_M23A_GetProgramSize
+    rtl
+ScummV5_M23A_NearEndRoomScript_FarEntry:
+    jsr ScummV5_M23A_EndRoomScript
     rtl
 .endif
 
@@ -18382,6 +18431,10 @@ ScummV5_SetError:
     inc
     sta.l $7E5500
     pla
+    ; Keep the ABI error byte in the common publication scratch before any
+    ; optional validator capture changes A.  Non-fixture builds do not have
+    ; a valid SAME_SCUMM_SCENARIO_ERROR_CODE value to reload here.
+    sta.l $7E5457
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     ; Capture the first-class error at the common setter, before the caller's
     ; error path can restore a slot or change the active program context.
@@ -18431,8 +18484,10 @@ ScummV5_SetError:
     lda.l SAME_SCUMM_RESULT_OFFSET
     sta.l SAME_SCUMM_SCENARIO_ERROR_RESULT
     .endif
-    ; Restore the error code in A for the existing state publication below.
-    lda.l SAME_SCUMM_SCENARIO_ERROR_CODE
+    ; Restore the error code from the common scratch.  The scenario-specific
+    ; capture is diagnostic only and must not be the source of runtime error
+    ; state in profiles that omit that fixture.
+    lda.l $7E5457
     sta.l $7E5501
     sta.l $7E5457
     lda.l SAME_SCUMM_PROGRAM_SELECT

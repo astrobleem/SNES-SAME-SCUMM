@@ -96,6 +96,8 @@ class StartScriptReplacementTests(unittest.TestCase):
                 x = a & (0xFF if x_width == 8 else 0xFFFF)
                 if first_tax_x is None:
                     first_tax_x = x
+            elif op == 'txa':
+                a = x & (0xFF if a_width == 8 else 0xFFFF)
             elif op == 'and':
                 mask = int(parts[1].removeprefix('#$'), 16)
                 a &= mask if a_width == 16 else (0xFF00 | (mask & 0xFF))

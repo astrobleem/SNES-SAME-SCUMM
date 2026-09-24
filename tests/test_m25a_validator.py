@@ -15,6 +15,8 @@ from tools.build_m25a_validator_room import (
     startobject_scripts,
     startobject_replacement_scripts,
     startobject_long_replacement_scripts,
+    startscript_replacement_scripts,
+    actor_position_success_scripts,
     require_fixture_room_is_unbound,
     selected_corpus_identity,
 )
@@ -148,6 +150,17 @@ class M25AValidatorFixtureTests(unittest.TestCase):
         self.assertIn(bytes((0x37, 100, 0, 8, 0, 0xEF, 0xBE, 0xFF)), objects[0])
         self.assertIn(bytes((0x1A, 11, 0, 0xAD, 0xDE)), objects[0])
 
+    def test_actor_position_success_fixture_encodes_all_four_forms(self) -> None:
+        program, scripts = actor_position_success_scripts()
+        self.assertEqual(scripts, ())
+        self.assertEqual(len(program), 30)
+        self.assertEqual(program[:5], bytes.fromhex("1a 0b 00 07 00"))
+        self.assertEqual(program[5:11], bytes.fromhex("43 14 00 07 00 80"))
+        self.assertEqual(program[11:17], bytes.fromhex("23 15 00 07 00 80"))
+        self.assertEqual(program[17:23], bytes.fromhex("c3 16 00 0b 00 80"))
+        self.assertEqual(program[23:29], bytes.fromhex("a3 17 00 0b 00 80"))
+        self.assertEqual(program[29], 0x00)
+
     def test_no_parent_slot_index_is_zero_extended_before_tax(self) -> None:
         """Source contract supplement; native execution is the Make target."""
         root = Path(__file__).resolve().parents[1]
@@ -155,25 +168,16 @@ class M25AValidatorFixtureTests(unittest.TestCase):
         helper = source.split("ScummV5_C4_RunAllocatedNoParent:\n", 1)[1].split(
             "ScummV5_C4_RunAllocatedNoParent_FarEntry:", 1
         )[0]
-        required = (
-            "lda.l SAME_SCUMM_FRAME_OPS\n"
-            "    sta.l SAME_SCUMM_C4_CHAIN_OPS\n"
-            "    sep #$20\n"
-            "    .a8\n"
-            "    lda.l SAME_SCUMM_C4_LAST_ALLOCATED\n"
-            "    sta.l SAME_SCUMM_C4_CURRENT_SLOT\n"
-            "    ; LAST_ALLOCATED is a byte, but this helper's caller may leave X 16-bit.\n"
-            "    ; Zero-extend A before TAX so FRAME_OPS' high byte cannot become the slot.\n"
-            "    rep #$30\n"
-            "    .a16\n"
-            "    .i16\n"
-            "    and #$00FF\n"
-            "    tax\n"
-            "    sep #$20\n"
-            "    .a8\n"
-            "    lda.l SAME_SCUMM_C4_SLOT_STATUS,x"
+        sequence = (
+            "lda.l SAME_SCUMM_C4_LAST_ALLOCATED",
+            "sta.l SAME_SCUMM_C4_CURRENT_SLOT",
+            "rep #$30",
+            "and #$00FF",
+            "tax",
+            "lda.l SAME_SCUMM_C4_SLOT_STATUS,x",
         )
-        self.assertIn(required, helper)
+        offsets = [helper.index(token) for token in sequence]
+        self.assertEqual(offsets, sorted(offsets))
 
     def test_startobject_nested_fixture_checks_distinct_activation_return(self) -> None:
         from build_m25a_validator_room import startobject_nested_scripts
@@ -190,6 +194,25 @@ class M25AValidatorFixtureTests(unittest.TestCase):
         self.assertIn(bytes((0x37, 101, 0, 8, 0, 0xFE, 0xCA, 0xFF)), objects[0])
         self.assertIn(bytes((0x9A, 10, 0, 0, 0x40, 0x00)), objects[1])
         self.assertIn(bytes((0x46, 11, 0, 0x00)), objects[0])
+
+    def test_startscript_replacement_fixture_has_fresh_argument_and_dead_tail(self) -> None:
+        entry, body = startscript_replacement_scripts()
+        self.assertEqual(entry, bytes((0x0A, 75, 0x00, 0, 0, 0xFF, 0x00)))
+        self.assertEqual(body[:5], bytes((0x28, 0x00, 0x40, 12, 0)))
+        self.assertIn(bytes((0x0A, 75, 0x00, 0xEF, 0xBE, 0xFF)), body)
+        self.assertIn(bytes((0x1A, 11, 0, 0xAD, 0xDE)), body)
+        self.assertTrue(body.endswith(bytes((0x9A, 10, 0, 0, 0x40, 0x80, 0x00))))
+
+        # The SAME host remains a separate semantic oracle for this fixture;
+        # the Make target adds the corresponding native CPU control.
+        import test_scumm_v5_engine as oracle
+        host = oracle.ScummV5EngineTests()._host(
+            entry, scripts={75: body},
+        )
+        host.tick()
+        variables = host.engine.inspect_state()["variables"]
+        self.assertEqual(variables.get("10"), -0x4111)
+        self.assertEqual(variables.get("11", 0), 0)
 
     def test_actor_position_error_fixtures_isolate_result_and_selector_failures(self) -> None:
         from build_m25a_validator_room import (

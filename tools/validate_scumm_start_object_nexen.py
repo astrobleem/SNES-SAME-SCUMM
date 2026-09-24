@@ -36,6 +36,7 @@ CURRENT_PROGRAM = 0x7E2362
 CURRENT_PC = 0x7E2300
 CURRENT_STATUS = 0x7E2302
 FRAME_OPS = 0x7E230A
+NATIVE_DIAG = 0x7E7FDA
 
 
 def u16(raw: bytes, offset: int = 0) -> int:
@@ -80,70 +81,18 @@ def main() -> int:
             args.rom.resolve(), "ScummV5_C4_RunAllocatedNoParent_FarEntry", bank=0))
         replacement_adapter_address = mapped_cpu_address_for_rom(
             args.rom.resolve(), "ScummV5_C4_RunAllocatedNoParent_FarEntry", bank=0)
-        complete_success_address = mapped_cpu_address_for_rom(
-            args.rom.resolve(), "ScummV5_Engine_Frame__complete_success", bank=0)
         adapter_hits = {nested_adapter: 0, replacement_adapter: 0}
         replacement_frame_ops: list[int] = []
         replacement_call_stack: dict[str, int] | None = None
         replacement_yield = None
         timeline = []
         for frame in range(1, 180):
-            if replacement_case and replacement_call_stack is None:
-                until_adapter = session.run_until(
-                    max_frames=1, hook_handle=replacement_adapter
-                )
-            else:
-                session.run_frames(1)
+            session.run_frames(1)
             for event in session.drain_notifications(0.01):
                 if event.get("method") == "notifications/mesen/hookFired":
                     handle = event.get("params", {}).get("handle")
                     if handle in adapter_hits:
                         adapter_hits[handle] += 1
-                        if handle == replacement_adapter:
-                            replacement_frame_ops.append(int.from_bytes(
-                                session.read_memory("snesMemory", FRAME_OPS, 2),
-                                "little",
-                            ))
-            if replacement_case and replacement_call_stack is None:
-                stop_reason = until_adapter.get("reason")
-                if until_adapter.get("hit") or stop_reason in ("hook", "hookFired"):
-                    entry_cpu = session.get_cpu_state("Snes")
-                    entry_address = ((entry_cpu.get("k", 0) & 0xFF) << 16) \
-                        | (entry_cpu.get("pc", 0) & 0xFFFF)
-                    if entry_address == replacement_adapter_address:
-                        entry_frame_ops = int.from_bytes(
-                            session.read_memory("snesMemory", FRAME_OPS, 2),
-                            "little",
-                        )
-                        replacement_frame_ops.append(entry_frame_ops)
-                        return_hook = session.add_exec_hook(complete_success_address)
-                        try:
-                            until_return = session.run_until(
-                                max_frames=1, hook_handle=return_hook
-                            )
-                            return_cpu = session.get_cpu_state("Snes")
-                        finally:
-                            session.remove_hook(return_hook)
-                        return_address = ((return_cpu.get("k", 0) & 0xFF) << 16) \
-                            | (return_cpu.get("pc", 0) & 0xFFFF)
-                        if (not until_return.get("hit")
-                                and until_return.get("reason") not in ("hook", "hookFired")):
-                            raise RuntimeError(
-                                "replacement no-parent adapter did not reach the "
-                                f"normal frame-completion handoff: {until_return}")
-                        if return_address != complete_success_address:
-                            raise RuntimeError(
-                                "replacement frame handoff stopped at the wrong "
-                                f"address: {return_cpu}; expected ${complete_success_address:06X}")
-                        replacement_call_stack = {
-                            "adapter_address": entry_address,
-                            "adapter_sp": entry_cpu.get("sp", -1),
-                            "frame_ops": entry_frame_ops,
-                            "completion_address": return_address,
-                            "completion_sp": return_cpu.get("sp", -1),
-                            "sp_delta": (return_cpu.get("sp", 0)
-                                         - entry_cpu.get("sp", 0)) & 0xFFFF,
-                        }
             variables = session.read_memory("snesMemory", VARIABLES, 32)
             error = session.read_memory("snesMemory", ERROR, 1)[0]
             start_count = session.read_memory("snesMemory", START_OBJECT + 12, 1)[0]
@@ -215,6 +164,23 @@ def main() -> int:
             elif error or all(u16(variables, index * 2) for index in range(10, 14)):
                 break
         start = session.read_memory("snesMemory", START_OBJECT, 23)
+        native_diag = session.read_memory("snesMemory", NATIVE_DIAG, 12)
+        native_values = [u16(native_diag, index) for index in range(0, 12, 2)]
+        if replacement_case:
+            (caller_sp, adapter_sp, adapter_return_sp, caller_return_sp,
+             slot_index, native_frame_ops) = native_values
+            replacement_frame_ops.append(native_frame_ops)
+            replacement_call_stack = {
+                "caller_sp_before_jsl": caller_sp,
+                "adapter_sp_at_entry": adapter_sp,
+                "adapter_sp_after_jsr_rts": adapter_return_sp,
+                "caller_sp_after_rtl": caller_return_sp,
+                "slot_index_at_descriptor_access": slot_index,
+                "live_frame_ops_at_handoff": native_frame_ops,
+                "jsl_entry_delta": (adapter_sp - caller_sp) & 0xFFFF,
+                "inner_jsr_rts_delta": (adapter_return_sp - adapter_sp) & 0xFFFF,
+                "caller_return_delta": (caller_return_sp - caller_sp) & 0xFFFF,
+            }
         nest_depth = session.read_memory("snesMemory", NEST_DEPTH, 1)[0]
         status = session.read_memory("snesMemory", SLOT_STATUS, 25)
         numbers = session.read_memory("snesMemory", SLOT_NUMBER, 25)
@@ -264,7 +230,7 @@ def main() -> int:
             "fresh_verb_received_argument": observed[0] == 0xBEEF,
             "old_verb_continuation_did_not_run": observed[1] == 0,
             "both_authored_verb_entries_started": start[12] == 2,
-            "replacement_entry_is_verb_8": u16(start, 4) == 0x003A,
+            "replacement_entry_is_verb_8": start[2] == 8,
             "replacement_reused_stopped_activation_slot": (
                 start[10] == start[22] and start[22] != 0
             ),
@@ -274,15 +240,26 @@ def main() -> int:
                 adapter_hits[replacement_adapter] == 1
             ),
             "replacement_after_256_native_operations": (
-                args.case != "replacement-long" or observed_frame_ops >= 256
+                args.case != "replacement-long"
+                or (observed_frame_ops >= 256
+                    and observed_frame_ops <= 0x1000)
+            ),
+            "frame_ops_high_byte_nonzero": (
+                args.case != "replacement-long"
+                or any(value >> 8 for value in replacement_frame_ops)
+            ),
+            "replacement_slot_index_zero_extended": (
+                replacement_call_stack is not None
+                and replacement_call_stack["slot_index_at_descriptor_access"]
+                == start[22]
+                and replacement_call_stack["slot_index_at_descriptor_access"] < 0x100
             ),
             "far_no_parent_call_frame_balanced": (
                 replacement_call_stack is not None
-                and replacement_call_stack["adapter_address"]
-                == replacement_adapter_address
-                and replacement_call_stack["completion_address"]
-                == complete_success_address
-                and replacement_call_stack["sp_delta"] == 3
+                and adapter_hits[replacement_adapter] == 1
+                and replacement_call_stack["jsl_entry_delta"] == 0xFFFD
+                and replacement_call_stack["inner_jsr_rts_delta"] == 0
+                and replacement_call_stack["caller_return_delta"] == 0
             ),
             "replacement_local_argument_preserved": (
                 replacement_yield is not None
@@ -292,7 +269,12 @@ def main() -> int:
                 replacement_yield is not None
                 and replacement_yield["status"] == 2
                 and replacement_yield["program"] == start[3]
-                and replacement_yield["pc"] == 0x0040
+                and replacement_yield["pc"] == u16(start, 4) + 6
+            ),
+            "replacement_resolved_verb_is_8": start[2] == 8,
+            "replacement_entry_matches_loaded_slot": (
+                replacement_yield is not None
+                and replacement_yield["pc"] == u16(start, 4) + 6
             ),
             "no_runnable_object_activation_remains": all(
                 item["where"] != 1 or item["status"] in (0, 4)
@@ -306,7 +288,11 @@ def main() -> int:
                 f"start={list(start)}; child={list(scenario_child)}; "
                 f"depth={nest_depth}; slots={slots}; trace={trace}; "
                 f"state={runtime_state}; yield={replacement_yield}; "
-                f"adapter_hits={adapter_hits}"
+                f"adapter_hits={adapter_hits}; "
+                f"frame_ops={replacement_frame_ops}; "
+                f"call_stack={replacement_call_stack}; "
+                f"adapter_address={replacement_adapter_address:06X}; "
+                f"native_diag={native_values}"
             )
         report = {
             "gate": ("M25-startObject-long-operation-same-activation-replacement-SNES"

@@ -57,6 +57,15 @@ fi
 if [[ "${SAME_BUILD_SCUMM_M25A_VALIDATOR:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-m25a-validator)
 fi
+if [[ "${SAME_BUILD_SCUMM_M25A_PENDING_ONLY:-0}" == "1" ]]; then
+    if [[ "${SAME_BUILD_SCUMM_M25A_VALIDATOR:-0}" != "1" || \
+          "${SAME_M25A_VALIDATOR_CASE:-}" != "pending-room-request" || \
+          "${SAME_BUILD_SCUMM_SCENARIO_FIXTURE:-0}" == "1" ]]; then
+        echo "M25A pending-only mode requires its validator content case and no broad scenario fixture" >&2
+        exit 1
+    fi
+    ENGINE_SELECTION_ARGS+=(--scumm-m25a-pending-only)
+fi
 if [[ "${SAME_BUILD_SCUMM_SCENARIO_FIXTURE:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-scenario-fixture)
     if [[ -n "${SAME_SCUMM_SCENARIO_START_ROOM:-}" ]]; then

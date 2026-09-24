@@ -4,7 +4,7 @@ TAD_COMPILER ?= $(or $(wildcard $(CURDIR)/../terrific-audio-driver/target/releas
 
 .PHONY: all fixtures generate fate-audio test validate demo package adventure-package \
 	engine-demo audio simulate snes s5-snes h0 k1 c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 c11 c12 c13 c14 c15 c16 c17 c18 c19 c20 c21 c22 c23 c24 c25 c26 c28 c29 c30 c31 c32 c33 c34 c35 c36 c37 c38 c39 c40 c41 c42 s1 s2 s3 s4 s5 s6-preflight s6-tad s6-auditions \
-	m4 m5-build m5 m6 m7-build m7 m8-build m8 m9-build m9 m10-build m10 m11-build m11 m12-build m12 m13-build m13 m14-build m14 m15-build m15 m16-build m16 m17-build m17 m18-build m18 m19-build m19 m20-build m20 m21-build m21 m22-build m22 m23a-build m23a m23b-build m23b m23c-build m23c m24ra-build m24ra m24rb-build m24rb m25a-validator-build m25a-validator m25a-startobject-normal m25a-startobject-control m25a-startobject-replacement m25a-startobject-long-replacement m25a-global-room-continuation m25a-local-room-continuation m25a-actor-position-errors-build m25a-actor-position-errors m25a-null-room-lifecycle-build m25a-null-room-lifecycle m25a-pending-room-request-build m25a-pending-room-request m25a-lookup-missing-build m25a-lookup-missing clean
+	m4 m5-build m5 m6 m7-build m7 m8-build m8 m9-build m9 m10-build m10 m11-build m11 m12-build m12 m13-build m13 m14-build m14 m15-build m15 m16-build m16 m17-build m17 m18-build m18 m19-build m19 m20-build m20 m21-build m21 m22-build m22 m23a-build m23a m23b-build m23b m23c-build m23c m24ra-build m24ra m24rb-build m24rb m25a-validator-build m25a-validator m25a-startscript-replacement m25a-startobject-normal m25a-startobject-control m25a-startobject-replacement m25a-startobject-long-replacement m25a-global-room-continuation m25a-local-room-continuation m25a-actor-position-errors-build m25a-actor-position-errors m25a-actor-position-success-build m25a-actor-position-success m25a-null-room-lifecycle-build m25a-null-room-lifecycle m25a-pending-room-request-build m25a-pending-room-request-near-build m25a-pending-room-request clean
 
 all: fixtures generate test validate demo
 
@@ -821,6 +821,23 @@ m25a-startobject-normal:
 		--rom build/m25a-validator/startobject/m25a-startobject.sfc \
 		--output build/m25a-validator/startobject/evidence.json
 
+m25a-startscript-replacement:
+	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
+	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+	SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
+	SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=startscript-replacement \
+	SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+	SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/startscript-replacement/m25a-startscript-replacement.sfc \
+	tools/build_snes.sh
+	PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
+		tools/validate_scumm_startscript_replacement_nexen.py \
+		--rom build/m25a-validator/startscript-replacement/m25a-startscript-replacement.sfc \
+		--manifest build/m25a-validator/startscript-replacement/manifest.json \
+		--output build/m25a-validator/startscript-replacement/evidence.json
+
 m25a-global-room-continuation:
 	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
 	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
@@ -877,6 +894,25 @@ m25a-actor-position-errors: m25a-actor-position-errors-build
 		--truncated-selector-rom build/m25a-validator/actor-position-selector-truncated/m25a-actor-position-selector-truncated.sfc \
 		--output build/m25a-validator/actor-position-errors/evidence.json
 
+m25a-actor-position-success-build:
+	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
+	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+	SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
+	SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=actor-position-success \
+	SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+	SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/actor-position-success/m25a-actor-position-success.sfc \
+	tools/build_snes.sh
+
+m25a-actor-position-success: m25a-actor-position-success-build
+	PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
+		tools/validate_scumm_actor_position_success_nexen.py \
+		--rom build/m25a-validator/actor-position-success/m25a-actor-position-success.sfc \
+		--manifest build/m25a-validator/actor-position-success/manifest.json \
+		--output build/m25a-validator/actor-position-success/evidence.json
+
 m25a-null-room-lifecycle-build:
 	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
 	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
@@ -911,17 +947,36 @@ m25a-pending-room-request-build:
 	SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/pending-far/m25a-pending-far.sfc \
 	tools/build_snes.sh
 
-m25a-pending-room-request: m25a-pending-room-request-build
-	@for phase in 4 5; do \
-		for mode in same conflict direct; do \
+m25a-pending-room-request-near-build:
+	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=0 SAME_BUILD_M24RB=0 \
+	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=0 SAME_BUILD_SCUMM_M23C=0 \
+	SAME_BUILD_SCUMM_ROOM_SERVICE_FAR=0 \
+	SAME_BUILD_SCUMM_SCENARIO_FIXTURE=0 \
+	SAME_BUILD_SCUMM_M25A_VALIDATOR=1 \
+	SAME_BUILD_SCUMM_M25A_PENDING_ONLY=1 \
+	SAME_M25A_VALIDATOR_CASE=pending-room-request \
+	SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+	SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/pending-near/m25a-pending-near.sfc \
+	tools/build_snes.sh
+
+m25a-pending-room-request: m25a-pending-room-request-build m25a-pending-room-request-near-build
+	@for route in far near; do \
+		if [ "$$route" = far ]; then rom=build/m25a-validator/pending-far/m25a-pending-far.sfc; \
+		else rom=build/m25a-validator/pending-near/m25a-pending-near.sfc; fi; \
+		for phase in 4 5; do \
+			for mode in same conflict direct; do \
 			PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
 				tools/validate_scumm_pending_room_request_nexen.py \
-				--rom build/m25a-validator/pending-far/m25a-pending-far.sfc \
+				--rom $$rom \
 				--manifest build/m25a-validator/pending-room-request/manifest.json \
-				--route far \
+				--route $$route \
 				--phase $$phase \
 				--mode $$mode \
-				--output build/m25a-validator/pending-far/phase-$$phase-$$mode-evidence.json || exit 1; \
+				--output build/m25a-validator/pending-$$route/phase-$$phase-$$mode-evidence.json || exit 1; \
+			done; \
 		done; \
 	done
 

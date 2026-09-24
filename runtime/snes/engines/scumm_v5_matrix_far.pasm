@@ -86,7 +86,11 @@ ScummV5_M23A_NormalizeEntryLifecycle_Far:
     ; authoritative terminal test, then retire through the same room-script
     ; primitive used by opcode 00.
     lda.l SAME_SCUMM_C4_SLOT_PROGRAM
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_GetProgramSize_Far
+    .else
+    jsl ScummV5_M23A_NearGetProgramSize_FarEntry
+    .endif
     bcc ScummV5_M23A_NormalizeEntryLifecycle_Far__done
     sta.l SAME_SCUMM_PROGRAM_SIZE
     rep #$20
@@ -99,7 +103,11 @@ ScummV5_M23A_NormalizeEntryLifecycle_Far:
     bcc ScummV5_M23A_NormalizeEntryLifecycle_Far__done16
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_EndRoomScript_FarEntry
+    .else
+    jsl ScummV5_M23A_NearEndRoomScript_FarEntry
+    .endif
     bra ScummV5_M23A_NormalizeEntryLifecycle_Far__complete
 ScummV5_M23A_NormalizeEntryLifecycle_Far__done16:
     sep #$20
@@ -1455,7 +1463,7 @@ ScummV5_StartObject_FarEntry__stop_match:
     tax
     sep #$20
     .a8
-.if SAME_BUILD_SCUMM_M25A_VALIDATOR
+.if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_M25A_PENDING_ONLY
     ; Preserve the old matching activation slot so the same-object fixture
     ; can prove that replacement did not accidentally nest under its reuse.
     lda.l SAME_SCUMM_START_OBJECT_EXEC_COUNT
@@ -1640,6 +1648,15 @@ ScummV5_StartObject_FarEntry__locals_ready:
     beq ScummV5_StartObject_FarEntry__run_nested
     ; This handler lives in bank 9 while the allocator helper is bank 0.
     ; Cross the bank boundary with the RTL adapter rather than a near JSR.
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_M25A_PENDING_ONLY
+    php
+    rep #$30
+    .a16
+    .i16
+    tsc
+    sta.l SAME_SCUMM_START_OBJECT_CALLER_SP
+    plp
+    .endif
     jsl ScummV5_C4_RunAllocatedNoParent_FarEntry
     php
     sep #$20
@@ -1648,6 +1665,15 @@ ScummV5_StartObject_FarEntry__locals_ready:
     bcc ScummV5_StartObject_FarEntry__replacement_ok
     jml ScummV5_Op__error
 ScummV5_StartObject_FarEntry__replacement_ok:
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR && !SAME_BUILD_SCUMM_M25A_PENDING_ONLY
+    php
+    rep #$30
+    .a16
+    .i16
+    tsc
+    sta.l SAME_SCUMM_START_OBJECT_CALLER_RETURN_SP
+    plp
+    .endif
     jml ScummV5_Engine_Frame__complete_success
 ScummV5_StartObject_FarEntry__run_nested:
     jml ScummV5_Op_StartScript__run_nested

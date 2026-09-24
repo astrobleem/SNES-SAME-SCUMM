@@ -113,6 +113,25 @@ reset_diag_valid:
 
     jsr Same_Kernel_Init
     jsr Same_Engine_Boot
+.if SAME_BUILD_SCUMM_M25A_PENDING_ONLY
+    ; Copyright-free near-route transaction control. Boot the synthetic source
+    ; room through the production near RequestRoom and Storage event path; the
+    ; validator later submits its tested requests through the public mailbox.
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_PENDING_DIAG_COUNT
+    sta.l SAME_SCUMM_PENDING_DIAG_STAGE
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECT_MODE
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECT_TARGET
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECTED
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECT_ROUTE
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECT_ORIGIN
+    sta.l SAME_SCUMM_ROOM_REQUEST_API_PENDING
+    sta.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
+    lda #$31
+    jsr ScummV5_RequestRoom
+.endif
 .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     ; Standalone conformance root: enter the normal room-request lifecycle
     ; after engine state is initialized, without writing active-room state.

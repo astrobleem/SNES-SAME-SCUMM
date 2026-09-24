@@ -1,3 +1,6 @@
+import hashlib
+import json
+import os
 from pathlib import Path
 import unittest
 
@@ -52,9 +55,25 @@ class Phase6KTests(unittest.TestCase):
         )
 
     def test_authentic_lscr_bytes_and_following_instruction(self) -> None:
+        archive_name = os.environ.get("SAME_FATE_DEMO_ARCHIVE")
+        if not archive_name:
+            self.skipTest(
+                "optional Fate demo integration: set SAME_FATE_DEMO_ARCHIVE to run"
+            )
+        archive = Path(archive_name).expanduser().resolve()
+        if not archive.is_file():
+            self.fail(f"explicit SAME_FATE_DEMO_ARCHIVE does not exist: {archive}")
         path = ROOT / "build/m23a-rooms/authentic/room-49.sc5c"
         if not path.is_file():
-            self.skipTest("user-generated authentic room record unavailable")
+            self.fail("explicit Fate integration requires generated authentic room 49")
+        manifest_path = path.parent / "manifest.json"
+        if not manifest_path.is_file():
+            self.fail("authentic room 49 has no source identity manifest")
+        manifest = json.loads(manifest_path.read_text())
+        expected_archive = manifest.get("source", {}).get("archive_sha256")
+        actual_archive = hashlib.sha256(archive.read_bytes()).hexdigest()
+        self.assertEqual(actual_archive, expected_archive,
+                         "generated room 49 came from a different Fate archive")
         from same.engines.scumm_v5.cooked_room import decode_cooked_room
 
         record = decode_cooked_room(path.read_bytes(), expected_room=49)

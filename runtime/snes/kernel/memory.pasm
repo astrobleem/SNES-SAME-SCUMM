@@ -1164,6 +1164,15 @@ SAME_SCUMM_LOAD_EGO_CALLER_PROGRAM          = $7E7FD7 ; u8 diagnostic
 SAME_SCUMM_LOAD_EGO_PREVIOUS_ROOM           = $7E7FD8 ; u8
 SAME_SCUMM_LOAD_EGO_EGO                     = $7E7FD9 ; u8 resolved actor
 SAME_SCUMM_LOAD_EGO_STATE_END               = $7E7FDA
+; Long StartObject replacement ABI observations. The range is the measured
+; gap between LoadEgo diagnostics and the object-owner table at $7E8000.
+SAME_SCUMM_START_OBJECT_CALLER_SP            = $7E7FDA ; u16 before replacement JSL
+SAME_SCUMM_START_OBJECT_ADAPTER_SP            = $7E7FDC ; u16 far-adapter entry
+SAME_SCUMM_START_OBJECT_ADAPTER_RETURN_SP     = $7E7FDE ; u16 after inner JSR/RTS
+SAME_SCUMM_START_OBJECT_CALLER_RETURN_SP      = $7E7FE0 ; u16 after JSL/RTL
+SAME_SCUMM_START_OBJECT_SLOT_INDEX             = $7E7FE2 ; u16 X at descriptor access
+SAME_SCUMM_START_OBJECT_FRAME_OPS              = $7E7FE4 ; u16 live count at handoff
+SAME_SCUMM_START_OBJECT_NATIVE_DIAG_END        = $7E7FE6
 SAME_SCUMM_LOAD_EGO_STATE_SIZE              = $000E
 
 ; Movement-observer scratch is outside the M23B nested-program vector

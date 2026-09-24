@@ -176,6 +176,19 @@ def start_script(number: int, arguments: tuple[int, ...] = ()) -> bytes:
     return bytes(encoded)
 
 
+def startscript_replacement_scripts() -> tuple[bytes, bytes]:
+    """Self-replace one global activation with a distinct argument."""
+    # The first activation has local0=0 and starts script 75 again with
+    # local0=$BEEF. Its old continuation writes V11 and must never execute.
+    # The replacement takes the false branch, copies its local into V10,
+    # yields once, and then stops on the following scheduler tick.
+    retired_tail = start_script(75, (0xBEEF,)) + set_word(11, 0xDEAD) + b"\x00"
+    replacement_tail = bytes((0x9A, 10, 0, 0x00, 0x40, 0x80, 0x00))
+    branch = bytes((0x28, 0x00, 0x40, len(retired_tail), 0x00))
+    body = branch + retired_tail + replacement_tail
+    return start_script(75, (0,)) + b"\x00", body
+
+
 def object_resource(
     object_id: int, entries: tuple[tuple[int, bytes], ...],
     program_prefix: bytes = b"",
@@ -741,6 +754,18 @@ def actor_position_selector_truncated_scripts() -> tuple[bytes, tuple[tuple[int,
     return bytes.fromhex("43 0a 00 01"), ()
 
 
+def actor_position_success_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
+    """Four direct/variable X/Y queries, each isolated by breakHere."""
+    entry = set_word(11, 7) + bytes.fromhex(
+        "43 14 00 07 00 80 "  # direct X -> V20, yield
+        "23 15 00 07 00 80 "  # direct Y -> V21, yield
+        "c3 16 00 0b 00 80 "  # variable X(Var11) -> V22, yield
+        "a3 17 00 0b 00 80 "  # variable Y(Var11) -> V23, yield
+        "00"
+    )
+    return entry, ()
+
+
 def global_room_continuation_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...], bytes]:
     """Yield a global out of ENCD before its room change, then test its locals."""
     entry = start_script(75) + bytes((0x00,))
@@ -886,13 +911,14 @@ def main() -> int:
         "setstate", "setstate-invalid", "setstate-malformed",
         "getfacing", "getfacing-invalid", "getfacing-malformed",
         "actor-position-result-truncated", "actor-position-result-invalid",
-        "actor-position-selector-truncated",
+        "actor-position-selector-truncated", "actor-position-success",
         "getwalkbox", "getwalkbox-invalid", "getwalkbox-malformed",
         "getdist", "getdist-malformed",
         "message", "message-long", "message-malformed",
         "lookup", "lookup-missing", "global-lookup-missing",
         "startobject", "startobject-replacement", "startobject-long-replacement",
         "startobject-nested",
+        "startscript-replacement",
         "global-room-continuation",
         "local-room-continuation",
         "null-room-lifecycle",
@@ -944,6 +970,7 @@ def main() -> int:
         "actor-position-result-truncated": actor_position_result_truncated_scripts,
         "actor-position-result-invalid": actor_position_result_invalid_scripts,
         "actor-position-selector-truncated": actor_position_selector_truncated_scripts,
+        "actor-position-success": actor_position_success_scripts,
         "global-room-continuation": global_room_continuation_scripts,
         "getwalkbox": getwalkbox_scripts,
         "getwalkbox-invalid": getwalkbox_invalid_scripts,
@@ -969,6 +996,10 @@ def main() -> int:
         entry, locals_, object_payloads = startobject_long_replacement_scripts()
     elif args.case == "startobject-nested":
         entry, locals_, object_payloads = startobject_nested_scripts()
+    elif args.case == "startscript-replacement":
+        entry, _global_program = startscript_replacement_scripts()
+        locals_ = ()
+        extra_global = (75, _global_program)
     elif args.case == "global-room-continuation":
         entry, locals_, _requester = global_room_continuation_scripts()
     elif args.case == "local-room-continuation":
@@ -1105,7 +1136,9 @@ def main() -> int:
             "number": number, "resource_key": f"script.{number}",
             "output": global_output.name, "length": len(program),
             "sha256": sha(program),
-            "source": "copyright-free null-room lifecycle fixture",
+            "source": ("copyright-free StartScript self-replacement fixture"
+                       if args.case == "startscript-replacement"
+                       else "copyright-free null-room lifecycle fixture"),
         })
     if args.case in {"crate", "fishnet", "balloon", "salvage", "startup42", "room55", "room55-movement"}:
         # The production sentence boundary launches VAR_SENTENCE_SCRIPT (2).
@@ -1230,6 +1263,11 @@ def main() -> int:
         }, *extra_records],
         "global_scripts": global_scripts,
     }
+    if args.case == "actor-position-success":
+        manifest["actor_positions"] = (
+            [[0, 0] for _ in range(7)] + [[0x1234, 0x2345]]
+            + [[0, 0] for _ in range(24)]
+        )
     if args.case == "getdist":
         manifest["actor_positions"] = [[0, 0], [7, 1], [2, 1]] + [[0, 0]] * 29
         count = 600
