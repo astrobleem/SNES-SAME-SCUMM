@@ -15,6 +15,7 @@ from same.errors import EngineExecutionError, ResourceError
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
 from same.services import HostServices
+from tools.cook_scumm_v5_rooms import prepend_fixture_global_script
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -103,6 +104,24 @@ def manifest() -> bytes:
 
 
 class CookedRoomTests(unittest.TestCase):
+    def test_fixture_global_wrapper_preserves_and_distinguishes_source_body(self) -> None:
+        original = bytes.fromhex("1a 34 12 00 00 00")
+        transformed, provenance = prepend_fixture_global_script(
+            original, target_script=144, prefix_script=18,
+        )
+
+        self.assertEqual(transformed, bytes.fromhex("0a 12 ff") + original)
+        self.assertEqual(provenance["kind"], "synthetic-fixture-wrapper")
+        self.assertEqual(provenance["target_script"], 144)
+        self.assertEqual(provenance["prefix_bytes"], "0a12ff")
+        self.assertEqual(provenance["original_length"], len(original))
+        self.assertEqual(provenance["original_sha256"], hashlib.sha256(original).hexdigest())
+        self.assertEqual(provenance["transformed_length"], len(transformed))
+        self.assertEqual(
+            provenance["transformed_sha256"], hashlib.sha256(transformed).hexdigest(),
+        )
+        self.assertNotEqual(provenance["original_sha256"], provenance["transformed_sha256"])
+
     def test_record_round_trip_and_strict_transactional_validation(self) -> None:
         payload = raw_room(entry=b"\x00", exit=b"\x00", locals=((200, b"\x80\x00"),))
         record_bytes = cooked(1, payload)
@@ -205,6 +224,76 @@ class CookedRoomTests(unittest.TestCase):
         self.assertLess(retire_index, activate_index)
         self.assertLess(activate_index, entry_index)
         self.assertLess(entry_index, execute_index)
+
+    def test_resource_less_room_zero_runs_exit_retires_locals_and_preserves_globals(self) -> None:
+        class ReadTrackingResources(MemoryResourceProvider):
+            def __init__(self, resources):
+                super().__init__(resources)
+                self.read_keys: list[str] = []
+
+            def read(self, key, offset=0, length=None):
+                self.read_keys.append(key)
+                return super().read(key, offset, length)
+
+        local = bytes((
+            0x46, 11, 0,       # increment old-room local counter
+            0x80,              # yield
+            0x18, 0xF9, 0xFF, # loop to the increment
+        ))
+        global_program = bytes((
+            0x46, 20, 0,
+            0x80,
+            0x18, 0xF9, 0xFF,
+        ))
+        room1 = raw_room(
+            entry=bytes((
+                0x0A, 75, 0xFF,   # global survives room changes
+                0x0A, 200, 0xFF,  # room-local must be retired
+                0x00,
+            )),
+            exit=bytes((0x46, 12, 0, 0x00)),
+            locals=((200, local),),
+        )
+        boot = bytes((0x72, 1, 0x80, 0x72, 0, 0x00))
+        resources = ReadTrackingResources({
+            "script.boot": boot,
+            "script.75": global_program,
+            "room.1": room1,
+            "cooked.room.1": cooked(1, room1),
+            "cooked.rooms.manifest": manifest(),
+        })
+        profile = load_profile(PROFILE)
+        host = EngineHost(
+            profile, default_registry(),
+            services=HostServices.create(profile, resources=resources),
+        )
+        host.boot()
+        host.tick()
+        host.tick()
+        host.tick()
+
+        state = host.engine.inspect_state()
+        self.assertEqual(state["room"], 0)
+        self.assertNotIn("room.0", resources.read_keys)
+        self.assertNotIn("cooked.room.0", resources.read_keys)
+        self.assertEqual(state["variables"].get("12"), 1)  # old EXCD exactly once
+        self.assertFalse(any(
+            slot["active"] and slot["room"] == 1 and slot["script_kind"] == "LSCR"
+            for slot in state["scripts"]
+        ))
+        local_value = state["variables"].get("11", 0)
+        global_value = state["variables"].get("20", 0)
+        self.assertTrue(any(
+            slot["active"] and slot["number"] == 75 and slot["script_kind"] == "global"
+            for slot in state["scripts"]
+        ))
+        host.tick()
+        after = host.engine.inspect_state()
+        self.assertEqual(after["variables"].get("11", 0), local_value)
+        self.assertGreater(after["variables"].get("20", 0), global_value)
+        phases = [item["phase"] for item in host.engine.inspect_room_lifecycle()]
+        self.assertEqual(phases.count("old_exit_completed"), 1)
+        self.assertIn("old_room_scripts_retired", phases)
 
     def test_room_local_nested_child_runs_immediately_then_resumes_later(self) -> None:
         # ENCD starts local A. A owns local[0]=1, immediately starts local B,

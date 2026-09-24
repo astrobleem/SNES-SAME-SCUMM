@@ -4,7 +4,7 @@ TAD_COMPILER ?= $(or $(wildcard $(CURDIR)/../terrific-audio-driver/target/releas
 
 .PHONY: all fixtures generate fate-audio test validate demo package adventure-package \
 	engine-demo audio simulate snes s5-snes h0 k1 c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 c11 c12 c13 c14 c15 c16 c17 c18 c19 c20 c21 c22 c23 c24 c25 c26 c28 c29 c30 c31 c32 c33 c34 c35 c36 c37 c38 c39 c40 c41 c42 s1 s2 s3 s4 s5 s6-preflight s6-tad s6-auditions \
-	m4 m5-build m5 m6 m7-build m7 m8-build m8 m9-build m9 m10-build m10 m11-build m11 m12-build m12 m13-build m13 m14-build m14 m15-build m15 m16-build m16 m17-build m17 m18-build m18 m19-build m19 m20-build m20 m21-build m21 m22-build m22 m23a-build m23a m23b-build m23b m23c-build m23c m24ra-build m24ra m24rb-build m24rb m25a-validator-build m25a-validator clean
+	m4 m5-build m5 m6 m7-build m7 m8-build m8 m9-build m9 m10-build m10 m11-build m11 m12-build m12 m13-build m13 m14-build m14 m15-build m15 m16-build m16 m17-build m17 m18-build m18 m19-build m19 m20-build m20 m21-build m21 m22-build m22 m23a-build m23a m23b-build m23b m23c-build m23c m24ra-build m24ra m24rb-build m24rb m25a-validator-build m25a-validator m25a-startobject-normal m25a-startobject-control m25a-startobject-replacement m25a-global-room-continuation m25a-local-room-continuation m25a-actor-position-errors-build m25a-actor-position-errors m25a-null-room-lifecycle-build m25a-null-room-lifecycle m25a-pending-room-request-build m25a-pending-room-request m25a-lookup-missing-build m25a-lookup-missing clean
 
 all: fixtures generate test validate demo
 
@@ -14,12 +14,22 @@ fixtures:
 generate: fixtures
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m same.cli abi generate runtime/snes/generated/abi.inc.pasm
 	$(PYTHON) tools/generate_snes_engine_selection.py --engine demo
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) tools/generate_snes_scumm_variables.py \
+		--synthetic --profile examples/profiles/scumm_v5_conformance.json \
+		--include runtime/snes/generated/scumm_v5_variables.inc.pasm \
+		--manifest build/test-scumm-v5-variables.json
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) tools/generate_snes_carrier.py \
 		--carrier lorom --rom-size-code 0x07 \
 		--manifest runtime/snes/generated/carrier_manifest.json
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) tools/generate_snes_video_backend.py \
 		--backend legacy_backdrop --carrier lorom \
 		--manifest runtime/snes/generated/video_backend_manifest.json
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) tools/generate_snes_video_overlay.py \
+		--overlay none --carrier lorom --backend legacy_backdrop \
+		--manifest build/test-video-overlay-manifest.json
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) tools/generate_music_catalog.py \
+		audio/m24ra/catalog.json examples/resources/music/test_tad_song_enums.inc \
+		runtime/snes/generated/music_catalog.inc.pasm
 
 fate-audio:
 	mkdir -p build/fate-audio
@@ -40,8 +50,16 @@ test: generate
 
 validate: generate
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) tools/lint_poppy.py runtime/snes/main.pasm
-	@for f in examples/targets/*.json; do PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m same.cli target validate "$$f" >/dev/null; done
-	@for f in examples/profiles/*.json; do PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m same.cli engine validate "$$f" >/dev/null; done
+	@set -e; for f in examples/targets/*.json; do PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m same.cli target validate "$$f" >/dev/null; done
+	@set -e; for f in \
+		examples/profiles/agi_v2_conformance.json \
+		examples/profiles/scumm_v5_conformance.json \
+		examples/profiles/scumm_v5_s2_conformance.json \
+		examples/profiles/scumm_v5_s3_conformance.json \
+		examples/profiles/scumm_v5_s4_conformance.json \
+		examples/profiles/scumm_v5_s5_conformance.json; do \
+		PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m same.cli engine validate "$$f" >/dev/null; \
+	done
 
 package:
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m same.cli package build \
@@ -715,10 +733,9 @@ m25a-validator-build:
 		SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
 		SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
 		SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
-		SAME_BUILD_SCUMM_M20=1 SAME_BUILD_SCUMM_M21=1 SAME_BUILD_SCUMM_M22=1 \
 		SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+		SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
 		SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=$$case \
-		SAME_SCUMM_SAVE_LOGICAL_ID=80 \
 		SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
 		SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/$$case/m25a-$$case.sfc \
 		tools/build_snes.sh || exit 1; \
@@ -735,6 +752,193 @@ m25a-validator: m25a-validator-build
 		--depth-manifest build/m25a-validator/depth/manifest.json \
 		--missing-manifest build/m25a-validator/missing/manifest.json \
 		--outer-manifest build/m25a-validator/outer/manifest.json
+
+m25a-startobject-replacement:
+	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
+	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+	SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
+	SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=startobject-replacement \
+	SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+	SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/startobject-replacement/m25a-startobject-replacement.sfc \
+	tools/build_snes.sh
+	PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
+		tools/validate_scumm_start_object_nexen.py \
+		--case replacement \
+		--rom build/m25a-validator/startobject-replacement/m25a-startobject-replacement.sfc \
+		--output build/m25a-validator/startobject-replacement/evidence.json
+
+m25a-startobject-control:
+	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
+	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+	SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
+	SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=startobject-nested \
+	SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+	SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/startobject-nested/m25a-startobject-nested.sfc \
+	tools/build_snes.sh
+	PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
+		tools/validate_scumm_start_object_nexen.py \
+		--case nested \
+		--rom build/m25a-validator/startobject-nested/m25a-startobject-nested.sfc \
+		--output build/m25a-validator/startobject-nested/evidence.json
+
+m25a-startobject-normal:
+	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
+	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+	SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
+	SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=startobject \
+	SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+	SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/startobject/m25a-startobject.sfc \
+	tools/build_snes.sh
+	PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
+		tools/validate_scumm_start_object_nexen.py \
+		--case normal \
+		--rom build/m25a-validator/startobject/m25a-startobject.sfc \
+		--output build/m25a-validator/startobject/evidence.json
+
+m25a-global-room-continuation:
+	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
+	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+	SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
+	SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=global-room-continuation \
+	SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+	SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/global-room-continuation/m25a-global-room-continuation.sfc \
+	tools/build_snes.sh
+	PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
+		tools/validate_scumm_global_room_continuation_nexen.py \
+		--rom build/m25a-validator/global-room-continuation/m25a-global-room-continuation.sfc \
+		--manifest build/m25a-validator/global-room-continuation/manifest.json \
+		--output build/m25a-validator/global-room-continuation/evidence.json
+
+m25a-local-room-continuation:
+	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
+	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+	SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
+	SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=local-room-continuation \
+	SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+	SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/local-room-continuation/m25a-local-room-continuation.sfc \
+	tools/build_snes.sh
+	PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
+		tools/validate_scumm_local_room_continuation_nexen.py \
+		--rom build/m25a-validator/local-room-continuation/m25a-local-room-continuation.sfc \
+		--manifest build/m25a-validator/local-room-continuation/manifest.json \
+		--output build/m25a-validator/local-room-continuation/evidence.json
+
+m25a-actor-position-errors-build:
+	@for case in actor-position-result-truncated actor-position-result-invalid actor-position-selector-truncated; do \
+		SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+		SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+		SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+		SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
+		SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+		SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
+		SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=$$case \
+		SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+		SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/$$case/m25a-$$case.sfc \
+		tools/build_snes.sh || exit 1; \
+	done
+
+m25a-actor-position-errors: m25a-actor-position-errors-build
+	PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
+		tools/validate_scumm_actor_position_errors_nexen.py \
+		--truncated-result-rom build/m25a-validator/actor-position-result-truncated/m25a-actor-position-result-truncated.sfc \
+		--invalid-result-rom build/m25a-validator/actor-position-result-invalid/m25a-actor-position-result-invalid.sfc \
+		--truncated-selector-rom build/m25a-validator/actor-position-selector-truncated/m25a-actor-position-selector-truncated.sfc \
+		--output build/m25a-validator/actor-position-errors/evidence.json
+
+m25a-null-room-lifecycle-build:
+	SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
+	SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+	SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
+	SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=null-room-lifecycle \
+	SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+	SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/null-room-lifecycle/m25a-null-room-lifecycle.sfc \
+	tools/build_snes.sh
+
+m25a-null-room-lifecycle: m25a-null-room-lifecycle-build
+	PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
+		tools/validate_scumm_null_room_lifecycle_nexen.py \
+		--rom build/m25a-validator/null-room-lifecycle/m25a-null-room-lifecycle.sfc \
+		--manifest build/m25a-validator/null-room-lifecycle/manifest.json \
+		--output build/m25a-validator/null-room-lifecycle/evidence.json
+
+# Exercise both route entry paths against the real Storage service. The near
+# route invokes the shared native phase-4/5 guard used at the head of the
+# near-only RequestRoom body; the far route enters the banked RequestRoom
+# implementation, which calls the same guard through its far adapter. A
+# banked runtime profile is needed to keep the full fixture engine out of the
+# bank-0 ROM-header window.
+m25a-pending-room-request-build:
+	@for route in near far; do \
+		SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+		SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+		SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+		SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
+		SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+		SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
+		SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=pending-room-request \
+		SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+		SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/pending-$$route/m25a-pending-$$route.sfc \
+		tools/build_snes.sh || exit 1; \
+	done
+
+m25a-pending-room-request: m25a-pending-room-request-build
+	@for route in near far; do \
+		for phase in 4 5; do \
+		for mode in same conflict direct; do \
+			PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
+				tools/validate_scumm_pending_room_request_nexen.py \
+				--rom build/m25a-validator/pending-$$route/m25a-pending-$$route.sfc \
+				--manifest build/m25a-validator/pending-room-request/manifest.json \
+				--route $$route \
+				--phase $$phase \
+				--mode $$mode \
+				--output build/m25a-validator/pending-$$route/phase-$$phase-$$mode-evidence.json || exit 1; \
+		done; \
+		done; \
+	done
+
+# Missing body-requiring starts must fail visibly in both namespaces.
+# The authentic-path validator also rejects any reached mapping error, rather
+# than treating a low final error byte as proof of executable closure.
+m25a-lookup-missing-build:
+	@for case in lookup-missing global-lookup-missing; do \
+		SAME_TAD_PREBUILT_DIR=$(CURDIR)/build/m24rb-content \
+		SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24rb/catalog.json \
+		SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/m24ra_tad_layout.inc.pasm \
+		SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 \
+		SAME_BUILD_SCUMM_M23A=1 SAME_BUILD_SCUMM_M23B=1 SAME_BUILD_SCUMM_M23C=1 \
+		SAME_BUILD_SCUMM_SCENARIO_FIXTURE=1 SAME_SCUMM_SCENARIO_START_ROOM=49 \
+		SAME_BUILD_SCUMM_M25A_VALIDATOR=1 SAME_M25A_VALIDATOR_CASE=$$case \
+		SAME_SNES_PROFILE=$(CURDIR)/examples/profiles/m25a_nested_conformance.json \
+		SAME_SNES_OUTPUT=$(CURDIR)/build/m25a-validator/$$case/m25a-$$case.sfc \
+		tools/build_snes.sh || exit 1; \
+	done
+
+m25a-lookup-missing: m25a-lookup-missing-build
+	PYTHONPATH=/home/chad/Mesen2/python:src:tools $(PYTHON) \
+		tools/validate_scumm_room_local_lookup_nexen.py \
+		--missing-rom build/m25a-validator/lookup-missing/m25a-lookup-missing.sfc \
+		--missing-global-rom build/m25a-validator/global-lookup-missing/m25a-global-lookup-missing.sfc \
+		--missing-only \
+		--output build/m25a-validator/unmapped-starts-evidence.json
 
 clean:
 	rm -rf build out/* runtime/snes/generated/*

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from fate_test_data import require_fate_demo_archive
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from tools.convert_fate_sound_to_tad_mml import load_sound, collect_notes, quantize_notes, virtualize_polyphony
@@ -10,8 +11,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 class M24RBCompositeTests(unittest.TestCase):
     def test_sound82_role_priority_is_stable_and_bounded(self):
-        archive=Path("/home/chad/fatedemo-box.zip")
-        if not archive.exists(): self.skipTest("user-supplied Fate demo absent")
+        archive=require_fate_demo_archive(self)
         sound=load_sound(archive,82)
         notes,decisions=virtualize_polyphony(82,quantize_notes(82,collect_notes(sound)))
         self.assertEqual(sound.sha256,"e665931c3440486624afde85035d4f1cd895a1ac097c9d915e115511b82dcb25")

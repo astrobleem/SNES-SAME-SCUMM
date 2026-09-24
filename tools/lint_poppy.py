@@ -9,6 +9,7 @@ assembler dialect, ABI drift, and missing target lifecycle labels.
 from __future__ import annotations
 
 import argparse
+import ast
 from pathlib import Path
 import re
 import sys
@@ -41,9 +42,51 @@ REQUIRED_LABELS = {
 }
 
 
+def _conditional_value(expression: str, symbols: dict[str, int]) -> bool | None:
+    """Evaluate the small boolean subset used to guard source includes.
+
+    Unknown expressions are kept active so lint fails closed on missing inputs.
+    This only filters includes in inactive generated build branches; it does
+    not preprocess or omit ordinary source text from the lint scan.
+    """
+    value = expression.strip().replace("&&", " and ").replace("||", " or ")
+    value = re.sub(r"(?<![<>=!])!(?!=)", " not ", value)
+    value = re.sub(r"\$([0-9A-Fa-f]+)", r"0x\1", value)
+    unknown = False
+
+    def substitute(match: re.Match[str]) -> str:
+        nonlocal unknown
+        token = match.group(0)
+        if token in {"and", "or", "not"}:
+            return token
+        if token in symbols:
+            return str(symbols[token])
+        if token in {"True", "False"}:
+            return token
+        unknown = True
+        return token
+
+    value = re.sub(r"\b[A-Za-z_][A-Za-z0-9_]*\b", substitute, value)
+    if unknown:
+        return None
+    try:
+        tree = ast.parse(value, mode="eval")
+    except SyntaxError:
+        return None
+    allowed = (
+        ast.Expression, ast.Constant, ast.BoolOp, ast.UnaryOp, ast.Compare,
+        ast.And, ast.Or, ast.Not, ast.Eq, ast.NotEq,
+    )
+    if any(not isinstance(node, allowed) for node in ast.walk(tree)):
+        return None
+    return bool(eval(compile(tree, "<poppy-include-condition>", "eval"),
+                     {"__builtins__": {}}, {}))
+
+
 def include_closure(main: Path) -> list[Path]:
     visited: set[Path] = set()
     ordered: list[Path] = []
+    symbols: dict[str, int] = {}
 
     def visit(path: Path) -> None:
         path = path.resolve()
@@ -54,8 +97,50 @@ def include_closure(main: Path) -> list[Path]:
         visited.add(path)
         ordered.append(path)
         text = path.read_text(encoding="utf-8")
-        for match in re.finditer(r'^\s*\.include\s+"([^"]+)"', text, re.MULTILINE):
-            visit(path.parent / match.group(1))
+        active = {True}
+        branches: list[tuple[set[bool], bool | None]] = []
+        for line in text.splitlines():
+            code = line.split(";", 1)[0].strip()
+            if code.lower().startswith(".if "):
+                condition = _conditional_value(code[4:], symbols)
+                branches.append((active, condition))
+                if condition is True:
+                    active = set(active)
+                elif condition is False or True not in active:
+                    active = {False}
+                else:
+                    # Unknown conditions are conservatively treated as
+                    # potentially active, so missing includes on either side
+                    # remain visible to lint.
+                    active = {False, True}
+                continue
+            if code.lower() == ".else":
+                if not branches:
+                    continue
+                parent, condition = branches[-1]
+                if condition is False:
+                    active = set(parent)
+                elif condition is True or True not in parent:
+                    active = {False}
+                else:
+                    active = {False, True}
+                continue
+            if code.lower() == ".endif":
+                if branches:
+                    parent, _condition = branches.pop()
+                    active = parent
+                continue
+            if True not in active:
+                continue
+            definition = re.match(
+                r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\$([0-9A-Fa-f]+)\b",
+                code,
+            )
+            if definition:
+                symbols[definition.group(1)] = int(definition.group(2), 16)
+            include = re.match(r'^\.include\s+"([^"]+)"', code, re.IGNORECASE)
+            if include:
+                visit(path.parent / include.group(1))
 
     visit(main)
     return ordered

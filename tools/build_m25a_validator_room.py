@@ -53,6 +53,14 @@ def selected_corpus_identity(archive: Path) -> dict[str, object]:
     }
 
 
+def require_fixture_room_is_unbound(fixture_room: int, authored_rooms: set[int]) -> None:
+    """Keep a synthetic carrier outside this corpus's actual room namespace."""
+    if fixture_room in authored_rooms:
+        raise RuntimeError(
+            f"synthetic fixture room {fixture_room} collides with an authored room"
+        )
+
+
 def chunk(tag: bytes, payload: bytes) -> bytes:
     return tag + struct.pack(">I", len(payload) + 8) + payload
 
@@ -61,6 +69,7 @@ def room(
     entry: bytes,
     locals_: tuple[tuple[int, bytes], ...],
     *,
+    exit: bytes = b"\x00",
     objects: bool = False,
     object_payloads: tuple[bytes, ...] = (),
     walkbox_count: int = 2,
@@ -130,12 +139,12 @@ def room(
         ))) for object_id, x, y, width, height in (
             ((590, 1, 1, 3, 1), (591, 4, 0, 2, 2)) if objects else ()
         ) if not object_payloads),
-        chunk(b"ENCD", entry), chunk(b"EXCD", b"\x00"),
+        chunk(b"ENCD", entry), chunk(b"EXCD", exit),
         *(chunk(b"LSCR", bytes((number,)) + program) for number, program in locals_),
     ))
 
 
-def descriptors(payload: bytes) -> tuple[ScriptChunkInput, ...]:
+def descriptors(payload: bytes, room_id: int = 49) -> tuple[ScriptChunkInput, ...]:
     result: list[ScriptChunkInput] = []
     offset = 0
     while offset < len(payload):
@@ -144,10 +153,10 @@ def descriptors(payload: bytes) -> tuple[ScriptChunkInput, ...]:
         if tag in {"ENCD", "EXCD", "LSCR"}:
             if tag == "LSCR":
                 number, body = payload[offset + 8], 9
-                identity = f"room.49/LSCR.{number}"
+                identity = f"room.{room_id}/LSCR.{number}"
             else:
                 number, body = (10002 if tag == "ENCD" else 10001), 8
-                identity = f"room.49/{tag}"
+                identity = f"room.{room_id}/{tag}"
             result.append(ScriptChunkInput(tag, number, identity, offset, body, size - body))
         offset += size
     return tuple(result)
@@ -157,8 +166,14 @@ def set_word(variable: int, value: int) -> bytes:
     return bytes((0x1A, variable & 0xFF, variable >> 8, value & 0xFF, value >> 8))
 
 
-def start_script(number: int) -> bytes:
-    return bytes((0x0A, number, 0xFF))
+def start_script(number: int, arguments: tuple[int, ...] = ()) -> bytes:
+    """Encode a nonrecursive startScript and its word varargs exactly."""
+    encoded = bytearray((0x0A, number))
+    for argument in arguments:
+        value = argument & 0xFFFF
+        encoded.extend((0x00, value & 0xFF, value >> 8))
+    encoded.append(0xFF)
+    return bytes(encoded)
 
 
 def object_resource(
@@ -215,6 +230,77 @@ def startobject_scripts() -> tuple[
         )
     )
     return entry, locals_, objects
+
+
+def startobject_replacement_scripts() -> tuple[
+    bytes, tuple[tuple[int, bytes], ...], tuple[bytes, ...]
+]:
+    """Same-object/different-verb replacement with an observable argument."""
+    def start_object(object_id: int, verb: int, *arguments: int) -> bytes:
+        encoded = bytearray((0x37, object_id & 0xFF, object_id >> 8, verb))
+        for argument in arguments:
+            encoded.extend((0, argument & 0xFF, argument >> 8))
+        encoded.append(0xFF)
+        return bytes(encoded)
+
+    # Verb 10 replaces its own activation with verb 8.  The old continuation
+    # writes global 11 and must never run.  Verb 8 copies its new local0
+    # argument to global 10, making fresh-entry argument transfer observable.
+    old_verb = start_object(100, 8, 0xBEEF) + set_word(11, 0xDEAD) + bytes((0x00,))
+    # setVar(10, local0), breakHere, STOP.  The yielded checkpoint exposes
+    # the replacement's copied argument before the following tick retires it.
+    new_verb = bytes((0x9A, 10, 0, 0, 0x40, 0x80, 0x00))
+    entry = set_word(10, 0) + set_word(11, 0) + start_object(100, 10) + bytes((0x00,))
+    objects = (object_resource(100, ((10, old_verb), (8, new_verb))),)
+    return entry, (), objects
+
+
+def startobject_nested_scripts() -> tuple[
+    bytes, tuple[tuple[int, bytes], ...], tuple[bytes, ...]
+]:
+    """Different-object nesting must return to the original object activation."""
+    def start_object(object_id: int, verb: int, *arguments: int) -> bytes:
+        encoded = bytearray((0x37, object_id & 0xFF, object_id >> 8, verb))
+        for argument in arguments:
+            value = argument & 0xFFFF
+            encoded.extend((0, value & 0xFF, value >> 8))
+        encoded.append(0xFF)
+        return bytes(encoded)
+
+    # OBCD 100/verb 10 starts a distinct OBCD activation. Once that child
+    # stops, the original parent writes V11; the child copies its argument
+    # into V10. These sentinels make both sides of the nested handoff visible.
+    parent = start_object(101, 8, 0xCAFE) + bytes((0x46, 11, 0, 0x00))
+    child = bytes((0x9A, 10, 0, 0, 0x40, 0x00))
+    entry = set_word(10, 0) + set_word(11, 0) + start_object(100, 10) + bytes((0x00,))
+    objects = (
+        object_resource(100, ((10, parent),)),
+        object_resource(101, ((8, child),)),
+    )
+    return entry, (), objects
+
+
+def null_room_lifecycle_scripts() -> tuple[
+    bytes, tuple[tuple[int, bytes], ...], bytes, bytes
+]:
+    """Exercise real M23A outgoing cleanup when entering resource-less room 0."""
+    entry = b"".join((
+        start_script(75),
+        start_script(200),
+        bytes((0x72, 0x00, 0x00)),  # loadRoom(0); STOP
+    ))
+    local = bytes((
+        0x46, 11, 0,       # increment room-owned counter
+        0x80,              # breakHere
+        0x18, 0xF9, 0xFF, # loop while this room owns the activation
+    ))
+    exit_script = bytes((0x46, 12, 0, 0x00))
+    global_script = bytes((
+        0x46, 20, 0,       # global remains scheduled after room 0 install
+        0x80,
+        0x18, 0xF9, 0xFF,
+    ))
+    return entry, ((200, local),), exit_script, global_script
 
 
 def normal_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
@@ -489,6 +575,27 @@ def _authored_global_script_numbers() -> tuple[int, ...]:
     )
 
 
+def _authored_room_numbers() -> set[int]:
+    """Return every room resource identity present in the selected corpus."""
+    if not FATE_ARCHIVE.is_file():
+        raise RuntimeError(f"missing supplied Fate archive: {FATE_ARCHIVE}")
+    with zipfile.ZipFile(FATE_ARCHIVE) as bundle:
+        raw = {
+            "game.index": bundle.read(source_member(bundle, ".000")),
+            "game.data": bundle.read(source_member(bundle, ".001")),
+        }
+    profile = load_profile(ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
+                           verify_resources=False)
+    provider = LucasartsScummV5ResourceProvider(
+        MemoryResourceProvider(raw), parse_game_policy(profile)
+    )
+    return {
+        int(key.split(".", 1)[1])
+        for key in provider.keys()
+        if key.startswith("room.") and key.split(".", 1)[1].isdigit()
+    }
+
+
 def _authored_global_classes(count: int = 600) -> bytes:
     """Serialize the source DOBJ class masks for the scenario cooker."""
     if not FATE_ARCHIVE.is_file():
@@ -557,23 +664,15 @@ def salvage_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...], tuple[bytes
 
 
 def startup42_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...], tuple[bytes, ...]]:
-    """Controlled startup root: ENCD launches the real global script 1."""
-    # Let the authored startup/title lifecycle establish room 75 first.  The
-    # scenario driver later starts the source-authored game-selection call to
-    # script 1 with its documented selector argument through the normal script
-    # launcher, avoiding a synthetic room context for the title prelude.
-    # Canonical no-argument startScript encoding is opcode, script number,
-    # vararg terminator, then stop.  The extra zero previously inserted
-    # before FF was decoded as a direct argument and made the fixture fail
-    # before script 1 could begin.
-    # The scenario root supplies the source-documented selector as an ordinary
-    # startScript vararg.  This is a fixture boundary, not a PC/slot write;
-    # script 1 still executes from PC zero and evaluates its own branch.
-    # Script 18 is the authored global verb-configuration program.  Starting
-    # it through the ordinary ENCD launcher keeps the controller's labels in
-    # C17 runtime state; this is not a controller-side verb-name table or a
-    # direct C17 write.
-    return bytes.fromhex("0a 01 00 0a 12 ff 13 03 ff 00"), (), ()
+    """Controlled root: start authentic Global1(local0=0) and Global18."""
+    # Canonical boot allocates Global1 with zeroed locals. Encode that
+    # source-observed selector explicitly, then terminate its varargs before
+    # emitting the distinct ordinary Global18 start. Global1 also reaches its
+    # authored Global18 call later; this early start is the fixture's explicit
+    # incoming verb/UI prerequisite, not a modification of either body.
+    entry = start_script(1, (0,)) + start_script(18)
+    # Preserve the fixture's harmless actorOps terminator and ENCD STOP.
+    return entry + bytes((0x13, 0x03, 0xFF, 0x00)), (), ()
 
 
 GET_FACING_ANGLES = (0, 70, 71, 90, 109, 110, 180, 250, 251, 270, 289, 290, 359)
@@ -596,6 +695,53 @@ def getfacing_invalid_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
 
 def getfacing_malformed_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
     return start_script(200) + bytes((0x00,)), ((200, bytes.fromhex("e3 00 00 01")),)
+
+
+def actor_position_result_truncated_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
+    # Put malformed bytes in ENCD (slot zero): C4 locals intentionally treat
+    # exact resource EOF as an implicit stop, which is not a truncated-fetch
+    # test.  getActorX has only the low byte of its result reference here.
+    return bytes.fromhex("43 0a"), ()
+
+
+def actor_position_result_invalid_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
+    # The result variable names local $0FFF, outside the 32-local activation.
+    return bytes.fromhex("43 ff 4f"), ()
+
+
+def actor_position_selector_truncated_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
+    # Valid global V10 result, then only the low byte of the direct word actor
+    # selector.  ENCD's strict fetch boundary makes this a real truncation.
+    return bytes.fromhex("43 0a 00 01"), ()
+
+
+def global_room_continuation_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...], bytes]:
+    """Yield a global out of ENCD before its room change, then test its locals."""
+    entry = start_script(75) + bytes((0x00,))
+    requester = b"".join((
+        set_word(0x4000, 0x1234),       # Global75.local0 is distinctive.
+        bytes((0x80,)),                 # Let the room ENCD finish first.
+        bytes((0x72, 50)),             # loadRoom(50) through M23A.
+        bytes((0x9A, 10, 0, 0, 0x40)), # V10 = Global75.local0 after ENCD.
+        bytes((0x46, 11, 0)),          # exactly one continuation execution.
+        bytes((0x80, 0x18, 0xFC, 0xFF)), # Yield, then return to this stable poll.
+    ))
+    return entry, (), requester
+
+
+def local_room_continuation_scripts() -> tuple[
+    bytes, tuple[tuple[int, bytes], ...], bytes
+]:
+    """Invalid room-local continuation must stay invalid through storage."""
+    entry = set_word(13, 0) + start_script(200) + bytes((0x00,))
+    local = b"".join((
+        set_word(0x4000, 0xBEEF),       # Distinctive outgoing local0.
+        bytes((0x80,)),                 # Resume on a later scheduler pass.
+        bytes((0x72, 50)),              # loadRoom(50), then stale tail marker.
+        bytes((0x9A, 13, 0, 0, 0x40)), # Must not execute after room install.
+        bytes((0x00,)),
+    ))
+    return entry, ((200, local),), set_word(12, 0xBEEF) + bytes((0x00,))
 
 
 def getwalkbox_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
@@ -701,6 +847,11 @@ def lookup_missing_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
     return start_script(203) + bytes((0x00,)), ((202, bytes((0x00,))),)
 
 
+def global_lookup_missing_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
+    """A body-requiring global start with no generated executable mapping."""
+    return start_script(131) + bytes((0x00,)), ()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", choices=(
@@ -708,14 +859,25 @@ def main() -> int:
         "putactor-malformed",
         "setstate", "setstate-invalid", "setstate-malformed",
         "getfacing", "getfacing-invalid", "getfacing-malformed",
+        "actor-position-result-truncated", "actor-position-result-invalid",
+        "actor-position-selector-truncated",
         "getwalkbox", "getwalkbox-invalid", "getwalkbox-malformed",
         "getdist", "getdist-malformed",
         "message", "message-long", "message-malformed",
-        "lookup", "lookup-missing",
-        "startobject", "crate", "fishnet", "balloon", "salvage", "startup42", "room55", "room55-accessor", "room55-movement",
+        "lookup", "lookup-missing", "global-lookup-missing",
+        "startobject", "startobject-replacement", "startobject-nested",
+        "global-room-continuation",
+        "local-room-continuation",
+        "null-room-lifecycle",
+        "pending-room-request",
+        "crate", "fishnet", "balloon", "salvage", "startup42", "room55", "room55-accessor", "room55-movement",
         "scheduler",
     ), required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--fixture-room", type=int, default=49,
+        help="logical room identity for this synthetic carrier (default: 49)",
+    )
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     # Persist corpus selection before authored resource resolution so a
@@ -752,6 +914,10 @@ def main() -> int:
         "getfacing": getfacing_scripts,
         "getfacing-invalid": getfacing_invalid_scripts,
         "getfacing-malformed": getfacing_malformed_scripts,
+        "actor-position-result-truncated": actor_position_result_truncated_scripts,
+        "actor-position-result-invalid": actor_position_result_invalid_scripts,
+        "actor-position-selector-truncated": actor_position_selector_truncated_scripts,
+        "global-room-continuation": global_room_continuation_scripts,
         "getwalkbox": getwalkbox_scripts,
         "getwalkbox-invalid": getwalkbox_invalid_scripts,
         "getwalkbox-malformed": getwalkbox_malformed_scripts,
@@ -762,10 +928,25 @@ def main() -> int:
         "message-malformed": message_malformed_scripts,
         "lookup": lookup_scripts,
         "lookup-missing": lookup_missing_scripts,
+        "global-lookup-missing": global_lookup_missing_scripts,
+        "pending-room-request": lambda: (b"\x00", ()),
     }
     object_payloads: tuple[bytes, ...] = ()
+    exit_script = b"\x00"
+    extra_global: tuple[int, bytes] | None = None
     if args.case == "startobject":
         entry, locals_, object_payloads = startobject_scripts()
+    elif args.case == "startobject-replacement":
+        entry, locals_, object_payloads = startobject_replacement_scripts()
+    elif args.case == "startobject-nested":
+        entry, locals_, object_payloads = startobject_nested_scripts()
+    elif args.case == "global-room-continuation":
+        entry, locals_, _requester = global_room_continuation_scripts()
+    elif args.case == "local-room-continuation":
+        entry, locals_, _local = local_room_continuation_scripts()
+    elif args.case == "null-room-lifecycle":
+        entry, locals_, exit_script, global_program = null_room_lifecycle_scripts()
+        extra_global = (75, global_program)
     elif args.case in {"crate", "fishnet", "balloon", "salvage", "startup42"}:
         entry, locals_, object_payloads = builders[args.case]()
     elif args.case == "room55":
@@ -776,22 +957,127 @@ def main() -> int:
         entry, locals_ = builders[args.case]()
     else:
         entry, locals_ = builders[args.case]()
+    if not 0 <= args.fixture_room <= 0xFF:
+        parser.error("--fixture-room must be in 0..255")
+    if args.case == "startup42" and args.fixture_room == 49:
+        parser.error("startup42 fixture must not occupy authentic room 49")
+    if args.case == "startup42":
+        require_fixture_room_is_unbound(args.fixture_room, _authored_room_numbers())
     payload = room(
-        entry, locals_, objects=(args.case.startswith("setstate") or args.case == "getdist"),
+        entry, locals_, exit=exit_script,
+        objects=(args.case.startswith("setstate") or args.case == "getdist"),
         object_payloads=object_payloads,
         walkbox_count=64 if args.case in {"room55-accessor", "room55-movement"} else (12 if args.case in {"crate", "fishnet", "balloon", "salvage", "startup42"} else (4 if args.case == "getwalkbox" else 2)),
         overlap_walkboxes=args.case == "room55-movement",
     )
     encoded = encode_cooked_room(
-        payload, room=49, flags=0, original_room_file_offset=0x250000,
+        payload, room=args.fixture_room, flags=0, original_room_file_offset=0x250000,
         profile_sha256=profile_hash, game_identity_sha256=game_hash,
         archive_sha256=source["archive"], index_sha256=source["index"],
-        data_sha256=source["data"], scripts=descriptors(payload),
+        data_sha256=source["data"], scripts=descriptors(payload, args.fixture_room),
     )
-    decoded = decode_cooked_room(encoded, expected_room=49)
-    room_output = args.output_dir / "room-49.sc5c"
+    decoded = decode_cooked_room(encoded, expected_room=args.fixture_room)
+    room_output = args.output_dir / f"room-{args.fixture_room}.sc5c"
     room_output.write_bytes(encoded)
+    extra_records = []
+    if args.case == "global-room-continuation":
+        destination_payload = room(
+            set_word(0x4000, 0xBEEF) + set_word(12, 0xBEEF) + bytes((0x00,)), (),
+        )
+        destination_encoded = encode_cooked_room(
+            destination_payload, room=50, flags=0,
+            original_room_file_offset=0x251000,
+            profile_sha256=profile_hash, game_identity_sha256=game_hash,
+            archive_sha256=source["archive"], index_sha256=source["index"],
+            data_sha256=source["data"], scripts=descriptors(destination_payload, 50),
+        )
+        destination_decoded = decode_cooked_room(destination_encoded, expected_room=50)
+        destination_output = args.output_dir / "room-50.sc5c"
+        destination_output.write_bytes(destination_encoded)
+        extra_records.append({
+            "room": 50, "resource_key": "room.50", "output": destination_output.name,
+            "registration_only": False, "record_length": len(destination_encoded),
+            "record_sha256": sha(destination_encoded),
+            "compact_checksum": destination_decoded.compact_checksum,
+            "scripts": [{
+                "identity": item.identity, "kind": item.kind, "number": item.number,
+                "program_length": len(item.program), "sha256": item.sha256,
+                **item.runtime_map(0),
+            } for item in destination_decoded.scripts],
+        })
+    if args.case == "local-room-continuation":
+        destination_payload = room(
+            local_room_continuation_scripts()[2], (),
+        )
+        destination_encoded = encode_cooked_room(
+            destination_payload, room=50, flags=0,
+            original_room_file_offset=0x251000,
+            profile_sha256=profile_hash, game_identity_sha256=game_hash,
+            archive_sha256=source["archive"], index_sha256=source["index"],
+            data_sha256=source["data"], scripts=descriptors(destination_payload, 50),
+        )
+        destination_decoded = decode_cooked_room(destination_encoded, expected_room=50)
+        destination_output = args.output_dir / "room-50.sc5c"
+        destination_output.write_bytes(destination_encoded)
+        extra_records.append({
+            "room": 50, "resource_key": "room.50", "output": destination_output.name,
+            "registration_only": False, "record_length": len(destination_encoded),
+            "record_sha256": sha(destination_encoded),
+            "compact_checksum": destination_decoded.compact_checksum,
+            "scripts": [{
+                "identity": item.identity, "kind": item.kind, "number": item.number,
+                "program_length": len(item.program), "sha256": item.sha256,
+                **item.runtime_map(0),
+            } for item in destination_decoded.scripts],
+        })
+    if args.case == "pending-room-request":
+        for room_number in (50, 51):
+            destination_payload = room(b"\x00", (), exit=b"\x00")
+            destination_encoded = encode_cooked_room(
+                destination_payload, room=room_number, flags=0,
+                original_room_file_offset=0x252000 + room_number * 0x100,
+                profile_sha256=profile_hash, game_identity_sha256=game_hash,
+                archive_sha256=source["archive"], index_sha256=source["index"],
+                data_sha256=source["data"],
+                scripts=descriptors(destination_payload, room_number),
+            )
+            destination_decoded = decode_cooked_room(
+                destination_encoded, expected_room=room_number,
+            )
+            destination_output = args.output_dir / f"room-{room_number}.sc5c"
+            destination_output.write_bytes(destination_encoded)
+            extra_records.append({
+                "room": room_number, "resource_key": f"room.{room_number}",
+                "output": destination_output.name, "registration_only": False,
+                "record_length": len(destination_encoded),
+                "record_sha256": sha(destination_encoded),
+                "compact_checksum": destination_decoded.compact_checksum,
+                "scripts": [{
+                    "identity": item.identity, "kind": item.kind,
+                    "number": item.number, "program_length": len(item.program),
+                    "sha256": item.sha256, **item.runtime_map(0),
+                } for item in destination_decoded.scripts],
+            })
     global_scripts = []
+    if args.case == "global-room-continuation":
+        requester = global_room_continuation_scripts()[2]
+        global_output = args.output_dir / "script-75.scrp"
+        global_output.write_bytes(requester)
+        global_scripts.append({
+            "number": 75, "resource_key": "script.75", "output": global_output.name,
+            "length": len(requester), "sha256": sha(requester),
+            "source": "copyright-free global room-continuation fixture",
+        })
+    if extra_global is not None:
+        number, program = extra_global
+        global_output = args.output_dir / f"script-{number}.scrp"
+        global_output.write_bytes(program)
+        global_scripts.append({
+            "number": number, "resource_key": f"script.{number}",
+            "output": global_output.name, "length": len(program),
+            "sha256": sha(program),
+            "source": "copyright-free null-room lifecycle fixture",
+        })
     if args.case in {"crate", "fishnet", "balloon", "salvage", "startup42", "room55", "room55-movement"}:
         # The production sentence boundary launches VAR_SENTENCE_SCRIPT (2).
         # Keep that launcher as an ordinary generated global resource: the
@@ -859,13 +1145,6 @@ def main() -> int:
             # room resource itself validated successfully.
             for number in (1, 13, 14, 18, 20, 57, 74, 75, 132, 144, 145):
                 program = _authored_global_script(number)
-                if number == 144:
-                    # The room-42 authored ENCD path starts global 144. Keep
-                    # the source lifecycle intact while making its source
-                    # prerequisite, global script 18's verbOps setup,
-                    # execute after the room transition rather than being
-                    # lost in the title-room handoff.
-                    program = start_script(18) + program
                 script_output = args.output_dir / f"script-{number}.scrp"
                 script_output.write_bytes(program)
                 global_scripts.append({
@@ -892,6 +1171,8 @@ def main() -> int:
         "source": {f"{name}_sha256": value for name, value in source.items()},
         "selected_corpus": corpus,
         "copyright": "generated copyright-free M25A nested-script fixture",
+        "fixture_room": args.fixture_room,
+        "room_provenance": "synthetic fixture; not an original-game room resource",
         "case": args.case,
         "actor_facings": [
             180, *GET_FACING_ANGLES,
@@ -908,7 +1189,8 @@ def main() -> int:
             if args.case == "getwalkbox" else [0] * 32
         ),
         "records": [{
-            "room": 49, "resource_key": "room.49", "output": room_output.name,
+            "room": args.fixture_room, "resource_key": f"room.{args.fixture_room}",
+            "output": room_output.name,
             "registration_only": False, "record_length": len(encoded),
             "record_sha256": sha(encoded), "compact_checksum": decoded.compact_checksum,
             "scripts": [{
@@ -916,7 +1198,7 @@ def main() -> int:
                 "program_length": len(item.program), "sha256": item.sha256,
                 **item.runtime_map(0),
             } for item in decoded.scripts],
-        }],
+        }, *extra_records],
         "global_scripts": global_scripts,
     }
     if args.case == "getdist":

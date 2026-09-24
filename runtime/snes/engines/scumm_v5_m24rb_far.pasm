@@ -332,6 +332,10 @@ ScummV5_M24RB_Far_CommitNullRoom__retire_owned:
     sta.l SAME_SCUMM_C4_SLOT_NUMBER,x
     sta.l SAME_SCUMM_C4_SLOT_PROGRAM,x
     sta.l SAME_SCUMM_M23A_SLOT_ROOMS,x
+    lda.l SAME_SCUMM_C4_ACTIVE_COUNT
+    beq ScummV5_M24RB_Far_CommitNullRoom__next
+    dec
+    sta.l SAME_SCUMM_C4_ACTIVE_COUNT
 ScummV5_M24RB_Far_CommitNullRoom__next:
     sep #$20
     .a8
@@ -359,15 +363,76 @@ ScummV5_M24RB_Far_CommitNullRoom__next:
     sta.l SAME_SCUMM_M23A_PHASE
     sta.l SAME_SCUMM_M23A_HOLD
     sta.l SAME_SCUMM_M23A_CURRENT_KIND
-    sta.l SAME_SCUMM_M23A_RETURN_VALID
+    clc
     rts
 
 ; Input A=logical room. Acquisition is asynchronous through SAME Storage READ;
 ; only the storage service validates profile-owned generated data.
-ScummV5_M24RB_Far_RequestRoom:
+; Shared transaction guard used by both near and far RequestRoom variants.
+; Input A is the proposed room. A=0 means no transaction is pending, 1 is a
+; same-target coalesce, 2 is an API conflict retained for retry, and 3 is a
+; direct conflict reported as SCUMM_ERR_SERVICE. Carry is clear for 0/1 and
+; set for 2/3.
+ScummV5_M24RB_Far_CheckPendingRequest:
     sep #$20
     .a8
     sta.l $7E5452
+    lda.l SAME_SCUMM_M23A_PHASE
+    cmp #$04
+    beq ScummV5_M24RB_Far_CheckPendingRequest__pending
+    cmp #$05
+    beq ScummV5_M24RB_Far_CheckPendingRequest__pending
+    lda #$00
+    clc
+    rtl
+ScummV5_M24RB_Far_CheckPendingRequest__pending:
+    .a8
+    lda.l $7E5452
+    cmp.l SAME_SCUMM_M23A_PENDING_ROOM
+    bne ScummV5_M24RB_Far_CheckPendingRequest__conflict
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    lda #$02
+    jsl ScummV5_M25A_FarCall_RecordPendingRequest
+    .endif
+    lda #$01
+    clc
+    rtl
+ScummV5_M24RB_Far_CheckPendingRequest__conflict:
+    .a8
+    lda.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
+    bne ScummV5_M24RB_Far_CheckPendingRequest__api_conflict
+    lda #SCUMM_ERR_SERVICE
+    jsl ScummV5_M24RB_FarCall_SetError
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    lda #$04
+    jsl ScummV5_M25A_FarCall_RecordPendingRequest
+    .endif
+    lda #$03
+    sec
+    rtl
+ScummV5_M24RB_Far_CheckPendingRequest__api_conflict:
+    .a8
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    lda #$03
+    jsl ScummV5_M25A_FarCall_RecordPendingRequest
+    .endif
+    lda #$02
+    sec
+    rtl
+
+ScummV5_M24RB_Far_RequestRoom:
+    sep #$20
+    .a8
+    jsl ScummV5_M24RB_Far_CheckPendingRequest
+    beq ScummV5_M24RB_Far_RequestRoom__new
+    cmp #$01
+    beq ScummV5_M24RB_Far_RequestRoom__coalesced
+    sec
+    rts
+ScummV5_M24RB_Far_RequestRoom__coalesced:
+    clc
+    rts
+ScummV5_M24RB_Far_RequestRoom__new:
     lda.l $7E5450
     inc
     sta.l $7E5450
@@ -385,6 +450,10 @@ ScummV5_M24RB_Far_RequestRoom:
     sta.l SAME_SCUMM_M23A_PENDING_ROOM
     lda.l SAME_SCUMM_PROGRAM_SELECT
     sta.l SAME_SCUMM_M23A_RETURN_PROGRAM
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_M23A_RETURN_SLOT
+    lda.l SAME_SCUMM_RETURN_MODE
+    sta.l SAME_SCUMM_M23A_RETURN_MODE
     rep #$20
     .a16
     lda.l SAME_SCUMM_PC
@@ -396,13 +465,6 @@ ScummV5_M24RB_Far_RequestRoom:
     ; preserved non-room-owned activations retain the normal continuation.
     lda #$01
     sta.l SAME_SCUMM_M23A_RETURN_VALID
-    ; Once a room transaction is pending, a later request must not replace
-    ; the outgoing local requester's invalidation with a new continuation.
-    lda.l SAME_SCUMM_M23A_PHASE
-    cmp #$04
-    beq ScummV5_M24RB_Far_RequestRoom__return_not_survivable
-    cmp #$05
-    beq ScummV5_M24RB_Far_RequestRoom__return_not_survivable
     rep #$10
     .i16
     ldx #$0000
@@ -420,6 +482,8 @@ ScummV5_M24RB_Far_RequestRoom__return_not_survivable:
     .a8
     lda #$00
     sta.l SAME_SCUMM_M23A_RETURN_VALID
+    sta.l SAME_SCUMM_M23A_RETURN_SLOT
+    sta.l SAME_SCUMM_M23A_RETURN_MODE
     sta.l SAME_SCUMM_M23A_RETURN_PROGRAM
     rep #$20
     .a16
@@ -438,7 +502,9 @@ ScummV5_M24RB_Far_RequestRoom__return_valid:
     jsr ScummV5_M24RB_Far_Trace
     lda.l SAME_SCUMM_M23A_PENDING_ROOM
     bne ScummV5_M24RB_Far_RequestRoom__queue
-    jsr ScummV5_M24RB_Far_CommitNullRoom
+    lda #$FF
+    sta.l SAME_SCUMM_M23A_PENDING_RECORD
+    jsr ScummV5_M24RB_Far_ResourceReady
     clc
     rts
 ScummV5_M24RB_Far_RequestRoom__queue:
@@ -475,6 +541,10 @@ ScummV5_M24RB_Far_RequestRoom__queue:
 ScummV5_M24RB_Far_RequestRoom__queued:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    lda #$01
+    jsl ScummV5_M25A_FarCall_RecordPendingRequest
+    .endif
     clc
     rts
 
@@ -482,9 +552,21 @@ ScummV5_M24RB_Far_RequestRoom__queued:
 ScummV5_M24RB_Far_ResourceReady:
     sep #$20
     .a8
+    lda.l SAME_SCUMM_M23A_PENDING_ROOM
+    bne ScummV5_M24RB_Far_ResourceReady__check_active
     lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
     cmp #$FF
-    bne ScummV5_M24RB_Far_ResourceReady__check_exit
+    beq ScummV5_M24RB_Far_ResourceReady__commit_null
+    bra ScummV5_M24RB_Far_ResourceReady__check_exit
+ScummV5_M24RB_Far_ResourceReady__check_active:
+    .a8
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    cmp #$FF
+    beq ScummV5_M24RB_Far_ResourceReady__commit_room
+    bra ScummV5_M24RB_Far_ResourceReady__check_exit
+ScummV5_M24RB_Far_ResourceReady__commit_null:
+    jmp ScummV5_M24RB_Far_CommitNullRoom
+ScummV5_M24RB_Far_ResourceReady__commit_room:
     jmp ScummV5_M24RB_Far_CommitRoom
 ScummV5_M24RB_Far_ResourceReady__check_exit:
     .a8
@@ -640,6 +722,11 @@ ScummV5_M24RB_Far_EndRoomScript__done:
 ScummV5_M24RB_Far_CommitRoom:
     sep #$20
     .a8
+    lda.l SAME_SCUMM_M23A_PENDING_ROOM
+    bne ScummV5_M24RB_Far_CommitRoom__resource_room
+    jmp ScummV5_M24RB_Far_CommitNullRoom
+ScummV5_M24RB_Far_CommitRoom__resource_room:
+    .a8
     ; Pending sentences belong to the outgoing room. Drop them at the same
     ; generic room boundary as cutscene state so the next API sentence starts
     ; at queue record zero instead of replaying an old room action first.
@@ -744,6 +831,8 @@ ScummV5_M24RB_Far_CommitRoom__retire_next:
     lda.l SAME_SCUMM_M23A_PENDING_ROOM
     sta.l SAME_SCUMM_M23A_ACTIVE_ROOM
     sta.l SAME_SCUMM_C22_CURRENT_ROOM
+    lda #$00
+    sta.l SAME_SCUMM_C22_NULL_SCENE
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && !SAME_SCUMM_SCENARIO_SOURCE_ACTOR_STATE
     ; Engine-owned reusable scenario setup; validators supply no actor table,
     ; room, slot, or PC state.

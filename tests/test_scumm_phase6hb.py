@@ -1,5 +1,6 @@
 import json, subprocess, sys, unittest
 from pathlib import Path
+from fate_test_data import require_fate_demo_archive
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -8,8 +9,9 @@ class Phase6HBDenseGlobalsTests(unittest.TestCase):
         import tempfile
         with tempfile.TemporaryDirectory() as directory:
             tmp_path=Path(directory); inc=tmp_path/"vars.inc"; manifest=tmp_path/"vars.json"
+            archive = require_fate_demo_archive(self)
             subprocess.run([sys.executable,str(ROOT/"tools/generate_snes_scumm_variables.py"),
-                "--archive","/home/chad/fatedemo-box.zip","--profile",str(ROOT/"examples/profiles/templates/fate_of_atlantis_demo.json"),
+                "--archive",str(archive),"--profile",str(ROOT/"examples/profiles/templates/fate_of_atlantis_demo.json"),
                 "--include",str(inc),"--manifest",str(manifest)],check=True)
             data=json.loads(manifest.read_text()); text=inc.read_text()
             self.assertEqual((data["maxs_offset"],data["variable_count"]),(979,800))

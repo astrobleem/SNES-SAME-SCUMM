@@ -26,8 +26,7 @@ CURRENT_SLOT = 0x7E2A88
 ACTIVE_COUNT = 0x7E2A8A
 NEST_DEPTH = 0x7FF465
 NEST_FRAMES = 0x7FF900
-VARIABLES = 0x7FF500
-LEGACY_VARIABLES = 0x7E2320
+VARIABLES = 0x7E0800
 EVIDENCE = 0x7E5000
 TRACE = 0x7E5010
 TRACE_CAPACITY = 128
@@ -87,8 +86,10 @@ def snapshot(session: object) -> dict[str, object]:
             "program": programs[index], "pc": pcs[index],
             "locals": words(local_raw[index * 64:(index + 1) * 64]),
         } for index in range(25)],
-        "globals": (words(session.read_memory("snesMemory", LEGACY_VARIABLES, 32))
-                    + words(session.read_memory("snesMemory", VARIABLES, 32))),
+        # The generated MAXS include owns the base for this profile. Its
+        # current table starts at $7E0800; $7FF500 is the separate provisional
+        # M23B extension window used only for globals >= 16 in this build.
+        "globals": words(session.read_memory("snesMemory", VARIABLES, 128)),
         "wram_evidence_hex": session.read_memory(
             "snesMemory", EVIDENCE, 0x410).hex(),
         "nest_frames_hex": session.read_memory(
@@ -152,7 +153,8 @@ def run_case(rom: Path, nexen: Path, port: int, output: Path,
             elif state["error"] != 0 and state["nest_depth"] == 0:
                 final = state
                 break
-        require(final is not None, f"{case}: did not reach its terminal evidence state")
+        require(final is not None,
+                f"{case}: did not reach its terminal evidence state; last={state}")
 
     evidence = {
         "case": case, "fresh_power_on": True, "rom": str(rom),
@@ -179,7 +181,11 @@ def run_case(rom: Path, nexen: Path, port: int, output: Path,
         require(scheduler == [(5, 1, 0xD2, 27), (5, 2, 0xD3, 16)],
                 f"normal: yielded scheduler order differs: {scheduler}")
         require(final["globals"][10:15] == [15, 18, 27, 0, 16],
-                f"normal: PC sentinels differ: {final['globals'][10:15]}")
+                f"normal: PC sentinels differ: {final['globals'][10:15]}; "
+                f"globals[0:20]={final['globals'][:20]}, "
+                f"globals[32:48]={final['globals'][32:48]}, "
+                f"slots={[(s['slot'],s['program'],s['status'],s['pc']) for s in final['slots'][:4]]}, "
+                f"trace={trace}")
         require(final["slots"][1]["locals"][:2] == [0x1112, 0x2222],
                 "normal: parent locals were not independently preserved")
         require(final["slots"][2]["locals"][:2] == [0x3334, 0x4444],

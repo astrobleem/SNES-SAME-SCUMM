@@ -55,6 +55,9 @@ Same_Storage_Handle:
     .endif
     lda #$05
     sta.l SAME_SCUMM_M23A_PHASE
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    jsr ScummV5_M25A_InjectPendingRequest
+    .endif
     rts
 Same_Storage_Handle__m23a_failed:
     sep #$20

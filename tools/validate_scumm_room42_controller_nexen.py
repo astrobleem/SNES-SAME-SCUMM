@@ -47,6 +47,8 @@ def require(value: bool, message: str) -> None:
 ACTOR_POSITIONS = 0x7FF1A0
 ACTOR_WALKBOX = 0x7FFDA5
 OBJECT_STATES = 0x7E6000
+ROOM_OBJECT_RECORDS = 0x7E7000
+ROOM_OBJECT_COUNT = 0x7E5FFC
 CONTROLLER = 0x7E5FE0
 VISUAL = 0x401080
 
@@ -168,8 +170,8 @@ def u16(raw: bytes, offset: int = 0) -> int:
 
 def active_room_objects(session) -> list[dict[str, int]]:
     """Read the source-backed active-room CDHD records copied by room load."""
-    count = session.read_memory("snesMemory", 0x7E5FFC, 1)[0]
-    raw = session.read_memory("snesMemory", 0x7E7000, count * 11)
+    count = session.read_memory("snesMemory", ROOM_OBJECT_COUNT, 1)[0]
+    raw = session.read_memory("snesMemory", ROOM_OBJECT_RECORDS, count * 11)
     result = []
     for offset in range(0, len(raw), 11):
         result.append({
@@ -289,10 +291,10 @@ def read_scene(session) -> dict[str, int]:
         "actor1_route_target_y": u16(session.read_memory("snesMemory", 0x7E7CCC, 2)),
         "actor1_route_origin_x": u16(session.read_memory("snesMemory", 0x7E7C0C, 2)),
         "actor1_route_origin_y": u16(session.read_memory("snesMemory", 0x7E7C4C, 2)),
-        "actor1_step_count": session.read_memory("snesMemory", 0x7E5016, 1)[0],
-        "actor1_x_write_count": session.read_memory("snesMemory", 0x7E5024, 1)[0],
-        "actor1_last_x": u16(session.read_memory("snesMemory", 0x7E5008, 2)),
-        "actor1_last_y": u16(session.read_memory("snesMemory", 0x7E500A, 2)),
+        "actor1_step_count": session.read_memory("snesMemory", 0x7E5492, 1)[0],
+        "actor1_x_write_count": session.read_memory("snesMemory", 0x7E54A0, 1)[0],
+        "actor1_last_x": u16(session.read_memory("snesMemory", 0x7E5484, 2)),
+        "actor1_last_y": u16(session.read_memory("snesMemory", 0x7E5486, 2)),
         "actor1_scale_x": session.read_memory("snesMemory", 0x7F370D, 1)[0],
         "actor1_scale_y": session.read_memory("snesMemory", 0x7F370E, 1)[0],
         "actor1_speed_x": session.read_memory("snesMemory", 0x7F3701, 1)[0],
@@ -360,7 +362,7 @@ def read_scene(session) -> dict[str, int]:
             "flags": session.read_memory("snesMemory", 0x7E5F96, 1)[0],
             "index": session.read_memory("snesMemory", 0x7E5F97, 1)[0],
             "limit": u16(session.read_memory("snesMemory", 0x7E5F98, 2)),
-            "local_count": session.read_memory("snesMemory", 0x7E5FFC, 1)[0],
+            "local_count": session.read_memory("snesMemory", ROOM_OBJECT_COUNT, 1)[0],
         },
         "verb_api": {
             "object": u16(session.read_memory("snesMemory", 0x7E7EBF, 2)),
@@ -907,7 +909,7 @@ def _forensic_snapshot(session, kind: str, *, hook: dict | None = None,
     ctl = session.read_memory("snesMemory", CONTROLLER, 0x10)
     interaction = session.read_memory("snesMemory", 0x7E5F90, 13)
     c17 = session.read_memory("snesMemory", 0x7F6F20 + 3 * 0x60, 0x28)
-    record_count = session.read_memory("snesMemory", 0x7E5FFC, 1)[0]
+    record_count = session.read_memory("snesMemory", ROOM_OBJECT_COUNT, 1)[0]
     records = [list(session.read_memory("snesMemory", 0x7E7000 + i * 11, 11))
                for i in range(record_count)]
     object490_records = [record for record in records
@@ -1362,7 +1364,7 @@ def advance_until(session, predicate, limit: int, description: str) -> dict:
             "controller_object": u16(session.read_memory("snesMemory", 0x7E5FE6, 2)),
             "active_object_records": [
                 list(session.read_memory("snesMemory", 0x7E7000 + i * 11, 11))
-                for i in range(session.read_memory("snesMemory", 0x7E5FFC, 1)[0])
+                for i in range(session.read_memory("snesMemory", ROOM_OBJECT_COUNT, 1)[0])
             ],
         }
     state = poll()
@@ -2236,7 +2238,7 @@ def main() -> int:
         # transaction and is not a production lifecycle result.
         global LOGICAL_FRAME_HOOK, LOGICAL_FRAME_ADDRESS
         LOGICAL_FRAME_ADDRESS = _startup_ns["mapped_cpu_address_for_rom"](
-            args.rom.resolve(), "Same_Main_Loop")
+            args.rom.resolve(), "Same_Main_Loop", bank=0x00)
         LOGICAL_FRAME_HOOK = session.add_exec_hook(LOGICAL_FRAME_ADDRESS)
         if args.skip_visual_ready:
             # Semantic-only diagnostics still need to cross complete engine
@@ -2445,10 +2447,15 @@ def main() -> int:
         )
         print("native stage: locker hover", flush=True)
         events.append({"stage": "locker_hover", "frame": frame, "state": read_scene(session)})
-        hover_quiescent = wait_for_surface_quiescent(session)
-        events.append({"stage": "hover_surface_quiescent", "state": hover_quiescent})
-        print("native stage: hover settled", read_scene(session),
-              "surface_quiescent", hover_quiescent, flush=True)
+        if args.skip_visual_ready:
+            hover_quiescent = {"skipped": True, "reason": "semantic_only"}
+            events.append({"stage": "hover_surface_quiescent_skipped",
+                           "state": hover_quiescent})
+        else:
+            hover_quiescent = wait_for_surface_quiescent(session)
+            events.append({"stage": "hover_surface_quiescent", "state": hover_quiescent})
+            print("native stage: hover settled", read_scene(session),
+                  "surface_quiescent", hover_quiescent, flush=True)
         capture_native(session, args.output / "02-hover.png")
         global RESTORE_DEBUG_HOOK
         RESTORE_DEBUG_HOOK = session.add_exec_hook(0x14863B)
@@ -2471,8 +2478,9 @@ def main() -> int:
         if first_verb["hud_runtime"]["verb_name_length"] == 0:
             first_verb = advance_until(
                 session,
-                lambda s: s["hud_runtime"]["verb_id"] == s["verb"]
-                and s["hud_runtime"]["verb_name_length"] != 0,
+                lambda s: s["verb"] == 3
+                and s["c17_name_length"] != 0
+                and s["c17_name"][:4] == [79, 112, 101, 110],
                 600, "runtime C17 verb name")
         require(first_verb["hud_runtime"]["verb_name"][:4] == [79, 112, 101, 110],
                 f"runtime C17 verb name was not source-authored Open: {first_verb}")

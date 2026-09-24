@@ -7,16 +7,34 @@ import zipfile
 
 from tools.build_m25a_validator_room import (
     depth_scripts,
+    global_lookup_missing_scripts,
     missing_scripts,
     normal_scripts,
     outer_scripts,
     scheduler_scripts,
     startobject_scripts,
+    startobject_replacement_scripts,
+    require_fixture_room_is_unbound,
     selected_corpus_identity,
 )
 
 
 class M25AValidatorFixtureTests(unittest.TestCase):
+    def test_startup42_build_uses_its_unbound_bootstrap_record(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        build = (root / "tools/build_snes.sh").read_text()
+        self.assertIn(
+            "ENGINE_SELECTION_ARGS+=(--scumm-scenario-start-room 254)", build,
+        )
+        self.assertIn(
+            'M25A_FIXTURE_ROOM_ARGS+=(--fixture-room 254)', build,
+        )
+
+    def test_synthetic_startup_room_must_be_absent_from_authored_namespace(self) -> None:
+        require_fixture_room_is_unbound(254, {1, 42, 49, 75, 98})
+        with self.assertRaisesRegex(RuntimeError, "collides with an authored room"):
+            require_fixture_room_is_unbound(49, {1, 42, 49, 75, 98})
+
     def test_selected_corpus_identity_records_both_scumm_members(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "corpus.zip"
@@ -64,6 +82,11 @@ class M25AValidatorFixtureTests(unittest.TestCase):
         self.assertEqual(programs[200][5:8], bytes((0x0A, 250, 0xFF)))
         self.assertNotIn(250, programs)
 
+    def test_unmapped_global_start_is_a_body_requiring_instruction(self) -> None:
+        entry, scripts = global_lookup_missing_scripts()
+        self.assertEqual(entry, bytes((0x0A, 131, 0xFF, 0x00)))
+        self.assertEqual(scripts, ())
+
     def test_outer_fixture_requires_zero_return_mode_after_child(self) -> None:
         entry, scripts = outer_scripts()
         self.assertEqual(tuple(dict(scripts)), (200,))
@@ -95,6 +118,54 @@ class M25AValidatorFixtureTests(unittest.TestCase):
         self.assertIn(bytes((0x42, 203, 0xFF)), objects[1])
         self.assertEqual(tuple(dict(scripts)), (200, 201, 202, 203))
         self.assertEqual(entry.count(0x37), 5)
+
+    def test_startobject_replacement_fixture_distinguishes_new_entry_and_old_tail(self) -> None:
+        entry, scripts, objects = startobject_replacement_scripts()
+        self.assertEqual(entry, bytes((
+            0x1A, 10, 0, 0, 0,       # clear observable result V10
+            0x1A, 11, 0, 0, 0,       # clear old-tail sentinel V11
+            0x37, 100, 0, 10, 0xFF,  # start object 100 / verb 10
+            0x00,
+        )))
+        self.assertEqual(scripts, ())
+        self.assertEqual(len(objects), 1)
+        encoded = objects[0]
+        self.assertIn(bytes((0x37, 100, 0, 8, 0, 0xEF, 0xBE, 0xFF)), encoded)
+        self.assertIn(bytes((0x9A, 10, 0, 0, 0x40, 0x80, 0x00)), encoded)
+        self.assertIn(bytes((0x1A, 11, 0, 0xAD, 0xDE)), encoded)
+
+    def test_startobject_nested_fixture_checks_distinct_activation_return(self) -> None:
+        from build_m25a_validator_room import startobject_nested_scripts
+
+        entry, scripts, objects = startobject_nested_scripts()
+        self.assertEqual(entry, bytes((
+            0x1A, 10, 0, 0, 0,
+            0x1A, 11, 0, 0, 0,
+            0x37, 100, 0, 10, 0xFF,
+            0x00,
+        )))
+        self.assertEqual(scripts, ())
+        self.assertEqual(len(objects), 2)
+        self.assertIn(bytes((0x37, 101, 0, 8, 0, 0xFE, 0xCA, 0xFF)), objects[0])
+        self.assertIn(bytes((0x9A, 10, 0, 0, 0x40, 0x00)), objects[1])
+        self.assertIn(bytes((0x46, 11, 0, 0x00)), objects[0])
+
+    def test_actor_position_error_fixtures_isolate_result_and_selector_failures(self) -> None:
+        from build_m25a_validator_room import (
+            actor_position_result_invalid_scripts,
+            actor_position_result_truncated_scripts,
+            actor_position_selector_truncated_scripts,
+        )
+
+        self.assertEqual(actor_position_result_truncated_scripts(), (bytes.fromhex("43 0a"), ()))
+        self.assertEqual(
+            actor_position_result_invalid_scripts(),
+            (bytes.fromhex("43 ff 4f"), ()),
+        )
+        self.assertEqual(
+            actor_position_selector_truncated_scripts(),
+            (bytes.fromhex("43 0a 00 01"), ()),
+        )
 
 
 if __name__ == "__main__":

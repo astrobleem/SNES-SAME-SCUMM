@@ -66,10 +66,10 @@ if [[ "${SAME_BUILD_SCUMM_SCENARIO_FIXTURE:-0}" == "1" ]]; then
     elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "room55-movement" ]]; then
         ENGINE_SELECTION_ARGS+=(--scumm-scenario-start-room 49)
     elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "startup42" ]]; then
-        # The startup42 source root begins at room 68; its authored ENCD
-        # launches the real title/game-selection path.  Keep this explicit so
-        # the fixture cannot silently fall back to the unrelated room-49 root.
-        ENGINE_SELECTION_ARGS+=(--scumm-scenario-start-room 68)
+        # Start in the explicit, corpus-checked synthetic bootstrap room. Its
+        # ENCD starts the authored Global1/Global18 title chain; starting at
+        # room 68 would bypass that launcher and leave no title scripts alive.
+        ENGINE_SELECTION_ARGS+=(--scumm-scenario-start-room 254)
     fi
 fi
 if [[ "${SAME_BUILD_SCUMM_M25_MOVEMENT:-0}" == "1" ]]; then
@@ -151,7 +151,7 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
         ROOM_MANIFESTS=(--manifest "$CONFORMANCE_BUILD/manifest.json")
         ROOM_BINARY_DIR="$CONFORMANCE_BUILD/segments"
         ROOM_GENERATOR_ARGS+=(--far-programs)
-        if [[ "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
+        if [[ "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_M24RB:-0}" == "1" || "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
             ROOM_GENERATOR_ARGS+=(--far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
         fi
         mkdir -p "$ROOM_BINARY_DIR"
@@ -170,19 +170,31 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
     if [[ "${SAME_BUILD_SCUMM_M25A_VALIDATOR:-0}" == "1" ]]; then
         M25A_BUILD="$ROOT/build/m25a-validator/${SAME_M25A_VALIDATOR_CASE:-normal}"
         mkdir -p "$M25A_BUILD" "$M25A_BUILD/segments"
+        M25A_FIXTURE_ROOM_ARGS=()
+        if [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "startup42" ]]; then
+            # 254 is absent from the authoritative Fate archive's room table;
+            # keep the synthetic bootstrap carrier outside the game's room
+            # namespace so loadRoom(49) resolves only the authentic room.
+            M25A_FIXTURE_ROOM_ARGS+=(--fixture-room 254)
+        fi
         "$PYTHON" tools/build_m25a_validator_room.py \
-            --case "${SAME_M25A_VALIDATOR_CASE:-normal}" --output-dir "$M25A_BUILD"
+            --case "${SAME_M25A_VALIDATOR_CASE:-normal}" --output-dir "$M25A_BUILD" \
+            "${M25A_FIXTURE_ROOM_ARGS[@]}"
         ROOM_MANIFESTS=(--manifest "$M25A_BUILD/manifest.json")
         ROOM_BINARY_DIR="$M25A_BUILD/segments"
         if [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "startup42" || "${SAME_M25A_VALIDATOR_CASE:-}" == "room55" ]]; then
-            # The controlled root starts at the source-backed pre-title room.
-            # Room 68's authored script owns the ordinary 68 -> 0 -> 75
-            # lifecycle; no profile-side room request is injected here.
+            # The startup42 case uses the source-backed Global1/Global18
+            # launcher in synthetic room 254; subsequent room identities and
+            # script bodies resolve from the authentic Fate archive.
             if [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "startup42" ]]; then
                 ENGINE_SELECTION_ARGS+=(--scumm-scenario-source-actor-state)
             fi
             mkdir -p "$M25A_BUILD/room42"
-            COOKED_STARTUP_ROOMS=(1 42 55 68 75 82 24)
+            # Preserve the room-record order required by the established
+            # startup runtime.  Room 24's entry/exit programs are allocated
+            # after ordinary room programs below, so adding it here does not
+            # shift previously accepted executable identities.
+            COOKED_STARTUP_ROOMS=(1 24 42 49 55 68 75 82)
             COOKED_STARTUP_GLOBAL_ARGS=()
             if [[ -n "${SAME_SCUMM_STARTUP_GLOBAL_SCRIPTS:-}" ]]; then
                 IFS=',' read -r -a STARTUP_GLOBAL_SCRIPTS <<< "${SAME_SCUMM_STARTUP_GLOBAL_SCRIPTS}"
@@ -221,9 +233,10 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
             # rooms and the complete, source-bound dynamic global closure.
             ROOM49_ROOMS=(49 68 75)
             ROOM49_GLOBAL_ARGS=(--global-script-set phase6la1d)
-            # Phase 6 is a deliberate mid-game root.  Run the authored
-            # VerbOps producer before global 144 through the normal script
-            # API, so C17 state is established without controller-side data.
+            # Phase 6 is a deliberate mid-game fixture root. The cooker emits
+            # a separately identified synthetic wrapper for global 144 and
+            # preserves the unchanged authored body as script-144.source.scrp;
+            # this is fixture setup, not an authentic cold-start path.
             ROOM49_GLOBAL_ARGS+=(--prepend-global-script 144 18)
             ENGINE_SELECTION_ARGS+=(--scumm-title-start-room 75 --scumm-title-target-room 49)
         elif [[ "${SAME_BUILD_SCUMM_PHASE6I:-0}" == "1" ]]; then
@@ -282,6 +295,24 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
             ROOM_GENERATOR_ARGS+=(--append-late-global-script "$global_script")
         done
     fi
+    if [[ -n "${SAME_SCUMM_APPEND_LATE_ROOM_ENTRY_EXITS:-}" ]]; then
+        IFS=',' read -r -a APPEND_LATE_ROOM_ENTRY_EXITS <<< "${SAME_SCUMM_APPEND_LATE_ROOM_ENTRY_EXITS}"
+        for room_number in "${APPEND_LATE_ROOM_ENTRY_EXITS[@]}"; do
+            ROOM_GENERATOR_ARGS+=(--append-late-room-entry-exit "$room_number")
+        done
+    fi
+    if [[ -n "${SAME_SCUMM_APPEND_ROOM_ENTRY_EXITS:-}" ]]; then
+        IFS=',' read -r -a APPEND_ROOM_ENTRY_EXITS <<< "${SAME_SCUMM_APPEND_ROOM_ENTRY_EXITS}"
+        for room_number in "${APPEND_ROOM_ENTRY_EXITS[@]}"; do
+            ROOM_GENERATOR_ARGS+=(--append-room-entry-exit "$room_number")
+        done
+    fi
+    if [[ -n "${SAME_SCUMM_APPEND_LATE_EXECUTABLE_LOCALS:-}" ]]; then
+        IFS=',' read -r -a APPEND_LATE_EXECUTABLE_LOCALS <<< "${SAME_SCUMM_APPEND_LATE_EXECUTABLE_LOCALS}"
+        for local_script in "${APPEND_LATE_EXECUTABLE_LOCALS[@]}"; do
+            ROOM_GENERATOR_ARGS+=(--append-late-executable-local "$local_script")
+        done
+    fi
     if [[ "${SAME_BUILD_SCUMM_M25A_VALIDATOR:-0}" == "1" ]]; then
         if [[ "${SAME_BUILD_SCUMM_SCENARIO_FIXTURE:-0}" == "1" ]]; then
             if [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "fishnet" ]]; then
@@ -290,6 +321,15 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
                 ROOM_GENERATOR_ARGS+=(--executable-local-room 49 --executable-local-object 49:593 --far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
             elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "salvage" ]]; then
                 ROOM_GENERATOR_ARGS+=(--executable-local-room 49 --executable-local-object 49:592 --far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
+            elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "startobject-replacement" ]]; then
+                ROOM_GENERATOR_ARGS+=(--executable-local-room 49 --executable-local-object 49:100 --far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
+            elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "global-room-continuation" ]]; then
+                ROOM_GENERATOR_ARGS+=(--entry-only-room 49 --entry-only-room 50 --far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
+            elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "local-room-continuation" ]]; then
+                ROOM_GENERATOR_ARGS+=(--entry-only-room 49 --entry-only-room 50 --executable-local 49:200 --far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
+            elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "pending-room-request" ]]; then
+                ROOM_GENERATOR_ARGS+=(--entry-only-room 49 --entry-only-room 50 --entry-only-room 51)
+                ROOM_GENERATOR_ARGS+=(--far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
             elif [[ "${SAME_M25A_VALIDATOR_CASE:-}" == "startup42" || "${SAME_M25A_VALIDATOR_CASE:-}" == "room55" ]]; then
                 # The startup root executes authored ENCD scripts which start
                 # room-local scripts in rooms 68, 75, 1, and 42.  Keep the
@@ -377,6 +417,9 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
             fi
         else
             ROOM_GENERATOR_ARGS+=(--entry-only-room 49 --executable-local-room 49)
+            if [[ "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_M24RB:-0}" == "1" || "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" ]]; then
+                ROOM_GENERATOR_ARGS+=(--far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
+            fi
         fi
     elif [[ "${SAME_BUILD_SCUMM_M23B:-0}" == "1" ]]; then
         # Room 63 is an entry-only transition target, but its authored player
@@ -390,7 +433,7 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
         fi
         if [[ "${SAME_BUILD_SCUMM_M23C:-0}" == "1" ]]; then
             ROOM_GENERATOR_ARGS+=(--entry-exit-room 49 --entry-only-room 63)
-            if [[ "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" ]]; then
+            if [[ "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_M24RB:-0}" == "1" || "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" ]]; then
                 ROOM_GENERATOR_ARGS+=(--far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
             fi
         fi
@@ -432,6 +475,9 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
     fi
     ROOM_GENERATOR_REPORT="$M23A_BUILD/cooked-rooms.json"
     ROOM_GENERATOR_ARGS+=(--report "$ROOM_GENERATOR_REPORT")
+    if [[ "${SAME_SNES_CARRIER:-lorom}" == "sa1_bwram" ]]; then
+        ROOM_GENERATOR_ARGS+=(--sa1-rom-bank-aliases)
+    fi
     # The mode-3 surface backend owns bank 15.  Keep generated room payloads
     # out of every fixed code bank instead of allowing a later include to
     # overwrite a cooked record silently.
@@ -592,6 +638,8 @@ echo "SNES layout map: $SAME_SNES_MAP"
 sha256sum "$SAME_SNES_OUTPUT"
 "$PYTHON" tools/write_build_identity.py \
     --rom "$SAME_SNES_OUTPUT" \
+    --map "$SAME_SNES_MAP" \
+    --listing "$SAME_SNES_LISTING" \
     --output "${SAME_SNES_OUTPUT%.sfc}.build_identity.json" \
     --poppy-sha256 "$POPPY_SHA256" \
     --carrier-manifest "$CARRIER_MANIFEST" \

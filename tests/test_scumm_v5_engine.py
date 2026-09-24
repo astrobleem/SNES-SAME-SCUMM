@@ -26,67 +26,6 @@ ROOM = (ROOT / "examples/resources/scumm_v5/room0.sc5r").read_bytes()
 
 
 class ScummV5EngineTests(unittest.TestCase):
-    def test_room_change_continuation_is_validated_by_requester_ownership(self) -> None:
-        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
-        far_runtime = (ROOT / "runtime/snes/engines/scumm_v5_m24rb_far.pasm").read_text()
-        memory = (ROOT / "runtime/snes/kernel/memory.pasm").read_text()
-
-        self.assertIn(
-            "SAME_SCUMM_M23A_RETURN_VALID             = $7FF2D3",
-            memory,
-        )
-        request = far_runtime.split("ScummV5_M24RB_Far_RequestRoom:", 1)[1].split(
-            "ScummV5_M24RB_Far_RequestRoom__queue:", 1
-        )[0]
-        self.assertIn("SAME_SCUMM_C4_CURRENT_SLOT", request)
-        self.assertIn("cmp #SCUMM_WIO_ROOM", request)
-        self.assertIn("cmp #SCUMM_WIO_LOCAL", request)
-        self.assertIn("SAME_SCUMM_M23A_RETURN_VALID", request)
-
-        near_request = runtime.split("ScummV5_M23A_RequestRoom:", 1)[1].split(
-            "ScummV5_M23A_RequestRoom__queue:", 1
-        )[0]
-        self.assertIn("cmp #$04", near_request)
-        self.assertIn("cmp #$05", near_request)
-        self.assertIn("cmp #SCUMM_WIO_ROOM", near_request)
-        self.assertIn("cmp #SCUMM_WIO_LOCAL", near_request)
-        self.assertIn("sta.l SAME_SCUMM_M23A_RETURN_PROGRAM", near_request)
-        self.assertIn("sta.l SAME_SCUMM_M23A_RETURN_PC", near_request)
-        self.assertIn("ScummV5_M23A_CommitNullRoom", near_request)
-
-        null_room = runtime.split("ScummV5_M23A_CommitNullRoom:", 1)[1].split(
-            "; Input A=logical room", 1
-        )[0]
-        self.assertIn("ScummV5_C20_ResetState", null_room)
-        self.assertIn("SAME_SCUMM_C4_SLOT_WHERE,x", null_room)
-        self.assertIn("SAME_SCUMM_C22_CURRENT_ROOM", null_room)
-        self.assertIn("SAME_SCUMM_C22_NULL_SCENE", null_room)
-        self.assertIn("SAME_SCUMM_M23A_RETURN_VALID", null_room)
-
-        completion = runtime.split("ScummV5_Op_Stop__m23a_entry_complete:", 1)[1].split(
-            "ScummV5_Op_Stop__m23a_error:", 1
-        )[0]
-        self.assertIn("beq ScummV5_Op_Stop__m23a_no_return", completion)
-        self.assertIn("SAME_SCUMM_M23A_RETURN_PROGRAM", completion)
-        self.assertIn("SAME_SCUMM_M23A_RETURN_PC", completion)
-        self.assertIn("ScummV5_Engine_Frame__complete_success", completion)
-        self.assertLess(
-            completion.index("sta.l SAME_SCUMM_M23A_RETURN_VALID"),
-            completion.index("lda.l SAME_SCUMM_M23A_RETURN_PROGRAM"),
-        )
-
-    def test_room_change_return_validity_is_explicitly_reset_and_consumed(self) -> None:
-        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
-        far_runtime = (ROOT / "runtime/snes/engines/scumm_v5_m24rb_far.pasm").read_text()
-        boot = runtime.split("ScummV5_Engine_Boot__clear_m23a:", 1)[1].split(
-            ".endif", 1
-        )[0]
-        null_room = far_runtime.split("ScummV5_M24RB_Far_CommitNullRoom:", 1)[1].split(
-            "; Input A=logical room", 1
-        )[0]
-        self.assertIn("sta.l SAME_SCUMM_M23A_RETURN_VALID", boot)
-        self.assertIn("sta.l SAME_SCUMM_M23A_RETURN_VALID", null_room)
-
     def test_headless_fixture_retains_logical_message_lifetime_without_presentation(self) -> None:
         runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
         talk_runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()

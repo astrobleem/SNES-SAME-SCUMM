@@ -6,6 +6,7 @@ import argparse
 import base64
 import hashlib
 import json
+from functools import lru_cache
 from pathlib import Path
 import sys
 import time
@@ -82,26 +83,72 @@ def room42_sentence_ready(state: dict, expected_room: int = 42) -> bool:
     )
 
 
-def mapped_cpu_address(symbol: str) -> int:
-    """Resolve a bank-0 symbol from the build map, avoiding stale hooks."""
-    map_path = ROOT / "build" / "same-engine-host.map"
-    for line in map_path.read_text().splitlines():
-        fields = line.split()
-        if len(fields) >= 3 and fields[0] == ";" and fields[2] == symbol:
-            return int(fields[1].lstrip("$"), 16)
-    raise RuntimeError(f"{symbol} not found in {map_path}")
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
-def mapped_cpu_address_for_rom(rom: Path, symbol: str) -> int:
-    """Resolve a bank-0 symbol from the map emitted beside this ROM."""
+@lru_cache(maxsize=8)
+def verified_symbol_map_for_rom(rom: Path) -> tuple[Path, dict[str, int]]:
+    """Load symbols only from a map/listing identity bound to this ROM."""
+    rom = rom.resolve()
     map_path = rom.with_suffix(".map")
-    if not map_path.is_file():
-        return mapped_cpu_address(symbol)
+    listing_path = rom.with_suffix(".lst")
+    identity_path = rom.with_suffix(".build_identity.json")
+    for artifact in (rom, map_path, listing_path, identity_path):
+        if not artifact.is_file():
+            raise RuntimeError(
+                f"acceptance symbols unavailable: required ROM-bound artifact missing: {artifact}"
+            )
+    try:
+        identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        identity_rom = identity["rom"]["sha256"]
+        symbol_identity = identity["native_symbols"]
+        map_identity = symbol_identity["map"]
+        listing_identity = symbol_identity["listing"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError(f"invalid ROM build identity {identity_path}: {exc}") from exc
+    if identity_rom != _sha256(rom):
+        raise RuntimeError(f"build identity ROM SHA does not match {rom}")
+    for artifact, recorded in ((map_path, map_identity), (listing_path, listing_identity)):
+        if recorded.get("name") != artifact.name:
+            raise RuntimeError(
+                f"build identity names {recorded.get('name')!r}, expected adjacent {artifact.name!r}"
+            )
+        if recorded.get("sha256") != _sha256(artifact):
+            raise RuntimeError(f"build identity {artifact.name} SHA mismatch for {rom}")
+    symbols: dict[str, int] = {}
     for line in map_path.read_text().splitlines():
         fields = line.split()
-        if len(fields) >= 3 and fields[0] == ";" and fields[2] == symbol:
-            return int(fields[1].lstrip("$"), 16)
-    raise RuntimeError(f"{symbol} not found in {map_path}")
+        if len(fields) >= 3 and fields[0] == ";":
+            try:
+                symbols[fields[2]] = int(fields[1].lstrip("$"), 16)
+            except ValueError:
+                continue
+    return map_path, symbols
+
+
+def mapped_cpu_address_for_rom(rom: Path, symbol: str, *, bank: int) -> int:
+    """Resolve a symbol with its explicit PBR after validating ROM identity.
+
+    Poppy's map records bank-local PCs (for example ``$8000``), not the 65816
+    PBR.  A bank-less address can silently install a hook in unrelated bank-0
+    code that happens to use the same PC, so callers must provide the actual
+    assembled bank from the source/build layout.
+    """
+    map_path, symbols = verified_symbol_map_for_rom(rom.resolve())
+    if not 0 <= bank <= 0xFF:
+        raise ValueError(f"PBR bank must fit in one byte: {bank}")
+    try:
+        pc = symbols[symbol]
+    except KeyError as exc:
+        raise RuntimeError(f"{symbol} not found in verified {map_path}") from exc
+    if not 0x8000 <= pc <= 0xFFFF:
+        raise RuntimeError(f"{symbol} is not a ROM address in {map_path}: ${pc:04X}")
+    return (bank << 16) | pc
 
 
 def class_mask(s, object_id: int) -> int | None:
@@ -703,6 +750,9 @@ def main() -> int:
     ap.add_argument("--pre-event-trace-count", type=int, default=1000,
                     help="number of synchronous CPU trace rows retained per selected frame")
     args = ap.parse_args()
+    # Fail before importing/starting Nexen or installing any hooks. A shared
+    # map from another ROM is never an acceptance fallback.
+    verified_symbol_map_for_rom(args.rom.resolve())
     sys.path.insert(0, "/home/chad/Mesen2/python")
     import mesen_mcp.session as ms
     ms.validate_mesen_build = lambda _: None
@@ -912,8 +962,8 @@ def main() -> int:
                         or symbol.startswith("Same_VideoSurface_")
                     ) else 0x00
                     service_path_handles[session.add_exec_hook(
-                        (hook_bank << 16)
-                        | mapped_cpu_address_for_rom(args.rom.resolve(), symbol))] = label
+                        mapped_cpu_address_for_rom(
+                            args.rom.resolve(), symbol, bank=hook_bank))] = label
                 except RuntimeError:
                     pass
             # Same_Frame_Run has no source label after its JSR to
@@ -1022,16 +1072,18 @@ def main() -> int:
                 # completed JSR Same_Frame_Run.  It is the safe boundary before
                 # SEP/WAI, without depending on debugger behavior around the
                 # WAI opcode itself.
-                mapped_cpu_address_for_rom(args.rom.resolve(), "Same_Main_Loop"))
+                mapped_cpu_address_for_rom(
+                    args.rom.resolve(), "Same_Main_Loop", bank=0))
             # Installing an execution hook can itself leave a notification for
             # the current debugger transaction.  It is not a completed-frame
             # observation; discard it before arming the run-until fence.
             session.drain_notifications(timeout=0.0)
         # The startup-root ENCD is deliberately allowed to run the real
-        # script-1/title chain.  START is a title-room input boundary, not an
-        # initial room-49 fixture action; sending it at the root can be
-        # latched before room 75 is installed and changes the lifecycle.
+        # script-1/title chain. START is sent only at the observed room68/75
+        # title boundary; no room or VM state is injected.
         start_sent = False
+        title_ack = False
+        start_input_observation = None
         sentence_sent = False
         sentence2_sent = False
         sentence2_frame = None
@@ -1055,25 +1107,26 @@ def main() -> int:
             # from the input-arm frame.
             pre = snap_light(session) if args.light else snap(session)
             last_full_state = pre
-            if not start_sent:
-                # Arm the real controller edge at the source-backed 68 -> 75
-                # title boundary.  The startup root intentionally begins in
-                # room 68, before the title room is installed.
-                # The target input latch is sampled during the NMI/frame
-                # boundary.  Arm while room installation is in its final
-                # phase so the edge is visible to the first idle title pass.
-                if pre["room"] == 75 and pre["room_phase"] in (0, 2):
-                    # Mesen's SNES controller mask is the native joypad word;
-                    # START is bit $1000 (the low bits are face buttons).
-                    # The MCP input API uses its abstract controller mask;
-                    # session.BTN_START is the value mapped to native $1000
-                    # by the emulator's joypad service.
-                    session.set_input(session.BTN_START, 40)
-                    start_sent = True
-                    # Keep the edge held across several NMI/frame boundaries;
-                    # the title gate samples the debounced controller state,
-                    # not the debugger transaction itself.
-                    start_release_frame = elapsed + 40
+            if (not start_sent and pre["room"] in (68, 75)
+                    and pre["room_phase"] in (0, 2)):
+                # Room68 is a valid authored title/input boundary. Waiting
+                # specifically for room75 can deadlock the observer before it
+                # sends the input that advances the title lifecycle.
+                session.set_input(session.BTN_START | session.BTN_A, 40)
+                start_sent = True
+                start_input_observation = {
+                    "frame": elapsed,
+                    "room": pre.get("room"),
+                    "room_phase": pre.get("room_phase"),
+                    "error": pre.get("error"),
+                    "buttons": ["START", "A"],
+                    "hold_frames": 40,
+                }
+                start_release_frame = elapsed + 40
+            elif (start_sent and not title_ack and pre["room"] == 68
+                  and pre.get("talk_lifetime", {}).get("active", 0)):
+                session.set_input(session.BTN_A, 2)
+                title_ack = True
             if start_release_frame is not None and elapsed >= start_release_frame:
                 session.set_input(0, 1)
                 start_release_frame = None
@@ -1306,10 +1359,9 @@ def main() -> int:
                 # room-42 dialogue.  Poll completed frames in bounded batches
                 # until a stable semantic input boundary is observed; return
                 # to frame-granular stepping before publishing a sentence.
-                # Before the title START edge is seen, retain enough resolution
-                # to notice room 75 without spending one MCP round-trip per
-                # frame through the long room-68 prelude.
-                batch = min(16 if not start_sent else (512 if pre["room"] != 42 else 64),
+                # Keep observations bounded until the next semantic input;
+                # phase-zero room42 observations remain frame-granular.
+                batch = min(16 if not start_sent else (16 if pre["room"] != 42 else 1),
                             args.frames - elapsed)
             else:
                 batch = 1
@@ -1428,7 +1480,8 @@ def main() -> int:
                 # from the post-stop paused snapshot below.
                 logical_frames.append({
                     "frame": elapsed + run_result.get("framesAdvanced", 0),
-                    "address": mapped_cpu_address_for_rom(args.rom.resolve(), "Same_Main_Loop"),
+                    "address": mapped_cpu_address_for_rom(
+                        args.rom.resolve(), "Same_Main_Loop", bank=0),
                     "cpu": session.get_cpu_state("Snes"),
                     "state": snap_light(session) if args.light else snap(session),
                 })
@@ -1886,6 +1939,9 @@ def main() -> int:
               "control_flow_hits": control_flow_hits,
               "sentence_sent": sentence_sent,
               "sentence_frame": sentence_frame,
+              "start_sent": start_sent,
+              "start_input_observation": start_input_observation,
+              "title_ack": title_ack,
               "sentence2_sent": sentence2_sent,
               "sentence2_frame": sentence2_frame,
               "sentence2_pre_state": sentence2_pre_state,

@@ -46,12 +46,18 @@ def corpus_identity(archive: str | None) -> dict[str, object]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--rom", type=Path, required=True)
+    parser.add_argument("--map", type=Path, required=True)
+    parser.add_argument("--listing", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--poppy-sha256", required=True)
     parser.add_argument("--carrier-manifest", type=Path, required=True)
     parser.add_argument("--video-backend-manifest", type=Path, required=True)
     parser.add_argument("--video-overlay-manifest", type=Path, required=True)
     args = parser.parse_args()
+
+    for artifact in (args.rom, args.map, args.listing):
+        if not artifact.is_file():
+            raise RuntimeError(f"required build artifact is missing: {artifact}")
 
     status = git("status", "--short")
     tracked_diff = subprocess.check_output(
@@ -84,6 +90,13 @@ def main() -> int:
     identity = {
         "format": "same-build-identity-v1",
         "rom": {"path": str(args.rom), "sha256": sha256(args.rom)},
+        # Native debugger symbols are acceptance inputs, not interchangeable
+        # build debris. Bind both files to this exact ROM so a stale shared
+        # map can never silently install hooks into another image.
+        "native_symbols": {
+            "map": {"name": args.map.name, "sha256": sha256(args.map)},
+            "listing": {"name": args.listing.name, "sha256": sha256(args.listing)},
+        },
         "git": {
             "head": git("rev-parse", "HEAD"),
             "branch": git("branch", "--show-current"),

@@ -169,12 +169,14 @@ offset `$060D`; script 18 installs the textual verb records and starts global
 script 132 at `$0167` for the remaining VerbOps state. This is executed through
 the ordinary `startScript`/interpreter path.
 
-The phase-6 fixture now restores that incoming state through the established
-authored-script seam: `tools/cook_scumm_v5_rooms.py
---prepend-global-script 144 18` prepends the encoded `startScript(18)` packet
-to global 144. It is a fixture-boundary setup, not a controller-side verb table
-or raw C17 memory write. The production controller still obtains authored verb
-IDs from active-room objects and display records from runtime C17.
+The phase-6 fixture restores that incoming state with an explicitly synthetic
+wrapper: `tools/cook_scumm_v5_rooms.py --prepend-global-script 144 18` prepends
+the encoded `startScript(18)` packet to a transformed copy of global 144. The
+cooker retains the unchanged source body separately and records both hashes in
+its manifest. This is fixture-boundary setup, not execution of unchanged
+authored global 144 and not a controller-side verb table or raw C17 memory
+write. The production controller still obtains authored verb IDs from
+active-room objects and display records from runtime C17.
 
 The target report for ROM
 `dda8be046d3d89f1d7aca0b08eb07324c7680f91aa4a41c744b35b944bb3eabc` is

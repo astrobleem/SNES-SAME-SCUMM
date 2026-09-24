@@ -8,9 +8,50 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from lint_poppy import include_closure  # noqa: E402
 
 
 class PoppySourceTests(unittest.TestCase):
+    def test_include_closure_skips_inactive_build_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "generated").mkdir()
+            (root / "generated/build_config.inc.pasm").write_text(
+                "SAME_BUILD_OPTIONAL = $00\n", encoding="utf-8"
+            )
+            (root / "present.inc.pasm").write_text("; present\n", encoding="utf-8")
+            main = root / "main.pasm"
+            main.write_text(
+                '.include "generated/build_config.inc.pasm"\n'
+                ".if SAME_BUILD_OPTIONAL\n"
+                '.include "not-generated-for-this-profile.inc.pasm"\n'
+                ".else\n"
+                '.include "present.inc.pasm"\n'
+                ".endif\n",
+                encoding="utf-8",
+            )
+            closure = include_closure(main)
+            self.assertIn((root / "present.inc.pasm").resolve(), closure)
+            self.assertNotIn(
+                (root / "not-generated-for-this-profile.inc.pasm").resolve(), closure
+            )
+
+    def test_include_closure_keeps_unknown_branches_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            main = root / "main.pasm"
+            main.write_text(
+                ".if UNKNOWN_BUILD_SWITCH\n"
+                '.include "missing-then.inc.pasm"\n'
+                ".else\n"
+                '.include "missing-else.inc.pasm"\n'
+                ".endif\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "missing-then.inc.pasm"):
+                include_closure(main)
+
     def test_static_lint(self) -> None:
         result = subprocess.run(
             [sys.executable, str(ROOT / "tools/lint_poppy.py"), str(ROOT / "runtime/snes/main.pasm")],

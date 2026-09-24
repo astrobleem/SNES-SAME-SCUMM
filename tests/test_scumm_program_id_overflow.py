@@ -266,3 +266,159 @@ class ProgramIdOverflowTests(unittest.TestCase):
             check=True, capture_output=True, text=True,
         )
         self.assertIn('--append-executable-local', result.stdout)
+
+    def test_late_appended_local_follows_late_global_without_renumbering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'stop.bin').write_bytes(b'\xa0')
+            records = []
+            for room in (42, 49):
+                name = f'room-{room}.cooked'
+                (root / name).write_bytes(_cooked_room(room, _raw_room((200,))))
+                records.append({'room': room, 'output': name})
+            manifest = root / 'manifest.json'
+            manifest.write_text(json.dumps({
+                'schema': 'same_scumm_v5_cooked_rooms_v1',
+                'num_global_scripts': 200,
+                'records': records,
+                'global_scripts': [
+                    {'number': 1, 'output': 'stop.bin', 'length': 1},
+                    {'number': 2, 'output': 'stop.bin', 'length': 1},
+                ],
+            }))
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+
+            def generate(name, *, late_local):
+                output, data = root / f'{name}.pasm', root / f'{name}-data.pasm'
+                command = [
+                    sys.executable, str(generator), '--manifest', str(manifest),
+                    '--output', str(output), '--data-output', str(data),
+                    '--binary-dir', str(root / f'{name}-bin'), '--far-programs',
+                    '--entry-only-room', '42', '--entry-only-room', '49',
+                    '--append-executable-local', '42:200',
+                    '--append-late-global-script', '2',
+                ]
+                if late_local:
+                    command.extend(('--append-late-executable-local', '49:200'))
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode:
+                    self.fail(result.stderr + result.stdout)
+                return json.loads(result.stdout), output.read_text(), data.read_text()
+
+            base_report, base_output, base_data = generate('base', late_local=False)
+            full_report, output, data = generate('full', late_local=True)
+            self.assertEqual(base_report['programs'], 7)
+            self.assertEqual(full_report['programs'], 8)
+            # The normal appended local remains before the explicitly late
+            # global; the late local follows it and cannot shift that global.
+            self.assertIn('cmp #$C8\n    bne ScummV5_M23A_ResolveLocalScript__next_D5\n    lda #$D5', base_data)
+            self.assertIn('cmp #$C8\n    bne ScummV5_M23A_ResolveLocalScript__next_D5\n    lda #$D5', data)
+            self.assertIn('cmp #$02\n    bne ScummV5_M23A_ResolveGlobalScript_Far__next_D6\n    lda #$D6', data)
+            self.assertIn('ScummV5_M23A_RoomLocalPrograms_1:\n    .byte $D7', output)
+            self.assertIn('cmp #$C8\n    bne ScummV5_M23A_ResolveLocalScript__next_D7\n    lda #$D7', data)
+
+    def test_new_room_entry_exit_and_local_can_append_after_accepted_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'stop.bin').write_bytes(b'\xa0')
+            room42 = root / 'room-42.cooked'
+            room49 = root / 'room-49.cooked'
+            room42.write_bytes(_cooked_room(42, _raw_room((200,))))
+            room49.write_bytes(_cooked_room(49, _raw_room((200,))))
+            manifest = root / 'manifest.json'
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+
+            def generate(name, *, include_room49):
+                records = [{'room': 42, 'output': room42.name}]
+                if include_room49:
+                    records.append({'room': 49, 'output': room49.name})
+                manifest.write_text(json.dumps({
+                    'schema': 'same_scumm_v5_cooked_rooms_v1',
+                    'num_global_scripts': 200,
+                    'records': records,
+                    'global_scripts': [
+                        {'number': 1, 'output': 'stop.bin', 'length': 1},
+                        {'number': 2, 'output': 'stop.bin', 'length': 1},
+                    ],
+                }))
+                output, data = root / f'{name}.pasm', root / f'{name}-data.pasm'
+                command = [
+                    sys.executable, str(generator), '--manifest', str(manifest),
+                    '--output', str(output), '--data-output', str(data),
+                    '--binary-dir', str(root / f'{name}-bin'), '--far-programs',
+                    '--entry-only-room', '42', '--entry-only-room', '49',
+                    '--append-executable-local', '42:200',
+                    '--append-late-global-script', '2',
+                ]
+                if include_room49:
+                    command.extend((
+                        '--append-late-room-entry-exit', '49',
+                        '--append-late-executable-local', '49:200',
+                    ))
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode:
+                    self.fail(result.stderr + result.stdout)
+                return json.loads(result.stdout), output.read_text(), data.read_text()
+
+            base_report, base_output, base_data = generate('base', include_room49=False)
+            full_report, full_output, full_data = generate('full', include_room49=True)
+            self.assertEqual((base_report['programs'], full_report['programs']), (5, 8))
+            # The prior room, local, and late-global IDs are byte-for-byte
+            # preserved; only the newly introduced room resources consume tail IDs.
+            self.assertIn('ScummV5_M23A_RoomEntryPrograms:\n    .byte $D0', base_output)
+            self.assertIn('ScummV5_M23A_RoomEntryPrograms:\n    .byte $D0,$D5', full_output)
+            self.assertIn('ScummV5_M23A_RoomExitPrograms:\n    .byte $D1', base_output)
+            self.assertIn('ScummV5_M23A_RoomExitPrograms:\n    .byte $D1,$D6', full_output)
+            self.assertIn('cmp #$01\n    bne ScummV5_M23A_ResolveGlobalScript_Far__next_D2\n    lda #$D2', base_data)
+            self.assertIn('cmp #$01\n    bne ScummV5_M23A_ResolveGlobalScript_Far__next_D2\n    lda #$D2', full_data)
+            self.assertIn('cmp #$02\n    bne ScummV5_M23A_ResolveGlobalScript_Far__next_D4\n    lda #$D4', base_data)
+            self.assertIn('cmp #$02\n    bne ScummV5_M23A_ResolveGlobalScript_Far__next_D4\n    lda #$D4', full_data)
+            self.assertIn('ScummV5_M23A_RoomLocalPrograms_0:\n    .byte $D3', base_output)
+            self.assertIn('ScummV5_M23A_RoomLocalPrograms_1:\n    .byte $D7', full_output)
+
+    def test_room_entry_exit_append_preserves_record_order_and_allocation_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'stop.bin').write_bytes(b'\xa0')
+            room24 = root / 'room-24.cooked'
+            room42 = root / 'room-42.cooked'
+            room24.write_bytes(_cooked_room(24, _raw_room(())))
+            room42.write_bytes(_cooked_room(42, _raw_room(())))
+            manifest = root / 'manifest.json'
+            manifest.write_text(json.dumps({
+                'schema': 'same_scumm_v5_cooked_rooms_v1',
+                'num_global_scripts': 200,
+                'records': [
+                    {'room': 24, 'output': room24.name},
+                    {'room': 42, 'output': room42.name},
+                ],
+                'global_scripts': [
+                    {'number': 1, 'output': 'stop.bin', 'length': 1},
+                    {'number': 2, 'output': 'stop.bin', 'length': 1},
+                ],
+            }))
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+            output, data, report_path = (
+                root / 'ordered.pasm', root / 'ordered-data.pasm', root / 'report.json'
+            )
+            result = subprocess.run([
+                sys.executable, str(generator), '--manifest', str(manifest),
+                '--output', str(output), '--data-output', str(data),
+                '--binary-dir', str(root / 'ordered-bin'), '--far-programs',
+                '--append-room-entry-exit', '24', '--report', str(report_path),
+            ], capture_output=True, text=True)
+            if result.returncode:
+                self.fail(result.stderr + result.stdout)
+
+            generated = output.read_text()
+            report = json.loads(report_path.read_text())
+            self.assertEqual(report['rooms'], [24, 42])
+            identities = {item['identity']: item['id'] for item in report['program_map']}
+            self.assertEqual(identities['room.42/ENCD'], 0xD0)
+            self.assertEqual(identities['room.42/EXCD'], 0xD1)
+            self.assertEqual(identities['room.24/ENCD'], 0xD2)
+            self.assertEqual(identities['room.24/EXCD'], 0xD3)
+            self.assertEqual(identities['script.1'], 0xD4)
+            self.assertEqual(identities['script.2'], 0xD5)
+            self.assertIn('ScummV5_M23A_RoomEntryPrograms:\n    .byte $D2,$D0', generated)
+            self.assertIn('ScummV5_M23A_RoomExitPrograms:\n    .byte $D3,$D1', generated)

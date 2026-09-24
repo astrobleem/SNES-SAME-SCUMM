@@ -66,6 +66,29 @@ def game_identity(profile) -> str:
     return sha(f"{profile.engine_id}\0{profile.game_id}\0{profile.variant}".encode())
 
 
+def prepend_fixture_global_script(
+    original: bytes, target_script: int, prefix_script: int
+) -> tuple[bytes, dict[str, object]]:
+    """Build an explicitly synthetic prefix wrapper without losing its source.
+
+    The wrapper remains useful for controlled mid-game fixtures, but its
+    executable bytes must never be labelled as an unchanged authored global.
+    Keep the original body separately and bind both byte streams by hash.
+    """
+    prefix = bytes((0x0A, prefix_script & 0xFF, 0xFF))
+    transformed = prefix + original
+    return transformed, {
+        "kind": "synthetic-fixture-wrapper",
+        "target_script": target_script,
+        "operation": f"prepend startScript({prefix_script})",
+        "prefix_bytes": prefix.hex(),
+        "original_length": len(original),
+        "original_sha256": sha(original),
+        "transformed_length": len(transformed),
+        "transformed_sha256": sha(transformed),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--archive", type=Path, default=DEFAULT_ARCHIVE)
@@ -275,13 +298,18 @@ def main() -> int:
             record_manifest["visual"] = visual_manifest
         records.append(record_manifest)
     global_scripts = []
+    global_transformations = []
     for number in selected_global_scripts:
         key = policy.script_key_template.format(script=number)
-        program = provider.read(key)
+        original_program = provider.read(key)
+        program = original_program
+        transformation = None
         if number == prepend_target:
             if prepend_script is None:
                 raise RuntimeError("global-script prepend is incomplete")
-            program = bytes((0x0A, prepend_script & 0xFF, 0xFF)) + program
+            program, transformation = prepend_fixture_global_script(
+                original_program, number, prepend_script
+            )
         directory = provider._directories["DSCR"]
         source_room = directory.rooms[number]
         directory_offset = directory.offsets[number]
@@ -290,12 +318,14 @@ def main() -> int:
         payload_offset = chunk_header_offset + 8
         output = args.output_dir / f"script-{number}.scrp"
         output.write_bytes(program)
-        global_scripts.append({
+        script_manifest = {
             "number": number,
             "resource_key": key,
             "output": output.name,
             "length": len(program),
             "sha256": sha(program),
+            "source_length": len(original_program),
+            "source_sha256": sha(original_program),
             "namespace": "WIO_GLOBAL",
             "directory_tag": "DSCR",
             "directory_room": source_room,
@@ -305,13 +335,23 @@ def main() -> int:
             "decoded_chunk_offset": chunk_header_offset,
             "decoded_payload_offset": payload_offset,
             "chunk_length": len(program) + 8,
-        })
+        }
+        if transformation is None:
+            script_manifest["content_provenance"] = "authentic-resource-unchanged"
+        else:
+            original_output = args.output_dir / f"script-{number}.source.scrp"
+            original_output.write_bytes(original_program)
+            transformation["original_output"] = original_output.name
+            transformation["executed_output"] = output.name
+            script_manifest["identity"] = f"synthetic.wrapper.global.{number}"
+            script_manifest["content_provenance"] = "synthetic-fixture-wrapper"
+            script_manifest["transformation"] = transformation
+            global_transformations.append(transformation)
+        global_scripts.append(script_manifest)
     manifest = {
         "schema": "same_scumm_v5_cooked_rooms_v1",
         "num_global_scripts": provider.global_script_count,
-        **({"prepended_global_script": {
-            "target": prepend_target, "script": prepend_script,
-        }} if prepend_target is not None else {}),
+        "synthetic_global_transformations": global_transformations,
         "profile": {
             "path": str(args.profile.resolve()), "sha256": profile_hash,
             "engine": profile.engine_id, "game": profile.game_id,

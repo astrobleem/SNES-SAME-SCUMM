@@ -677,7 +677,6 @@ SAME_SCUMM_M23A_EXIT_PROGRAM             = $7FF2CE
 SAME_SCUMM_M23A_CURRENT_KIND             = $7FF2CF
 SAME_SCUMM_M23A_CHECKSUM                 = $7FF2D0 ; compact record sum
 SAME_SCUMM_M23A_BYTE                     = $7FF2D2 ; zero-extended sum byte
-SAME_SCUMM_M23A_RETURN_VALID             = $7FF2D3 ; u8, saved continuation survives room commit
 SAME_SCUMM_M23A_DESCRIPTOR_CHECKSUM      = $7FF2D4
 SAME_SCUMM_M23A_LIFECYCLE_COUNT          = $7FF2D6
 SAME_SCUMM_M23A_LIFECYCLE                = $7FF2D7 ; 14 ordered phase codes
@@ -718,6 +717,14 @@ SAME_SCUMM_M23B_NEST_STATE_END           = $7FF948
 ; It must remain exact across a long nested child and intervening NMIs.
 SAME_SCUMM_M23B_NEST_PROGRAMS            = $7E5420 ; 24 x u8 program identity
 SAME_SCUMM_M23B_STATE_END                = $7FF467
+; Room-return activation metadata is in the audited gap after M23B's
+; seven-byte diagnostic block and before the optional $7FF500 variable table.
+; It is outside the checksum scratch words at $7FF2D0-$7FF2D5 and all M23A
+; bulk-cleared descriptor/state ranges.
+SAME_SCUMM_M23A_RETURN_VALID             = $7FF467 ; u8 one-shot continuation validity
+SAME_SCUMM_M23A_RETURN_SLOT              = $7FF468 ; u8 surviving C4 activation owner
+SAME_SCUMM_M23A_RETURN_MODE              = $7FF469 ; u8 saved scheduler return mode
+SAME_SCUMM_M23A_REQUEST_API_ACTIVE       = $7FF46A ; u8 API request origin during dispatch
 .if SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_PHASE6LA1D
 SAME_SCUMM_M23B_VARIABLES                = SAME_SCUMM_VARIABLES ; compatibility name only
 SAME_SCUMM_M23B_VARIABLES_END            = SAME_SCUMM_VARIABLE_END
@@ -1109,7 +1116,12 @@ SAME_SCUMM_START_OBJECT_LSCR_ENTRY_SEEN     = $7E7FA1 ; u8
 SAME_SCUMM_START_OBJECT_ARG0                = $7E7FA2 ; u16 evidence
 SAME_SCUMM_START_OBJECT_ARG1                = $7E7FA4 ; u16 evidence
 SAME_SCUMM_START_OBJECT_SELECTOR            = $7E7FA6 ; u8 decode scratch
-SAME_SCUMM_START_OBJECT_STATE_END           = $7E7FA7
+; Reused only after the encoded selector/arguments have been fully decoded.
+; This operation-local decision must survive target resolution and slot
+; allocation, both of which may change the shared VM status byte.
+SAME_SCUMM_START_OBJECT_CALLER_REPLACED      = SAME_SCUMM_START_OBJECT_SELECTOR
+SAME_SCUMM_START_OBJECT_REPLACED_SLOT       = $7E7FA7 ; M25A self-replacement evidence
+SAME_SCUMM_START_OBJECT_STATE_END           = $7E7FA8
 
 ; Canonical v5 camera state and Phase-6F immediate/published evidence.  The
 ; camera is engine state; the target video facade consumes only the published
@@ -1154,6 +1166,12 @@ SAME_SCUMM_LOAD_EGO_EGO                     = $7E7FD9 ; u8 resolved actor
 SAME_SCUMM_LOAD_EGO_STATE_END               = $7E7FDA
 SAME_SCUMM_LOAD_EGO_STATE_SIZE              = $000E
 
+; Movement-observer scratch is outside the M23B nested-program vector
+; ($5420-$5437), room/service/query evidence ($5450-$5478), and object-query
+; work ring ($54FE+). The bounded 50-byte probe ends at $54B1.
+SAME_SCUMM_MOVE_DIAG_BASE                  = $7E5480
+SAME_SCUMM_MOVE_DIAG_END                   = $7E54B2
+
 .if SAME_BUILD_SCUMM_M25A_VALIDATOR
 ; Dedicated copyright-free validator evidence. This region is not part of a
 ; game personality or save format and is never referenced by integrated Fate.
@@ -1162,6 +1180,7 @@ SAME_SCUMM_M25A_TRACE_COUNT               = $7E5000
 SAME_SCUMM_M25A_TRACE_OVERFLOW            = $7E5001
 SAME_SCUMM_M25A_MAX_DEPTH                 = $7E5002
 SAME_SCUMM_M25A_FAULT_DEPTH               = $7E5003
+SAME_SCUMM_M25A_TRACE_EVENT               = $7E5004 ; saved before near/far adapter frames
 SAME_SCUMM_M25A_TRACE                     = $7E5010 ; 128 x 8-byte transition records
 SAME_SCUMM_M25A_TRACE_STRIDE              = $0008
 SAME_SCUMM_M25A_TRACE_CAPACITY            = $0080
@@ -1252,6 +1271,11 @@ SAME_SCUMM_SCENARIO_OP_TRACE               = $7E5A02 ; 256 x 4 bytes
 SAME_SCUMM_SCENARIO_LAST_OP_PROGRAM        = $7E5F00 ; u8, persistent breadcrumb
 SAME_SCUMM_SCENARIO_LAST_OP_PC             = $7E5F01 ; u16, persistent breadcrumb
 SAME_SCUMM_SCENARIO_LAST_OP_OPCODE         = $7E5F03 ; u8, persistent breadcrumb
+; M25A-only actor-query native ABI witness. SP is sampled around the JSL/RTL
+; boundary, and the returned byte proves control reached the dispatcher again.
+SAME_SCUMM_M25A_QUERY_SP_BEFORE            = $7E56A0 ; u16
+SAME_SCUMM_M25A_QUERY_SP_AFTER             = $7E56A2 ; u16
+SAME_SCUMM_M25A_QUERY_RETURNED             = $7E56A4 ; u8
 SAME_SCUMM_SCENARIO_C25_ERROR_LAST_PROGRAM = $7E5F04 ; u8, snapshot at C25 error
 SAME_SCUMM_SCENARIO_C25_ERROR_LAST_PC      = $7E5F05 ; u16, snapshot at C25 error
 SAME_SCUMM_SCENARIO_C25_ERROR_LAST_OPCODE  = $7E5F07 ; u8, snapshot at C25 error
@@ -1330,6 +1354,23 @@ SAME_SCUMM_SCENARIO_C4_RETURN_PROGRAM        = $7E57B4 ; u8 selected slot progra
 SAME_SCUMM_SCENARIO_C4_RETURN_PC             = $7E57B5 ; u16 selected slot PC after RunSelected
 SAME_SCUMM_SCENARIO_C4_RETURN_STATUS         = $7E57B7 ; u8 selected slot VM status
 SAME_SCUMM_SCENARIO_C4_RETURN_ERROR          = $7E57B8 ; u8 SCUMM error at return
+; Pending-room validator snapshots are written synchronously by the native
+; request routine. Each 24-byte record captures the decision boundary before
+; a debugger can observe later frame/service progress.
+SAME_SCUMM_PENDING_DIAG_COUNT               = $7E57BF ; u8
+SAME_SCUMM_PENDING_DIAG_RECORDS             = $7E57C0 ; 8 x 24-byte records
+SAME_SCUMM_PENDING_DIAG_STRIDE              = $0018
+SAME_SCUMM_PENDING_DIAG_CAPACITY            = $0008
+SAME_SCUMM_PENDING_DIAG_INDEX               = $7E5880 ; u16 helper scratch
+SAME_SCUMM_PENDING_DIAG_STAGE               = $7E5882 ; u8 helper scratch
+SAME_SCUMM_PENDING_DIAG_X_SAVE              = $7E5883 ; u16 helper scratch
+SAME_SCUMM_PENDING_DIAG_INJECT_MODE         = $7E5885 ; validator: 0 off, 1 phase4, 2 phase5
+SAME_SCUMM_PENDING_DIAG_INJECT_TARGET       = $7E5886 ; second API request target
+SAME_SCUMM_PENDING_DIAG_INJECTED            = $7E5887 ; one-shot marker
+SAME_SCUMM_PENDING_DIAG_INJECT_X_SAVE       = $7E5888 ; u16 helper scratch
+SAME_SCUMM_PENDING_DIAG_INJECT_ROUTE        = $7E588A ; validator: 0 near, 1 far request entry
+SAME_SCUMM_PENDING_DIAG_INJECT_ORIGIN       = $7E588B ; validator: 0 direct VM, 1 public API
+SAME_SCUMM_PENDING_DIAG_END                 = $7E588C
 SAME_SCUMM_SCENARIO_C25_ENTRY               = $7E5654 ; u8 entry breadcrumb
 SAME_SCUMM_SCENARIO_C25_STABLE_INDEX        = $7E5655 ; u8
 SAME_SCUMM_SCENARIO_C25_STABLE_OFFSET       = $7E5656 ; u16

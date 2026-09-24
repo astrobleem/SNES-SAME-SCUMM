@@ -20,6 +20,13 @@ PRIMARY_PROGRAM_IDS = tuple(range(0xD0, 0x100))
 OVERFLOW_PROGRAM_IDS = tuple(range(0xCF, 0x4D, -1))
 
 
+def cpu_visible_rom_bank(bank: int, *, sa1_aliases: bool) -> int:
+    """Return the S-CPU bank window that exposes a generated LoROM bank."""
+    if sa1_aliases and 0x40 <= bank <= 0x4F:
+        return bank + 0x40
+    return bank
+
+
 def reserved_program_ids() -> set[int]:
     """Reserve every built-in personality, not just the active build."""
     from generate_engine_fixtures import poppy_fixture_include, scumm_c2_fixtures
@@ -111,6 +118,10 @@ def main() -> int:
         "--reserved-bank", type=int, action="append", default=[],
         help="LoROM bank unavailable to generated room data/code",
     )
+    parser.add_argument(
+        "--sa1-rom-bank-aliases", action="store_true",
+        help="read generated payloads in banks $40-$4F through their $80-$8F SA-1 ROM windows",
+    )
     parser.add_argument("--entry-only-room", type=int, action="append", default=[])
     parser.add_argument(
         "--executable-local-script-room", action="append", type=int,
@@ -130,6 +141,19 @@ def main() -> int:
     parser.add_argument(
         "--append-executable-local", action="append", default=[], metavar="ROOM:SCRIPT",
         help="allocate selected local scripts after ordinary programs and appended globals",
+    )
+    parser.add_argument(
+        "--append-late-executable-local", action="append", default=[], metavar="ROOM:SCRIPT",
+        help="allocate selected local scripts after late-appended globals",
+    )
+    parser.add_argument(
+        "--append-late-room-entry-exit", action="append", type=int, default=[], metavar="ROOM",
+        help="allocate a room's ENCD/EXCD after previously selected executable identities",
+    )
+    parser.add_argument(
+        "--append-room-entry-exit", action="append", type=int, default=[], metavar="ROOM",
+        help=("allocate a room's ENCD/EXCD after ordinary room programs but before "
+              "appended globals"),
     )
     parser.add_argument(
         "--executable-local-object", action="append", default=[],
@@ -213,6 +237,27 @@ def main() -> int:
                 f"local script selected as both ordinary and appended: {item[0]}:{item[1]}"
             )
         append_executable_locals.append(item)
+    append_late_executable_locals = []
+    for raw in args.append_late_executable_local:
+        parts = raw.split(":")
+        if len(parts) != 2:
+            raise RuntimeError("--append-late-executable-local requires ROOM:SCRIPT")
+        item = tuple(int(value) for value in parts)
+        if item in append_late_executable_locals:
+            raise RuntimeError(f"duplicate late-appended executable local {item[0]}:{item[1]}")
+        if item in append_executable_locals or item in executable_locals:
+            raise RuntimeError(
+                f"local script selected more than once: {item[0]}:{item[1]}"
+            )
+        append_late_executable_locals.append(item)
+    if set(append_executable_locals) & set(append_late_executable_locals):
+        raise RuntimeError("local script selected as both appended and late-appended")
+    if len(set(args.append_late_room_entry_exit)) != len(args.append_late_room_entry_exit):
+        raise RuntimeError("duplicate late-appended room entry/exit selection")
+    if len(set(args.append_room_entry_exit)) != len(args.append_room_entry_exit):
+        raise RuntimeError("duplicate appended room entry/exit selection")
+    if set(args.append_room_entry_exit) & set(args.append_late_room_entry_exit):
+        raise RuntimeError("room entry/exit selected for both append phases")
     executable_local_objects = {
         tuple(int(value) for value in item.split(":"))
         for item in args.executable_local_object
@@ -225,6 +270,7 @@ def main() -> int:
     global_scripts = []
     deferred_global_scripts = []
     deferred_local_scripts = []
+    late_deferred_room_entry_exit_scripts = []
     global_states: bytes | None = None
     global_owners: bytes | None = None
     global_classes: tuple[int, ...] | None = None
@@ -328,6 +374,7 @@ def main() -> int:
             if actor_walkboxes is not None and candidate_walkboxes != actor_walkboxes:
                 raise RuntimeError("cooked-room manifests disagree on actor walkboxes")
             actor_walkboxes = candidate_walkboxes
+        manifest_deferred_room_entry_exit_scripts = []
         for source_record in manifest["records"]:
             path = manifest_path.parent / source_record["output"]
             raw = path.read_bytes()
@@ -343,6 +390,7 @@ def main() -> int:
                         or decoded.room in args.executable_local_script_room
                         or (decoded.room, script.number) in executable_locals
                         or (decoded.room, script.number) in append_executable_locals
+                        or (decoded.room, script.number) in append_late_executable_locals
                         or script.kind in {"ENCD", "EXCD"}
                         or decoded.room not in args.entry_only_room
                     )
@@ -363,7 +411,14 @@ def main() -> int:
                     # ENCD/EXCD selection remains governed by room lifecycle.
                     "executable": executable,
                 }
-                if (decoded.room, script.number) in append_executable_locals:
+                if (script.kind in {"ENCD", "EXCD"}
+                        and decoded.room in args.append_room_entry_exit):
+                    manifest_deferred_room_entry_exit_scripts.append(item)
+                elif (script.kind in {"ENCD", "EXCD"}
+                        and decoded.room in args.append_late_room_entry_exit):
+                    late_deferred_room_entry_exit_scripts.append(item)
+                elif ((decoded.room, script.number) in append_executable_locals
+                        or (decoded.room, script.number) in append_late_executable_locals):
                     deferred_local_scripts.append(item)
                 else:
                     item["id"] = program_ids.allocate()
@@ -482,6 +537,16 @@ def main() -> int:
                     f"room {decoded.room} has LSCR below global-script boundary "
                     f"{manifest_global_scripts}"
                 )
+        room_order = {room: index for index, room in enumerate(args.append_room_entry_exit)}
+        manifest_deferred_room_entry_exit_scripts.sort(key=lambda item: (
+            room_order[int(item["room"])], 0 if item["kind_name"] == "ENCD" else 1,
+        ))
+        for item in manifest_deferred_room_entry_exit_scripts:
+            item["id"] = program_ids.allocate()
+            programs.append(item)
+            room_record = records[int(item["record"])]
+            room_record["entry" if item["kind_name"] == "ENCD" else "exit"] = item["id"]
+
         for source_script in manifest.get("global_scripts", []):
             if source_script.get("append_after_rooms", False) or int(source_script["number"]) in args.append_global_script or int(source_script["number"]) in args.append_late_global_script:
                 deferred_global_scripts.append({
@@ -569,8 +634,30 @@ def main() -> int:
         }
         programs.append(item)
         global_scripts.append(item)
+    late_room_order = {room: index for index, room in enumerate(args.append_late_room_entry_exit)}
+    late_deferred_room_entry_exit_scripts.sort(key=lambda item: (
+        late_room_order[int(item["room"])], 0 if item["kind_name"] == "ENCD" else 1,
+    ))
+    for item in late_deferred_room_entry_exit_scripts:
+        item["id"] = program_ids.allocate()
+        programs.append(item)
+        room_record = records[int(item["record"])]
+        room_record["entry" if item["kind_name"] == "ENCD" else "exit"] = item["id"]
+    for room, number in append_late_executable_locals:
+        item = requested_locals.get((room, number))
+        if item is None:
+            raise RuntimeError(
+                f"late-appended executable local absent from input manifests: {room}:{number}"
+            )
+        item["id"] = program_ids.allocate()
+        programs.append(item)
     if set(args.append_global_script + args.append_late_global_script) - {item["number"] for item in global_scripts}:
         raise RuntimeError("appended global script absent from input manifests")
+    if set(append_executable_locals + append_late_executable_locals) - set(requested_locals):
+        raise RuntimeError("appended executable local absent from input manifests")
+    selected_entry_exit_rooms = set(args.append_room_entry_exit + args.append_late_room_entry_exit)
+    if selected_entry_exit_rooms - {int(item["room"]) for item in records}:
+        raise RuntimeError("late-appended room entry/exit selection absent from input manifests")
     if len({item["room"] for item in records}) != len(records):
         raise RuntimeError("generated cooked-room tables contain duplicate room numbers")
     if len({item["number"] for item in global_scripts}) != len(global_scripts):
@@ -607,6 +694,10 @@ def main() -> int:
         hold_after_started_global_program = int(match["id"])
 
     reserved_banks = set(args.reserved_bank)
+
+    def cpu_rom_address(bank: int) -> str:
+        visible_bank = cpu_visible_rom_bank(bank, sa1_aliases=args.sa1_rom_bank_aliases)
+        return f"${visible_bank:02X}8000"
 
     def next_free_bank(value: int) -> int:
         while value in reserved_banks:
@@ -708,22 +799,17 @@ def main() -> int:
         )
         for label, payload in tables:
             bank = next_free_bank(bank)
-            geometry_bank = bank if label == f"ScummV5_PutActor_Record_{index}_Geometry" else None
-            data_lines.extend((f".bank {bank}", ".org $8000"))
-            if geometry_bank is not None:
-                # Poppy's generated long-label relocation is not reliable
-                # across independently banked data sections.  Publish the
-                # actual LoROM bank as an explicit 24-bit address constant;
-                # the accessor remains one generic path for every index.
-                data_lines.append(
-                    f"ScummV5_PutActor_Record_{index}_Geometry_Address = ${geometry_bank:02X}8000"
-                )
+            data_lines.extend((
+                f".bank {bank}", ".org $8000",
+                f"{label}_Address = {cpu_rom_address(bank)}",
+            ))
             data_lines.extend((f"{label}:", rows(payload)))
             bank += 1
         bank = next_free_bank(bank)
         data_lines.extend((
             f".bank {bank}", ".org $8000",
             f"ScummV5_Verb_Record_{index}_Count = ${len(record['verb_entries']):04X}",
+            f"ScummV5_Verb_Record_{index}_Entries_Address = {cpu_rom_address(bank)}",
             f"ScummV5_Verb_Record_{index}_Entries:",
             "    .word " + ",".join(
                 f"${object_id:04X},${verb:04X},${offset:04X}"
@@ -807,7 +893,7 @@ def main() -> int:
             "    .a8", "    .i16",
             f"    cpx #${len(record['walkbox_flags']):04X}",
             f"    bcs ScummV5_Matrix_LoadActiveRoom__done_{index}",
-            f"    lda.l ScummV5_Matrix_Record_{index}_InitialFlags,x",
+            f"    lda.l ScummV5_Matrix_Record_{index}_InitialFlags_Address,x",
             "    sta.l SAME_SCUMM_MATRIX_BOX_FLAGS,x",
             "    inx",
             f"    bra ScummV5_Matrix_LoadActiveRoom__copy_{index}",
@@ -818,7 +904,7 @@ def main() -> int:
             "    .a8", "    .i16",
             f"    cpx #${len(record['objects']):04X}",
             f"    bcs ScummV5_SetState_LoadActiveRoom__done_{index}",
-            f"    lda.l ScummV5_SetState_Record_{index}_Objects,x",
+            f"    lda.l ScummV5_SetState_Record_{index}_Objects_Address,x",
             "    sta.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS,x", "    inx",
             f"    bra ScummV5_SetState_LoadActiveRoom__copy_{index}",
             f"ScummV5_SetState_LoadActiveRoom__done_{index}:",
@@ -876,7 +962,7 @@ def main() -> int:
                 "    phx",
                 "    rep #$20", "    .a16", "    tya", "    tax",
                 "    sep #$20", "    .a8",
-                f"    lda.l ScummV5_SetState_Record_{index}_ObjectNames,x",
+                f"    lda.l ScummV5_SetState_Record_{index}_ObjectNames_Address,x",
                 "    plx",
                 "    sta.l SAME_SCUMM_OBJECT_NAMES,x",
                 "    iny", "    inx",
@@ -1059,7 +1145,7 @@ def main() -> int:
             f"    bra ScummV5_Movement_NextBox_Far__mul_{index}",
             f"ScummV5_Movement_NextBox_Far__mul_done_{index}:", "    pla",
             "    clc", "    adc.l SAME_SCUMM_MOVE_ROUTE_DEST", "    tax",
-            "    sep #$20", "    .a8", f"    lda.l ScummV5_Movement_Record_{index}_Routes,x",
+            "    sep #$20", "    .a8", f"    lda.l ScummV5_Movement_Record_{index}_Routes_Address,x",
             "    cmp #$FF", f"    bne ScummV5_Movement_NextBox_Far__success_{index}",
             "    brl ScummV5_Movement_NextBox_Far__fail",
             f"ScummV5_Movement_NextBox_Far__success_{index}:", "    sec", "    rtl",
@@ -1102,7 +1188,7 @@ def main() -> int:
             "    sta.l SAME_SCUMM_MOVE_TEMP",
             "    asl", "    asl", "    asl", "    sec", "    sbc.l SAME_SCUMM_MOVE_TEMP",
             "    tax", "    sep #$20", "    .a8",
-            f"    lda.l ScummV5_Movement_Record_{index}_Portals,x",
+            f"    lda.l ScummV5_Movement_Record_{index}_Portals_Address,x",
             "    sta.l SAME_SCUMM_MOVE_PORTAL_TYPE", f"    bne ScummV5_Movement_Portal_Far__success_{index}",
             "    brl ScummV5_Movement_Portal_Far__fail",
             f"ScummV5_Movement_Portal_Far__success_{index}:",
@@ -1112,11 +1198,11 @@ def main() -> int:
             # so advance X to each packed field instead of applying an
             # arithmetic expression to the long label.
             "    inx",
-            f"    lda.l ScummV5_Movement_Record_{index}_Portals,x", "    sta.l SAME_SCUMM_MOVE_PORTAL_FIXED",
+            f"    lda.l ScummV5_Movement_Record_{index}_Portals_Address,x", "    sta.l SAME_SCUMM_MOVE_PORTAL_FIXED",
             "    inx", "    inx",
-            f"    lda.l ScummV5_Movement_Record_{index}_Portals,x", "    sta.l SAME_SCUMM_MOVE_PORTAL_LOW",
+            f"    lda.l ScummV5_Movement_Record_{index}_Portals_Address,x", "    sta.l SAME_SCUMM_MOVE_PORTAL_LOW",
             "    inx", "    inx",
-            f"    lda.l ScummV5_Movement_Record_{index}_Portals,x", "    sta.l SAME_SCUMM_MOVE_PORTAL_HIGH",
+            f"    lda.l ScummV5_Movement_Record_{index}_Portals_Address,x", "    sta.l SAME_SCUMM_MOVE_PORTAL_HIGH",
             "    sep #$20", "    .a8", "    sec", "    rtl",
             f"ScummV5_Movement_Portal_Far__next_{index}:", "    .a8",
         ))
@@ -1139,28 +1225,28 @@ def main() -> int:
             "    brl ScummV5_Movement_ObjectWalk_Far__fail",
             f"ScummV5_Movement_ObjectWalk_Far__scan_ok_{index}:",
             "    .a16", "    .i16",
-            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk,x",
+            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk_Address,x",
             "    cmp.l SAME_SCUMM_MOVE_OBJECT", f"    beq ScummV5_Movement_ObjectWalk_Far__found_{index}",
             "    txa", "    clc", "    adc #$000C", "    tax",
             f"    bra ScummV5_Movement_ObjectWalk_Far__scan_{index}",
             f"ScummV5_Movement_ObjectWalk_Far__found_{index}:",
             "    inx", "    inx",
-            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk,x",
+            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk_Address,x",
             "    sta.l SAME_SCUMM_MOVE_REQUEST_X",
             "    inx", "    inx",
-            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk,x",
+            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk_Address,x",
             "    sta.l SAME_SCUMM_MOVE_REQUEST_Y", "    sep #$20", "    .a8",
             "    inx", "    inx",
-            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk,x",
+            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk_Address,x",
             "    sta.l SAME_SCUMM_MOVE_QUERY_DIR",
             "    inx", "    rep #$20", "    .a16",
-            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk,x",
+            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk_Address,x",
             "    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_X",
             "    inx", "    inx",
-            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk,x",
+            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk_Address,x",
             "    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_Y",
             "    inx", "    inx", "    sep #$20", "    .a8",
-            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk,x",
+            f"    lda.l ScummV5_Movement_Record_{index}_ObjectWalk_Address,x",
             "    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_BOX", "    sec", "    rtl",
             f"ScummV5_Movement_ObjectWalk_Far__next_{index}:", "    .a8",
         ))
@@ -1468,7 +1554,7 @@ def main() -> int:
         "    sta.l $7E5465",
         "    rep #$20", "    .a16", "    lda.l SAME_SCUMM_VERB_OBJECT", "    sta.l $7E5466",
         "    lda.l SAME_SCUMM_VERB_ID", "    sta.l $7E5468",
-        f"    lda.l ScummV5_Verb_Record_0_Entries", "    sta.l $7E546A",
+        f"    lda.l ScummV5_Verb_Record_0_Entries_Address", "    sta.l $7E546A",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
     for index, record in enumerate(records):
@@ -1915,6 +2001,15 @@ def main() -> int:
     args.data_output.write_text("\n".join(data_lines) + "\n")
     report = {
         "rooms": [item["room"] for item in records], "programs": len(programs),
+        "program_map": [
+            {
+                "id": item["id"], "identity": item["identity"],
+                "kind": item["kind_name"], "room": item["room"],
+                "number": item["number"], "length": item["length"],
+                "sha256": hashlib.sha256(item["program"]).hexdigest(),
+            }
+            for item in programs
+        ],
         "last_bank": bank, "output": str(args.output), "data": str(args.data_output),
     }
     if args.report:

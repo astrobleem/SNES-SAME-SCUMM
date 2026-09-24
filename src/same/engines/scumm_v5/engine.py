@@ -3905,6 +3905,7 @@ class ScummV5Engine(Engine):
         preserve_local_scripts: bool = False,
     ) -> None:
         key = self._room_key(room)
+        null_scene = False
         if not context.services.resources.contains(key):
             # Room zero is SCUMM's resource-less null scene.  startScene(0)
             # still commits the room transition and clears local draw state;
@@ -3920,34 +3921,30 @@ class ScummV5Engine(Engine):
                     self.state.current_room = 0
                     context.services.debug.marker("scumm_v5.room", 0)
                     return
-                self.state.room_objects.clear()
-                self.state.object_draw_queue.clear()
-                self.state.current_room = 0
-                self._room_scripts = {}
-                self._room_script_descriptors = {}
-                self._room_entry = None
-                self._room_exit = None
-                self._room_record = None
-                surface = context.services.video.surface
-                context.services.video.set_palette(0, ((0, 0, 0),) * 256)
-                context.services.video.fill(0)
-                self.state.room_hash = surface.hash()
-                self._video = None
-                context.services.debug.marker("scumm_v5.room", 0)
-                return
-            if required:
+                null_scene = True
+            elif required:
                 raise ResourceError(f"SCUMM room {room} has no resource binding {key!r}")
-            return
-        # Transactional preflight: acquire, validate, and fully decode the new
-        # resource before any exit script or active-room state can change.
-        raw, decoded, record = self._prepare_room(context, room, key)
-        self._room_lifecycle_event("room_change_requested", room)
-        self._room_lifecycle_event(
-            "new_room_validated", room,
-            resource=key,
-            cooked=record is not None,
-            record_sha256=None if record is None else record.record_sha256,
-        )
+            else:
+                return
+        if null_scene:
+            raw = None
+            record = None
+            self._room_lifecycle_event("room_change_requested", room)
+            self._room_lifecycle_event(
+                "new_room_validated", room, resource=None, cooked=False,
+                null_scene=True,
+            )
+        else:
+            # Transactional preflight: acquire, validate, and fully decode the
+            # destination before any exit script or active-room state changes.
+            raw, decoded, record = self._prepare_room(context, room, key)
+            self._room_lifecycle_event("room_change_requested", room)
+            self._room_lifecycle_event(
+                "new_room_validated", room,
+                resource=key,
+                cooked=record is not None,
+                record_sha256=None if record is None else record.record_sha256,
+            )
         old_room = self.state.current_room
         if not preserve_local_scripts and self._room_exit is not None:
             exit_slot = ScriptSlot(
@@ -3981,6 +3978,23 @@ class ScummV5Engine(Engine):
                     script.recursive = False
                     script.freeze_count = 0
             self._room_lifecycle_event("old_room_scripts_retired", old_room)
+        if null_scene:
+            self.state.room_objects.clear()
+            self.state.object_draw_queue.clear()
+            self.state.current_room = 0
+            self._room_scripts = {}
+            self._room_script_descriptors = {}
+            self._room_entry = None
+            self._room_exit = None
+            self._room_record = None
+            surface = context.services.video.surface
+            context.services.video.set_palette(0, ((0, 0, 0),) * 256)
+            context.services.video.fill(0)
+            self.state.room_hash = surface.hash()
+            self._video = None
+            self._room_lifecycle_event("new_room_activated", 0, null_scene=True)
+            context.services.debug.marker("scumm_v5.room", 0)
+            return
         adapter = ScummV5RoomAdapter(context)
         adapter.render(key, room_data=raw)
         self._video = adapter

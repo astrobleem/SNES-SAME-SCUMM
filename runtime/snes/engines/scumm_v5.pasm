@@ -119,6 +119,9 @@ ScummV5_Engine_Boot__clear_m23a:
     sta.l SAME_SCUMM_M23A_PENDING_RECORD
     lda #$00
     sta.l SAME_SCUMM_M23A_RETURN_VALID
+    sta.l SAME_SCUMM_M23A_RETURN_SLOT
+    sta.l SAME_SCUMM_M23A_RETURN_MODE
+    sta.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
     .endif
     rep #$30
     .a16
@@ -205,6 +208,26 @@ ScummV5_Engine_Boot__m25a_clear_variables:
     bcc ScummV5_Engine_Boot__m25a_clear_variables
     sep #$20
     .a8
+    ; StartObject diagnostics live outside the bounded M25A trace region.
+    ; WRAM survives emulator power/reset, so clear their counters and
+    ; breadcrumbs before a fresh conformance run.
+    lda #$00
+    ldx #$0000
+ScummV5_Engine_Boot__m25a_clear_start_object:
+    .a8
+    .i16
+    sta.l SAME_SCUMM_START_OBJECT_OBJECT,x
+    inx
+    cpx #$0017
+    bcc ScummV5_Engine_Boot__m25a_clear_start_object
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_M25A_QUERY_SP_BEFORE
+    sta.l SAME_SCUMM_M25A_QUERY_SP_AFTER
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_M25A_QUERY_RETURNED
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     ; Standalone scenario boots do not inherit the debugger's committed-frame
     ; hold from SRAM.  The normal frame lifecycle must remain live after the
@@ -263,6 +286,15 @@ ScummV5_Engine_Boot__clear_scenario:
     sta.l SAME_SCUMM_SCENARIO_FIXTURE_REQUESTED
     sta.l SAME_SCUMM_SCENARIO_FIXTURE_READY
     sta.l SAME_SCUMM_M25_START_TRACE_COUNT
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    sta.l SAME_SCUMM_PENDING_DIAG_COUNT
+    sta.l SAME_SCUMM_PENDING_DIAG_STAGE
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECT_MODE
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECT_TARGET
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECTED
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECT_ROUTE
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECT_ORIGIN
+    .endif
     sta.l SAME_SCUMM_SCENARIO_ALLOC_TRACE_COUNT
     sta.l SAME_SCUMM_SCENARIO_M24RB_ALLOC_COUNT
     sta.l SAME_SCUMM_SCENARIO_M24RB_ALLOC_STATUS1
@@ -630,11 +662,31 @@ ScummV5_Engine_Frame__sentence_api_done:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda.l SAME_SCUMM_ROOM_REQUEST_API_PENDING
     beq ScummV5_Engine_Frame__room_request_done
+    ; Keep an external later target in its one-entry mailbox until the accepted
+    ; room lifecycle reaches phase zero. During phases 4/5 RequestRoom is still
+    ; called so an identical target can coalesce; phases 1-3 finish the
+    ; accepted EXCD/ENCD before the different target is retried.
+    lda.l SAME_SCUMM_M23A_PHASE
+    beq ScummV5_Engine_Frame__room_request_submit
+    cmp #$04
+    beq ScummV5_Engine_Frame__room_request_submit
+    cmp #$05
+    bne ScummV5_Engine_Frame__room_request_done
+ScummV5_Engine_Frame__room_request_submit:
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
     lda.l SAME_SCUMM_ROOM_REQUEST_API_ROOM
     jsr ScummV5_RequestRoom
     lda #$00
+    sta.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
+    bcs ScummV5_Engine_Frame__room_request_done
+    lda #$00
     sta.l SAME_SCUMM_ROOM_REQUEST_API_PENDING
 ScummV5_Engine_Frame__room_request_done:
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    jsr ScummV5_M25A_InjectPendingRequest
+    .endif
     .endif
     .a8
     ; A semantic sentence may arrive while the resource service is finishing
@@ -2238,14 +2290,60 @@ ScummV5_Engine_Frame__dispatch_get_actor_room:
     jmp ScummV5_Op_GetActorRoom
 ScummV5_Engine_Frame__dispatch_get_actor_x:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    rep #$30
+    .a16
+    .i16
+    tsx
+    txa
+    sta.l SAME_SCUMM_M25A_QUERY_SP_BEFORE
+    sep #$20
+    .a8
+    .endif
     jsl ScummV5_GetActorX_FarEntry
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    rep #$30
+    .a16
+    .i16
+    tsx
+    txa
+    sta.l SAME_SCUMM_M25A_QUERY_SP_AFTER
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_M25A_QUERY_RETURNED
+    .endif
+    bcs ScummV5_Engine_Frame__error
     jml ScummV5_Engine_Frame__next
     .else
     jmp ScummV5_Engine_Frame__opcode_error
     .endif
 ScummV5_Engine_Frame__dispatch_get_actor_y:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    rep #$30
+    .a16
+    .i16
+    tsx
+    txa
+    sta.l SAME_SCUMM_M25A_QUERY_SP_BEFORE
+    sep #$20
+    .a8
+    .endif
     jsl ScummV5_GetActorY_FarEntry
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    rep #$30
+    .a16
+    .i16
+    tsx
+    txa
+    sta.l SAME_SCUMM_M25A_QUERY_SP_AFTER
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_M25A_QUERY_RETURNED
+    .endif
+    bcs ScummV5_Engine_Frame__error
     jmp ScummV5_Engine_Frame__next
     .else
     jmp ScummV5_Engine_Frame__opcode_error
@@ -2453,6 +2551,12 @@ ScummV5_C4_ResetState__loop:
 ; Input A8 is an event code. Records are
 ; (event,depth,slot,program,u16 PC,status,active-count).
 ScummV5_M25A_Trace:
+    ; Save the event at the ABI boundary. Recovering it later from the stack
+    ; only works for JSR callers; the far-call adapter adds a three-byte JSL
+    ; return frame, so the same stack-relative offset silently records zero.
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_M25A_TRACE_EVENT
     pha
     php
     rep #$10
@@ -2472,16 +2576,12 @@ ScummV5_M25A_Trace__space:
     .a16
     and #$00FF
     asl
-    sta.l SAME_SCUMM_OPERAND
     asl
-    clc
-    adc.l SAME_SCUMM_OPERAND
     asl
     tax
     sep #$20
     .a8
-    ; Recover the caller's event byte without disturbing its saved stack copy.
-    lda 6,s
+    lda.l SAME_SCUMM_M25A_TRACE_EVENT
     sta.l SAME_SCUMM_M25A_TRACE,x
     lda.l SAME_SCUMM_M23B_NEST_DEPTH
     sta.l SAME_SCUMM_M25A_TRACE+1,x
@@ -3447,6 +3547,12 @@ ScummV5_C4_RunAllocatedNoParent:
     plp
     rts
 
+; Bank-0 return adapter for cold far handlers. The far caller uses JSL/RTL;
+; this adapter owns that long frame and delegates the existing near helper.
+ScummV5_C4_RunAllocatedNoParent_FarEntry:
+    jsr ScummV5_C4_RunAllocatedNoParent
+    rtl
+
 ; Stop every live global/local script with the requested number. A8 holds the
 ; number on entry. Script zero is handled by the opcode as self-stop.
 ScummV5_C4_StopNumber:
@@ -3466,6 +3572,19 @@ ScummV5_C4_StopNumber__scan:
     lda.l SAME_SCUMM_C4_SLOT_NUMBER,x
     cmp.l SAME_SCUMM_CONDITION
     bne ScummV5_C4_StopNumber__next
+    ; A room-return continuation belongs to one live activation, not merely
+    ; to the numeric slot. If any stop/replacement kills that activation,
+    ; invalidate the saved return before this slot can be reused.
+    lda.l SAME_SCUMM_M23A_RETURN_VALID
+    beq ScummV5_C4_StopNumber__retire
+    txa
+    cmp.l SAME_SCUMM_M23A_RETURN_SLOT
+    bne ScummV5_C4_StopNumber__retire
+    lda #$00
+    sta.l SAME_SCUMM_M23A_RETURN_VALID
+ScummV5_C4_StopNumber__retire:
+    .a8
+    .i16
     lda #SCUMM_VM_STOPPED
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda #$00
@@ -7355,6 +7474,257 @@ ScummV5_Movement_FarCall_Divide:
     .a16
     .i16
     rtl
+.if SAME_BUILD_SCUMM_M25A_VALIDATOR
+; Native, synchronous snapshot for pending-room validator decisions. The
+; emulator API pauses at frame boundaries, after Storage may have consumed the
+; event, so tests read these records rather than infer a transient phase from
+; later WRAM state. Input A: 1 queued, 2 coalesced, 3 API conflict retained,
+; 4 direct conflicting request rejected. Clobbers A/X/flags; callers set carry.
+ScummV5_M25A_RecordPendingRequest:
+    php
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_PENDING_DIAG_STAGE
+    rep #$10
+    .i16
+    rep #$20
+    .a16
+    txa
+    sta.l SAME_SCUMM_PENDING_DIAG_X_SAVE
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_PENDING_DIAG_COUNT
+    cmp #SAME_SCUMM_PENDING_DIAG_CAPACITY
+    bcc ScummV5_M25A_RecordPendingRequest__record
+    jmp ScummV5_M25A_RecordPendingRequest__restore
+ScummV5_M25A_RecordPendingRequest__record:
+    inc
+    sta.l SAME_SCUMM_PENDING_DIAG_COUNT
+    dec
+    rep #$30
+    .a16
+    .i16
+    and #$00FF
+    sta.l SAME_SCUMM_PENDING_DIAG_INDEX
+    asl
+    clc
+    adc.l SAME_SCUMM_PENDING_DIAG_INDEX
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_PENDING_DIAG_STAGE
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS,x
+    lda.l SAME_SCUMM_M23A_PHASE
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+1,x
+    lda.l $7E5452
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+2,x
+    lda.l SAME_SCUMM_M23A_PENDING_ROOM
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+3,x
+    lda.l SAME_SCUMM_M23A_REQUEST_COUNT
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+4,x
+    lda.l SAME_SCUMM_M23A_RETURN_VALID
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+5,x
+    lda.l SAME_SCUMM_M23A_RETURN_PROGRAM
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+6,x
+    lda.l SAME_SCUMM_M23A_RETURN_SLOT
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+7,x
+    lda.l SAME_SCUMM_M23A_RETURN_MODE
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+8,x
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+9,x
+    lda.l SAME_EVENT_COUNT
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+14,x
+    lda.l SAME_EVENT_SEQUENCE
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+16,x
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+11,x
+    lda.l SAME_SCUMM_ROOM_REQUEST_API_PENDING
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+12,x
+    lda.l SAME_SCUMM_ROOM_REQUEST_API_ROOM
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+13,x
+    lda.l SAME_SCUMM_ERROR
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+18,x
+    lda.l SAME_ENGINE_LIFECYCLE
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+19,x
+    lda.l SAME_SCUMM_M23A_PENDING_RECORD
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+20,x
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+21,x
+    lda.l SAME_SCUMM_C22_CURRENT_ROOM
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+22,x
+    lda.l SAME_SCUMM_PENDING_DIAG_INJECT_ROUTE
+    sta.l SAME_SCUMM_PENDING_DIAG_RECORDS+23,x
+ScummV5_M25A_RecordPendingRequest__restore:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_PENDING_DIAG_X_SAVE
+    tax
+    plp
+    rts
+
+; Native fixture injection at the transaction's actual phase-4 or phase-5
+; boundary. The second request still enters the ordinary RequestRoom routine
+; with the same API-origin flag and mailbox semantics as the engine caller.
+; This is compiled only in the copyright-free M25A validator profile.
+ScummV5_M25A_InjectPendingRequest:
+    php
+    sep #$20
+    .a8
+    rep #$10
+    .i16
+    rep #$20
+    .a16
+    txa
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECT_X_SAVE
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_PENDING_DIAG_INJECT_MODE
+    bne ScummV5_M25A_InjectPendingRequest__mode_enabled
+    jmp ScummV5_M25A_InjectPendingRequest__restore
+ScummV5_M25A_InjectPendingRequest__mode_enabled:
+    lda.l SAME_SCUMM_PENDING_DIAG_INJECTED
+    beq ScummV5_M25A_InjectPendingRequest__not_injected
+    jmp ScummV5_M25A_InjectPendingRequest__restore
+ScummV5_M25A_InjectPendingRequest__not_injected:
+    .a8
+    lda.l SAME_SCUMM_M23A_PHASE
+    cmp #$04
+    beq ScummV5_M25A_InjectPendingRequest__phase4
+    cmp #$05
+    beq ScummV5_M25A_InjectPendingRequest__phase5
+    bra ScummV5_M25A_InjectPendingRequest__restore
+ScummV5_M25A_InjectPendingRequest__phase4:
+    .a8
+    lda.l SAME_SCUMM_PENDING_DIAG_INJECT_MODE
+    cmp #$01
+    bne ScummV5_M25A_InjectPendingRequest__restore
+    bra ScummV5_M25A_InjectPendingRequest__invoke
+ScummV5_M25A_InjectPendingRequest__phase5:
+    .a8
+    lda.l SAME_SCUMM_PENDING_DIAG_INJECT_MODE
+    cmp #$02
+    bne ScummV5_M25A_InjectPendingRequest__restore
+ScummV5_M25A_InjectPendingRequest__invoke:
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_PENDING_DIAG_INJECTED
+    lda.l SAME_SCUMM_PENDING_DIAG_INJECT_TARGET
+    sta.l SAME_SCUMM_ROOM_REQUEST_API_ROOM
+    lda.l SAME_SCUMM_PENDING_DIAG_INJECT_ORIGIN
+    beq ScummV5_M25A_InjectPendingRequest__direct_origin
+    lda #$01
+    sta.l SAME_SCUMM_ROOM_REQUEST_API_PENDING
+    sta.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
+    bra ScummV5_M25A_InjectPendingRequest__invoke_route
+ScummV5_M25A_InjectPendingRequest__direct_origin:
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ROOM_REQUEST_API_PENDING
+    sta.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
+ScummV5_M25A_InjectPendingRequest__invoke_route:
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    lda.l SAME_SCUMM_PENDING_DIAG_INJECT_ROUTE
+    beq ScummV5_M25A_InjectPendingRequest__near
+    lda.l SAME_SCUMM_ROOM_REQUEST_API_ROOM
+    jsl ScummV5_M23A_RequestRoom_FarEntry
+    bra ScummV5_M25A_InjectPendingRequest__request_done
+ScummV5_M25A_InjectPendingRequest__near:
+    lda.l SAME_SCUMM_ROOM_REQUEST_API_ROOM
+    jsl ScummV5_M23A_CheckPendingRequest_FarEntry
+    .else
+    lda.l SAME_SCUMM_ROOM_REQUEST_API_ROOM
+    jsr ScummV5_M23A_RequestRoom
+    .endif
+ScummV5_M25A_InjectPendingRequest__request_done:
+    .a8
+    php
+    lda #$00
+    sta.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
+    plp
+    bcs ScummV5_M25A_InjectPendingRequest__retain
+    lda #$00
+    sta.l SAME_SCUMM_ROOM_REQUEST_API_PENDING
+    bra ScummV5_M25A_InjectPendingRequest__restore
+ScummV5_M25A_InjectPendingRequest__retain:
+    .a8
+    lda.l SAME_SCUMM_PENDING_DIAG_INJECT_ORIGIN
+    beq ScummV5_M25A_InjectPendingRequest__restore
+    lda #$01
+    sta.l SAME_SCUMM_ROOM_REQUEST_API_PENDING
+ScummV5_M25A_InjectPendingRequest__restore:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_PENDING_DIAG_INJECT_X_SAVE
+    tax
+    plp
+    rts
+.endif
+
+; Near-profile phase-4/5 transaction policy. Far builds keep this bounded
+; helper in the banked room-service section to preserve bank-zero space.
+.if !SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+ScummV5_M23A_CheckPendingRequest:
+    sep #$20
+    .a8
+    sta.l $7E5452
+    lda.l SAME_SCUMM_M23A_PHASE
+    cmp #$04
+    beq ScummV5_M23A_CheckPendingRequest__pending
+    cmp #$05
+    beq ScummV5_M23A_CheckPendingRequest__pending
+    lda #$00
+    clc
+    rts
+ScummV5_M23A_CheckPendingRequest__pending:
+    .a8
+    lda.l $7E5452
+    cmp.l SAME_SCUMM_M23A_PENDING_ROOM
+    bne ScummV5_M23A_CheckPendingRequest__conflict
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    lda #$02
+    jsr ScummV5_M25A_RecordPendingRequest
+    .endif
+    lda #$01
+    clc
+    rts
+ScummV5_M23A_CheckPendingRequest__conflict:
+    .a8
+    lda.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
+    bne ScummV5_M23A_CheckPendingRequest__api_conflict
+    lda #SCUMM_ERR_SERVICE
+    jsr ScummV5_SetError
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    lda #$04
+    jsr ScummV5_M25A_RecordPendingRequest
+    .endif
+    lda #$03
+    sec
+    rts
+ScummV5_M23A_CheckPendingRequest__api_conflict:
+    .a8
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    lda #$03
+    jsr ScummV5_M25A_RecordPendingRequest
+    .endif
+    lda #$02
+    sec
+    rts
+.endif
+
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+ScummV5_M23A_CheckPendingRequest_FarEntry:
+    jsl ScummV5_M24RB_Far_CheckPendingRequest
+    rtl
+.endif
 .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 ScummV5_M24RB_FarCall_C25Flush:
     jsr ScummV5_C25_Flush
@@ -7394,6 +7764,9 @@ ScummV5_M25A_FarCall_RunSelected:
 .if SAME_BUILD_SCUMM_M25A_VALIDATOR
 ScummV5_M25A_FarCall_Trace:
     jsr ScummV5_M25A_Trace
+    rtl
+ScummV5_M25A_FarCall_RecordPendingRequest:
+    jsr ScummV5_M25A_RecordPendingRequest
     rtl
 .endif
 .endif
@@ -7688,6 +8061,10 @@ ScummV5_M23A_CommitNullRoom__retire_owned:
     sta.l SAME_SCUMM_C4_SLOT_NUMBER,x
     sta.l SAME_SCUMM_C4_SLOT_PROGRAM,x
     sta.l SAME_SCUMM_M23A_SLOT_ROOMS,x
+    lda.l SAME_SCUMM_C4_ACTIVE_COUNT
+    beq ScummV5_M23A_CommitNullRoom__next
+    dec
+    sta.l SAME_SCUMM_C4_ACTIVE_COUNT
 ScummV5_M23A_CommitNullRoom__next:
     rep #$10
     .i16
@@ -7713,7 +8090,7 @@ ScummV5_M23A_CommitNullRoom__next:
     sta.l SAME_SCUMM_M23A_PHASE
     sta.l SAME_SCUMM_M23A_HOLD
     sta.l SAME_SCUMM_M23A_CURRENT_KIND
-    sta.l SAME_SCUMM_M23A_RETURN_VALID
+    clc
     rts
 
 ; Input A=logical room. Acquisition is asynchronous through SAME Storage READ;
@@ -7721,7 +8098,16 @@ ScummV5_M23A_CommitNullRoom__next:
 ScummV5_M23A_RequestRoom:
     sep #$20
     .a8
-    sta.l $7E5452
+    jsr ScummV5_M23A_CheckPendingRequest
+    beq ScummV5_M23A_RequestRoom__new
+    cmp #$01
+    beq ScummV5_M23A_RequestRoom__coalesced
+    sec
+    rts
+ScummV5_M23A_RequestRoom__coalesced:
+    clc
+    rts
+ScummV5_M23A_RequestRoom__new:
     lda.l $7E5450
     inc
     sta.l $7E5450
@@ -7739,6 +8125,10 @@ ScummV5_M23A_RequestRoom:
     sta.l SAME_SCUMM_M23A_PENDING_ROOM
     lda.l SAME_SCUMM_PROGRAM_SELECT
     sta.l SAME_SCUMM_M23A_RETURN_PROGRAM
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_M23A_RETURN_SLOT
+    lda.l SAME_SCUMM_RETURN_MODE
+    sta.l SAME_SCUMM_M23A_RETURN_MODE
     rep #$20
     .a16
     lda.l SAME_SCUMM_PC
@@ -7750,14 +8140,6 @@ ScummV5_M23A_RequestRoom:
     ; continuations still restore exactly once.
     lda #$01
     sta.l SAME_SCUMM_M23A_RETURN_VALID
-    ; A second room request can be emitted while the first transaction is
-    ; still being committed.  The outgoing room-local continuation must not
-    ; be revalidated by that later request.
-    lda.l SAME_SCUMM_M23A_PHASE
-    cmp #$04
-    beq ScummV5_M23A_RequestRoom__return_not_survivable
-    cmp #$05
-    beq ScummV5_M23A_RequestRoom__return_not_survivable
     rep #$10
     .i16
     ldx #$0000
@@ -7775,6 +8157,8 @@ ScummV5_M23A_RequestRoom__return_not_survivable:
     .a8
     lda #$00
     sta.l SAME_SCUMM_M23A_RETURN_VALID
+    sta.l SAME_SCUMM_M23A_RETURN_SLOT
+    sta.l SAME_SCUMM_M23A_RETURN_MODE
     sta.l SAME_SCUMM_M23A_RETURN_PROGRAM
     rep #$20
     .a16
@@ -7793,7 +8177,9 @@ ScummV5_M23A_RequestRoom__return_valid:
     jsr ScummV5_M23A_Trace
     lda.l SAME_SCUMM_M23A_PENDING_ROOM
     bne ScummV5_M23A_RequestRoom__queue
-    jsr ScummV5_M23A_CommitNullRoom
+    lda #$FF
+    sta.l SAME_SCUMM_M23A_PENDING_RECORD
+    jsr ScummV5_M23A_ResourceReady
     clc
     rts
 ScummV5_M23A_RequestRoom__queue:
@@ -7830,6 +8216,10 @@ ScummV5_M23A_RequestRoom__queue:
 ScummV5_M23A_RequestRoom__queued:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    lda #$01
+    jsr ScummV5_M25A_RecordPendingRequest
+    .endif
     clc
     rts
 
@@ -7837,9 +8227,21 @@ ScummV5_M23A_RequestRoom__queued:
 ScummV5_M23A_ResourceReady:
     sep #$20
     .a8
+    lda.l SAME_SCUMM_M23A_PENDING_ROOM
+    bne ScummV5_M23A_ResourceReady__check_active
     lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
     cmp #$FF
-    bne ScummV5_M23A_ResourceReady__check_exit
+    beq ScummV5_M23A_ResourceReady__commit_null
+    bra ScummV5_M23A_ResourceReady__check_exit
+ScummV5_M23A_ResourceReady__check_active:
+    .a8
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    cmp #$FF
+    beq ScummV5_M23A_ResourceReady__commit_room
+    bra ScummV5_M23A_ResourceReady__check_exit
+ScummV5_M23A_ResourceReady__commit_null:
+    jmp ScummV5_M23A_CommitNullRoom
+ScummV5_M23A_ResourceReady__commit_room:
     jmp ScummV5_M23A_CommitRoom
 ScummV5_M23A_ResourceReady__check_exit:
     .a8
@@ -7912,6 +8314,11 @@ ScummV5_M23A_EndRoomScript__done:
 ScummV5_M23A_CommitRoom:
     sep #$20
     .a8
+    lda.l SAME_SCUMM_M23A_PENDING_ROOM
+    bne ScummV5_M23A_CommitRoom__resource_room
+    jmp ScummV5_M23A_CommitNullRoom
+ScummV5_M23A_CommitRoom__resource_room:
+    .a8
     ; A room change is a canonical cutscene-abort boundary.  Do not carry the
     ; previous room's global C19 stack or per-slot override depths into the
     ; continuing scheduler context; the new room owns a fresh lifecycle.
@@ -7969,6 +8376,8 @@ ScummV5_M23A_CommitRoom__retire_next:
     lda.l SAME_SCUMM_M23A_PENDING_ROOM
     sta.l SAME_SCUMM_M23A_ACTIVE_ROOM
     sta.l SAME_SCUMM_C22_CURRENT_ROOM
+    lda #$00
+    sta.l SAME_SCUMM_C22_NULL_SCENE
     lda #$05
     jsr ScummV5_M23A_Trace
     sep #$10
@@ -11532,7 +11941,7 @@ ScummV5_Op_SoundKludge__m24rb_continue:
     jmp ScummV5_Engine_Frame__next
 
 ScummV5_C25_Flush:
-.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_C25_Flush_Far
     rts
 ScummV5_C25_Flush_Bank0_Resume:
@@ -12654,7 +13063,7 @@ ScummV5_C25_Flush__complete_continue:
     .endif
     jml ScummV5_Engine_Frame__next
 
-.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     .bank 0
     .org ScummV5_C25_Flush_Bank0_Resume
 ScummV5_C25_FarCall_EmitAudio:
@@ -13910,7 +14319,7 @@ ScummV5_Op_Stop__m23a_check_phase:
     beq ScummV5_Op_Stop__m23a_exit_complete
     cmp #$02
     beq ScummV5_Op_Stop__m23a_entry_complete
-    bra ScummV5_Op_Stop__m23a_not_room_script
+    jmp ScummV5_Op_Stop__m23a_not_room_script
 ScummV5_Op_Stop__m23a_exit_complete:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_EndRoomScript_FarEntry
@@ -13919,7 +14328,15 @@ ScummV5_Op_Stop__m23a_exit_complete:
     jsr ScummV5_M23A_EndRoomScript
     jsr ScummV5_M23A_CommitRoom
     .endif
-    bcs ScummV5_Op_Stop__m23a_error
+    bcc ScummV5_Op_Stop__m23a_exit_commit_ok
+    jmp ScummV5_Op_Stop__m23a_error
+ScummV5_Op_Stop__m23a_exit_commit_ok:
+    lda.l SAME_SCUMM_C22_NULL_SCENE
+    beq ScummV5_Op_Stop__m23a_exit_room_ready
+    lda.l SAME_SCUMM_M23A_RETURN_VALID
+    beq ScummV5_Op_Stop__m23a_no_return_near
+    jmp ScummV5_Op_Stop__m23a_restore_return
+ScummV5_Op_Stop__m23a_exit_room_ready:
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_Stop__m23a_entry_complete:
     .a8
@@ -13943,28 +14360,60 @@ ScummV5_Op_Stop__m23a_no_return_near:
     jmp ScummV5_Op_Stop__m23a_no_return
 ScummV5_Op_Stop__m23a_restore_return:
     .a8
-    ; Consume a surviving continuation before restoring it.  This prevents a
-    ; later room completion from reusing the same driver return context.
-    lda #$00
-    sta.l SAME_SCUMM_M23A_RETURN_VALID
-    lda.l SAME_SCUMM_M23A_RETURN_PROGRAM
-    sta.l SAME_SCUMM_PROGRAM_SELECT
+    ; A code location alone is not an activation. Verify that the captured
+    ; scheduler slot still owns the same live global before restoring any
+    ; context; a killed/replaced caller is never resurrected.
+    lda.l SAME_SCUMM_M23A_RETURN_SLOT
+    beq ScummV5_Op_Stop__m23a_no_return_near
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_NUMBER,x
+    beq ScummV5_Op_Stop__m23a_no_return_near
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    beq ScummV5_Op_Stop__m23a_no_return_near
+    cmp #SCUMM_VM_STOPPED
+    beq ScummV5_Op_Stop__m23a_no_return_near
+    cmp #SCUMM_VM_ERROR
+    beq ScummV5_Op_Stop__m23a_no_return_near
+    lda.l SAME_SCUMM_C4_SLOT_WHERE,x
+    cmp #SCUMM_WIO_GLOBAL
+    bne ScummV5_Op_Stop__m23a_no_return_near
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    cmp.l SAME_SCUMM_M23A_RETURN_PROGRAM
+    bne ScummV5_Op_Stop__m23a_no_return_near
+    ; Room ENCD runs in a separate host-frame invocation from the suspended
+    ; global.  Restoring its shared PC and jumping directly into bytecode
+    ; would bypass C4's RunSelected return path, so a later breakHere would
+    ; leave the slot descriptor at the pre-room continuation and replay it.
+    ; Queue the saved continuation in its existing activation instead; the
+    ; ordinary scheduler will load its slot, execute it, and save the yielded
+    ; PC through the normal descriptor path on the next frame.
+    lda.l SAME_SCUMM_M23A_RETURN_SLOT
+    tax
+    lda #SCUMM_VM_YIELDED
+    sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     rep #$20
     .a16
+    lda.l SAME_SCUMM_M23A_RETURN_SLOT
+    and #$00FF
+    asl
+    tax
     lda.l SAME_SCUMM_M23A_RETURN_PC
-    sta.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_C4_SLOT_PC,x
     sep #$20
     .a8
-    lda #SCUMM_VM_RUNNING
-    sta.l SAME_SCUMM_STATUS
-    jmp ScummV5_Engine_Frame__next
+    lda #$00
+    sta.l SAME_SCUMM_C4_CURRENT_SLOT
+    jmp ScummV5_Op_Stop__m23a_no_return
 ScummV5_Op_Stop__m23a_no_return:
     .a8
-    ; The outgoing room/local activation was retired at CommitRoom.  Its
-    ; continuation bytes are stale data, not a caller to resurrect.
+    ; No VM activation is running inline after room lifecycle completion.
+    ; The outgoing local was retired, while a surviving global (if any) has
+    ; already been returned to its original yielded C4 descriptor above.
     lda #$00
     sta.l SAME_SCUMM_M23A_RETURN_VALID
     sta.l SAME_SCUMM_M23A_RETURN_PROGRAM
+    sta.l SAME_SCUMM_M23A_RETURN_SLOT
+    sta.l SAME_SCUMM_M23A_RETURN_MODE
     sta.l SAME_SCUMM_PROGRAM_SELECT
     rep #$20
     .a16
@@ -14871,10 +15320,6 @@ ScummV5_Op_StartScript__mapping_error:
     sta.l SAME_SCUMM_C4_SLOT_FREEZE_RESISTANT,x
     sta.l SAME_SCUMM_C4_SLOT_RECURSIVE,x
     sta.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
-    ; A directory may omit a dormant/optional global script.  SCUMM treats
-    ; an unavailable startScript target as a no-op after releasing the slot;
-    ; it must not poison the parent scheduler with a script error.
-    jmp ScummV5_Engine_Frame__complete_success
     lda.l SAME_SCUMM_C4_CHAIN_MODE
     beq ScummV5_Op_StartScript__mapping_error_code
     lda #$42

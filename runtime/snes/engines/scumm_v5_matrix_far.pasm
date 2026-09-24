@@ -1123,13 +1123,17 @@ ScummV5_GetActorPosition_FarEntry:
     sta.l SAME_SCUMM_MOVE_POSITION_AXIS
     jsl ScummV5_GetActorFacing_FarCall_ReadResult
     bcc ScummV5_GetActorPosition_FarEntry__result_ok
-    brl ScummV5_ReadOnlyQuery_Far__operand_error
+    ; ReadResultOffset owns the precise error for a malformed result
+    ; reference (for example SCUMM_ERR_LOCAL).  Preserve it while returning
+    ; through this JSL/RTL service boundary; only a malformed/truncated actor
+    ; selector below is classified as PC_RANGE here.
+    bra ScummV5_GetActorPosition_FarEntry__result_error
 ScummV5_GetActorPosition_FarEntry__result_ok:
     ; v5 $43/$C3 getActorX and $23/$A3 getActorY share the result destination
     ; followed by a direct-or-variable word object selector.  The high opcode
     ; bit controls the operand form; it is not an instruction-family split.
     jsl ScummV5_Movement_FarCall_FetchVarOrDirectWord
-    bcs ScummV5_ReadOnlyQuery_Far__operand_error
+    bcs ScummV5_GetActorPosition_FarEntry__operand_error
     rep #$30
     .a16
     .i16
@@ -1184,6 +1188,26 @@ ScummV5_GetActorPosition_FarEntry__missing:
     lda #$FFFF
 ScummV5_GetActorPosition_FarEntry__write:
     jsl ScummV5_GetActorFacing_FarCall_WriteResult
+    clc
+    rtl
+ScummV5_GetActorPosition_FarEntry__result_error:
+    sep #$20
+    .a8
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_STATUS
+    sec
+    rtl
+ScummV5_GetActorPosition_FarEntry__operand_error:
+    ; This is a JSL/RTL service contract. Return the SCUMM error to the
+    ; dispatcher after unwinding this helper's long-call frame; never tail
+    ; jump into the VM RTS error exit with a live 24-bit return address.
+    sep #$20
+    .a8
+    lda #SCUMM_ERR_PC_RANGE
+    sta.l SAME_SCUMM_ERROR
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_STATUS
+    sec
     rtl
 
 ScummV5_ReadOnlyQuery_Far__operand_error:
@@ -1382,6 +1406,10 @@ ScummV5_StartObject_FarEntry__arg_ready:
     sta.l SAME_SCUMM_START_OBJECT_ARG_COUNT
     bra ScummV5_StartObject_FarEntry__next_arg
 ScummV5_StartObject_FarEntry__args_done:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_START_OBJECT_CALLER_REPLACED
     rep #$20
     .a16
     lda.l SAME_SCUMM_C4_ARGS
@@ -1427,8 +1455,30 @@ ScummV5_StartObject_FarEntry__stop_match:
     tax
     sep #$20
     .a8
+.if SAME_BUILD_SCUMM_M25A_VALIDATOR
+    ; Preserve the old matching activation slot so the same-object fixture
+    ; can prove that replacement did not accidentally nest under its reuse.
+    lda.l SAME_SCUMM_START_OBJECT_EXEC_COUNT
+    cmp #$01
+    bne ScummV5_StartObject_FarEntry__stop_match_no_evidence
+    txa
+    sta.l SAME_SCUMM_START_OBJECT_REPLACED_SLOT
+ScummV5_StartObject_FarEntry__stop_match_no_evidence:
+    .a8
+.endif
     lda #SCUMM_VM_STOPPED
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
+    ; If the object being replaced is this exact executing activation, mark
+    ; the shared caller dead as StartScript does. The replacement may reuse
+    ; this slot, so slot-number equality alone cannot authorize a parent save.
+    txa
+    cmp.l SAME_SCUMM_C4_CURRENT_SLOT
+    bne ScummV5_StartObject_FarEntry__stop_count
+    lda #$01
+    sta.l SAME_SCUMM_START_OBJECT_CALLER_REPLACED
+    lda #SCUMM_VM_STOPPED
+    sta.l SAME_SCUMM_STATUS
+ScummV5_StartObject_FarEntry__stop_count:
     lda.l SAME_SCUMM_C4_ACTIVE_COUNT
     beq ScummV5_StartObject_FarEntry__stop_next
     dec
@@ -1586,6 +1636,20 @@ ScummV5_StartObject_FarEntry__locals_ready:
     lda.l SAME_SCUMM_START_OBJECT_EXEC_COUNT
     inc
     sta.l SAME_SCUMM_START_OBJECT_EXEC_COUNT
+    lda.l SAME_SCUMM_START_OBJECT_CALLER_REPLACED
+    beq ScummV5_StartObject_FarEntry__run_nested
+    ; This handler lives in bank 9 while the allocator helper is bank 0.
+    ; Cross the bank boundary with the RTL adapter rather than a near JSR.
+    jsl ScummV5_C4_RunAllocatedNoParent_FarEntry
+    php
+    sep #$20
+    .a8
+    plp
+    bcc ScummV5_StartObject_FarEntry__replacement_ok
+    jml ScummV5_Op__error
+ScummV5_StartObject_FarEntry__replacement_ok:
+    jml ScummV5_Engine_Frame__complete_success
+ScummV5_StartObject_FarEntry__run_nested:
     jml ScummV5_Op_StartScript__run_nested
 ScummV5_StartObject_FarEntry__no_entry:
     jml ScummV5_Engine_Frame__next
@@ -2271,21 +2335,21 @@ ScummV5_Movement_UpdateActor_Far:
     bne ScummV5_Movement_UpdateActor_Far__entry_probe_done
     lda #$10
     jsr ScummV5_Movement_TracePositionEvent
-    lda.l $7E5015
-    sta.l $7E502A
+    lda.l SAME_SCUMM_MOVE_DIAG_BASE+$11
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$26
     rep #$20
     .a16
     lda.l SAME_SCUMM_C31_POSITIONS+4
-    sta.l $7E502C
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$28
     sep #$20
     .a8
-    lda.l $7E5016
+    lda.l SAME_SCUMM_MOVE_DIAG_BASE+$12
     inc
-    sta.l $7E5016
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$12
     lda.l SAME_SCUMM_MOVE_TICK
-    sta.l $7E5018
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$14
     lda.l SAME_SCUMM_C31_MOVING,x
-    sta.l $7E501A
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$16
     rep #$20
     .a16
     lda.l SAME_SCUMM_MOVE_ACTOR
@@ -2294,17 +2358,17 @@ ScummV5_Movement_UpdateActor_Far:
     asl
     tax
     lda.l SAME_SCUMM_C31_POSITIONS,x
-    sta.l $7E501C
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$18
     lda.l SAME_SCUMM_C31_POSITIONS+2,x
-    sta.l $7E501E
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$1A
     lda.l SAME_SCUMM_MOVE_ACTOR
     and #$00FF
     asl
     tax
     lda.l SAME_SCUMM_MOVE_LEG_TARGET_X,x
-    sta.l $7E5020
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$1C
     lda.l SAME_SCUMM_MOVE_LEG_TARGET_Y,x
-    sta.l $7E5022
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$1E
     sep #$20
     .a8
 ScummV5_Movement_UpdateActor_Far__entry_probe_done:
@@ -2900,7 +2964,7 @@ ScummV5_Movement_TracePositionEvent:
     .a8
     lda.l $7E54FE
     sta.l $7E5500,x
-    lda.l $7E5015
+    lda.l SAME_SCUMM_MOVE_DIAG_BASE+$11
     sta.l $7E5501,x
     rep #$20
     .a16
@@ -2910,7 +2974,7 @@ ScummV5_Movement_TracePositionEvent:
     sta.l $7E5504,x
     sep #$20
     .a8
-    lda.l $7E5016
+    lda.l SAME_SCUMM_MOVE_DIAG_BASE+$12
     sta.l $7E5506,x
     lda #$00
     sta.l $7E5507,x
@@ -2942,7 +3006,7 @@ ScummV5_Movement_WalkStep_Far:
     tax
     lda.l SAME_SCUMM_C31_POSITIONS,x
     sta.l SAME_SCUMM_M25_MOVE_STEP_PRE_X
-    sta.l $7E500E
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$0A
     rep #$30
     .a16
     .i16
@@ -3031,9 +3095,9 @@ ScummV5_Movement_WalkStep_Far__x_shift_high:
     rep #$20
     .a16
     lda.l SAME_SCUMM_C18_RESULT_LO
-    sta.l $7E5004
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$00
     lda.l SAME_SCUMM_C18_RESULT_HI
-    sta.l $7E5006
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$02
 ScummV5_Movement_WalkStep_Far__product_no_probe:
     plx
     ; The actor probe above is byte-oriented and leaves M=8 on both the
@@ -3052,29 +3116,29 @@ ScummV5_Movement_WalkStep_Far__product_no_probe:
     lda.l SAME_SCUMM_MOVE_POSITION_OFFSET
     tax
     lda.l SAME_SCUMM_C18_RESULT_HI
-    sta.l $7E5010
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$0C
     adc.l SAME_SCUMM_C31_POSITIONS,x
-    sta.l $7E5012
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$0E
     sta.l SAME_SCUMM_C31_POSITIONS,x
     sep #$20
     .a8
     lda.l SAME_SCUMM_MOVE_ACTOR
     cmp #$01
     bne ScummV5_Movement_WalkStep_Far__x_write_probe_done
-    lda.l $7E5024
+    lda.l SAME_SCUMM_MOVE_DIAG_BASE+$20
     inc
-    sta.l $7E5024
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$20
     lda.l SAME_SCUMM_MOVE_TICK
-    sta.l $7E5026
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$22
     lda #$01
-    sta.l $7E5028
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$24
 ScummV5_Movement_WalkStep_Far__x_write_probe_done:
     rep #$20
     .a16
     sep #$20
     .a8
     lda #$01
-    sta.l $7E5014
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$10
     lda #$01
     jsr ScummV5_Movement_TracePositionEvent
     rep #$20
@@ -3087,7 +3151,7 @@ ScummV5_Movement_WalkStep_Far__x_write_probe_done:
     rep #$20
     .a16
     lda.l SAME_SCUMM_C31_POSITIONS,x
-    sta.l $7E500C
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$08
 ScummV5_Movement_WalkStep_Far__x_probe_done:
     rep #$20
     .a16
@@ -3169,9 +3233,9 @@ ScummV5_Movement_WalkStep_Far__active:
     lda.l SAME_SCUMM_MOVE_POSITION_OFFSET
     tax
     lda.l SAME_SCUMM_C31_POSITIONS,x
-    sta.l $7E5008
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$04
     lda.l SAME_SCUMM_C31_POSITIONS+2,x
-    sta.l $7E500A
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$06
 ScummV5_Movement_WalkStep_Far__active_no_probe:
     sec
     rts
@@ -3935,27 +3999,27 @@ ScummV5_PutActor_FarEntry__present:
     cmp #$0001
     bne ScummV5_PutActor_FarEntry__first_x_probe_done
     lda.l SAME_SCUMM_C31_POSITIONS,x
-    sta.l $7E502E
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$2A
     lda.l SAME_SCUMM_PC
-    sta.l $7E5030
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$2C
     sep #$20
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
-    sta.l $7E5032
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$2E
     lda #$02
-    sta.l $7E5034
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$30
     rep #$20
     .a16
 ScummV5_PutActor_FarEntry__first_x_probe_done:
     sep #$20
     .a8
     lda #$02
-    sta.l $7E5014
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$10
     lda #$02
     jsr ScummV5_Movement_TracePositionEvent
-    lda.l $7E5015
+    lda.l SAME_SCUMM_MOVE_DIAG_BASE+$11
     inc
-    sta.l $7E5015
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$11
     rep #$20
     .a16
     lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
@@ -4074,27 +4138,27 @@ ScummV5_PutActor_FarEntry__scale_done:
     cmp #$0001
     bne ScummV5_PutActor_FarEntry__result_x_probe_done
     lda.l SAME_SCUMM_C31_POSITIONS,x
-    sta.l $7E502E
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$2A
     lda.l SAME_SCUMM_PC
-    sta.l $7E5030
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$2C
     sep #$20
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
-    sta.l $7E5032
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$2E
     lda #$03
-    sta.l $7E5034
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$30
     rep #$20
     .a16
 ScummV5_PutActor_FarEntry__result_x_probe_done:
     sep #$20
     .a8
     lda #$02
-    sta.l $7E5014
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$10
     lda #$03
     jsr ScummV5_Movement_TracePositionEvent
-    lda.l $7E5015
+    lda.l SAME_SCUMM_MOVE_DIAG_BASE+$11
     inc
-    sta.l $7E5015
+    sta.l SAME_SCUMM_MOVE_DIAG_BASE+$11
     rep #$20
     .a16
     lda.l SAME_SCUMM_PUT_ACTOR_RESULT_Y

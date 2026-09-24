@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import unittest
 import zipfile
+from fate_test_data import require_fate_demo_archive
 
 from same.engines.scumm_v5.policy import parse_game_policy
 from same.engines.scumm_v5.resources import LucasartsScummV5ResourceProvider
@@ -14,7 +15,6 @@ from same.resources import MemoryResourceProvider
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json"
-ARCHIVE = Path("/home/chad/fatedemo-box.zip")
 SCRIPT14_SHA256 = "ee6b379d25e4ace9772673b05bb40d2f428dd2c0bd9142a8f53d85005fb4e371"
 
 
@@ -29,9 +29,9 @@ class Phase6HAScriptDeliveryTests(unittest.TestCase):
             {"hold_after_started_global_script": 14},
         )
 
-    @unittest.skipUnless(ARCHIVE.is_file(), "user-supplied Fate demo archive unavailable")
     def test_authentic_script14_is_a_complete_source_global(self) -> None:
-        with zipfile.ZipFile(ARCHIVE) as archive:
+        archive_path = require_fate_demo_archive(self)
+        with zipfile.ZipFile(archive_path) as archive:
             raw = {
                 "game.index": archive.read("FATEDEMO/PLAYFATE.000"),
                 "game.data": archive.read("FATEDEMO/PLAYFATE.001"),

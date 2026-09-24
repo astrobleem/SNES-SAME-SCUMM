@@ -102,25 +102,49 @@ def run_missing(rom: Path, nexen: Path, port: int, output: Path) -> dict[str, ob
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--rom", type=Path, required=True)
-    parser.add_argument("--missing-rom", type=Path, required=True)
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--rom", type=Path)
+    parser.add_argument("--missing-rom", type=Path)
+    parser.add_argument("--missing-global-rom", type=Path)
+    parser.add_argument("--manifest", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--missing-only", action="store_true")
     parser.add_argument("--nexen", type=Path, default=DEFAULT_NEXEN)
     parser.add_argument("--port", type=int, default=45371)
     args = parser.parse_args()
     require(args.nexen.is_file() and os.access(args.nexen, os.X_OK), "Nexen unavailable")
+    output = args.output.parent
+    output.mkdir(parents=True, exist_ok=True)
+    sys.path.insert(0, "/home/chad/Mesen2/python")
+    import mesen_mcp.session as mcp_session
+    mcp_session.validate_mesen_build = lambda _path: None
+    if args.missing_only:
+        require(args.missing_rom is not None and args.missing_global_rom is not None,
+                "missing-only mode requires both local and global negative ROMs")
+        report = {
+            "gate": "SCUMM-unmapped-starts-fail-closed", "result": "pass",
+            "missing_local": run_missing(
+                args.missing_rom.resolve(), args.nexen.resolve(), args.port, output),
+            "missing_global": run_missing(
+                args.missing_global_rom.resolve(), args.nexen.resolve(),
+                args.port + 1, output),
+            "missing_local_rom_sha256": hashlib.sha256(
+                args.missing_rom.read_bytes()).hexdigest(),
+            "missing_global_rom_sha256": hashlib.sha256(
+                args.missing_global_rom.read_bytes()).hexdigest(),
+        }
+        args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        print(json.dumps({"result": "pass", "output": str(args.output)}, sort_keys=True))
+        return 0
+
+    require(args.rom is not None and args.missing_rom is not None
+            and args.missing_global_rom is not None and args.manifest is not None,
+            "normal mode requires ROM, both missing-target ROMs, and manifest")
     manifest = json.loads(args.manifest.read_text())
     record = manifest["records"][0]
     locals_ = [item for item in record["scripts"] if item["kind"] == "LSCR"]
     numbers = [item["number"] for item in locals_]
     require(manifest["num_global_scripts"] == 200 and numbers == [200, 201, 202, 208],
             f"generated namespace metadata differs: {numbers}")
-    output = args.output.parent
-    output.mkdir(parents=True, exist_ok=True)
-    sys.path.insert(0, "/home/chad/Mesen2/python")
-    import mesen_mcp.session as mcp_session
-    mcp_session.validate_mesen_build = lambda _path: None
     report = {
         "gate": "M25-complete-room-local-directory-conformance", "result": "pass",
         "namespace": {"num_global_scripts": 200, "local_numbers": numbers,
@@ -129,8 +153,14 @@ def main() -> int:
         "valid": run_valid(args.rom.resolve(), args.nexen.resolve(), args.port, output),
         "missing": run_missing(args.missing_rom.resolve(), args.nexen.resolve(),
                                args.port + 1, output),
+        "missing_global_start": run_missing(
+            args.missing_global_rom.resolve(), args.nexen.resolve(),
+            args.port + 2, output,
+        ),
         "rom_sha256": hashlib.sha256(args.rom.read_bytes()).hexdigest(),
         "missing_rom_sha256": hashlib.sha256(args.missing_rom.read_bytes()).hexdigest(),
+        "missing_global_rom_sha256": hashlib.sha256(
+            args.missing_global_rom.read_bytes()).hexdigest(),
     }
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"result": "pass", "output": str(args.output)}, sort_keys=True))

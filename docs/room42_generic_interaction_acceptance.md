@@ -1,6 +1,9 @@
 # Room 42 generic interaction acceptance
 
-Status: accepted cold replay; final screened review evidence.
+Status: historical bounded interaction evidence only. The earlier complete
+cold-path acceptance claim is withdrawn after review found that the selected
+room49 was a synthetic startup carrier. This document does not establish a
+complete authentic original-game route or endpoint.
 
 ## Build and replay identity
 
@@ -36,8 +39,16 @@ Native captures inspected locally include `02-open-selected.png`, `06-object492-
 - `git diff --check`: passed.
 - Poppy guard/lint: passed, historical SAME-compatible DLL above.
 - SA-1/BW-RAM ROM audit: passed.
-- FULL startup42 and cold controller replay: passed.
+- The historical replay report recorded a fixture-assisted startup and
+  controller interaction. It is not valid evidence that an unmodified
+  original-game cold path traversed authentic room49 or reached the claimed
+  room0 endpoint. The reviewed build's room49 carrier restarted startup logic.
 
 ## Scope
 
-The screened implementation contains generic ACTION_PENDING lifecycle handling, direct selected-object validation/requery, source/runtime HUD text assembly, bounded HUD text handling, cursor invalidation, tests, provenance tooling, and the Winston Inkpen fixture-direction document. Fate archives, ROMs, savestates, captures, and extracted copyrighted payloads are excluded.
+The bounded interaction observations above remain useful for the tested
+fixture configuration. They must not be combined with the former room sequence
+claim as proof of the complete original-game action. Corrected remediation
+scope and current execution provenance are tracked in
+[`PR1_REMEDIATION.md`](PR1_REMEDIATION.md). Fate archives, ROMs, savestates,
+captures, and extracted copyrighted payloads are excluded.

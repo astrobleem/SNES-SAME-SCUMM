@@ -27,6 +27,30 @@ pip install -e .
 
 The host build never invokes an emulator.
 
+## Tests and optional original-data integrations
+
+The ordinary test suite uses the repository's copyright-free fixtures and
+does not require a game archive. Run it from a clean checkout with:
+
+```bash
+make test
+```
+
+`make generate`, which is a prerequisite of `make test`, also emits the
+copyright-free generated includes needed by source lint (the synthetic SCUMM
+variables and music lookup, carrier/video configuration, and disabled-overlay
+configuration). The source linter follows known-active build branches, so an
+inactive optional M24R-A layout or subtitle-font include is not required by a
+default demo test build; unknown conditions remain fail-closed. `make validate`
+checks the runnable AGI/SCUMM conformance profiles, not music catalog fixtures
+or profile templates. Tests that inspect authentic Fate demo resources are
+skipped when no corpus is configured. To
+run those integrations, set `SAME_FATE_DEMO_ARCHIVE` to a compatible local
+archive before invoking the relevant tests (for example the `test_scumm_phase6h*`,
+`test_scumm_phase6i`, and `test_m24rb_composite` modules). If the variable is
+set to a missing or invalid archive, the integration fails explicitly; it does
+not silently skip.
+
 ## SNES bootstrap
 
 Requirements:
