@@ -623,6 +623,29 @@ if [[ "${SAME_BUILD_SCUMM_M20:-0}" == "1" ]]; then
         "${SAVE_ID_ARGS[@]}" \
         --output runtime/snes/generated/save_identity.inc.pasm
 fi
+# Poppy resolves include paths before evaluating surrounding .if blocks.
+# Emit deterministic empty files for feature-gated generated includes when
+# their producer is inactive; otherwise a clean checkout can accidentally
+# depend on ignored outputs left by a different build profile.
+if [[ "${SAME_BUILD_SCUMM_M22:-0}" != "1" ]]; then
+    printf '%s\n' '; Generated empty music-sections include (M22 disabled).' \
+        > runtime/snes/generated/music_sections.inc.pasm
+fi
+if [[ "${SAME_BUILD_SCUMM_M20:-0}" != "1" ]]; then
+    printf '%s\n' '; Generated empty save-identity include (M20 disabled).' \
+        > runtime/snes/generated/save_identity.inc.pasm
+fi
+if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" != "1" ]]; then
+    printf '%s\n' '; Generated empty room-visual include (room visuals disabled).' \
+        > runtime/snes/generated/scumm_v5_room_visuals.inc.pasm
+fi
+if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" != "1" || \
+      "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" != "1" ]]; then
+    printf '%s\n' '; Generated empty actor-sprite include (fixture sprites disabled).' \
+        > runtime/snes/generated/scumm_v5_actor_sprite.inc.pasm
+    printf '%s\n' '; Generated empty object-sprite include (fixture sprites disabled).' \
+        > runtime/snes/generated/scumm_v5_object_sprite.inc.pasm
+fi
 "$PYTHON" tools/lint_poppy.py runtime/snes/main.pasm
 mkdir -p build
 SAME_SNES_MAP="${SAME_SNES_OUTPUT%.sfc}.map"

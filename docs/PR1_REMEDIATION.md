@@ -119,6 +119,15 @@ optional-corpus skips. `make validate` passed, including Poppy lint (38 source
 files, 2,217 global labels). These are host/source and static-build results;
 they do not replace the blocked R1/R2 native execution.
 
+The clean-export assembly attempt exposed one additional build-graph defect:
+Poppy resolves paths for feature-gated includes before processing their `.if`
+guards, while ignored leftovers had supplied empty or generated files in the
+developer tree. `tools/build_snes.sh` now emits deterministic empty includes
+for disabled M20/M22, room-visual, and fixture-sprite producers. Clean assembly
+and ROM audit are required again after this correction; the source-linked
+records in the follow-up evidence distinguish those build results from native
+execution.
+
 The original-game acceptance limitation is unchanged: corrected gameplay
 observation did not reach room42 readiness, and the complete original-game
 action remains unauthenticated. Asset redistribution permissions also remain
