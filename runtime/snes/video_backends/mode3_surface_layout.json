@@ -1,0 +1,21 @@
+{
+  "format": "same-snes-mode3-backend-layout",
+  "version": 1,
+  "staging_address": "41:E200",
+  "staging_bytes": 7680,
+  "live_palette": {"address": "41:E200", "bytes": 768},
+  "candidate_tiles": {"address": "41:E500", "bytes": 112},
+  "pending_tiles": {"address": "41:E570", "bytes": 112},
+  "inflight_tiles": {"address": "41:E5E0", "bytes": 112},
+  "candidate_palette": {"address": "41:E650", "bytes": 32},
+  "pending_palette": {"address": "41:E670", "bytes": 32},
+  "inflight_palette": {"address": "41:E690", "bytes": 32},
+  "tile_scratch": {"address": "41:E6B0", "bytes": 64},
+  "inflight_records": {"address": "41:E6F0", "bytes": 96, "records": 8, "record_bytes": 12},
+  "work": {"address": "41:E750", "bytes": 176},
+  "fixture": {"address": "41:E800", "bytes": 2048},
+  "reserved": {"address": "41:F000", "bytes": 4096},
+  "active_convert_tile_budget": 4,
+  "dma_byte_budget": 2048,
+  "dma_descriptor_limit": 8
+}

@@ -1,0 +1,16 @@
+{
+  "schema": "same_compiled_music_catalog_v1",
+  "name": "SAME QTMA 600 Hz rational timing catalog",
+  "time_scale": 125,
+  "entries": [
+    {
+      "logical_id": 1,
+      "source_resource": "qtma.movie.m14",
+      "source_sha256": "dc3d37081a608210469597f152d15b0ec9bebda84193112c0a199858aa788c8d",
+      "compiled_song": "qtma_conformance",
+      "compiled_song_id": 1,
+      "duration": 125,
+      "loop": null
+    }
+  ]
+}

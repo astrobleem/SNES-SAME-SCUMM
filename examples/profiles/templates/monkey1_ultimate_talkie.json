@@ -34,7 +34,8 @@
       "z_mask",
       "sa1_jobs",
       "msu1_stream",
-      "audio_speech"
+      "audio_speech",
+      "chip_audio"
     ]
   },
   "resources": [
@@ -70,6 +71,11 @@
       "path": "../../../user-data/monkey1/scumm_patches.json",
       "kind": "SPAT",
       "required": false
+    },
+    {
+      "key": "music.catalog",
+      "path": "../../resources/music/monkey_v5_compiled.json",
+      "kind": "MCAT"
     }
   ],
   "options": {
@@ -90,6 +96,7 @@
       "speech_track_base": 1000,
       "stub_sound_policy": "not_running"
     },
+    "compiled_music_catalog": "music.catalog",
     "coordinate_policy": {
       "logical_width": 320,
       "logical_height": 200,

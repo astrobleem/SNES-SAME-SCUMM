@@ -7,9 +7,12 @@ from same.capabilities import DEFAULT_HOST_CAPABILITIES, EngineCapability
 from same.engine import EngineHost
 from same.engines import default_registry
 from same.engines.scumm_v5 import ScummV5Charset, decode_scene
+from same.engines.scumm_v5.engine import PrintMessageState, PrintSlotState
 from same.errors import ResourceError
 from same.profile import load_profile
+from same.resources import MemoryResourceProvider
 from same.services import HostServices
+from same.video import Rect
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "examples/profiles/scumm_v5_s3_conformance.json"
@@ -61,6 +64,17 @@ class ScummV5VideoTests(unittest.TestCase):
         self.assertEqual(accelerated_video["plan"]["oam_objects"], 2)
         self.assertEqual(accelerated_video["plan"]["z_mask_pixels"], 704)
         self.assertEqual(accelerated_video["plan"]["glyphs"], 11)
+        expected_dirty = (
+            Rect(0, 0, 256, 224),
+            Rect(0, 0, 256, 224),
+            Rect(0, 0, 256, 224),
+            Rect(0, 12, 256, 200),
+        )
+        self.assertEqual(accelerated.services.video._dirty.rects, expected_dirty)
+        self.assertEqual(baseline.services.video._dirty.rects, expected_dirty)
+        logical = accelerated.engine._video.logical_surface
+        assert logical is not None
+        self.assertFalse(hasattr(logical, "_dirty"))
 
     def test_actor_z_mask_font_and_cursor_projection_are_exact(self) -> None:
         host = host_with(DEFAULT_HOST_CAPABILITIES)
@@ -78,6 +92,47 @@ class ScummV5VideoTests(unittest.TestCase):
         self.assertEqual(
             (host.services.video.cursor.x, host.services.video.cursor.y), (255, 211)
         )
+
+    def test_runtime_text_keeps_physical_coordinates_with_nonzero_viewport(self) -> None:
+        host = host_with(DEFAULT_HOST_CAPABILITIES)
+        adapter = host.engine._video
+        self.assertEqual(adapter._projection, (32, 0, 0, 12, 256, 200))
+        before = host.services.video.surface.visible_bytes()
+        font_bytes = (RESOURCE_ROOT / "s3_font.char").read_bytes()
+        assert host.context is not None
+        host.context.services.resources = MemoryResourceProvider(
+            {"charset.0": font_bytes}, kinds={"charset.0": "CHAR"}
+        )
+        message = PrintMessageState(
+            252,
+            3,
+            PrintSlotState(x=80, y=40, right=319, color=250),
+            bytearray((ord("S"), 0)),
+        )
+        host.engine.state.print_messages.append(message)
+        host.engine._presentation_dirty = True
+        host.engine._compose_presentation(host.context)
+
+        glyph = ScummV5Charset(font_bytes, key="charset.0").glyph(ord("S"))
+        assert glyph is not None
+        expected = {
+            (80 - 32 + glyph.x_offset + x, 12 + 40 + glyph.y_offset + y)
+            for y in range(glyph.height)
+            for x in range(glyph.width)
+            if glyph.pixels[y * glyph.width + x]
+        }
+        after = host.services.video.surface.visible_bytes()
+        changed = {
+            (index % 256, index // 256)
+            for index, (old, new) in enumerate(zip(before, after))
+            if old != new
+        }
+        self.assertEqual(changed, expected)
+        self.assertTrue(all(after[y * 256 + x] == 250 for x, y in expected))
+        composition = adapter.composition_surface
+        self.assertIsNotNone(composition)
+        assert composition is not None
+        self.assertEqual(composition.visible_bytes(), after)
 
     def test_scene_and_charset_decoders_fail_closed(self) -> None:
         scene = (RESOURCE_ROOT / "s3_scene.scn3").read_bytes()

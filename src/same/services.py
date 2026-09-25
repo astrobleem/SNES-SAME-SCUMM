@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
@@ -156,6 +157,54 @@ class AudioService:
     master_volume: int = 255
     sfx_history: list[dict[str, int | str | None]] = field(default_factory=list)
     command_history: list[dict[str, int | str | None]] = field(default_factory=list)
+    pcm_streams: dict[int, bytearray] = field(default_factory=dict)
+    pcm_stream_rates: dict[int, int] = field(default_factory=dict)
+
+    def start_pcm_stream(
+        self, stream: int, *, sample_rate: int, resource: str | None = None
+    ) -> None:
+        stream, sample_rate = int(stream), int(sample_rate)
+        if not 8_000 <= sample_rate <= 96_000:
+            raise ValueError("PCM stream rate is outside 8000..96000")
+        self.pcm_streams[stream] = bytearray()
+        self.pcm_stream_rates[stream] = sample_rate
+        self.command_history.append({
+            "command": "pcm_start", "stream": stream,
+            "sample_rate": sample_rate, "resource": resource,
+        })
+        self.events.emit(
+            service=Service.AUDIO,
+            opcode=AudioOpcode.PCM_STREAM_START,
+            arg0=stream,
+            arg1=sample_rate,
+            source=Endpoint.ENGINE,
+            destination=Endpoint.HOST,
+        )
+
+    def submit_pcm(self, stream: int, pcm: bytes) -> None:
+        stream = int(stream)
+        if stream not in self.pcm_streams:
+            raise ValueError(f"PCM stream {stream} is not active")
+        if len(pcm) % 2:
+            raise ValueError("PCM stream chunk is not signed-16 aligned")
+        self.pcm_streams[stream].extend(pcm)
+
+    def stop_pcm_stream(self, stream: int) -> None:
+        stream = int(stream)
+        pcm = bytes(self.pcm_streams.get(stream, b""))
+        self.command_history.append({
+            "command": "pcm_stop", "stream": stream,
+            "frames": len(pcm) // 2,
+            "sha256": hashlib.sha256(pcm).hexdigest(),
+        })
+        self.pcm_stream_rates.pop(stream, None)
+        self.events.emit(
+            service=Service.AUDIO,
+            opcode=AudioOpcode.PCM_STREAM_STOP,
+            arg0=stream,
+            source=Endpoint.ENGINE,
+            destination=Endpoint.HOST,
+        )
 
     def play_music(
         self,
@@ -165,18 +214,18 @@ class AudioService:
         resource: str | None = None,
         backend: str = "normalized",
         position: int = 0,
+        route_kind: str = "default",
+        route_value: int = 0,
     ) -> None:
         self.music_track = int(track)
-        self.command_history.append(
-            {
-                "command": "music_play",
-                "track": self.music_track,
-                "loop": int(loop),
-                "resource": resource,
-                "backend": backend,
-                "position": int(position),
-            }
-        )
+        command = {
+            "command": "music_play", "track": self.music_track,
+            "loop": int(loop), "resource": resource, "backend": backend,
+            "position": int(position),
+        }
+        if route_kind != "default" or route_value:
+            command.update(route_kind=str(route_kind), route_value=int(route_value))
+        self.command_history.append(command)
         self.events.emit(
             service=Service.AUDIO,
             opcode=AudioOpcode.MUSIC_PLAY,
@@ -194,6 +243,22 @@ class AudioService:
             opcode=AudioOpcode.MUSIC_STOP,
             source=Endpoint.ENGINE,
             destination=Endpoint.SPC,
+        )
+
+    def select_music_section(
+        self, selector: int, boundary_token: int, *, current_section: int,
+        selected_section: int,
+    ) -> None:
+        self.command_history.append({
+            "command": "music_section_select", "selector": int(selector),
+            "boundary_token": int(boundary_token), "current_section": int(current_section),
+            "selected_section": int(selected_section),
+        })
+        self.events.emit(
+            service=Service.AUDIO, opcode=AudioOpcode.MUSIC_SECTION_SELECT,
+            arg0=(int(boundary_token) << 8) | int(selector),
+            arg1=(int(selected_section) << 8) | int(current_section),
+            source=Endpoint.ENGINE, destination=Endpoint.SPC,
         )
 
     def play_sfx(

@@ -1,0 +1,16 @@
+{
+  "schema": "same_compiled_music_catalog_v1",
+  "name": "Monkey v5 reviewed TAD catalog",
+  "time_scale": 125,
+  "entries": [
+    {
+      "logical_id": 154,
+      "source_resource": "sound.154",
+      "source_sha256": "dd5af48a6626fe50a31fe10ef1850a9c178d84ecdd505f937f49ba8afbb0325b",
+      "compiled_song": "monkey_m5_church",
+      "compiled_song_id": 26,
+      "duration": 7174,
+      "loop": [2, 7174]
+    }
+  ]
+}

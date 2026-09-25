@@ -35,6 +35,7 @@ def u16(raw: bytes, offset: int) -> int:
 
 def snapshot(session: object) -> dict[str, object]:
     raw = session.read_memory("snesMemory", STATE_ADDRESS, STATE_LENGTH)
+    frame_busy = session.read_memory("snesMemory", 0x7E2231, 1)[0]
     variables = [u16(raw, 0x20 + index * 2) for index in range(16)]
     return {
         "pc": u16(raw, 0x00),
@@ -46,6 +47,7 @@ def snapshot(session: object) -> dict[str, object]:
         "frame_ops": u16(raw, 0x0A),
         "total_ops": u16(raw, 0x0C),
         "variables": variables,
+        "frame_busy": frame_busy,
     }
 
 
@@ -109,8 +111,12 @@ def main() -> int:
             session.tool("reset_emulator", {"power": True})
             session.pause()
             require(session.get_state()["frameCount"] == 0, "power reset did not reach frame zero")
+            # Hold each committed semantic frame until the debugger consumes
+            # it. This avoids losing an intermediate checkpoint when a long
+            # TAD transfer changes where the emulator's frame-step pause lands.
+            session.write_u8(0x7E2364, 1)
             observed_frames: dict[int, dict[str, object]] = {}
-            for _ in range(12):
+            for _ in range(119):
                 for _attempt in range(20):
                     run = session.run_frames(1)
                     if run["framesAdvanced"] == 1:
@@ -121,9 +127,14 @@ def main() -> int:
                 state["cpu"] = session.get_cpu_state()
                 report["observations"].append(state)
                 frame = int(state["frame_count"])
-                if 1 <= frame <= len(expected) and frame not in observed_frames:
+                # The semantic counter is committed at the end of a frame.  A
+                # debugger may interrupt the next transaction before that
+                # counter advances, so only consume stable host checkpoints.
+                if state["frame_busy"] == 0 and 1 <= frame <= len(expected) and frame not in observed_frames:
                     observed_frames[frame] = state
-                if frame >= len(expected):
+                    if frame < len(expected):
+                        session.write_u8(0x7E2364, frame + 1)
+                if len(observed_frames) == len(expected):
                     break
 
             require(len(observed_frames) == len(expected), f"only observed semantic frames {sorted(observed_frames)}")

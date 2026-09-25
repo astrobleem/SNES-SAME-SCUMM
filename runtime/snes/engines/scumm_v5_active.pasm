@@ -42,3 +42,17 @@ Same_ActiveEngine_Resume:
 Same_ActiveEngine_Shutdown:
     jsr ScummV5_Engine_Shutdown
     rts
+
+.if SAME_BUILD_SCUMM_M20
+Same_ActiveEngine_SaveCompiledMusic:
+    jsr ScummV5_M20_SaveCompiledMusic
+    rts
+
+Same_ActiveEngine_ValidateCompiledMusic:
+    jsr ScummV5_M20_ValidateCompiledMusic
+    rts
+
+Same_ActiveEngine_ApplyCompiledMusic:
+    jsr ScummV5_M20_ApplyCompiledMusic
+    rts
+.endif

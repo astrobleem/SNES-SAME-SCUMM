@@ -1,0 +1,12 @@
+{
+  "schema": "same_music_reference_oracle_v1",
+  "source_sha256": "1a595217e6ef5e05e3f15c193a92d364243db7c308c179ff48109e1456e2b0c0",
+  "sample_rate": 24000,
+  "channels": 1,
+  "sample_bits": 16,
+  "frames": 24000,
+  "peak_absolute": 16316,
+  "clipped_samples": 0,
+  "pcm_sha256": "0b5d2002c7a3f72069ddc373f6000ef90c29ff8b71de37909bb57eafd7a933a7",
+  "wav_sha256": "5555b38dc9c89f9cd6572003ad1cfef3b39d81b0037cb5c5cbb91d77a9fad811"
+}

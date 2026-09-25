@@ -1,0 +1,56 @@
+{
+  "schema": "same_music_build_graph_v1",
+  "name": "SAME QTMA 600 Hz rational timing M14 graph",
+  "profile": "same-qtma-time-conformance",
+  "adapter": "qtma_mov_musi_v1",
+  "time_scale": 125,
+  "project_output": "qtma-m14.terrificaudio",
+  "catalog_template": "qtma-catalog",
+  "dependencies": [
+    {
+      "name": "qtma-catalog",
+      "path": "examples/resources/music/qtma_m14_compiled.json",
+      "sha256": "38db369df58a03e4bf6ae0d14ce8e2646145477679927cf06be8143effe6b1b7"
+    },
+    {
+      "name": "qtma-movie",
+      "path": "examples/resources/music/qtma_m14_movie_600.hex",
+      "sha256": "ed6ea9d0bbf10b95d7d6cd284a420d7b291c2f45e4e0dc0d3e9fbb7a2cc4e111"
+    },
+    {
+      "name": "qtma-generated-bank",
+      "path": "examples/resources/music/qtma_m10_bank.json",
+      "sha256": "faa1ec06857c9f67347f01fe1be6f91b6ab1e93f9081019cf9884155f0f5bbbf"
+    }
+  ],
+  "renditions": [
+    {
+      "logical_id": 1,
+      "source_resource": "qtma.movie.m14",
+      "source_sha256": "dc3d37081a608210469597f152d15b0ec9bebda84193112c0a199858aa788c8d",
+      "importer": "qtma_mov_musi_v1",
+      "source_device": "qtma_gm_note_request_v1",
+      "bank": "qtma-generated-bank",
+      "target": "terrific_audio_driver_mml_v1",
+      "policy": {
+        "author": "SAME M14 rational timing adapter",
+        "movie_dependency": "qtma-movie",
+        "music_track": 0,
+        "pan": "stereo_cc10",
+        "source_time_scale": 600,
+        "sustain": "encoded_note_lifetimes",
+        "time_normalization": "nearest_absolute",
+        "title": "SAME QTMA conformance score",
+        "voice_limit": 8
+      },
+      "output": "qtma_conformance.mml",
+      "mml_sha256": "7a04a144fd7a53f387b2a5f2f73c5b7601d783adbbe297ab042291d0a450db4d",
+      "audit_output": "qtma_conformance.audit.json",
+      "audit_sha256": "146b6e9e8548e5d40a5a74df321ef339beeb045a1377e5f8b2da0d48ad97435b",
+      "compiled_song": "qtma_conformance",
+      "compiled_song_id": 1,
+      "duration": 125,
+      "loop": null
+    }
+  ]
+}

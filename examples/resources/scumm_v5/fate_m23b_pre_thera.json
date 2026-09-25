@@ -1,0 +1,32 @@
+{
+  "schema": "same_scumm_v5_named_engine_state_v1",
+  "name": "fate-demo-pre-thera-room49-m23b",
+  "profile_sha256": "d824c9b7aa06db8acbd383c07227d52aad16af23eaba6b1687686066b2551561",
+  "archive_sha256": "558cc436cebed658ad12bc64152efa19490e0327f89ec97acfb108e8d438d798",
+  "room": 49,
+  "room_record_sha256": "2904015371af15b616711013298b8e95874e55c5e9c45216fe09bf9a544a025f",
+  "global_scripts": {
+    "2": "09aa2fb2e9930723a9d0c9da0c94dcd64f6c62191633f4192318c594fea3d6dd",
+    "144": "15df9d2f8ea96729aff1816ccb96b3365b69b7b0af7f029f9850d1218d28c594",
+    "145": "c2a5ef1468895155cae658dd75f955396e1f8dc3ed44350816905e4785eb7543"
+  },
+  "variables": {
+    "1": 1,
+    "33": 2
+  },
+  "bits_set": [425],
+  "strings": {
+    "30": {"length": 153, "fill": 100},
+    "31": {"length": 153, "fill": 100}
+  },
+  "running_sounds": [],
+  "inactive_scripts": [1],
+  "provenance": {
+    "bits_set.425": "Authentic ENCD requires the already-awarded ordinary-sound branch to be false; room entry then tests sounds 81 and 80.",
+    "strings.30": "Authentic Fate boot script creates the 153-byte IQ current-score array with byte bias 100.",
+    "strings.31": "Authentic Fate boot script creates the 153-byte IQ saved-score array with byte bias 100.",
+    "inactive_scripts.1": "The bounded integration profile enters room 49 through its normal room-change driver after boot initialization; the full earlier-gameplay boot script is not replayed."
+    ,"variables.1": "Canonical SCUMM v5 VAR_EGO is variable 1; the accepted pre-Thera state owns actor 1 as ego."
+    ,"variables.33": "Canonical SCUMM v5 VAR_SENTENCE_SCRIPT is variable 33; the authentic Fate initialization selects global script 2."
+  }
+}
