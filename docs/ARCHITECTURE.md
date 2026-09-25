@@ -48,6 +48,12 @@ Own platform mechanisms:
 
 A backend can be replaced without changing engine semantics.
 
+Symbolic music has an additional portable layer above the normalized audio
+packet ABI. Importers produce stable parts, note lifetimes, controls, timing,
+instrument identities, and provenance; source-device models preserve authored
+response; instrument/voice realization targets TAD, a chip, or a rendered
+stream. See [MUSIC_ARCHITECTURE.md](MUSIC_ARCHITECTURE.md).
+
 ### Engine module
 
 Owns one game-engine family’s semantics:
@@ -201,6 +207,13 @@ payload
 The host rejects another engine, another game, another schema, truncation, or
 corruption before invoking `Engine_Load`.
 
+The first SNES implementation applies the same envelope rules to one
+battery-backed SRAM slot for SCUMM compiled music. The storage service owns the
+atomic SRAM commit and outer validation; the active engine owns the versioned
+music subrecord and catalog/source checks. A cold running restore deliberately
+uses deterministic cue restart. It does not claim musical-position or
+sample-continuous restoration, and its advisory saved position is not applied.
+
 ## 8. Python/SNES relationship
 
 The Python implementation is not a substitute SNES emulator. It is:
@@ -223,6 +236,7 @@ src/same/
     resources.py           resource-provider layer
     savegame.py            save envelope/stores
     video.py               indexed surface
+    music/                 symbolic IR, source devices, reviewed instruments
     engines/scumm_v5/      SCUMM v5 host oracle
     engines/agi/           Sierra AGI host oracle
     target.py/runtime.py   legacy machine-personality host model
@@ -238,3 +252,38 @@ examples/profiles/         game-engine profiles
 examples/resources/        copyright-free conformance resources
 labs/vdp/                  machine-video translation lab
 ```
+
+Music compilation follows the same ownership rule as runtime resources. A
+profile may bind `music.build_graph`; the generic graph runner validates and
+publishes complete target assets, while format/title adapters alone resolve
+commercial source containers. Generated score-derived intermediates are build
+artifacts, never repository resources.
+
+The profile-to-ROM handoff treats generated music as an inseparable bundle. A
+profile hash and game identity own one graph transaction; catalog song enums
+must match its TAD compiler output before the platform build can consume either.
+This prevents independently valid but mutually incompatible catalogs and audio
+binaries from being paired by build configuration.
+
+SCUMM v5 room cooking follows that ownership rule as well. Commercial ROOM
+payloads remain user-supplied build inputs. The host build emits versioned,
+profile-owned records containing the complete ROOM payload and typed ENCD,
+EXCD, and LSCR descriptors, with SHA-256 provenance in the build graph and
+compact length/bounds/integrity validation in the cartridge runtime. Validation
+is transactional: a new room cannot retire the old registry or become active
+until its complete cooked record passes.
+
+M23B proves that this is also an executable boundary, not only a registration
+format. The profile table resolves complete room 49 plus authentic global
+scripts 144/145; the outer room ENCD starts at normalized PC zero, while nested
+script caller frames retain stable slot/program/PC/delay/operation and return-
+mode state. Source maps remain attached to every decoded instruction through
+the authentic single soundKludge flush.
+
+M23C proves the same contract across a real room transition. Room-49 EXCD runs,
+old locals retire, room 63 validates and activates, and its authentic ENCD and
+global script 151 execute from PC zero. The interpreter evaluates canonical
+object classes and logical sound/script ownership before the existing compiled
+music adapter receives the source-authored hook-8/clear-queue batch. Thus room
+lifecycle and SCUMM semantics own when the request exists; the music backend
+still owns only the bounded, source-bound section decision.

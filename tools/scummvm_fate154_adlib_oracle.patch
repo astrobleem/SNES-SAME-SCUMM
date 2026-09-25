@@ -1,0 +1,26 @@
+diff --git a/engines/scumm/scumm.cpp b/engines/scumm/scumm.cpp
+--- a/engines/scumm/scumm.cpp
++++ b/engines/scumm/scumm.cpp
+@@ -2787,6 +2787,22 @@ Common::Error ScummEngine::go() {
+ 		_saveLoadFlag = 0;
+ 	}
+ 
++	// SAME reference-only harness: isolate one Fate demo iMUSE resource while
++	// retaining ScummVM's complete SCUMM AdLib driver and selected OPL core.
++	if (_game.id == GID_INDY4) {
++		_musicEngine->stopAllSounds();
++		_sound->startSound(154);
++		_sound->processSound();
++		const uint32 referenceEnd = _system->getMillis() + 16000;
++		while (!shouldQuit() && _system->getMillis() < referenceEnd) {
++			parseEvents();
++			_system->updateScreen();
++			_system->delayMillis(10);
++		}
++		_musicEngine->stopAllSounds();
++		return Common::kNoError;
++	}
++
+ 	// In ScummVM 2.7.0, original GUI support was added.
+ 	// Unfortunately it came with an issue: in v4-7 games users could
+ 	// overwrite autosaves (slot 0). Why? Because I forgot about autosaves :-)

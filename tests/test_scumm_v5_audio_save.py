@@ -80,7 +80,7 @@ class ScummV5AudioSaveTests(unittest.TestCase):
         self.assertEqual(restored["audio"]["music_position"], 1)
         self.assertEqual(restored["audio"]["sfx"], {9: 1})
         self.assertEqual(restored["audio"]["speech_position"], 1)
-        self.assertEqual(saved.schema, 2)
+        self.assertEqual(saved.schema, 6)
 
     def test_envelope_identity_schema_and_crc_fail_before_engine_load(self) -> None:
         host = make_host()

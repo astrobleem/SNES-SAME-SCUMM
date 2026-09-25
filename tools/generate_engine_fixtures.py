@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import re
 import struct
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -143,7 +144,48 @@ def scumm_c2_fixtures() -> list[tuple[str, bytes]]:
         ("c25_sound_kludge", scumm_c25_sound_kludge_script()),
         ("c26_save_restore_verbs", scumm_c26_save_restore_verbs_script()),
         ("c28_animate_actor", scumm_c28_animate_actor_script()),
+        ("c29_actor_from_pos", scumm_c29_actor_from_pos_script()),
+        ("c30_find_object", scumm_c30_find_object_script()),
+        ("c31_put_actor_in_room", scumm_c31_put_actor_in_room_script()),
+        ("c32_put_actor_at_object", scumm_c32_put_actor_at_object_script()),
+        ("matrix_set_box_flags", scumm_matrix_set_box_flags_script()),
+        ("matrix_missing", bytes((0x30, 0x01, 1, 0x80, 0x00))),
+        ("matrix_invalid", bytes((0x30, 0x01, 3, 0x80))),
+        ("matrix_subop2", bytes((0x30, 0x02))),
+        ("matrix_subop3", bytes((0x30, 0x03))),
+        ("matrix_subop4", bytes((0x30, 0x04))),
+        ("matrix_unknown", bytes((0x30, 0x1F))),
+        ("m19_monkey_music", scumm_m19_monkey_music_script()),
+        ("m20_start_music", scumm_m20_start_music_script()),
+        ("m20_save_music", scumm_m20_save_music_script()),
+        ("m20_load_music", scumm_m20_load_music_script()),
+        ("m20_stop_save_music", scumm_m20_stop_save_music_script()),
+        ("m21_fate_room49_hook14", scumm_m21_fate_room49_hook14_script()),
+        ("m22_fate_room49_room63_hook8", scumm_m22_fate_hook8_script(True)),
+        ("m22_fate_room49_no_hook8", scumm_m22_fate_hook8_script(False)),
+        ("m22_load_music", scumm_m22_load_music_script()),
+        ("m22_hook8_lifetime", scumm_m22_hook8_lifetime_script()),
+        ("m23a_auth_room49", bytes((0x72, 49, 0x80, 0x18, 0xFC, 0xFF))),
+        ("m23a_auth_room63", bytes((0x72, 63, 0x80, 0x18, 0xFC, 0xFF))),
+        ("m23a_lifecycle", bytes((0x72, 1, 0x80, 0x72, 2, 0x80, 0x18, 0xFC, 0xFF))),
+        ("m23c_if_class", scumm_m23c_if_class_script()),
+        ("m23c_if_class_malformed", bytes.fromhex("1d 0100 01 0000 ff 0000")),
     ]
+
+
+def scumm_matrix_set_box_flags_script() -> bytes:
+    """Canonical matrixOps sub-op 1 with all operand forms and replacement."""
+    return bytes((
+        0x1A, 0, 0, 2, 0,             # v0 = box 2
+        0x1A, 1, 0, 0x80, 0,          # v1 = flags $80
+        0x30, 0x01, 1, 0x7F,          # direct/direct
+        0x30, 0x81, 0, 0, 0x33,       # variable box/direct flags
+        0x30, 0x41, 1, 1, 0,          # direct box/variable flags
+        0x30, 0xC1, 0, 0, 1, 0,       # variable box/variable flags
+        0x30, 0x01, 1, 0x44,          # overwrite box 1
+        0x30, 0x01, 0xFF, 0x99,       # absent-box sentinel is ignored
+        0x80, 0x18, 0xFC, 0xFF,
+    ))
 
 
 def scumm_s5_binding_script() -> bytes:
@@ -158,6 +200,138 @@ def scumm_s5_binding_script() -> bytes:
             0x20,                          # stopMusic
             0x00,                          # stopObjectCode
         ]
+    )
+
+
+def scumm_m19_monkey_music_script() -> bytes:
+    """Normal-path start/status/stop/restart fixture for Monkey sound 154.
+
+    Yields separate each synchronous sound-status query from the preceding
+    asynchronous SAME audio packet.  The bounded delays give TAD enough time
+    to load/play the first request, load the blank stop song, and then accept
+    the restart.  The terminal breakHere loop leaves the restarted cue alive
+    for the real-DSP loop capture.
+    """
+    return bytes(
+        [
+            0x02, 0x9A,                    # startMusic(154)
+            0x80,                          # service drains the play packet
+            0x7C, 0x00, 0x00, 0x9A,        # v0 = isSoundRunning(154) -> 1
+            0x2E, 0xB4, 0x00, 0x00,        # delay 180 frames while playing
+            0x20,                          # stopMusic
+            0x80,                          # service drains the stop packet
+            0x7C, 0x01, 0x00, 0x9A,        # v1 = isSoundRunning(154) -> 0
+            0x2E, 0x3C, 0x00, 0x00,        # delay 60 frames on blank song
+            0x02, 0x9A,                    # startMusic(154) again
+            0x80,                          # service drains the restart packet
+            0x7C, 0x02, 0x00, 0x9A,        # v2 = isSoundRunning(154) -> 1
+            0x80,
+            0x18, 0xFC, 0xFF,              # stable breakHere loop
+        ]
+    )
+
+
+def scumm_m20_start_music_script() -> bytes:
+    """Start Monkey church music and remain runnable for timed save selection."""
+    return bytes([0x02, 0x9A, 0x80, 0x18, 0xFC, 0xFF])
+
+
+def scumm_m20_save_music_script() -> bytes:
+    """Request the single SRAM save slot through canonical roomOps."""
+    return bytes([0x33, 0x09, 0x01, 0x00, 0x80, 0x18, 0xFC, 0xFF])
+
+
+def scumm_m20_load_music_script() -> bytes:
+    """Request the single SRAM load slot, then query logical status."""
+    return bytes([
+        0x33, 0x09, 0x02, 0x00,
+        0x80,
+        0x7C, 0x00, 0x00, 0x9A,
+        0x80, 0x18, 0xFC, 0xFF,
+    ])
+
+
+def scumm_m20_stop_save_music_script() -> bytes:
+    """Stop through $20, drain it, then persist the stopped logical state."""
+    return bytes([
+        0x20, 0x80,
+        0x33, 0x09, 0x01, 0x00,
+        0x80, 0x18, 0xFC, 0xFF,
+    ])
+
+
+def scumm_m21_fate_room49_hook14_script() -> bytes:
+    """Exact room-49 start/hook pair plus bounded one-shot lifetime proof."""
+    command = lambda *words: bytes((
+        0x4C,
+        *(byte for word in words for byte in (0x00, word & 0xFF, word >> 8 & 0xFF)),
+        0xFF,
+    ))
+    flush = command(0xFFFF)
+    room_pair = command(0x0108, 80) + flush + command(0x010C, 80, 0, 14) + flush
+    start_default = command(0x0108, 80) + flush
+    stop = command(0x0109, 80) + flush
+    return bytes(
+        room_pair + b"\x80" + bytes((0x7C, 0x00, 0x00, 80, 0x2E, 120, 0, 0))
+        + stop + b"\x80" + bytes((0x7C, 0x01, 0x00, 80))
+        + start_default + b"\x80" + bytes((0x7C, 0x02, 0x00, 80, 0x2E, 120, 0, 0))
+        + stop + b"\x80" + room_pair + b"\x80"
+        + bytes((0x7C, 0x03, 0x00, 80, 0x80, 0x18, 0xFC, 0xFF))
+    )
+
+
+def scumm_m22_fate_hook8_script(hooked: bool) -> bytes:
+    """Room-49 hook-14 route followed by room-63's delayed hook-8 command."""
+    command = lambda *words: bytes((
+        0x4C,
+        *(byte for word in words for byte in (0x00, word & 0xFF, word >> 8 & 0xFF)),
+        0xFF,
+    ))
+    flush = command(0xFFFF)
+    room49 = command(0x0108, 80) + flush + command(0x010C, 80, 0, 14) + flush
+    room63 = command(0x010C, 80, 0, 8) + flush
+    # Arm only after the compiled cue owns ready/playing and has produced a
+    # comfortably audible prefix. The 4300-frame delay crosses tick 68160.
+    body = room49 + b"\x80" + bytes((0x2E, 120, 0, 0))
+    if hooked:
+        body += room63 + b"\x80"
+    body += bytes((0x2E, 0xCC, 0x10, 0, 0x7C, 0x00, 0x00, 80))
+    # Hold after the status query so the validator owns capture duration.
+    return bytes(body + b"\x80\x18\xFC\xFF")
+
+
+def scumm_m22_load_music_script() -> bytes:
+    """Cold-load the Fate record and query canonical $7C for sound 80."""
+    return bytes([
+        0x33, 0x09, 0x02, 0x00,
+        0x80,
+        0x7C, 0x00, 0x00, 80,
+        0x80, 0x18, 0xFC, 0xFF,
+    ])
+
+
+def scumm_m22_hook8_lifetime_script() -> bytes:
+    """Consume, stop, plain-default start, stop, then consume in a new generation."""
+    command = lambda *words: bytes((
+        0x4C,
+        *(byte for word in words for byte in (0x00, word & 0xFF, word >> 8 & 0xFF)),
+        0xFF,
+    ))
+    flush = command(0xFFFF)
+    room49 = command(0x0108, 80) + flush + command(0x010C, 80, 0, 14) + flush
+    room63 = command(0x010C, 80, 0, 8) + flush
+    stop = command(0x0109, 80) + flush
+    plain_start = command(0x0108, 80) + flush
+    delay_arm = bytes((0x2E, 120, 0, 0))
+    delay_boundary = bytes((0x2E, 0xCC, 0x10, 0))
+    status = lambda variable: bytes((0x7C, variable, 0x00, 80))
+    return bytes(
+        room49 + b"\x80" + delay_arm + room63 + b"\x80" + delay_boundary
+        + status(0) + b"\x80" + stop + b"\x80" + status(1) + b"\x80"
+        + plain_start + b"\x80" + delay_arm + status(2) + b"\x80"
+        + stop + b"\x80" + status(3) + b"\x80"
+        + room49 + b"\x80" + delay_arm + room63 + b"\x80" + delay_boundary
+        + status(4) + b"\x80\x18\xFC\xFF"
     )
 
 
@@ -387,6 +561,17 @@ def scumm_c16_set_class_script() -> bytes:
     )
 
 
+def scumm_m23c_if_class_script() -> bytes:
+    """Copyright-free canonical class-list true/false/multiple coverage."""
+    return bytes.fromhex(
+        "5d 2a00 01 8500 01 8700 ff "
+        "1d 2a00 01 8500 01 8700 ff 0500 1a 0000 0b00 "
+        "1d 2a00 01 8800 ff 0500 1a 0100 1600 "
+        "1d 2a00 01 0900 ff 0500 1a 0200 2100 "
+        "1d 5302 01 9200 ff 0500 1a 0300 2c00 80 00"
+    )
+
+
 def scumm_c17_verb_ops_script() -> bytes:
     """Complete v5 verb configuration surface across two scheduler ticks."""
     return bytes(
@@ -610,6 +795,72 @@ def scumm_c28_animate_actor_script() -> bytes:
     )
 
 
+def scumm_c29_actor_from_pos_script() -> bytes:
+    """Query direct, fully-variable, and no-match actor hit positions."""
+    return bytes(
+        [
+            0x80,
+            0x15, 0, 0, 20, 0, 30, 0,
+            0x1A, 2, 0, 50, 0,
+            0x1A, 3, 0, 60, 0,
+            0xD5, 1, 0, 2, 0, 3, 0,
+            0x15, 4, 0, 200, 0, 200, 0,
+            0x80,
+            0x00,
+        ]
+    )
+
+
+def scumm_c30_find_object_script() -> bytes:
+    """Query direct, wide-variable, and half-open-boundary object positions."""
+    return bytes(
+        [
+            0x80,
+            0x35, 0, 0, 10, 10,
+            0x1A, 2, 0, 0x2C, 0x01,
+            0x1A, 3, 0, 40, 0,
+            0xF5, 1, 0, 2, 0, 3, 0,
+            0x35, 4, 0, 20, 10,
+            0x80,
+            0x00,
+        ]
+    )
+
+
+def scumm_c31_put_actor_in_room_script() -> bytes:
+    """Assign direct/variable rooms and canonically remove an actor to room zero."""
+    return bytes(
+        [
+            0x80,
+            0x2D, 1, 75,
+            0x80,
+            0x1A, 0, 0, 2, 0,
+            0x1A, 1, 0, 0x4B, 0x01,
+            0xED, 0, 0, 1, 0,
+            0x2D, 1, 0,
+            0x80,
+            0x00,
+        ]
+    )
+
+
+def scumm_c32_put_actor_at_object_script() -> bytes:
+    """Place current/noncurrent actors at object walk points and v5 fallback."""
+    return bytes(
+        [
+            0x80,
+            0x0E, 1, 100, 0,
+            0x80,
+            0x1A, 0, 0, 2, 0,
+            0x1A, 1, 0, 101, 0,
+            0xCE, 0, 0, 1, 0,
+            0x0E, 3, 0xE7, 0x03,
+            0x80,
+            0x00,
+        ]
+    )
+
+
 def scumm_c3_operand_script() -> bytes:
     """Indexed results, variable operands, signed wrap, and comparisons."""
     return bytes(
@@ -730,15 +981,58 @@ def poppy_fixture_include(c1: bytes, c2: list[tuple[str, bytes]]) -> str:
         "ScummV5_Conformance_Program:\n"
         f"{poppy_byte_rows(c1)}\n"
     ]
-    for index, (name, data) in enumerate(c2, start=1):
+    matrix_names = {
+        "matrix_set_box_flags", "matrix_missing", "matrix_invalid",
+        "matrix_subop2", "matrix_subop3", "matrix_subop4", "matrix_unknown",
+    }
+    matrix_first = len(c2) - len(matrix_names) + 1
+    matrix_index = 0
+    after_matrix = False
+    for ordinal, (name, data) in enumerate(c2, start=1):
+        if name in matrix_names:
+            index = matrix_first + matrix_index
+            matrix_index += 1
+            after_matrix = True
+        else:
+            index = ordinal - len(matrix_names) if after_matrix else ordinal
         symbol = name.upper()
+        if name == "m19_monkey_music":
+            sections.append(".endif ; SAME_BUILD_SCUMM_M23A == 0\n")
+            sections.append(".if SAME_BUILD_SCUMM_M19\n")
+        if name == "m20_start_music":
+            sections.append(".if SAME_BUILD_SCUMM_M20\n")
+        if name == "m21_fate_room49_hook14":
+            sections.append(".if SAME_BUILD_SCUMM_M21\n")
+        if name == "m22_fate_room49_room63_hook8":
+            sections.append(".if SAME_BUILD_SCUMM_M22\n")
+        if name == "m23a_auth_room49":
+            sections.append(".if SAME_BUILD_SCUMM_M23A\n")
+        if name == "matrix_set_box_flags":
+            sections.append(".if SAME_BUILD_SCUMM_M23A == 0\n")
         sections.append(
             f"SCUMM_C2_FIXTURE_{symbol} = ${index:02X}\n"
             f"SCUMM_C2_PROGRAM_{symbol}_SIZE = ${len(data):04X}\n"
             f"ScummV5_C2_Program_{name}:\n"
             f"{poppy_byte_rows(data)}\n"
         )
-    sections.append(f"SCUMM_C2_FIXTURE_COUNT = ${len(c2) + 1:02X}\n")
+    sections.append(
+        f"SCUMM_C2_FIXTURE_COUNT = ${len(c2) - len(matrix_names) + 1:02X}\n"
+        ".else\n"
+        f"SCUMM_C2_FIXTURE_COUNT = ${len(c2) + 1:02X}\n"
+        ".endif\n"
+        ".else\n"
+        f"SCUMM_C2_FIXTURE_COUNT = ${len(c2) + 1:02X}\n"
+        ".endif\n"
+        ".else\n"
+        f"SCUMM_C2_FIXTURE_COUNT = ${len(c2) + 1:02X}\n"
+        ".endif\n"
+        ".else\n"
+        f"SCUMM_C2_FIXTURE_COUNT = ${len(c2) + 1:02X}\n"
+        ".endif\n"
+        ".else\n"
+        f"SCUMM_C2_FIXTURE_COUNT = ${len(c2) + 1:02X}\n"
+        ".endif\n"
+    )
     return "".join(sections)
 
 
@@ -1051,17 +1345,33 @@ def write_text(path: Path, data: str) -> None:
     print(f"{path.relative_to(ROOT)} {len(data.encode('utf-8'))} bytes")
 
 
+def far_fixture_include(data: str) -> str:
+    """Place fixture data in a far bank while preserving its source labels."""
+    labels = re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):", data, re.MULTILINE)
+    far = data.replace("ScummV5_", "ScummV5_Far_")
+    aliases = "\n; Bank-zero compatibility aliases for cold fixture fetchers.\n"
+    aliases += "\n".join(
+        f"{label} = {label.replace('ScummV5_', 'ScummV5_Far_')}"
+        for label in labels
+    )
+    return far + aliases + "\n"
+
+
 def main() -> int:
     write(ROOT / "examples/resources/scumm_v5/boot.scrp", scumm_script())
     conformance = scumm_core_conformance_script()
     c2 = scumm_c2_fixtures()
     write(ROOT / "examples/resources/scumm_v5/core_conformance.scrp", conformance)
     for name, data in c2:
-        prefix = "" if name.startswith(("c3_", "c4_", "c5_", "c6_", "c7_", "c8_", "c9_", "c10_", "c11_", "c12_", "c13_", "c14_", "c15_", "c16_", "c17_", "c18_", "c19_", "c20_", "c21_", "c22_", "c23_", "c24_", "c25_", "c26_", "c28_", "s5_")) else "c2_"
+        prefix = "" if name.startswith(("c3_", "c4_", "c5_", "c6_", "c7_", "c8_", "c9_", "c10_", "c11_", "c12_", "c13_", "c14_", "c15_", "c16_", "c17_", "c18_", "c19_", "c20_", "c21_", "c22_", "c23_", "c24_", "c25_", "c26_", "c28_", "c29_", "c30_", "c31_", "c32_", "matrix_", "m19_", "m20_", "s5_")) else "c2_"
         write(ROOT / f"examples/resources/scumm_v5/{prefix}{name}.scrp", data)
     write_text(
         ROOT / "runtime/snes/generated/scumm_v5_conformance.inc.pasm",
         poppy_fixture_include(conformance, c2),
+    )
+    write_text(
+        ROOT / "runtime/snes/generated/scumm_v5_conformance_far.inc.pasm",
+        far_fixture_include(poppy_fixture_include(conformance, c2)),
     )
     write(ROOT / "examples/resources/scumm_v5/room0.sc5r", scumm_room())
     s2_index, s2_data = scumm_s2_raw_files()

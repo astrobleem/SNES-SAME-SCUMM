@@ -168,11 +168,14 @@ def main() -> int:
             require(baseline["lifecycle"] == 2, "active engine is not RUNNING")
             session.write_u8(FIXTURE_REQUEST, S5_FIXTURE)
             timeline = []
-            for _ in range(5):
+            prior_tick = None
+            for _ in range(300):
                 step(session)
                 observed = snes_snapshot(session)
-                if observed["fixture_active"] == S5_FIXTURE:
+                tick = (observed["pc"], observed["total_ops"])
+                if observed["fixture_active"] == S5_FIXTURE and tick != prior_tick:
                     timeline.append(observed)
+                    prior_tick = tick
                 if len(timeline) == 2:
                     break
             report["snes"] = {"baseline": baseline, "timeline": timeline}

@@ -1,0 +1,29 @@
+{
+  "format": "same-snes-carriers",
+  "version": 1,
+  "default": "lorom",
+  "carriers": {
+    "lorom": {
+      "id": 0,
+      "map_mode": 32,
+      "cartridge_type_without_save": 0,
+      "cartridge_type_with_save": 2,
+      "ram_size_without_save": 0,
+      "ram_size_with_save": 1,
+      "save_base": "70:0000",
+      "save_bytes": 2048,
+      "layout": null
+    },
+    "sa1_bwram": {
+      "id": 1,
+      "map_mode": 35,
+      "cartridge_type_without_save": 53,
+      "cartridge_type_with_save": 53,
+      "ram_size_without_save": 7,
+      "ram_size_with_save": 7,
+      "save_base": "40:0800",
+      "save_bytes": 2048,
+      "layout": "runtime/snes/carriers/sa1_bwram_layout.json"
+    }
+  }
+}

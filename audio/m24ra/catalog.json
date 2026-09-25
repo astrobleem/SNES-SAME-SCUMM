@@ -1,0 +1,16 @@
+{
+  "schema": "same_compiled_music_catalog_v1",
+  "name": "M24R-A copyright-free asynchronous-layer fixture",
+  "time_scale": 1000000,
+  "entries": [
+    {
+      "logical_id": 1,
+      "source_resource": "synthetic.m24ra.layer-transition",
+      "source_sha256": "67810cb05458ec6fcceec12b5f98cde5a8ac3ee303bee51761c3231b42c5e410",
+      "compiled_song": "m24ra_async_layer_transition",
+      "compiled_song_id": 1,
+      "duration": 32000000,
+      "loop": null
+    }
+  ]
+}

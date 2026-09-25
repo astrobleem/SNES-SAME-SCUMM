@@ -1,0 +1,15 @@
+[
+  {"controller": 7, "event": "controller", "order": 92, "part": 0, "tick": 0, "value_q16": 6553600},
+  {"controller": 10, "event": "controller", "order": 94, "part": 0, "tick": 0, "value_q16": 65536},
+  {"controller": 64, "event": "controller", "order": 96, "part": 0, "tick": 0, "value_q16": 65536},
+  {"event": "note_on", "note_id": 0, "order": 98, "part": 0, "pitch_q8_8": 15360, "tick": 0, "velocity": 96},
+  {"event": "note_on", "note_id": 1, "order": 100, "part": 0, "pitch_q8_8": 16384, "tick": 0, "velocity": 88},
+  {"event": "note_on", "note_id": 2, "order": 104, "part": 1, "pitch_q8_8": 9216, "tick": 150, "velocity": 110},
+  {"event": "note_off", "note_id": 2, "order": 105, "part": 1, "release_velocity": 64, "tick": 250},
+  {"event": "note_off", "note_id": 0, "order": 99, "part": 0, "release_velocity": 64, "tick": 300},
+  {"controller": 64, "event": "controller", "order": 108, "part": 0, "tick": 300, "value_q16": 0},
+  {"event": "note_on", "note_id": 3, "order": 110, "part": 0, "pitch_q8_8": 17152, "tick": 300, "velocity": 92},
+  {"event": "note_off", "note_id": 1, "order": 101, "part": 0, "release_velocity": 64, "tick": 450},
+  {"event": "note_off", "note_id": 3, "order": 111, "part": 0, "release_velocity": 64, "tick": 600},
+  {"event": "marker", "marker": "end", "order": 114, "tick": 600, "value": 0}
+]
