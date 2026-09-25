@@ -27,8 +27,9 @@ for a file-by-file rights finding.
 Each row is the exact path, byte size, SHA-256, introducing commit, and
 disposition at reviewed head. Group codes refer to the full purpose/source/
 consumer/rights/required findings above. The W1/W2/B1/M1–M4 assets are absent
-from the resulting asset-clearance tree; their historical Git objects remain
-in ancestors because published history was not rewritten.
+from the resulting asset-clearance tree. Their blobs remain reachable from
+the older, already-published PR history, but are not ancestors of the
+clean-publication branch described below.
 
 | Path | Bytes | SHA-256 | Introduced | Group / disposition |
 |---|---:|---|---|---|
@@ -173,11 +174,12 @@ them requires a separately cleared external input package.
 ## History and publication boundary
 
 The removable assets were introduced in already-published commit `3c88f54`.
-This branch does not rewrite that published history: ancestor Git objects can
-still contain their old blob data. The additive change removes all 67
-unresolved Fate/Monkey WAV, BRR, and MML assets from the branch's resulting
-tree and removes/guards their build selections. The one added MML retained is
-the independently authored M24R-A fixture. A normal PR tree diff against its
-base therefore no longer distributes the deleted paths, but this cleanup is
-not a history purge. No ZIP, original game resource, ROM, savestate, or raw
-archive is added by this clearance change.
+The clean-publication branch starts at published main
+`3476f816fc8766f90f790699da059ba96aee232c` and imports the sanitized tree
+without that media-bearing commit graph. Its reachable history contains no
+removed media path or blob. The sanitized tree source was
+`62c7017f4cf1bf89dfd310d69951055edfd4859a`; the clean-history audit records
+the path, Git blob, and content-hash checks. This does not erase blobs from the
+older PR branch or from any remote that already received it. The one added
+MML retained is the independently authored M24R-A fixture. No ZIP, original
+game resource, ROM, savestate, or raw archive is added by the clean import.
