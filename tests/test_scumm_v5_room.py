@@ -9,6 +9,7 @@ from same.engine import EngineHost
 from same.engines import default_registry
 from same.engines.scumm_v5 import decode_room
 from same.engines.scumm_v5.engine import ActorState
+from same.engines.scumm_v5.room import ScummV5RoomAdapter
 from same.errors import EngineExecutionError, ResourceError, SaveFormatError
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
@@ -161,8 +162,8 @@ class ScummV5RawRoomTests(unittest.TestCase):
         first = host.engine.inspect_state()
         self.assertEqual(
             {key: first["variables"].get(str(key), 0)
-             for key in (10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25)},
-            {10: 0xA, 11: 0xB, 12: 0xD, 13: 0, 14: 0,
+             for key in (10, 14, 15, 16, 17, 20, 21, 22, 23, 24, 25)},
+            {10: 0xA, 14: 0, 15: 0xB, 16: 0xD, 17: 0,
              20: 0x20, 21: 0, 22: 0, 23: 0x30, 24: 0x40, 25: 0},
         )
         active = {item["number"]: item for item in first["scripts"]
@@ -178,8 +179,8 @@ class ScummV5RawRoomTests(unittest.TestCase):
         host.tick()
         second = host.engine.inspect_state()
         self.assertEqual(
-            {key: second["variables"].get(str(key), 0) for key in (13, 14, 21, 25)},
-            {13: 0xF, 14: 0xE, 21: 0x21, 25: 0},
+            {key: second["variables"].get(str(key), 0) for key in (14, 17, 21, 25)},
+            {14: 0xE, 17: 0xF, 21: 0x21, 25: 0},
         )
         active = [item for item in second["scripts"]
                   if item["active"] and item["number"]]
@@ -231,7 +232,7 @@ class ScummV5RawRoomTests(unittest.TestCase):
         with self.assertRaisesRegex(EngineExecutionError, "walkbox 3 is outside"):
             invalid.tick()
 
-        for subopcode in (0x02, 0x03, 0x04, 0x1F):
+        for subopcode in (0x02, 0x03, 0x1F):
             with self.subTest(subopcode=subopcode):
                 host = self._matrix_host(bytes((0x30, subopcode)), self._matrix_room())
                 with self.assertRaisesRegex(
@@ -240,6 +241,41 @@ class ScummV5RawRoomTests(unittest.TestCase):
                 ):
                     host.tick()
                 self.assertEqual(host.engine.state.scripts[0].pc, 2)
+
+    def test_matrix_ops_create_box_matrix_uses_live_visibility_flags(self) -> None:
+        def box(x0: int, y0: int, x1: int, y1: int, flags: int = 0) -> bytes:
+            return struct.pack(
+                "<hhhhhhhhBBH",
+                x0, y0, x1, y0, x1, y1, x0, y1, 0, flags, 255,
+            )
+
+        boxes = (
+            box(-100, -100, -90, -90, 0x80),  # canonical unused box zero
+            box(0, 0, 10, 10),                # source
+            box(10, 0, 20, 10),               # direct middle, then disabled
+            box(20, 0, 30, 10),               # destination
+            box(0, 10, 10, 20),               # alternate lower route
+            box(10, 10, 20, 20),
+            box(20, 10, 30, 20),
+        )
+        room_data = raw_room(bytes((1,)) + bytes(16), walkboxes=boxes)
+        script = bytes((
+            0x30, 0x01, 2, 0x80,  # hide direct middle box
+            0x30, 0x04,            # createBoxMatrix: no operands
+            0x80,
+        ))
+        host = self._matrix_host(script, room_data)
+        host.tick()
+
+        routes = host.engine._dynamic_box_routes
+        self.assertIsNotNone(routes)
+        assert routes is not None
+        self.assertEqual(routes[1][3], 4)
+        self.assertEqual(routes[1][6], 4)
+        self.assertIsNone(routes[1][2])
+        self.assertEqual(host.engine._video.room.walkboxes[2].flags, 0x80)
+        self.assertEqual(host.engine.state.scripts[0].pc, len(script))
+        self.assertTrue(host.engine.state.scripts[0].yielded)
 
     def test_put_actor_applies_bounded_canonical_v5_placement_side_effects(self) -> None:
         boxes = (
@@ -266,6 +302,43 @@ class ScummV5RawRoomTests(unittest.TestCase):
         self.assertEqual(actor.moving, 0)
         self.assertTrue(actor.visible)
         self.assertEqual(actor.costume_frame, actor.init_frame)
+
+    def test_actor_ops_recomputes_placement_when_box_policy_changes(self) -> None:
+        strip = bytes((1,)) + bytes(range(16))
+        boxes = (
+            struct.pack("<hhhhhhhhBBH", *([-32000] * 8), 0, 0, 255),
+            struct.pack("<hhhhhhhhBBH", 0, 0, 15, 0, 15, 1, 0, 1, 0, 0, 255),
+        )
+        room_data = raw_room(strip, walkboxes=boxes)
+        script = bytes((
+            0x13, 1, 0x14, 0xFF, 0x80,  # ignore boxes, then yield
+            0x13, 1, 0x15, 0xFF, 0x80,  # follow boxes, then yield
+        ))
+        host = self._matrix_host(script, None)
+        assert host.context is not None
+        adapter = ScummV5RoomAdapter(host.context)
+        adapter.render("room.1", room_data=room_data)
+        host.engine._video = adapter
+        host.engine.state.current_room = 1
+        host.engine.state.actors[1] = ActorState(
+            room=1, position=(4, 1), walkbox=1,
+            walk_current_box=1, walk_destination_box=1, visible=True,
+        )
+
+        host.tick()
+        actor = host.engine.state.actors[1]
+        self.assertTrue(actor.ignore_boxes)
+        self.assertEqual((actor.walkbox, actor.walk_current_box, actor.walk_destination_box),
+                         (0xFF, 0xFF, 0xFF))
+
+        host.tick()
+        actor = host.engine.state.actors[1]
+        self.assertFalse(actor.ignore_boxes)
+        self.assertEqual(actor.position, (4, 1))
+        self.assertEqual((actor.walkbox, actor.walk_current_box, actor.walk_destination_box),
+                         (1, 1, 1))
+        self.assertEqual(actor.walk_destination[0], -1)
+        self.assertEqual(actor.moving, 0)
 
     def test_raw_basic_vertical_horizontal_and_major_minor_strips(self) -> None:
         raw_pixels = bytes(range(16))

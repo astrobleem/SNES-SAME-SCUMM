@@ -19,6 +19,24 @@ Same_Input_Poll:
     php
     sep #$20
     .a8
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    lda #$00
+    sta.l SAME_RESET_DIAG_INPUT_SP_STAGE
+    sta.l SAME_RESET_DIAG_INPUT_SP_STAGE+1
+    sta.l SAME_RESET_DIAG_INPUT_SP_FAILURES
+    sta.l SAME_RESET_DIAG_INPUT_SP_FAILURES+1
+    rep #$30
+    .a16
+    .i16
+    tsc
+    sta.l SAME_RESET_DIAG_INPUT_SP_CURRENT
+    jsr Same_Reset_Diag_CheckInputStack
+    bcc Same_Input_Poll__diag_entry_ok
+    jmp Same_Reset_Diag_StackFailure
+Same_Input_Poll__diag_entry_ok:
+    sep #$20
+    .a8
+.endif
 Same_Input_Poll__wait_autojoy:
     sep #$20
     .a8
@@ -49,6 +67,22 @@ Same_Input_Poll__wait_autojoy:
     beq Same_Input_Poll__done
 
     jsr Same_Event_StageTarget
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0002
+    sta.l SAME_RESET_DIAG_INPUT_SP_STAGE
+    plp
+    rep #$20
+    .a16
+    tsc
+    sta.l SAME_RESET_DIAG_INPUT_SP_CURRENT
+    jsr Same_Reset_Diag_CheckInputStack
+    bcc Same_Input_Poll__diag_stage_target_ok
+    jmp Same_Reset_Diag_StackFailure
+Same_Input_Poll__diag_stage_target_ok:
+.endif
     sep #$20
     .a8
     lda #SAME_SERVICE_INPUT
@@ -68,6 +102,38 @@ Same_Input_Poll__wait_autojoy:
     lda.l SAME_INPUT_PRESSED
     sta.l SAME_EVENT_STAGING+SAME_PKT_ARG1+2
     jsr Same_Event_Push
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0003
+    sta.l SAME_RESET_DIAG_INPUT_SP_STAGE
+    plp
+    rep #$20
+    .a16
+    tsc
+    sta.l SAME_RESET_DIAG_INPUT_SP_CURRENT
+    jsr Same_Reset_Diag_CheckInputStack
+    bcc Same_Input_Poll__diag_event_push_ok
+    jmp Same_Reset_Diag_StackFailure
+Same_Input_Poll__diag_event_push_ok:
+.endif
 Same_Input_Poll__done:
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0001
+    sta.l SAME_RESET_DIAG_INPUT_SP_STAGE
+    plp
+    rep #$20
+    .a16
+    tsc
+    sta.l SAME_RESET_DIAG_INPUT_SP_CURRENT
+    jsr Same_Reset_Diag_CheckInputStack
+    bcc Same_Input_Poll__diag_done_ok
+    jmp Same_Reset_Diag_StackFailure
+Same_Input_Poll__diag_done_ok:
+.endif
     plp
     rts

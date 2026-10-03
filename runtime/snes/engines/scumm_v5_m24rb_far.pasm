@@ -354,6 +354,7 @@ ScummV5_M24RB_Far_CommitNullRoom__next:
     sta.l SAME_SCUMM_M23A_SLOT_ROOMS
     sta.l SAME_SCUMM_M23A_PENDING_RECORD
     sta.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_VALID
     sta.l SAME_SCUMM_C22_CURRENT_ROOM
     lda #$FF
     sta.l SAME_SCUMM_M23A_ACTIVE_RECORD
@@ -504,7 +505,15 @@ ScummV5_M24RB_Far_RequestRoom__return_valid:
     bne ScummV5_M24RB_Far_RequestRoom__queue
     lda #$FF
     sta.l SAME_SCUMM_M23A_PENDING_RECORD
+    ; ResourceReady may synchronously begin the outgoing room's EXCD and set
+    ; RETURN_MODE for that new outer room-script context.  The loadRoom
+    ; opcode that called RequestRoom still has to unwind using the mode of
+    ; its own invocation (notably mode 1 when called from C4 RunSelected).
+    lda.l SAME_SCUMM_RETURN_MODE
+    pha
     jsr ScummV5_M24RB_Far_ResourceReady
+    pla
+    sta.l SAME_SCUMM_RETURN_MODE
     clc
     rts
 ScummV5_M24RB_Far_RequestRoom__queue:

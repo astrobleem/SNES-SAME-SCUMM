@@ -61,6 +61,22 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         self.assertNotIn("#$00F1", selection)
         self.assertNotIn("#$004C", selection)
 
+    def test_empty_room_click_starts_canonical_ego_walk_not_a_sentence(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        selection = source.split(
+            "ScummV5_Controller_Frame__mode_select_fallback:", 1
+        )[1].split("ScummV5_Controller_Frame__select_verb:", 1)[0]
+        miss = selection.split(
+            "ScummV5_Controller_Frame__walk_miss_done:", 1
+        )[0]
+        self.assertIn("SAME_SCUMM_M23B_VARIABLES+2 ; VAR_EGO", miss)
+        self.assertIn("SAME_SCUMM_C14_A_PRESENT", miss)
+        self.assertIn("SAME_SCUMM_C14_A_ROOM", miss)
+        self.assertIn("ScummV5_PutActor_Adjust_Far", miss)
+        self.assertIn("ScummV5_Movement_StartNormalized_Far", miss)
+        self.assertIn("SAME_SCUMM_MOVE_QUERY_DIR", miss)
+        self.assertNotIn("SAME_SCUMM_SENTENCE_API_PENDING", miss)
+
     def test_controller_cycles_authored_verbs_and_uses_selected_object(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         cycle = source.split("ScummV5_Controller_Frame__select_verb:", 1)[1].split(
@@ -73,6 +89,19 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         )[0]
         self.assertIn("SAME_SCUMM_SENTENCE_API_OBJECT1", submit)
         self.assertNotIn("#$EA", submit)
+
+    def test_semantic_sentence_submit_is_not_gated_by_hud_render_status(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        submit = source.split(
+            "ScummV5_Controller_Frame__select_verb_a_pressed:", 1
+        )[1].split("ScummV5_Controller_Frame__action_pending:", 1)[0]
+        self.assertNotIn("SAME_SCUMM_TALK_VISUAL_STATUS", submit)
+        # Active authored dialogue still owns the normal controller gate;
+        # only an inactive overlay's presentation failure is non-semantic.
+        active_talk_gate = source.split(
+            "ScummV5_Controller_Frame__stack_ok:", 1
+        )[1].split("ScummV5_Controller_Frame__talk_ok:", 1)[0]
+        self.assertIn("SAME_SCUMM_TALK_ACTIVE", active_talk_gate)
 
     def test_generated_room_metadata_exports_generic_hit_and_verb_services(self) -> None:
         source = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
@@ -372,6 +401,42 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
             )
             config_m24rb = output_m24rb.with_name("build_config.inc.pasm").read_text()
             self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = $01", config_m24rb)
+
+    def test_title_start_routing_is_disabled_unless_both_rooms_are_explicit(self) -> None:
+        generator = ROOT / "tools/generate_snes_engine_selection.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "default.inc.pasm"
+            subprocess.run(
+                ["python3", str(generator), "--engine", "scumm_v5", "--output", str(output)],
+                check=True, capture_output=True, text=True,
+            )
+            default_config = output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn("SAME_BUILD_SCUMM_TITLE_START = $00", default_config)
+
+            output = Path(tmp) / "explicit.inc.pasm"
+            subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--scumm-title-start-room", "75",
+                    "--scumm-title-target-room", "49",
+                    "--output", str(output),
+                ],
+                check=True, capture_output=True, text=True,
+            )
+            explicit_config = output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn("SAME_BUILD_SCUMM_TITLE_START = $01", explicit_config)
+            self.assertIn("SCUMM_V5_TITLE_START_ROOM = $4B", explicit_config)
+            self.assertIn("SCUMM_V5_TITLE_TARGET_ROOM = $31", explicit_config)
+
+            rejected = subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--scumm-title-start-room", "0", "--output", str(output),
+                ],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("requires both start-room and target-room", rejected.stderr)
 
     def test_video_overlay_non_overlay_packets_reach_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

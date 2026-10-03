@@ -10,9 +10,18 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from finalize_snes_rom import finalize  # noqa: E402
+from audit_snes_rom import map_capacity_errors  # noqa: E402
 
 
 class SnesRomToolTests(unittest.TestCase):
+    def test_lorom_map_audit_rejects_segment_overflow(self) -> None:
+        valid = "; 1   $8000   $FFFF    32768   32768\n"
+        overflow = "; 7   $8000   $10010   36881   36881\n"
+        self.assertEqual(map_capacity_errors(valid), [])
+        errors = map_capacity_errors(overflow)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("segment 7 uses 36881 bytes", errors[0])
+
     def test_finalize_pads_and_writes_real_checksum(self) -> None:
         raw = bytearray(0x7FE0)
         raw[0x7FC0 : 0x7FC0 + 16] = b"SAME ENGINE HOST"

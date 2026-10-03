@@ -87,7 +87,7 @@ ScummV5_M23A_NormalizeEntryLifecycle_Far:
     ; primitive used by opcode 00.
     lda.l SAME_SCUMM_C4_SLOT_PROGRAM
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
-    jsl ScummV5_M23A_GetProgramSize_Far
+    jsl ScummV5_M23A_GetProgramSize_Far_Address
     .else
     jsl ScummV5_M23A_NearGetProgramSize_FarEntry
     .endif
@@ -347,7 +347,7 @@ ScummV5_SentenceProcess_Far__resolve:
     sep #$20
     .a8
     lda.l SAME_SCUMM_OPERAND
-    jsl ScummV5_M23A_ResolveGlobalScript_Far
+    jsl ScummV5_M23A_ResolveGlobalScript_Far_Address
     bcs ScummV5_SentenceProcess_Far__resolved
     brl ScummV5_SentenceProcess_Far__resource_error
 ScummV5_SentenceProcess_Far__resolved:
@@ -2223,15 +2223,54 @@ ScummV5_WalkActorToObject_FarEntry__object_fetched:
     lda.l SAME_SCUMM_MOVE_ACTOR
     sta.l $7E5704
     jsl ScummV5_Movement_ObjectWalk_Far
+    ; This far helper returns in A8 on both carry paths. Reassert the width
+    ; for the assembler and caller before the immediate success flag below.
+    sep #$20
+    .a8
     bcc ScummV5_WalkActorToObject_FarEntry__absent
     lda #$01
     sta.l $7E5705
     bra ScummV5_WalkActorToObject_FarEntry__start
 ScummV5_WalkActorToObject_FarEntry__start:
-    ; The room cooker derives the canonical normalized object destination from
-    ; the complete BOXD geometry and retains it beside the raw walk point. The
-    ; bounded route does not touch either mutable box (12/20), so this avoids a
-    ; long synchronous geometry scan without changing this source-defined walk.
+    ; SCUMM v5 normalizes the raw OBCD walk point at walk-start time, using
+    ; the room's current box flags. ENCD/matrixOps may have hidden boxes since
+    ; the room cooker built its immutable object-walk cache, so the cached
+    ; normalized point/box is not authoritative for movement.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    rep #$30
+    .a16
+    .i16
+    and #$00FF
+    xba
+    lsr
+    lsr
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_IGNORE_BOXES,x
+    bne ScummV5_WalkActorToObject_FarEntry__ignore_boxes
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MOVE_REQUEST_X
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
+    lda.l SAME_SCUMM_MOVE_REQUEST_Y
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    jsl ScummV5_PutActor_Adjust_Far
+    bra ScummV5_WalkActorToObject_FarEntry__normalized
+ScummV5_WalkActorToObject_FarEntry__ignore_boxes:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MOVE_REQUEST_X
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_X
+    lda.l SAME_SCUMM_MOVE_REQUEST_Y
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_Y
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_BOX
+ScummV5_WalkActorToObject_FarEntry__normalized:
     jsr ScummV5_Movement_StartNormalized_Far
     jml ScummV5_Engine_Frame__next
 ScummV5_WalkActorToObject_FarEntry__absent:
@@ -4099,20 +4138,134 @@ ScummV5_PutActor_FarEntry__ignore_boxes:
     lda #$FF
     sta.l SAME_SCUMM_PUT_ACTOR_RESULT_BOX
 ScummV5_PutActor_FarEntry__placed:
-    ; setBox retains the raw box scale. A direct scale also updates effective
-    ; actor scale; a high-bit scale slot remains at the current effective scale
-    ; when that slot has not been initialized by canonical roomOps.
+    jsl ScummV5_PutActor_CommitAdjusted_Far
+    bra ScummV5_PutActor_FarEntry__success
+    bra ScummV5_PutActor_FarEntry__success
+ScummV5_PutActor_FarEntry__not_current:
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_VISIBLE,x
+    beq ScummV5_PutActor_FarEntry__success
+    lda #$00
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_VISIBLE,x
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PUT_ACTOR_ACTOR
+    and #$00FF
+    tax
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C31_MOVING,x
+ScummV5_PutActor_FarEntry__success:
+    .a8
+    jsr ScummV5_PutActor_Trace_Far
+    lda.l SAME_SCUMM_PUT_ACTOR_EXEC_COUNT
+    inc
+    sta.l SAME_SCUMM_PUT_ACTOR_EXEC_COUNT
+    jml ScummV5_Engine_Frame__next
+ScummV5_PutActor_FarEntry__actor_error:
+    .a8
+    lda #SCUMM_ERR_ARGUMENTS
+    bra ScummV5_PutActor_FarEntry__set_error
+ScummV5_PutActor_FarEntry__operand_error:
+    .a8
+    lda #SCUMM_ERR_PC_RANGE
+ScummV5_PutActor_FarEntry__set_error:
+    .a8
+    sta.l SAME_SCUMM_ERROR
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_STATUS
+    jml ScummV5_Op__error
+
+; ActorOps IGNORE_BOXES/FOLLOW_BOXES call Actor::putActor() for an actor in
+; the current room. Recompute the same placed-position state used by putActor
+; so changing the box policy cannot leave a live actor in stale walkbox data.
+ScummV5_ActorOps_ReboxCurrent_Far:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C14_BASE
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_PUT_ACTOR_ACTOR
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C14_BASE
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ROOM,x
+    cmp.l SAME_SCUMM_C22_CURRENT_ROOM
+    bne ScummV5_ActorOps_ReboxCurrent_Far__done
+    lda.l SAME_SCUMM_C22_CURRENT_ROOM
+    beq ScummV5_ActorOps_ReboxCurrent_Far__done
+
+    ; C14_BASE is actor * 64, so /16 is the actor's four-byte position offset.
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C14_BASE
+    lsr
+    lsr
+    lsr
+    lsr
+    tax
+    lda.l SAME_SCUMM_C31_POSITIONS,x
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
+    lda.l SAME_SCUMM_C31_POSITIONS+2,x
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C14_BASE
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_IGNORE_BOXES,x
+    bne ScummV5_ActorOps_ReboxCurrent_Far__ignore_boxes
+    jsl ScummV5_PutActor_Adjust_Far
+    bra ScummV5_ActorOps_ReboxCurrent_Far__commit
+ScummV5_ActorOps_ReboxCurrent_Far__ignore_boxes:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_X
+    lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_Y
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_BOX
+ScummV5_ActorOps_ReboxCurrent_Far__commit:
+    jsl ScummV5_PutActor_CommitAdjusted_Far
+ScummV5_ActorOps_ReboxCurrent_Far__done:
+    sep #$20
+    .a8
+    rtl
+
+; Shared Actor::setBox/adjustActorPos result commit. Input:
+; PUT_ACTOR_ACTOR, RESULT_X/Y, RESULT_BOX; returns M=8, X=16.
+ScummV5_PutActor_CommitAdjusted_Far:
     sep #$20
     .a8
     lda.l SAME_SCUMM_PUT_ACTOR_RESULT_BOX
     cmp #$FF
-    beq ScummV5_PutActor_FarEntry__scale_done
+    beq ScummV5_PutActor_CommitAdjusted_Far__scale_done
     rep #$20
     .a16
     and #$00FF
     tax
     jsl ScummV5_PutActor_LoadGeometry_Far
-    bcs ScummV5_PutActor_FarEntry__scale_done
+    bcs ScummV5_PutActor_CommitAdjusted_Far__scale_done
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK+16
     sta.l SAME_SCUMM_PUT_ACTOR_TEMP1
     lda.l SAME_SCUMM_PUT_ACTOR_ACTOR
@@ -4122,7 +4275,7 @@ ScummV5_PutActor_FarEntry__placed:
     lda.l SAME_SCUMM_PUT_ACTOR_TEMP1
     sta.l SAME_SCUMM_PUT_ACTOR_BOX_SCALE_RAW,x
     bit #$8000
-    bne ScummV5_PutActor_FarEntry__scale_done16
+    bne ScummV5_PutActor_CommitAdjusted_Far__scale_done16
     sep #$20
     .a8
     sta.l SAME_SCUMM_PUT_ACTOR_TEMP0
@@ -4143,13 +4296,12 @@ ScummV5_PutActor_FarEntry__placed:
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_BOX_SCALE,x
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_SCALE_X,x
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_SCALE_Y,x
-    bra ScummV5_PutActor_FarEntry__scale_done
-ScummV5_PutActor_FarEntry__scale_done16:
+    bra ScummV5_PutActor_CommitAdjusted_Far__scale_done
+ScummV5_PutActor_CommitAdjusted_Far__scale_done16:
     .a16
     sep #$20
     .a8
-ScummV5_PutActor_FarEntry__scale_done:
-    .a8
+ScummV5_PutActor_CommitAdjusted_Far__scale_done:
     rep #$20
     .a16
     lda.l SAME_SCUMM_PUT_ACTOR_ACTOR
@@ -4162,7 +4314,7 @@ ScummV5_PutActor_FarEntry__scale_done:
     lda.l SAME_SCUMM_PUT_ACTOR_ACTOR
     and #$00FF
     cmp #$0001
-    bne ScummV5_PutActor_FarEntry__result_x_probe_done
+    bne ScummV5_PutActor_CommitAdjusted_Far__result_x_probe_done
     lda.l SAME_SCUMM_C31_POSITIONS,x
     sta.l SAME_SCUMM_MOVE_DIAG_BASE+$2A
     lda.l SAME_SCUMM_PC
@@ -4175,7 +4327,7 @@ ScummV5_PutActor_FarEntry__scale_done:
     sta.l SAME_SCUMM_MOVE_DIAG_BASE+$30
     rep #$20
     .a16
-ScummV5_PutActor_FarEntry__result_x_probe_done:
+ScummV5_PutActor_CommitAdjusted_Far__result_x_probe_done:
     sep #$20
     .a8
     lda #$02
@@ -4228,42 +4380,9 @@ ScummV5_PutActor_FarEntry__result_x_probe_done:
     .a8
     lda #$01
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_VISIBLE,x
-    bra ScummV5_PutActor_FarEntry__success
-ScummV5_PutActor_FarEntry__not_current:
-    .a8
-    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_VISIBLE,x
-    beq ScummV5_PutActor_FarEntry__success
-    lda #$00
-    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_VISIBLE,x
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_PUT_ACTOR_ACTOR
-    and #$00FF
-    tax
     sep #$20
     .a8
-    lda #$00
-    sta.l SAME_SCUMM_C31_MOVING,x
-ScummV5_PutActor_FarEntry__success:
-    .a8
-    jsr ScummV5_PutActor_Trace_Far
-    lda.l SAME_SCUMM_PUT_ACTOR_EXEC_COUNT
-    inc
-    sta.l SAME_SCUMM_PUT_ACTOR_EXEC_COUNT
-    jml ScummV5_Engine_Frame__next
-ScummV5_PutActor_FarEntry__actor_error:
-    .a8
-    lda #SCUMM_ERR_ARGUMENTS
-    bra ScummV5_PutActor_FarEntry__set_error
-ScummV5_PutActor_FarEntry__operand_error:
-    .a8
-    lda #SCUMM_ERR_PC_RANGE
-ScummV5_PutActor_FarEntry__set_error:
-    .a8
-    sta.l SAME_SCUMM_ERROR
-    lda #SCUMM_VM_ERROR
-    sta.l SAME_SCUMM_STATUS
-    jml ScummV5_Op__error
+    rtl
 
 ScummV5_PutActor_Trace_Far:
     sep #$20
@@ -4606,12 +4725,38 @@ ScummV5_MatrixOps_FarEntry:
     sep #$20
     .a8
     jsl ScummV5_Matrix_FarCall_FetchByte
-    bcs ScummV5_MatrixOps_FarEntry__error
+    bcc ScummV5_MatrixOps_FarEntry__subop_ready
+    brl ScummV5_MatrixOps_FarEntry__error
+ScummV5_MatrixOps_FarEntry__subop_ready:
+    .a8
     sta.l SAME_SCUMM_C10_SUBOP
     sta.l SAME_SCUMM_MATRIX_LAST_SUBOP
     and #$1F
     cmp #$01
-    bne ScummV5_MatrixOps_FarEntry__unsupported
+    bne ScummV5_MatrixOps_FarEntry__check_create_matrix
+    brl ScummV5_MatrixOps_FarEntry__set_box_flags
+ScummV5_MatrixOps_FarEntry__check_create_matrix:
+    .a8
+    cmp #$04
+    beq ScummV5_MatrixOps_FarEntry__create_matrix
+    brl ScummV5_MatrixOps_FarEntry__unsupported
+ScummV5_MatrixOps_FarEntry__create_matrix:
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_MATRIX_LAST_BOX
+    sta.l SAME_SCUMM_MATRIX_LAST_FLAGS
+    jsl ScummV5_Matrix_BuildRoutes_Far
+    bcs ScummV5_MatrixOps_FarEntry__bad_box
+    lda.l SAME_SCUMM_MATRIX_EXEC_COUNT
+    inc
+    sta.l SAME_SCUMM_MATRIX_EXEC_COUNT
+    lda #$FF
+    sta.l SAME_SCUMM_MATRIX_LAST_BOX
+    sta.l SAME_SCUMM_MATRIX_LAST_FLAGS
+    jsr ScummV5_MatrixOps_FarTrace
+    jmp ScummV5_MatrixOps_FarEntry__success
+ScummV5_MatrixOps_FarEntry__set_box_flags:
+    .a8
     lda #$80
     jsl ScummV5_Matrix_FarCall_FetchByteParam
     bcs ScummV5_MatrixOps_FarEntry__error
@@ -4678,11 +4823,24 @@ ScummV5_MatrixOps_FarTrace:
     sta.l SAME_SCUMM_MATRIX_TRACE+1,x
     lda.l SAME_SCUMM_MATRIX_LAST_FLAGS
     sta.l SAME_SCUMM_MATRIX_TRACE+2,x
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_LAST_SUBOP
+    cmp #$04
+    beq ScummV5_MatrixOps_FarTrace__create_matrix
     rep #$20
     .a16
     lda.l SAME_SCUMM_PC
     sec
     sbc #$0004
+    bra ScummV5_MatrixOps_FarTrace__store_before
+ScummV5_MatrixOps_FarTrace__create_matrix:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sec
+    sbc #$0002
+ScummV5_MatrixOps_FarTrace__store_before:
     sta.l SAME_SCUMM_MATRIX_TRACE+3,x
     lda.l SAME_SCUMM_PC
     sta.l SAME_SCUMM_MATRIX_TRACE+5,x
@@ -4693,6 +4851,358 @@ ScummV5_MatrixOps_FarTrace:
     sta.l SAME_SCUMM_MATRIX_TRACE_COUNT
 ScummV5_MatrixOps_FarTrace__done:
     rts
+
+; Build the SCUMM v5 shortest-path matrix from the active room's live box
+; visibility flags and immutable shared-edge geometry.  The canonical v5
+; matrix domain is 64 boxes; the two 64x64 WRAM tables are reserved above.
+; The distance table is temporary after this routine returns.  The next-hop
+; table is consulted by the generated room-data accessor until the next room
+; install or createBoxMatrix call.
+ScummV5_Matrix_BuildRoutes_Far:
+    ; Returning helper contract: preserve the caller's M/X widths and other
+    ; processor flags, then return only carry as the success/error result.
+    php
+    sep #$20
+    .a8
+    rep #$10
+    .i16
+    lda #$00
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_VALID
+    lda.l SAME_SCUMM_MATRIX_BOX_COUNT
+    cmp #$41
+    bcc ScummV5_Matrix_BuildRoutes_Far__count_ok
+    brl ScummV5_Matrix_BuildRoutes_Far__error
+ScummV5_Matrix_BuildRoutes_Far__count_ok:
+    rep #$30
+    .a16
+    .i16
+    lda #$0000
+    sta.l SAME_SCUMM_MATRIX_BUILD_I
+    sta.l SAME_SCUMM_MATRIX_BUILD_J
+ScummV5_Matrix_BuildRoutes_Far__init_i:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_BUILD_I
+    cmp.l SAME_SCUMM_MATRIX_BOX_COUNT
+    bcc ScummV5_Matrix_BuildRoutes_Far__init_i_ok
+    brl ScummV5_Matrix_BuildRoutes_Far__floyd_start
+ScummV5_Matrix_BuildRoutes_Far__init_i_ok:
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_MATRIX_BUILD_J
+ScummV5_Matrix_BuildRoutes_Far__init_j:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_BUILD_J
+    cmp.l SAME_SCUMM_MATRIX_BOX_COUNT
+    bcc ScummV5_Matrix_BuildRoutes_Far__init_j_ok
+    brl ScummV5_Matrix_BuildRoutes_Far__init_next_i
+ScummV5_Matrix_BuildRoutes_Far__init_j_ok:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_I
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MATRIX_BUILD_J
+    sta.l SAME_SCUMM_MATRIX_BUILD_OFFSET_KJ
+    lda.l SAME_SCUMM_MATRIX_BUILD_I
+    cmp.l SAME_SCUMM_MATRIX_BUILD_J
+    beq ScummV5_Matrix_BuildRoutes_Far__diagonal
+
+    ; Invisible boxes are excluded as both route source and destination.
+    lda.l SAME_SCUMM_MATRIX_BUILD_I
+    and #$00FF
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_BOX_FLAGS,x
+    and #$80
+    bne ScummV5_Matrix_BuildRoutes_Far__unreachable
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_J
+    and #$00FF
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_BOX_FLAGS,x
+    and #$80
+    bne ScummV5_Matrix_BuildRoutes_Far__unreachable
+
+    ; The generated portal accessor applies the same shared-edge geometry
+    ; predicate used by actor movement, across the active cooked room record.
+    lda.l SAME_SCUMM_MATRIX_BUILD_I
+    sta.l SAME_SCUMM_MOVE_ROUTE_SOURCE
+    lda.l SAME_SCUMM_MATRIX_BUILD_J
+    sta.l SAME_SCUMM_MOVE_ROUTE_NEXT
+    jsl ScummV5_Movement_Portal_Far
+    bcc ScummV5_Matrix_BuildRoutes_Far__unreachable
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_OFFSET_KJ
+    tax
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_MATRIX_DISTANCE,x
+    lda.l SAME_SCUMM_MATRIX_BUILD_J
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+    bra ScummV5_Matrix_BuildRoutes_Far__init_next_j
+
+ScummV5_Matrix_BuildRoutes_Far__diagonal:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_OFFSET_KJ
+    tax
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_MATRIX_DISTANCE,x
+    lda.l SAME_SCUMM_MATRIX_BUILD_J
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+    bra ScummV5_Matrix_BuildRoutes_Far__init_next_j
+
+ScummV5_Matrix_BuildRoutes_Far__unreachable:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_OFFSET_KJ
+    tax
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_MATRIX_DISTANCE,x
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+ScummV5_Matrix_BuildRoutes_Far__init_next_j:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_J
+    inc
+    sta.l SAME_SCUMM_MATRIX_BUILD_J
+    brl ScummV5_Matrix_BuildRoutes_Far__init_j
+ScummV5_Matrix_BuildRoutes_Far__init_next_i:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_I
+    inc
+    sta.l SAME_SCUMM_MATRIX_BUILD_I
+    brl ScummV5_Matrix_BuildRoutes_Far__init_i
+
+; Kleene/Floyd recurrence used by ScummVM's createBoxMatrix implementation.
+ScummV5_Matrix_BuildRoutes_Far__floyd_start:
+    rep #$30
+    .a16
+    .i16
+    lda #$0000
+    sta.l SAME_SCUMM_MATRIX_BUILD_K
+ScummV5_Matrix_BuildRoutes_Far__floyd_k:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_BUILD_K
+    cmp.l SAME_SCUMM_MATRIX_BOX_COUNT
+    bcc ScummV5_Matrix_BuildRoutes_Far__floyd_k_ok
+    brl ScummV5_Matrix_BuildRoutes_Far__done
+ScummV5_Matrix_BuildRoutes_Far__floyd_k_ok:
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_MATRIX_BUILD_I
+ScummV5_Matrix_BuildRoutes_Far__floyd_i:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_BUILD_I
+    cmp.l SAME_SCUMM_MATRIX_BOX_COUNT
+    bcc ScummV5_Matrix_BuildRoutes_Far__floyd_i_ok
+    brl ScummV5_Matrix_BuildRoutes_Far__floyd_next_k
+ScummV5_Matrix_BuildRoutes_Far__floyd_i_ok:
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_MATRIX_BUILD_J
+ScummV5_Matrix_BuildRoutes_Far__floyd_j:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_BUILD_J
+    cmp.l SAME_SCUMM_MATRIX_BOX_COUNT
+    bcc ScummV5_Matrix_BuildRoutes_Far__floyd_j_ok
+    brl ScummV5_Matrix_BuildRoutes_Far__floyd_next_i
+ScummV5_Matrix_BuildRoutes_Far__floyd_j_ok:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_I
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MATRIX_BUILD_K
+    sta.l SAME_SCUMM_MATRIX_BUILD_OFFSET_IK
+    lda.l SAME_SCUMM_MATRIX_BUILD_K
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MATRIX_BUILD_J
+    sta.l SAME_SCUMM_MATRIX_BUILD_OFFSET_KJ
+    lda.l SAME_SCUMM_MATRIX_BUILD_I
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MATRIX_BUILD_J
+    sta.l SAME_SCUMM_MOVE_TEMP
+
+    lda.l SAME_SCUMM_MATRIX_BUILD_OFFSET_IK
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_DISTANCE,x
+    cmp #$FF
+    bne ScummV5_Matrix_BuildRoutes_Far__floyd_left_ok
+    brl ScummV5_Matrix_BuildRoutes_Far__floyd_next_j
+ScummV5_Matrix_BuildRoutes_Far__floyd_left_ok:
+    sta.l SAME_SCUMM_MATRIX_LAST_BOX
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_OFFSET_KJ
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_DISTANCE,x
+    cmp #$FF
+    bne ScummV5_Matrix_BuildRoutes_Far__floyd_right_ok
+    brl ScummV5_Matrix_BuildRoutes_Far__floyd_next_j
+ScummV5_Matrix_BuildRoutes_Far__floyd_right_ok:
+    .a8
+    sta.l SAME_SCUMM_MATRIX_LAST_FLAGS
+    lda #$00
+    sta.l SAME_SCUMM_MOVE_TEMP2+1
+    lda.l SAME_SCUMM_MATRIX_LAST_BOX
+    clc
+    adc.l SAME_SCUMM_MATRIX_LAST_FLAGS
+    sta.l SAME_SCUMM_MOVE_TEMP2
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MOVE_TEMP
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_DISTANCE,x
+    cmp #$FF
+    beq ScummV5_Matrix_BuildRoutes_Far__floyd_update
+    cmp.l SAME_SCUMM_MOVE_TEMP2
+    bcc ScummV5_Matrix_BuildRoutes_Far__floyd_next_j
+    beq ScummV5_Matrix_BuildRoutes_Far__floyd_next_j
+ScummV5_Matrix_BuildRoutes_Far__floyd_update:
+    lda.l SAME_SCUMM_MOVE_TEMP2
+    sta.l SAME_SCUMM_MATRIX_DISTANCE,x
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_OFFSET_IK
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+    sta.l SAME_SCUMM_MATRIX_LAST_BOX
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MOVE_TEMP
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_LAST_BOX
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+ScummV5_Matrix_BuildRoutes_Far__floyd_next_j:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_J
+    inc
+    sta.l SAME_SCUMM_MATRIX_BUILD_J
+    brl ScummV5_Matrix_BuildRoutes_Far__floyd_j
+ScummV5_Matrix_BuildRoutes_Far__floyd_next_i:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_I
+    inc
+    sta.l SAME_SCUMM_MATRIX_BUILD_I
+    brl ScummV5_Matrix_BuildRoutes_Far__floyd_i
+ScummV5_Matrix_BuildRoutes_Far__floyd_next_k:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_K
+    inc
+    sta.l SAME_SCUMM_MATRIX_BUILD_K
+    brl ScummV5_Matrix_BuildRoutes_Far__floyd_k
+ScummV5_Matrix_BuildRoutes_Far__done:
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_VALID
+    plp
+    clc
+    rtl
+ScummV5_Matrix_BuildRoutes_Far__error:
+    plp
+    sec
+    rtl
+
+; Runtime next-hop lookup used after createBoxMatrix.  Distances are retained
+; only while building; the active room's 64x64 next-hop result is immutable
+; until another createBoxMatrix call or room installation.
+ScummV5_Movement_NextBox_Dynamic_Far:
+    sep #$20
+    .a8
+    rep #$10
+    .i16
+    lda.l SAME_SCUMM_MOVE_ROUTE_SOURCE
+    cmp.l SAME_SCUMM_MATRIX_BOX_COUNT
+    bcs ScummV5_Movement_NextBox_Dynamic_Far__fail
+    lda.l SAME_SCUMM_MOVE_ROUTE_DEST
+    cmp.l SAME_SCUMM_MATRIX_BOX_COUNT
+    bcs ScummV5_Movement_NextBox_Dynamic_Far__fail
+    lda.l SAME_SCUMM_MOVE_ROUTE_SOURCE
+    cmp.l SAME_SCUMM_MOVE_ROUTE_DEST
+    beq ScummV5_Movement_NextBox_Dynamic_Far__same
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MOVE_ROUTE_SOURCE
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MOVE_ROUTE_DEST
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+    cmp #$FF
+    beq ScummV5_Movement_NextBox_Dynamic_Far__fail
+    sec
+    rtl
+ScummV5_Movement_NextBox_Dynamic_Far__same:
+    lda.l SAME_SCUMM_MOVE_ROUTE_DEST
+    sec
+    rtl
+ScummV5_Movement_NextBox_Dynamic_Far__fail:
+    clc
+    rtl
 
 ; Canonical v5 headless slot-0 actor-talk state. Animation requests are
 ; recorded as logical events; costume/frame state is deliberately untouched.
@@ -4753,6 +5263,7 @@ ScummV5_Talk_StoreTextByte_Far:
     rep #$20
     .a16
     lda.l SAME_SCUMM_C23_RAW_INDEX
+    and #$00FF
     dec
     sta.l SAME_SCUMM_TALK_CONTROL_FIRST_POS
     sep #$20
@@ -4769,28 +5280,25 @@ ScummV5_Talk_StoreTextByte_Far__pending_done:
     sep #$20
     .a8
     lda.l SAME_SCUMM_C23_RAW_INDEX
-    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
-    ; Headless scenario validation still consumes the complete source string,
-    ; but need not retain more than the compact presentation buffer.  Keep
-    ; the decoded length/PC contract while discarding bytes beyond storage.
-    cmp #$20
+    cmp #SAME_SCUMM_TALK_MAX_RAW
     bcc ScummV5_Talk_StoreTextByte_Far__space
-    ; Do not classify FF as overflow: it is an encoded control byte and the
-    ; caller will fetch/interpret its selector next.  Advance the logical
-    ; cursor explicitly; incrementing A here used to leave RAW_INDEX at 32
-    ; and made the next continuation look malformed.
+    ; The compact overlay retains at most 32 bytes. Keep consuming the
+    ; encoded SCUMM stream, but mark that presentation cannot retain it all.
+    ; RAW_INDEX remains the full logical encoded length for PC/lifetime
+    ; accounting. Its u8 ABI permits at most 255 bytes including terminator.
+    lda #$80
+    sta.l SAME_SCUMM_C23_TEXT_TRUNCATED
     lda.l SAME_SCUMM_C23_RAW_INDEX
+    cmp #$FF
+    beq ScummV5_Talk_StoreTextByte_Far__full
     inc
     sta.l SAME_SCUMM_C23_RAW_INDEX
     lda.l SAME_SCUMM_C23_SELECTOR
     clc
     rtl
-    .else
-    cmp #SAME_SCUMM_TALK_MAX_RAW
-    bcc ScummV5_Talk_StoreTextByte_Far__space
+ScummV5_Talk_StoreTextByte_Far__full:
     sec
     rtl
-    .endif
 ScummV5_Talk_StoreTextByte_Far__space:
     rep #$30
     .a16
@@ -4821,18 +5329,16 @@ ScummV5_Talk_Begin_Far:
     bne ScummV5_Talk_Begin_Far__length_nonzero
     jmp ScummV5_Talk_Begin_Far__error
 ScummV5_Talk_Begin_Far__length_nonzero:
-    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
-    ; C23 has already consumed the complete encoded stream.  The compact
-    ; presentation buffer is intentionally limited to 32 bytes, but headless
-    ; logical ownership is not: KEEP_TEXT below carries the decoded lifetime.
-    ; The byte cursor is the only remaining bound for this fixture ABI.
-    bra ScummV5_Talk_Begin_Far__length_valid
-    .endif
     .a8
+    lda.l SAME_SCUMM_C23_TEXT_TRUNCATED
+    and #$80
+    bne ScummV5_Talk_Begin_Far__length_valid
+    lda.l SAME_SCUMM_C23_RAW_INDEX
     cmp #(SAME_SCUMM_TALK_MAX_RAW + 1)
     bcc ScummV5_Talk_Begin_Far__length_valid
     jmp ScummV5_Talk_Begin_Far__error
 ScummV5_Talk_Begin_Far__length_valid:
+    lda.l SAME_SCUMM_C23_RAW_INDEX
     sta.l SAME_SCUMM_TALK_RAW_LENGTH
     dec
     rep #$30
@@ -4842,8 +5348,8 @@ ScummV5_Talk_Begin_Far__length_valid:
     tax
     sep #$20
     .a8
-    lda.l SAME_SCUMM_TALK_RAW,x
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    lda.l SAME_SCUMM_TALK_RAW,x
     ; A headless fixture may decode a source string larger than the compact
     ; presentation buffer.  C23 has consumed the complete source stream, so
     ; retain its logical length and use the encoded length for the bounded
@@ -4915,6 +5421,64 @@ ScummV5_Talk_Begin_Far__pc_prefix_ready:
     sec
     sbc.l SAME_SCUMM_PRODUCT
     sta.l SAME_SCUMM_TALK_PC_BEFORE
+    lda.l SAME_SCUMM_C23_TEXT_TRUNCATED
+    and #$80
+    beq ScummV5_Talk_Begin_Far__not_truncated
+    ; The VM consumed the complete source string, but only the compact
+    ; overlay prefix was retained. Preserve a single recorded FF 03 boundary
+    ; as two logical segments; never scan stale suffix bytes or claim full
+    ; presentation of the overlength text.
+    lda.l SAME_SCUMM_TALK_CONTROL_COUNT
+    cmp #$01
+    beq ScummV5_Talk_Begin_Far__truncated_wait
+    lda.l SAME_SCUMM_TALK_RAW_LENGTH
+    sta.l SAME_SCUMM_TALK_CURSOR
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_TALK_RAW_LENGTH
+    and #$00FF
+    dec
+    sta.l SAME_SCUMM_LOOP
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_TALK_SEGMENT_START
+    sta.l SAME_SCUMM_TALK_SEGMENT_INDEX
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    sta.l SAME_SCUMM_TALK_SEGMENT_GLYPHS
+    lda #$01
+    sta.l SAME_SCUMM_TALK_HAVE_MSG
+    bra ScummV5_Talk_Begin_Far__truncated_ready
+ScummV5_Talk_Begin_Far__truncated_wait:
+    ; C23 records the exact first wait position even when the 32-byte visual
+    ; prefix ends on its FF marker. The source parser confirmed control $03;
+    ; advance past both bytes and use the encoded prefix length for timing.
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_TALK_CONTROL_FIRST_POS
+    and #$00FF
+    sta.l SAME_SCUMM_LOOP
+    clc
+    adc #$0002
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_TALK_CURSOR
+    lda #$00
+    sta.l SAME_SCUMM_TALK_SEGMENT_START
+    sta.l SAME_SCUMM_TALK_SEGMENT_INDEX
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    sta.l SAME_SCUMM_TALK_SEGMENT_GLYPHS
+    lda #$FF
+    sta.l SAME_SCUMM_TALK_HAVE_MSG
+ScummV5_Talk_Begin_Far__truncated_ready:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_TALK_VISUAL_STATUS
+    brl ScummV5_Talk_Begin_Far__message_ready
+ScummV5_Talk_Begin_Far__not_truncated:
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     lda.l SAME_SCUMM_TALK_KEEP_TEXT
     bne ScummV5_Talk_Begin_Far__keep_text
@@ -5081,6 +5645,7 @@ ScummV5_Talk_Begin_Far__scan_done_common:
     .a8
     sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
     sta.l SAME_SCUMM_TALK_SEGMENT_GLYPHS
+ScummV5_Talk_Begin_Far__message_ready:
     sep #$20
     .a8
     lda.l SAME_SCUMM_TALK_ACTIVE
@@ -5171,11 +5736,19 @@ ScummV5_Talk_Begin_Far__delay_done:
     lda #$01
     jsr ScummV5_Talk_RecordEvent_Far
     .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
+    lda.l SAME_SCUMM_C23_TEXT_TRUNCATED
+    and #$80
+    bne ScummV5_Talk_Begin_Far__visual_omitted
     rep #$20
     .a16
     lda.l SAME_FRAME_COUNTER
     sta.l SAME_OVERLAY_TRACE_S0
     jsl Same_VideoText_ShowSegment_Far
+    bra ScummV5_Talk_Begin_Far__visual_done
+ScummV5_Talk_Begin_Far__visual_omitted:
+    ; Script/wait semantics are retained, but the compact raster buffer does
+    ; not claim to present the complete overlength source string.
+ScummV5_Talk_Begin_Far__visual_done:
     .else
     lda.l SAME_SCUMM_TALK_VISUAL_STATUS
     inc
@@ -5396,6 +5969,32 @@ ScummV5_Talk_Continue_Far:
     .a8
     txa
     sta.l SAME_SCUMM_TALK_SEGMENT_START
+    lda.l SAME_SCUMM_C23_TEXT_TRUNCATED
+    and #$80
+    beq ScummV5_Talk_Continue_Far__scan
+    ; A truncated long message can reach this path only for its one recorded
+    ; FF 03 wait. The suffix is not in the compact visual buffer; complete it
+    ; as one final logical segment using the remaining encoded length, and do
+    ; not read stale bytes beyond TALK_RAW.
+    rep #$30
+    .a16
+    .i16
+    txa
+    and #$00FF
+    sta.l SAME_SCUMM_LOOP
+    lda.l SAME_SCUMM_TALK_RAW_LENGTH
+    and #$00FF
+    sec
+    sbc.l SAME_SCUMM_LOOP
+    dec
+    sta.l SAME_SCUMM_LOOP
+    lda.l SAME_SCUMM_TALK_RAW_LENGTH
+    and #$00FF
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_TALK_CURSOR
+    lda #$01
+    brl ScummV5_Talk_Continue_Far__publish
 ScummV5_Talk_Continue_Far__scan:
     .a8
     .i16
@@ -5468,6 +6067,11 @@ ScummV5_Talk_Continue_Far__publish:
     .a8
     sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
     sta.l SAME_SCUMM_TALK_SEGMENT_GLYPHS
+    lda.l SAME_SCUMM_C23_TEXT_TRUNCATED
+    and #$80
+    beq ScummV5_Talk_Continue_Far__publish_visual
+    brl ScummV5_Talk_Continue_Far__publish_done
+ScummV5_Talk_Continue_Far__publish_visual:
     lda.l SAME_SCUMM_TALK_CHARINC
     rep #$20
     .a16
@@ -5504,6 +6108,7 @@ ScummV5_Talk_Continue_Far__delay_done:
     inc
     sta.l SAME_SCUMM_TALK_VISUAL_STATUS
     .endif
+ScummV5_Talk_Continue_Far__publish_done:
     sep #$20
     .a8
     plp

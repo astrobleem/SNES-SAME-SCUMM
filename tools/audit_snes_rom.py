@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 import sys
 
@@ -15,17 +16,46 @@ sys.path.insert(0, str(ROOT / "src"))
 from same.snes_carrier import load_carrier
 
 
+def map_capacity_errors(map_text: str, *, bank_capacity: int = 0x8000) -> list[str]:
+    """Reject Poppy segments that cannot fit in a LoROM bank window."""
+    row = re.compile(
+        r"^;\s*(\d+)\s+\$([0-9A-Fa-f]+)\s+\$([0-9A-Fa-f]+)\s+(\d+)\s+(\d+)\s*$",
+        re.MULTILINE,
+    )
+    segments = list(row.finditer(map_text))
+    if not segments:
+        return ["Poppy map has no segment table rows"]
+    errors = []
+    for match in segments:
+        segment, start_text, end_text, _size_text, used_text = match.groups()
+        used = int(used_text)
+        if used > bank_capacity:
+            errors.append(
+                f"Poppy segment {segment} uses {used} bytes, exceeding the "
+                f"${bank_capacity:04X} LoROM bank window "
+                f"(${start_text}-${end_text})"
+            )
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("rom", type=Path)
     parser.add_argument("--carrier", choices=("lorom", "sa1_bwram"), default="lorom")
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--map", type=Path,
+                        help="Poppy map to audit for LoROM bank-window overflow")
     args = parser.parse_args()
     try:
         raw = args.rom.read_bytes()
     except OSError as exc:
         parser.error(str(exc))
     errors: list[str] = []
+    if args.map is not None:
+        try:
+            errors.extend(map_capacity_errors(args.map.read_text(encoding="utf-8-sig")))
+        except OSError as exc:
+            errors.append(f"cannot read Poppy map {args.map}: {exc}")
     if len(raw) < 0x8000 or len(raw) & (len(raw) - 1):
         errors.append(f"ROM size {len(raw)} is not a power of two >= 32 KiB")
     if len(raw) >= 0x8000:

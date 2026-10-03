@@ -171,6 +171,41 @@ def _v5_point_in_box_bounds(
     return dest_x, dest_y, distance
 
 
+def _walkboxes_share_portal(
+    first: "ScummV5Walkbox", second: "ScummV5Walkbox",
+) -> bool:
+    """Mirror SCUMM v5's orthogonal shared-edge adjacency predicate."""
+    for edge_a in range(4):
+        a0 = first.points[edge_a]
+        a1 = first.points[(edge_a + 1) & 3]
+        for edge_b in range(4):
+            b0 = second.points[edge_b]
+            b1 = second.points[(edge_b + 1) & 3]
+            if a0[0] == a1[0] == b0[0] == b1[0]:
+                a_low, a_high = sorted((a0[1], a1[1]))
+                b_low, b_high = sorted((b0[1], b1[1]))
+                touching_only = (
+                    (a_high == b_low or b_high == a_low)
+                    and a_low != a_high and b_low != b_high
+                )
+                if not (
+                    a_low > b_high or b_low > a_high or touching_only
+                ):
+                    return True
+            if a0[1] == a1[1] == b0[1] == b1[1]:
+                a_low, a_high = sorted((a0[0], a1[0]))
+                b_low, b_high = sorted((b0[0], b1[0]))
+                touching_only = (
+                    (a_high == b_low or b_high == a_low)
+                    and a_low != a_high and b_low != b_high
+                )
+                if not (
+                    a_low > b_high or b_low > a_high or touching_only
+                ):
+                    return True
+    return False
+
+
 @dataclass(frozen=True, slots=True)
 class ScummV5Room:
     width: int
@@ -187,6 +222,43 @@ class ScummV5Room:
     entry_script: bytes | None
     exit_script: bytes | None
     local_scripts: tuple[tuple[int, bytes], ...]
+
+    def create_box_matrix(self) -> tuple[tuple[int | None, ...], ...]:
+        """Rebuild the v5 shortest-path matrix from live BOXD flags/geometry.
+
+        ``matrixOps`` sub-op 4 (``createBoxMatrix``) intentionally rebuilds
+        the route graph rather than reusing the authored BOXM table.  In
+        particular, boxes whose invisible bit is set by an earlier matrixOps
+        instruction are not allowed as route vertices.
+        """
+        count = len(self.walkboxes)
+        distance = [[0xFF] * count for _ in range(count)]
+        routes: list[list[int | None]] = [[None] * count for _ in range(count)]
+        for source, first in enumerate(self.walkboxes):
+            for destination, second in enumerate(self.walkboxes):
+                if source == destination:
+                    distance[source][destination] = 0
+                    routes[source][destination] = destination
+                elif (first.flags & 0x80 or second.flags & 0x80):
+                    continue
+                elif _walkboxes_share_portal(first, second):
+                    distance[source][destination] = 1
+                    routes[source][destination] = destination
+
+        # Same recurrence and strict-shorter tie policy as SCUMM v5's
+        # calcItineraryMatrix: retain the first equal-length authored route.
+        for pivot in range(count):
+            for source in range(count):
+                left = distance[source][pivot]
+                if left == 0xFF:
+                    continue
+                for destination in range(count):
+                    right = distance[pivot][destination]
+                    candidate = left + right
+                    if right != 0xFF and distance[source][destination] > candidate:
+                        distance[source][destination] = candidate
+                        routes[source][destination] = routes[source][pivot]
+        return tuple(tuple(row) for row in routes)
 
     def next_box(self, source: int, destination: int) -> int | None:
         if source == destination and 0 <= source < len(self.walkboxes):

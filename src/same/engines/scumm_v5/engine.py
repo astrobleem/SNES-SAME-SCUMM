@@ -47,13 +47,18 @@ _MAX_SAVED_VERBS = 64
 _MAX_VERB_NAME_BYTES = 64
 _MAX_CUTSCENE_DEPTH = 4  # plus the canonical record-zero override sentinel
 _MAX_SENTENCES = 6
-_MAX_SOUND_COMMANDS = 16
+_MAX_SOUND_QUEUE_WORDS = 0x100
+_MAX_SOUND_QUEUE_COMMANDS = _MAX_SOUND_QUEUE_WORDS // 2
 _MAX_SOUND_HISTORY = 32
 _MAX_LOCAL_OBJECTS = 200
 _MAX_OBJECT_STATES = 4096
 _MAX_PRINT_MESSAGES = 32
-_MAX_TALK_MESSAGE_BYTES = 32  # smallest power-of-two bound covering Fate's 26 bytes
+_MAX_TALK_MESSAGE_BYTES = _MAX_STRING_BYTES
 _VAR_HAVE_MSG = 3
+_VAR_TMR_1 = 11
+_VAR_TMR_2 = 12
+_VAR_TMR_3 = 13
+_VAR_TIMER_NEXT = 19
 _VAR_TALK_ACTOR = 25
 _VAR_CHARINC = 37
 _TALK_BASE_DELAY = 60
@@ -758,10 +763,11 @@ class ScummV5Engine(Engine):
             self._handlers[opcode] = self._op_do_sentence
         for opcode in (0x05, 0x85):
             self._handlers[opcode] = self._op_draw_object
-        # v5 pickupObject consumes a word object id and transfers the object
-        # out of the current room.  Inventory ownership is represented by the
-        # existing object-state map; no title-specific inventory is needed.
-        self._handlers[0x25] = self._op_pickup_object
+        # v5 pickupObject consumes a word object id and a byte room selector.
+        # It transfers ownership to VAR_EGO; it is not just a room-visibility
+        # mutation.
+        for opcode in (0x25, 0x65, 0xA5, 0xE5):
+            self._handlers[opcode] = self._op_pickup_object
         for opcode in (0x07, 0x47, 0x87, 0xC7):
             self._handlers[opcode] = self._op_set_state
         for opcode in (0x63, 0xE3):
@@ -820,6 +826,15 @@ class ScummV5Engine(Engine):
                 screen_bottom=logical_height,
             ),
         )
+        # SCUMM v4+ initializes VAR_HEAPSPACE to 1400 during reset. Full-game
+        # startup conditions depend on this before any authored script runs.
+        self.state.variables[40] = 1400
+        # SCUMM v5 resetScummVars initializes VAR_CURRENT_LIGHTS (9) to the
+        # normal actor/room-light flags: base palette (1), room lights on (2),
+        # and actor colors (8). Authored Fate Global2 tests this value before
+        # dispatching verb 9, so leaving the zero-filled value here incorrectly
+        # reports that every room is dark.
+        self.state.variables[9] = 0x000B
         # VAR_HAVE_MSG and VAR_TALK_ACTOR begin clear through zero-filled
         # engine variables. VAR_CHARINC is game initialization state (four in
         # the hash-bound Fate pre-Thera state), not a universal VM default.
@@ -836,6 +851,7 @@ class ScummV5Engine(Engine):
             raise ResourceError("SCUMM global script count must be in 0..256")
         self._room_scripts = {}
         self._room_script_descriptors = {}
+        self._dynamic_box_routes: tuple[tuple[int | None, ...], ...] | None = None
         self._room_entry = None
         self._room_exit = None
         self._room_record = None
@@ -947,6 +963,14 @@ class ScummV5Engine(Engine):
         if self._input is not None:
             self._input.begin_frame(context.services.clock.frame)
         self.state.frames += 1
+        # SCUMM v5's outer loop advances its three game timers by the
+        # requested loop delta before running scripts.  SAME presents one
+        # engine tick per host frame, so use VAR_TIMER_NEXT as that tick's
+        # delta and retain SCUMM's minimum of one when the variable is zero.
+        timer_delta = max(1, int(self.state.variables[_VAR_TIMER_NEXT]))
+        for variable in (_VAR_TMR_1, _VAR_TMR_2, _VAR_TMR_3):
+            value = (int(self.state.variables[variable]) + timer_delta) & 0xFFFF
+            self.state.variables[variable] = value - 0x10000 if value & 0x8000 else value
         self._advance_talk_frame_begin()
         self._tick_operations = 0
         self._tick_max_ops = context.profile.max_ops_per_tick
@@ -1077,7 +1101,16 @@ class ScummV5Engine(Engine):
                     break
                 if actor.walkbox == actor.walk_destination_box:
                     break
-                next_box = room.next_box(actor.walkbox, actor.walk_destination_box)
+                if self._dynamic_box_routes is None:
+                    next_box = room.next_box(actor.walkbox, actor.walk_destination_box)
+                else:
+                    routes = self._dynamic_box_routes
+                    next_box = (
+                        routes[actor.walkbox][actor.walk_destination_box]
+                        if 0 <= actor.walkbox < len(routes)
+                        and 0 <= actor.walk_destination_box < len(routes)
+                        else None
+                    )
                 if next_box is None:
                     actor.walk_destination_box = actor.walkbox
                     actor.moving |= _MF_LAST_LEG
@@ -1496,9 +1529,15 @@ class ScummV5Engine(Engine):
         return True
 
     def _op_matrix_ops(self, slot: ScriptSlot, context: EngineContext) -> bool:
-        """Canonical v5 matrixOps sub-op 1: mutate one room box's raw flags."""
+        """Canonical v5 box-flag mutation and route-matrix rebuild operations."""
         del context
         subopcode = self._u8(slot)
+        if subopcode & 0x1F == 0x04:
+            if isinstance(self._video, ScummV5RoomAdapter) and self._video.room is not None:
+                self._dynamic_box_routes = self._video.room.create_box_matrix()
+            else:
+                self._dynamic_box_routes = ()
+            return False
         if subopcode & 0x1F != 0x01:
             raise EngineExecutionError(
                 f"SCUMM v5 matrixOps subopcode ${subopcode:02X} is not implemented "
@@ -1920,9 +1959,10 @@ class ScummV5Engine(Engine):
         if arguments[0] == -1:
             self._flush_sound_commands(context)
             return False
-        if len(self.state.sound_queue) >= _MAX_SOUND_COMMANDS:
+        queued_words = sum(1 + len(command) for command in self.state.sound_queue)
+        if queued_words + 1 + len(arguments) > _MAX_SOUND_QUEUE_WORDS:
             raise EngineExecutionError(
-                f"SCUMM soundKludge queue exceeds {_MAX_SOUND_COMMANDS} commands"
+                f"SCUMM soundKludge queue exceeds {_MAX_SOUND_QUEUE_WORDS} iMUSE words"
             )
         self.state.sound_queue.append(arguments)
         return False
@@ -1960,11 +2000,13 @@ class ScummV5Engine(Engine):
             ) else -1
             return
         if parameter == 1 and command == 14:
-            if (len(arguments) != 3 or not 0 <= arguments[1] <= 0xffff
-                    or not 0 <= arguments[2] <= 255):
+            if len(arguments) != 3 or not 0 <= arguments[1] <= 0xffff:
                 raise EngineExecutionError("SCUMM iMUSE trigger operands are invalid")
+            # soundKludge operands are SCUMM words.  _word_varargs keeps the
+            # signed-word view used by arithmetic, so restore the trigger ID's
+            # full 16-bit bit pattern at this unsigned iMUSE boundary.
             self.state.sound_result = 0 if self._audio is not None and self._audio.install_trigger(
-                arguments[1], arguments[2]
+                arguments[1], arguments[2] & 0xFFFF
             ) else -1
             return
         if parameter == 1 and command == 15:
@@ -2161,13 +2203,18 @@ class ScummV5Engine(Engine):
         state.camera_update_pending = False
 
     def _op_actor_follow_camera(self, slot: ScriptSlot, context: EngineContext) -> bool:
-        """Select the v5 follow-actor camera intent without backend policy."""
-        del context
+        """Follow an actor, entering its scene first when it is elsewhere."""
         actor_id = self._var_or_direct_byte(slot, 0x80)
         if not 0 <= actor_id < _MAX_ACTORS:
             raise EngineExecutionError(
                 f"SCUMM actorFollowCamera actor {actor_id} is outside 0..{_MAX_ACTORS - 1}"
             )
+        actor = self._actor(actor_id)
+        if actor.room != self.state.current_room:
+            # SCUMM v5's setCameraFollows starts the actor's scene when the
+            # followed actor is not in the current room. Reuse the ordinary
+            # room lifecycle so EXCD, local retirement, and ENCD stay ordered.
+            self._load_room(context, actor.room, required=True)
         self.state.camera_follow_actor = actor_id
         self.state.camera_mode = 1
         self.state.camera_moving_to_actor = False
@@ -2612,19 +2659,34 @@ class ScummV5Engine(Engine):
         return False
 
     def _op_pickup_object(self, slot: ScriptSlot, context: EngineContext) -> bool:
-        """Canonical pickupObject: remove an object from room visibility."""
+        """Transfer a room object to VAR_EGO and make it untouchable."""
         del context
         object_id = self._var_or_direct_word(slot, 0x80) & 0xFFFF
+        source_room = self._var_or_direct_byte(slot, 0x40) & 0xFF
         if not 0 <= object_id < self._num_global_objects:
             raise EngineExecutionError(
                 f"SCUMM pickup object {object_id} is outside global range"
             )
-        self.state.object_states[object_id] = 0
-        self.state.room_objects.pop(object_id, None)
-        self.state.object_draw_queue = [
-            value for value in self.state.object_draw_queue if value != object_id
-        ]
+        classes = self.state.object_classes.get(object_id)
+        if classes is None and len(self.state.object_classes) >= _MAX_CLASS_OBJECTS:
+            raise EngineExecutionError(
+                f"SCUMM pickup exceeds {_MAX_CLASS_OBJECTS} modified class objects"
+            )
+        if source_room == 0:
+            source_room = self.state.current_room
+        if source_room == self.state.current_room:
+            self.state.room_objects.pop(object_id, None)
+        owners = bytearray(self._object_owners)
+        owners[object_id] = self.state.variables[1] & 0xFF  # VAR_EGO
+        self._object_owners = bytes(owners)
+        self.state.object_states[object_id] = 1
+        if classes is None:
+            classes = set()
+            self.state.object_classes[object_id] = classes
+        classes.add(32)  # kObjectClassUntouchable
+        self.state.object_draw_queue.clear()
         self._actors_dirty = True
+        self._background_needs_redraw = True
         return False
 
     def _op_set_state(self, slot: ScriptSlot, context: EngineContext) -> bool:
@@ -3102,6 +3164,7 @@ class ScummV5Engine(Engine):
             elif subop in (20, 21):
                 actor.ignore_boxes = subop == 20
                 actor.force_clip = 0
+                self._refresh_actor_after_box_policy_change(actor)
             elif subop == 22:
                 actor.animation_speed = byte1()
             elif subop == 23:
@@ -3496,6 +3559,36 @@ class ScummV5Engine(Engine):
             )
         scale = min(255, max(1, scale))
         actor.scale = (scale, scale)
+
+    def _refresh_actor_after_box_policy_change(self, actor: ActorState) -> None:
+        """Mirror Actor::putActor when IGNORE_BOXES/FOLLOW_BOXES changes."""
+        if actor.room != self.state.current_room:
+            return
+
+        if actor.visible and actor.moving:
+            actor.moving = 0
+            actor.costume_frame = actor.stand_frame
+            actor.costume_step = 0
+            actor.animation_progress = 0
+
+        if self.state.current_room != 0:
+            if isinstance(self._video, ScummV5RoomAdapter) and self._video.room is not None:
+                actor.position, box = self._video.room.adjust_actor_point_v5(
+                    *actor.position, ignore_boxes=actor.ignore_boxes
+                )
+                actor.walkbox = 0xFF if box is None else box
+                actor.walk_destination_box = actor.walkbox
+                actor.walk_current_box = actor.walkbox
+                self._actor_scale_for_box(actor, actor.walkbox, *actor.position)
+            actor.walk_destination = (-1, actor.walk_destination[1])
+            actor.moving = 0
+            if not actor.visible:
+                if actor.costume_frame is None:
+                    actor.costume_frame = actor.init_frame
+                actor.costume_step = 0
+                actor.animation_progress = 0
+                actor.visible = True
+            self._actors_dirty = True
 
     def _op_put_actor(self, slot: ScriptSlot, context: EngineContext) -> bool:
         """Canonical v5 Actor::putActor(x, y, actor.room) placement state."""
@@ -3978,6 +4071,10 @@ class ScummV5Engine(Engine):
                     script.recursive = False
                     script.freeze_count = 0
             self._room_lifecycle_event("old_room_scripts_retired", old_room)
+        # A room's derived BOXM routes belong to its own geometry and live
+        # flags.  A successful scene installation starts from the destination
+        # resource's authored matrix until that room executes createBoxMatrix.
+        self._dynamic_box_routes = None
         if null_scene:
             self.state.room_objects.clear()
             self.state.object_draw_queue.clear()
@@ -4327,6 +4424,7 @@ class ScummV5Engine(Engine):
             if not isinstance(raw, list) or len(raw) > maximum:
                 raise SaveFormatError(f"SCUMM save soundKludge {name} is invalid")
             commands: list[list[int]] = []
+            queued_words = 0
             for command in raw:
                 if not isinstance(command, list) or not 1 <= len(command) <= _LOCAL_VARIABLE_COUNT:
                     raise SaveFormatError(f"SCUMM save soundKludge {name} command is invalid")
@@ -4335,11 +4433,18 @@ class ScummV5Engine(Engine):
                     raise SaveFormatError(
                         f"SCUMM save soundKludge {name} value must fit s16"
                     )
+                if name == "queue":
+                    queued_words += 1 + len(values)
+                    if queued_words > _MAX_SOUND_QUEUE_WORDS:
+                        raise SaveFormatError(
+                            "SCUMM save soundKludge queue exceeds "
+                            f"{_MAX_SOUND_QUEUE_WORDS} iMUSE words"
+                        )
                 commands.append(values)
             return commands
 
         sound_queue = parse_sound_commands(
-            sound_raw.get("queue"), _MAX_SOUND_COMMANDS, "queue"
+            sound_raw.get("queue"), _MAX_SOUND_QUEUE_COMMANDS, "queue"
         )
         sound_history = parse_sound_commands(
             sound_raw.get("history"), _MAX_SOUND_HISTORY, "history"

@@ -225,6 +225,58 @@ class CookedRoomTests(unittest.TestCase):
         self.assertLess(activate_index, entry_index)
         self.assertLess(entry_index, execute_index)
 
+    def test_host_room_exit_yield_returns_to_scene_install_and_retires_old_locals(self) -> None:
+        # SCUMM startScene runs EXCD until its first yield, then proceeds with
+        # the room change.  It does not keep rescheduling a yielded EXCD while
+        # the old-room caller is frozen outside the new scene.
+        room1 = raw_room(
+            entry=bytes((0x0A, 200, 0xFF, 0x00)),
+            exit=bytes((
+                0x46, 42, 0,       # record the EXCD prefix once
+                0x80,              # first breakHere returns to startScene
+                0x68, 0, 0, 200,  # would observe the suspended local caller
+                0x28, 0, 0, 0xF6, 0xFF,  # repeat if still live
+                0x46, 44, 0,      # must not execute after the yield
+                0x00,
+            )),
+            locals=((200, bytes((
+                0x46, 41, 0,       # persistent local counter
+                0x80,
+                0x18, 0xF9, 0xFF, # loop while room remains active
+            ))),),
+        )
+        room2 = raw_room(entry=bytes((0x46, 43, 0, 0x00)), exit=b"\x00", locals=())
+        resources = MemoryResourceProvider({
+            "script.boot": bytes((0x72, 1, 0x80, 0x72, 2, 0x00)),
+            "room.1": room1, "room.2": room2,
+            "cooked.room.1": cooked(1, room1),
+            "cooked.room.2": cooked(2, room2),
+            "cooked.rooms.manifest": manifest(),
+        })
+        profile = load_profile(PROFILE)
+        host = EngineHost(
+            profile, default_registry(),
+            services=HostServices.create(profile, resources=resources),
+        )
+        host.boot()
+        host.tick()
+        self.assertEqual(host.engine.inspect_state()["room"], 1)
+        host.tick()
+
+        state = host.engine.inspect_state()
+        self.assertEqual(state["room"], 2)
+        self.assertEqual(state["variables"].get("42"), 1)
+        self.assertEqual(state["variables"].get("43"), 1)
+        self.assertEqual(state["variables"].get("44", 0), 0)
+        self.assertGreaterEqual(state["variables"].get("41", 0), 1)
+        self.assertFalse(any(
+            item["active"] and item["room"] == 1 and item["script_kind"] == "LSCR"
+            for item in state["scripts"]
+        ))
+        phases = [item["phase"] for item in host.engine.inspect_room_lifecycle()]
+        self.assertEqual(phases.count("old_exit_completed"), 1)
+        self.assertIn("old_room_scripts_retired", phases)
+
     def test_resource_less_room_zero_runs_exit_retires_locals_and_preserves_globals(self) -> None:
         class ReadTrackingResources(MemoryResourceProvider):
             def __init__(self, resources):

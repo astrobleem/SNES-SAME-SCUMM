@@ -21,6 +21,7 @@ from io import BytesIO
 from PIL import Image, ImageChops, ImageStat
 
 ROOT = Path(__file__).resolve().parents[1]
+RESET_DIAG_BASE = 0x7FF46B
 CAPTURE_NATIVE_ENABLED = True
 INPUT_HOLD_FRAMES = 40
 RESTORE_DEBUG_HOOK = None
@@ -1501,7 +1502,7 @@ def wait_for_moving_publication(session, hook_handle: int,
         f"no successful moving actor publication: witness={witness} "
         f"scene={read_scene(session)} "
         f"cpu={session.get_cpu_state('Snes')} "
-        f"nmi={u16(session.read_memory('snesMemory', 0x7E102E, 2))}")
+        f"nmi={u16(session.read_memory('snesMemory', RESET_DIAG_BASE + 0x0E, 2))}")
 
 
 def wait_for_semantic_moving_snapshot(session, hook_handle: int,
@@ -1857,7 +1858,7 @@ def settle_native_capture(session, frames: int = 1800, room: int | None = 42) ->
     print("native display timeout:", {
         "cpu": session.get_cpu_state("Snes"),
         "ppu": session.get_ppu_state(),
-        "reset_diag": list(session.read_memory("snesMemory", 0x7E1020, 0x20)),
+        "reset_diag": list(session.read_memory("snesMemory", RESET_DIAG_BASE, 0x20)),
         "scene": read_scene(session),
         "surface": list(session.read_memory("snesMemory", 0x401080, 0x34)),
         "backend": list(session.read_memory("snesMemory", 0x401000, 0x40)),
@@ -1915,12 +1916,12 @@ def read_service_progress(session) -> dict:
     def w(offset):
         return int.from_bytes(diag[offset:offset + 2], "little")
     return {
-        "nmi": int.from_bytes(session.read_memory("snesMemory", 0x7E102E, 2), "little"),
+        "nmi": int.from_bytes(session.read_memory("snesMemory", RESET_DIAG_BASE + 0x0E, 2), "little"),
         "frame_counter": int.from_bytes(session.read_memory("snesMemory", 0x7E2210, 2), "little"),
         "logical_frame_count": int.from_bytes(session.read_memory("snesMemory", 0x7E2308, 2), "little"),
         "engine_frame_busy": engine[0x11],
         "engine_lifecycle": engine[1],
-        "engine_phase": session.read_memory("snesMemory", 0x7E103C, 1)[0],
+        "engine_phase": session.read_memory("snesMemory", RESET_DIAG_BASE + 0x1C, 1)[0],
         "kernel_entries": w(0x26),
         "kernel_pops": w(0x28),
         "kernel_last_service": diag[0x2A],
@@ -2052,7 +2053,7 @@ def capture_native(session, path: Path, *, min_overlay_generation: int | None = 
             f"overlay={list(session.read_memory('snesMemory', 0x41F614, 0x20))}")
     path.write_bytes(last)
     print("native capture ppu:", session.get_ppu_state(), flush=True)
-    print("native capture reset diag:", list(session.read_memory("snesMemory", 0x7E1020, 0x20)), flush=True)
+    print("native capture reset diag:", list(session.read_memory("snesMemory", RESET_DIAG_BASE, 0x20)), flush=True)
     print("native capture surface:", list(session.read_memory("snesMemory", 0x401080, 0x34)), flush=True)
     print("native capture backend:", list(session.read_memory("snesMemory", 0x401000, 0x40)), flush=True)
     raise RuntimeError(f"native capture did not match the inspected room-42 landmark: {path}")
@@ -2281,7 +2282,7 @@ def main() -> int:
                     "service_progress": read_service_progress(session),
                     "scene": read_scene(session),
                     "cpu": session.get_cpu_state("Snes"),
-                    "reset_diag": list(session.read_memory("snesMemory", 0x7E1020, 0x20)),
+                    "reset_diag": list(session.read_memory("snesMemory", RESET_DIAG_BASE, 0x20)),
                 }, sort_keys=True), flush=True)
             advance_logical_safe(session)
         if not visual_ready:
@@ -2371,7 +2372,7 @@ def main() -> int:
                 "service_progress": read_service_progress(session),
                 "fifo_snapshot": read_event_fifo(session),
                 "dma_state": list(session.read_memory("snesMemory", 0x7E223A, 0x2E)),
-                "nmi_count": int.from_bytes(session.read_memory("snesMemory", 0x7E102E, 2), "little"),
+                "nmi_count": int.from_bytes(session.read_memory("snesMemory", RESET_DIAG_BASE + 0x0E, 2), "little"),
                 "vram_prefix": list(session.read_memory("snesVideoRam", 0, 64)),
             }, indent=2) + "\n")
             return 0
@@ -2661,7 +2662,7 @@ def main() -> int:
         print("native stage: state-neutral authored action submitted", events[-1]["state"], flush=True)
         print("state-neutral sentence diagnostics", {
             "cpu": session.get_cpu_state("Snes"),
-            "reset_diag": list(session.read_memory("snesMemory", 0x7E1020, 0x20)),
+            "reset_diag": list(session.read_memory("snesMemory", RESET_DIAG_BASE, 0x20)),
             "events": list(session.read_memory("snesMemory", 0x7E2000, 0x06)),
             "service_diag": list(session.read_memory("snesMemory", 0x7E5FB0, 0x32)),
             "backend": list(session.read_memory("snesMemory", 0x401000, 0x40)),

@@ -36,6 +36,41 @@ class Phase6JTests(unittest.TestCase):
         for forbidden in ("room 49", "LSCR 211", "#28", "#38"):
             self.assertNotIn(forbidden, body)
 
+    def test_walk_actor_to_object_reasserts_far_helper_accumulator_width(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
+        start = source.index("ScummV5_WalkActorToObject_FarEntry:")
+        end = source.index("ScummV5_Movement_StartNormalized_Far:", start)
+        body = source[start:end]
+        self.assertIn(
+            "jsl ScummV5_Movement_ObjectWalk_Far\n"
+            "    ; This far helper returns in A8 on both carry paths. Reassert the width\n"
+            "    ; for the assembler and caller before the immediate success flag below.\n"
+            "    sep #$20\n"
+            "    .a8\n"
+            "    bcc ScummV5_WalkActorToObject_FarEntry__absent\n"
+            "    lda #$01",
+            body,
+        )
+
+    def test_controller_refresh_restores_word_width_after_object_validation(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        start = source.index("ScummV5_Controller_RefreshSelection_Far:")
+        end = source.index("ScummV5_Controller_RefreshSelection__clear:", start)
+        body = source[start:end]
+        self.assertIn(
+            "jsl ScummV5_Generic_Object_ValidateSelected_Far\n"
+            "    bcc ScummV5_Controller_RefreshSelection__clear\n"
+            "    ; ValidateSelected returns A8 on success.  Keep its carry result above,\n"
+            "    ; then restore the word width before copying the selected object ID and\n"
+            "    ; clearing the secondary-object word.\n"
+            "    rep #$20\n"
+            "    .a16\n"
+            "    lda.l SAME_SCUMM_CONTROLLER_OBJECT\n"
+            "    sta.l SAME_SCUMM_VERB_OBJECT\n"
+            "    lda #$0000",
+            body,
+        )
+
     def test_host_uses_word_coordinate_decoder(self) -> None:
         source = (ROOT / "src/same/engines/scumm_v5/engine.py").read_text()
         start = source.index("def _op_walk_actor_to(")
