@@ -27,10 +27,16 @@ one-off native probes remain untracked and were not added to the repository.
 ## Host save-state correction
 
 SCUMM save-state schema 6 now serializes the current object-owner table and
-the optional dynamic walkbox routing matrix. Restore validates both fields
-before mutating engine state. Older schema-6 saves without these optional
-fields use archive ownership defaults and authored room routes; a saved
-script-created route is restored exactly and is not rebuilt from defaults.
+the optional dynamic walkbox routing matrix. These fields are parsed and
+semantically validated before they are installed; a concrete saved matrix
+must match the decoded current room's walkbox count. This is not a claim that
+the entire host load operation is globally transactional: later room/resource
+checks still occur after some restored state has been applied. Older schema-6
+saves without these optional fields use archive ownership defaults and
+authored room routes; a saved script-created route is restored exactly and is
+not rebuilt from defaults. A resource-less room-zero scene has zero walkboxes,
+so its concrete matrix form is the empty matrix; `None` remains the compatible
+authored-route fallback.
 
 Behavioral host tests cover pickup/save/fresh-host restore, restoring an
 earlier save after later ownership changes, old-save defaults, and a created
@@ -114,3 +120,22 @@ controlled input. Two equivalent UI attempts with no new evidence end UI
 retries; instrumentation or a concrete blocker report follows. A red
 regression must be fixed or explained before gameplay resumes. No endless
 player-choice exploration is required.
+
+## Independent-review follow-up
+
+The reusable room-4 prefix now changes controller level with zero-frame
+`set_input` calls, advances exactly four pressed frames and one neutral frame
+per step, and verifies the observed frame counter through `advance_bounded`.
+It makes one attempt per expected input edge and releases the owned input on
+exceptions. The recipe and returned report preserve this schedule. Fake-session
+tests model the wall-clock overshoot of `set_input(frames=N)`, prove the replay
+does not use that form, and verify its action sequence and frame boundaries.
+This is automation/source test evidence, not a new Nexen replay.
+
+Concrete saved dynamic walkbox matrices are now checked against the decoded
+current room's walkbox count before restoration mutates engine state or
+installs the matrix. Resource-less room zero has zero walkboxes: `None` remains
+the legacy/authored-route fallback and an empty matrix is the matching concrete
+state. Host tests reject undersized/oversized matrices, malformed rows, and
+invalid next hops while preserving the preexisting route state. The broader
+load operation is not claimed to be globally transactional.

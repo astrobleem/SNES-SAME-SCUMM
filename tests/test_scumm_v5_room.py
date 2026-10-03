@@ -318,6 +318,92 @@ class ScummV5RawRoomTests(unittest.TestCase):
         restored_route = take_first_routed_step(restored.engine)
         self.assertEqual(restored_route, original_route)
 
+    @staticmethod
+    def _seven_walkbox_room() -> bytes:
+        boxes = (
+            struct.pack("<hhhhhhhhBBH", -100, -100, -90, -100, -90, -90,
+                        -100, -90, 0, 0x80, 255),
+            struct.pack("<hhhhhhhhBBH", 0, 0, 10, 0, 10, 10, 0, 10, 0, 0, 255),
+            struct.pack("<hhhhhhhhBBH", 10, 0, 20, 0, 20, 10, 10, 10, 0, 0, 255),
+            struct.pack("<hhhhhhhhBBH", 20, 0, 30, 0, 30, 10, 20, 10, 0, 0, 255),
+            struct.pack("<hhhhhhhhBBH", 0, 10, 10, 10, 10, 20, 0, 20, 0, 0, 255),
+            struct.pack("<hhhhhhhhBBH", 10, 10, 20, 10, 20, 20, 10, 20, 0, 0, 255),
+            struct.pack("<hhhhhhhhBBH", 20, 10, 30, 10, 30, 20, 20, 20, 0, 0, 255),
+        )
+        return raw_room(bytes((1,)) + bytes(16), walkboxes=boxes)
+
+    def _created_matrix_save(self) -> dict[str, object]:
+        script = bytes((0x30, 0x04, 0x80))
+        host = self._matrix_host(script, self._seven_walkbox_room())
+        host.tick()
+        payload = json.loads(host.engine.save_state(host.context))
+        self.assertEqual(len(payload["dynamic_box_routes"]), 7)
+        return payload
+
+    def test_saved_dynamic_matrix_must_match_room_geometry_before_install(self) -> None:
+        valid_payload = self._created_matrix_save()
+        seven_by_seven = valid_payload["dynamic_box_routes"]
+        self.assertEqual(len(seven_by_seven), 7)
+
+        malformed = {
+            "undersized square": [[None]],
+            "oversized square": [[None] * 8 for _ in range(8)],
+            "row length mismatch": [row[:] for row in seven_by_seven],
+            "out-of-range hop": [row[:] for row in seven_by_seven],
+        }
+        malformed["row length mismatch"][3] = [None] * 6
+        malformed["out-of-range hop"][2][4] = 7
+
+        for name, routes in malformed.items():
+            with self.subTest(name=name):
+                payload = json.loads(json.dumps(valid_payload))
+                payload["dynamic_box_routes"] = routes
+                host = self._matrix_host(
+                    bytes((0x30, 0x04, 0x80)), self._seven_walkbox_room()
+                )
+                host.tick()
+                previous_routes = host.engine._dynamic_box_routes
+                previous_room = host.engine.state.current_room
+                with self.assertRaises(SaveFormatError):
+                    host.engine.load_state(
+                        host.context, json.dumps(payload).encode("utf-8")
+                    )
+                # Matrix validation precedes installation and leaves the
+                # destination's route state untouched on this rejection.
+                self.assertEqual(host.engine._dynamic_box_routes, previous_routes)
+                self.assertEqual(host.engine.state.current_room, previous_room)
+
+    def test_room_zero_accepts_only_none_or_zero_by_zero_dynamic_matrix(self) -> None:
+        script = bytes((0x30, 0x04, 0x80))
+        payload_host = self._matrix_host(script, None)
+        payload_host.tick()
+        self.assertEqual(payload_host.engine._dynamic_box_routes, ())
+        payload = json.loads(payload_host.engine.save_state(payload_host.context))
+        self.assertEqual(payload["current_room"], 0)
+        self.assertEqual(payload["dynamic_box_routes"], [])
+
+        for routes, expected in (([], ()), (None, None)):
+            with self.subTest(routes=routes):
+                restored = self._matrix_host(script, None)
+                restored.tick()
+                candidate = json.loads(json.dumps(payload))
+                candidate["dynamic_box_routes"] = routes
+                restored.engine.load_state(
+                    restored.context, json.dumps(candidate).encode("utf-8")
+                )
+                self.assertEqual(restored.engine._dynamic_box_routes, expected)
+
+        invalid = json.loads(json.dumps(payload))
+        invalid["dynamic_box_routes"] = [[None]]
+        restored = self._matrix_host(script, None)
+        restored.tick()
+        previous_routes = restored.engine._dynamic_box_routes
+        with self.assertRaisesRegex(SaveFormatError, "walkbox count 0"):
+            restored.engine.load_state(
+                restored.context, json.dumps(invalid).encode("utf-8")
+            )
+        self.assertEqual(restored.engine._dynamic_box_routes, previous_routes)
+
     def test_put_actor_applies_bounded_canonical_v5_placement_side_effects(self) -> None:
         boxes = (
             struct.pack("<hhhhhhhhBBH", -32000, -32000, -32000, -32000,

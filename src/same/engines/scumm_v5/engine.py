@@ -4789,6 +4789,25 @@ class ScummV5Engine(Engine):
                     raise SaveFormatError("SCUMM save dynamic box matrix is invalid")
                 parsed_routes.append(tuple(row))
             dynamic_box_routes = tuple(parsed_routes)
+            # A concrete matrix is runtime routing state for this room, not
+            # a cache we may resize/rebuild from current flags. Preflight the
+            # resource geometry before any restored engine state is installed.
+            # The resource-less null scene has zero walkboxes; its valid
+            # concrete representation is therefore the empty 0x0 matrix.
+            room_key = self._room_key(room)
+            if room == 0 and not context.services.resources.contains(room_key):
+                walkbox_count = 0
+            else:
+                _room_bytes, decoded_room, _record = self._prepare_room(
+                    context, room, room_key
+                )
+                walkbox_count = len(decoded_room.walkboxes)
+            if route_count != walkbox_count:
+                raise SaveFormatError(
+                    "SCUMM save dynamic box matrix dimension "
+                    f"{route_count} does not match room {room} walkbox count "
+                    f"{walkbox_count}"
+                )
         room_objects_raw = data.get("room_objects", {})
         if not isinstance(room_objects_raw, dict) or len(room_objects_raw) > _MAX_LOCAL_OBJECTS:
             raise SaveFormatError("SCUMM save room-object table is invalid")

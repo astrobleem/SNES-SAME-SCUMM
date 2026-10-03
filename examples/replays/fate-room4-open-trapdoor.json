@@ -86,5 +86,13 @@
       "all_other_pulses_retried": false
     }
   },
+  "input_execution": {
+    "controller_level_changes_advance_frames": false,
+    "mechanism": "hold/release controller level with frames=0, then advance exact emulator frames",
+    "press_frames": 4,
+    "release_neutral_frames": 1,
+    "equivalent_attempts_per_step": 1,
+    "frame_progress": "verify actual frameCount against each run_frames result"
+  },
   "driver": "python3 tools/replay_fate_room4_prefix.py --rom <matching-rom> --state <same-rom-room4-ready-state> --state-identity <rom/build/state-sha-sidecar.json> --output <report.json>"
 }

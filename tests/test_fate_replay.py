@@ -65,6 +65,12 @@ class FakeRoom4Session:
             0x7E5FE6: 0, 0x7E5F94: 0, 0x7E5FE9: 22,
         }
         self.inputs: list[tuple[int, int]] = []
+        self.controller_events: list[tuple[int, int, bool, int]] = []
+        self.advances: list[tuple[int, int, int, int]] = []
+        self.dangerous_set_input_calls: list[tuple[int, int, int]] = []
+        self.held_buttons = 0
+        self.pending_edge = 0
+        self.fail_next_advance = False
 
     def get_state(self) -> dict[str, int]:
         return {"frameCount": self.frame}
@@ -78,11 +84,51 @@ class FakeRoom4Session:
         value = self.values[address]
         return value.to_bytes(length, "little")
 
+    def tool(self, name: str, args: dict[str, object]) -> dict[str, object]:
+        if name != "set_input":
+            raise AssertionError(name)
+        buttons = int(args["buttons"])
+        hold = bool(args["hold"])
+        frames = int(args["frames"])
+        if frames != 0:
+            raise AssertionError("durable replay must not advance in set_input")
+        self.inputs.append((buttons, frames))
+        self.controller_events.append((self.frame, buttons, hold, frames))
+        if buttons and buttons != self.held_buttons:
+            self.pending_edge = buttons
+        self.held_buttons = buttons
+        return {}
+
     def set_input(self, *, buttons: int, frames: int, port: int) -> dict[str, object]:
+        """Model the wall-clock overshoot hazard of set_input(frames=...)."""
         if port != 0:
             raise AssertionError(port)
-        self.inputs.append((buttons, frames))
-        self.frame += frames
+        self.dangerous_set_input_calls.append((buttons, frames, self.frame))
+        self.frame += frames * 2
+        if buttons:
+            self._apply_edge(buttons)
+            self._apply_edge(buttons)
+        return {}
+
+    def run_frames(self, count: int) -> dict[str, object]:
+        if self.fail_next_advance:
+            self.fail_next_advance = False
+            raise RuntimeError("simulated frame runner failure")
+        start = self.frame
+        self.frame += count
+        held = self.held_buttons
+        self.advances.append((start, self.frame, count, held))
+        if self.pending_edge:
+            self._apply_edge(self.pending_edge)
+            self.pending_edge = 0
+        return {
+            "startFrame": start,
+            "endFrame": self.frame,
+            "framesAdvanced": count,
+            "timedOut": False,
+        }
+
+    def _apply_edge(self, buttons: int) -> None:
         if buttons == 0x040:
             self.values[0x7E5FE1] -= 2
         elif buttons == 0x010:
@@ -96,11 +142,6 @@ class FakeRoom4Session:
             else:
                 self.values[0x7E5FE0] = 2
                 self.values[0x7E5FE9] += 1
-        return {}
-
-    def run_frames(self, count: int) -> dict[str, object]:
-        self.frame += count
-        return {"framesAdvanced": count, "timedOut": False}
 
 
 class FateReplayTests(unittest.TestCase):
@@ -231,22 +272,68 @@ class FateReplayTests(unittest.TestCase):
         session = FakeRoom4Session()
         result = replay_room4_open_trapdoor_prefix(session)
         self.assertEqual(len(result["steps"]), 19)
+        self.assertEqual(result["input_schedule"], {
+            "press_frames": 4,
+            "release_neutral_frames": 1,
+            "controller_level_changes_advance_frames": False,
+            "equivalent_attempts_per_step": 1,
+        })
+        masks = [0x040] * 14 + [0x010] * 3 + [0x001, 0x001]
         self.assertEqual(
-            [mask for mask, frames in session.inputs if mask],
-            [0x040] * 14 + [0x010] * 3 + [0x001, 0x001],
+            [buttons for _frame, buttons, hold, _frames in session.controller_events
+             if hold and buttons], masks,
         )
-        self.assertTrue(all(
-            frames == 4 for mask, frames in session.inputs if mask
-        ))
-        self.assertTrue(all(
-            frames == 1 for mask, frames in session.inputs if not mask
-        ))
+        self.assertEqual(len(session.advances), len(masks) * 2)
+        for index, (mask, step) in enumerate(zip(masks, result["steps"], strict=True)):
+            hold_frame, held, hold, hold_frames = session.controller_events[index * 2]
+            release_frame, neutral, release_hold, release_frames = (
+                session.controller_events[index * 2 + 1]
+            )
+            press_start, press_end, press_count, press_mask = session.advances[index * 2]
+            neutral_start, neutral_end, neutral_count, neutral_mask = (
+                session.advances[index * 2 + 1]
+            )
+            self.assertEqual((hold_frame, held, hold, hold_frames),
+                             (step["start_frame"], mask, True, 0))
+            self.assertEqual((press_start, press_end, press_count, press_mask),
+                             (step["start_frame"], step["start_frame"] + 4, 4, mask))
+            self.assertEqual((release_frame, neutral, release_hold, release_frames),
+                             (press_end, 0, True, 0))
+            self.assertEqual((neutral_start, neutral_end, neutral_count, neutral_mask),
+                             (press_end, press_end + 1, 1, 0))
+            self.assertEqual(step["attempt"], 1)
+            self.assertEqual(step["press_frames_advanced"], 4)
+            self.assertEqual(step["release_frames_advanced"], 1)
+        self.assertEqual(session.dangerous_set_input_calls, [])
         self.assertEqual((result["final"]["x"], result["final"]["y"]), (89, 132))
         self.assertEqual(result["final"]["verb"], 3)
         self.assertEqual(result["final"]["object"], 61)
         self.assertEqual(result["final"]["submissions"], 23)
         self.assertEqual(result["final"]["error"], 0)
-        self.assertEqual(session.inputs[-1], (0, 1))
+        self.assertEqual(session.controller_events[-1][1:], (0, True, 0))
+
+    def test_room4_wall_clock_input_model_overshoots_but_driver_avoids_it(self) -> None:
+        unsafe = FakeRoom4Session()
+        unsafe.set_input(buttons=0x040, frames=4, port=0)
+        self.assertEqual(unsafe.frame, 108)
+        self.assertEqual(unsafe.values[0x7E5FE1], 113)
+
+        safe = FakeRoom4Session()
+        result = replay_room4_open_trapdoor_prefix(safe)
+        self.assertEqual(safe.dangerous_set_input_calls, [])
+        self.assertEqual((result["final"]["x"], result["final"]["y"]), (89, 132))
+
+    def test_room4_replay_releases_input_when_frame_advance_raises(self) -> None:
+        session = FakeRoom4Session()
+        session.fail_next_advance = True
+        with self.assertRaisesRegex(RuntimeError, "simulated frame runner failure"):
+            replay_room4_open_trapdoor_prefix(session)
+        self.assertEqual(
+            [(buttons, hold) for _frame, buttons, hold, _frames
+             in session.controller_events],
+            [(0x040, True), (0, True)],
+        )
+        self.assertEqual(session.held_buttons, 0)
 
     def test_room4_replay_driver_rejects_wrong_start_state_without_input(self) -> None:
         session = FakeRoom4Session(ready=0)

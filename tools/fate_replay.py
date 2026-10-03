@@ -40,52 +40,55 @@ def room4_controller_snapshot(session: Any) -> dict[str, int]:
     }
 
 
-def _one_frame(session: Any) -> None:
-    result = session.run_frames(1)
-    if result.get("timedOut") or int(result.get("framesAdvanced", 0)) != 1:
-        raise RuntimeError(f"room-4 replay did not advance one frame: {result}")
-
-
 def _room4_pulse_until(
     session: Any,
+    controller: "ControllerInputLease",
     mask: int,
     predicate: Any,
     *,
-    max_attempts: int = 8,
     poll_frames: int = 45,
 ) -> dict[str, Any]:
-    """Send a 4-frame press/1-frame release and observe the intended edge."""
-    for attempt in range(1, max_attempts + 1):
-        before = room4_controller_snapshot(session)
-        start_frame = int(session.get_state()["frameCount"])
-        released = False
-        try:
-            session.set_input(buttons=mask, frames=4, port=0)
-            pressed_frame = int(session.get_state()["frameCount"])
-            session.set_input(buttons=0, frames=1, port=0)
-            released = True
-            released_frame = int(session.get_state()["frameCount"])
-            for _ in range(poll_frames + 1):
-                after = room4_controller_snapshot(session)
-                if predicate(before, after):
-                    return {
-                        "mask": mask,
-                        "attempt": attempt,
-                        "start_frame": start_frame,
-                        "after_press_frame": pressed_frame,
-                        "after_release_frame": released_frame,
-                        "observed_frame": int(session.get_state()["frameCount"]),
-                        "before": before,
-                        "after": after,
-                    }
-                _one_frame(session)
-        finally:
-            # A failed predicate/poll or tool exception must not leave buttons
-            # owned by this replay in the live Nexen session.
-            if not released:
-                session.set_input(buttons=0, frames=1, port=0)
+    """Send one exact 4-frame press/1-frame neutral interval and observe it.
+
+    Nexen's ``set_input(frames=...)`` is wall-clock driven at max speed, so
+    this replay only changes controller level without advancing and uses
+    frame-counted runs for every press/release interval. A failed edge is a
+    diagnostic boundary; repeating the same input could move the cursor past
+    its target and conceal the timing problem.
+    """
+    before = room4_controller_snapshot(session)
+    start_frame = int(session.get_state()["frameCount"])
+    controller.hold(mask)
+    try:
+        press = advance_bounded(session, 4)
+    finally:
+        # Release even when frame advancement or observation raises.
+        controller.release()
+    if press["start_frame"] != start_frame or press["frames_advanced"] != 4:
+        raise RuntimeError(f"room-4 press interval was not exactly four frames: {press}")
+
+    neutral = advance_bounded(session, 1)
+    if neutral["start_frame"] != press["end_frame"] or neutral["frames_advanced"] != 1:
+        raise RuntimeError(f"room-4 release interval was not exactly one frame: {neutral}")
+
+    for _ in range(poll_frames + 1):
+        after = room4_controller_snapshot(session)
+        if predicate(before, after):
+            return {
+                "mask": mask,
+                "attempt": 1,
+                "start_frame": start_frame,
+                "after_press_frame": press["end_frame"],
+                "after_release_frame": neutral["end_frame"],
+                "press_frames_advanced": press["frames_advanced"],
+                "release_frames_advanced": neutral["frames_advanced"],
+                "observed_frame": int(session.get_state()["frameCount"]),
+                "before": before,
+                "after": after,
+            }
+        advance_bounded(session, 1)
     raise RuntimeError(
-        f"room-4 input ${mask:03X} was not consumed after {max_attempts} attempts"
+        f"room-4 input ${mask:03X} was not consumed after one exact-frame pulse"
     )
 
 
@@ -115,39 +118,43 @@ def replay_room4_open_trapdoor_prefix(session: Any) -> dict[str, Any]:
 
     steps: list[dict[str, Any]] = []
     x, y = initial["x"], initial["y"]
-    try:
+    with ControllerInputLease(session) as controller:
         for _ in range(14):
             x -= 2
             steps.append(_room4_pulse_until(
-                session, 0x040,
+                session, controller, 0x040,
                 lambda _before, after, tx=x: after["x"] == tx,
             ))
         for _ in range(3):
             y -= 2
             steps.append(_room4_pulse_until(
-                session, 0x010,
+                session, controller, 0x010,
                 lambda _before, after, ty=y: after["y"] == ty,
             ))
         steps.append(_room4_pulse_until(
-            session, 0x001,
+            session, controller, 0x001,
             lambda _before, after: (
                 after["mode"] == 1 and after["verb"] == 3
                 and after["object"] == 61 and after["hit_object"] == 61
             ),
         ))
         steps.append(_room4_pulse_until(
-            session, 0x001,
+            session, controller, 0x001,
             lambda before, after: (
                 after["submissions"] == ((before["submissions"] + 1) & 0xFF)
             ),
         ))
-    finally:
-        session.set_input(buttons=0, frames=1, port=0)
     final = room4_controller_snapshot(session)
     if final["error"] != 0 or final["room"] != 4:
         raise RuntimeError(f"room-4 replay left its accepted scene: {final!r}")
     return {
         "precondition": initial,
+        "input_schedule": {
+            "press_frames": 4,
+            "release_neutral_frames": 1,
+            "controller_level_changes_advance_frames": False,
+            "equivalent_attempts_per_step": 1,
+        },
         "steps": steps,
         "final": final,
         "result": "controller submitted Open on object 61 at world (89,132)",
