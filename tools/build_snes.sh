@@ -142,6 +142,12 @@ if [[ "${SAME_BUILD_SCUMM_CONTROLLER:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLL
 fi
 if [[ "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-controller-conformance)
+    if [[ "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE_NO_ROOT_ROOM:-0}" == "1" ]]; then
+        ENGINE_SELECTION_ARGS+=(--scumm-controller-conformance-no-root-room)
+    fi
+    if [[ "${SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE:-0}" == "1" ]]; then
+        ENGINE_SELECTION_ARGS+=(--scumm-c19-native-fixture)
+    fi
     if [[ "${SAME_BUILD_SCUMM_CONTROLLER:-0}" == "1" ]]; then
         ENGINE_SELECTION_ARGS+=(--scumm-controller)
     fi
@@ -194,22 +200,34 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
     if [[ "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
         CONFORMANCE_BUILD="$ROOT/build/controller-conformance"
         M23A_BUILD="$CONFORMANCE_BUILD"
-        "$PYTHON" tools/build_scumm_controller_conformance.py --output-dir "$CONFORMANCE_BUILD"
-        ROOM_MANIFESTS=(--manifest "$CONFORMANCE_BUILD/manifest.json")
-        ROOM_BINARY_DIR="$CONFORMANCE_BUILD/segments"
-        ROOM_GENERATOR_ARGS+=(--far-programs)
+        if [[ "${SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE:-0}" == "1" ]]; then
+            # The C19 cutscene control enters through the engine's dedicated
+            # fixture dispatch. It needs the synthetic variable layout, but
+            # no controller-room resources; including room 1 here caused an
+            # unrelated room request before the cutscene fixture ran.
+            ROOM_MANIFESTS=(--manifest examples/resources/scumm_v5/empty_cooked_rooms.json)
+            ROOM_BINARY_DIR="$ROOT/build/empty-scumm-rooms/segments"
+            ROOM_GENERATOR_ARGS+=(--far-programs)
+        else
+            "$PYTHON" tools/build_scumm_controller_conformance.py --output-dir "$CONFORMANCE_BUILD"
+            ROOM_MANIFESTS=(--manifest "$CONFORMANCE_BUILD/manifest.json")
+            ROOM_BINARY_DIR="$CONFORMANCE_BUILD/segments"
+            ROOM_GENERATOR_ARGS+=(--far-programs)
+        fi
         if [[ "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_M24RB:-0}" == "1" || "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
             ROOM_GENERATOR_ARGS+=(--far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
         fi
         mkdir -p "$ROOM_BINARY_DIR"
-        "$PYTHON" tools/generate_snes_room_visuals.py \
-            --manifest "$CONFORMANCE_BUILD/manifest.json" \
-            --output runtime/snes/generated/scumm_v5_room_visuals.inc.pasm \
-            --binary-dir "$CONFORMANCE_BUILD/visual-segments" \
-            --report "${SAME_SNES_OUTPUT:-build/controller-conformance.sfc}.room-visuals.json" \
-            --first-bank 16 --room 1
-        CONFORMANCE_ROOM_GENERATED=1
-        SAME_SCUMM_REUSE_COOKED_ROOM_VISUALS=1
+        if [[ "${SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE:-0}" != "1" ]]; then
+            "$PYTHON" tools/generate_snes_room_visuals.py \
+                --manifest "$CONFORMANCE_BUILD/manifest.json" \
+                --output runtime/snes/generated/scumm_v5_room_visuals.inc.pasm \
+                --binary-dir "$CONFORMANCE_BUILD/visual-segments" \
+                --report "${SAME_SNES_OUTPUT:-build/controller-conformance.sfc}.room-visuals.json" \
+                --first-bank 16 --room 1
+            CONFORMANCE_ROOM_GENERATED=1
+            SAME_SCUMM_REUSE_COOKED_ROOM_VISUALS=1
+        fi
     else
     M23A_SOURCE="${SAME_FATE_ARCHIVE:?Set SAME_FATE_ARCHIVE to a user-supplied archive}"
     M23A_BUILD="$ROOT/build/m23a-rooms"
@@ -725,11 +743,12 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
                               --reserved-bank 22 --reserved-bank 23
                               --reserved-bank 24)
     fi
-    if [[ "${SAME_BUILD_M24RB:-0}" == "1" ]]; then
-        # M24R-B has fixed code sections in bank 9 and bank 83. Keep generated
-        # room payloads out of both; otherwise a multi-bank room can be
-        # overwritten by lifecycle code and fail only when its later segment
-        # is validated at runtime.
+    if [[ "${SAME_BUILD_M24RB:-0}" == "1" || "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
+        # The far room-service closure is fixed in banks 9 and 83 for both
+        # M24R-B production profiles and controller-conformance builds.
+        # Keep generated room tables/helpers out of both banks even when the
+        # selected room manifest is empty; otherwise the name/lookup helpers
+        # can collide with the fixed bank-9 service entry.
         ROOM_GENERATOR_ARGS+=(--reserved-bank 9 --reserved-bank 83)
     fi
     if [[ -n "${SAME_SCUMM_ROOM_DATA_FIRST_BANK:-}" ]]; then

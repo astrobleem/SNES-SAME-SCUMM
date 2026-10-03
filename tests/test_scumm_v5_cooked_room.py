@@ -178,11 +178,11 @@ class CookedRoomTests(unittest.TestCase):
         # execute room 1 EXCD before retiring that local, then run room 2 ENCD.
         room1 = raw_room(
             entry=bytes((0x1A, 10, 0, 1, 0, 0x0A, 200, 0xFF, 0x00)),
-            exit=bytes((0x46, 12, 0, 0x00)),
-            locals=((200, bytes((0x46, 11, 0, 0x80, 0x18, 0xFC, 0xFF))),),
+            exit=bytes((0x46, 102, 0, 0x00)),
+            locals=((200, bytes((0x46, 101, 0, 0x80, 0x18, 0xFC, 0xFF))),),
         )
         room2 = raw_room(
-            entry=bytes((0x46, 13, 0, 0x00)), exit=b"\x00",
+            entry=bytes((0x46, 103, 0, 0x00)), exit=b"\x00",
             locals=((201, b"\x00"),),
         )
         # load room 1; yield; load room 2; stop
@@ -204,14 +204,14 @@ class CookedRoomTests(unittest.TestCase):
         first = host.engine.inspect_state()
         self.assertEqual(first["room"], 1)
         self.assertEqual(first["variables"]["10"], 1)
-        self.assertEqual(first["variables"]["11"], 1)
+        self.assertEqual(first["variables"]["101"], 1)
         self.assertTrue(any(slot["active"] and slot["script_kind"] == "LSCR"
                             for slot in first["scripts"]))
         host.tick()
         second = host.engine.inspect_state()
         self.assertEqual(second["room"], 2)
-        self.assertEqual(second["variables"]["12"], 1)
-        self.assertEqual(second["variables"]["13"], 1)
+        self.assertEqual(second["variables"]["102"], 1)
+        self.assertEqual(second["variables"]["103"], 1)
         self.assertFalse(any(slot["active"] and slot["room"] == 1
                              for slot in second["scripts"]))
         phases = [item["phase"] for item in host.engine.inspect_room_lifecycle()]
@@ -232,7 +232,7 @@ class CookedRoomTests(unittest.TestCase):
         room1 = raw_room(
             entry=bytes((0x0A, 200, 0xFF, 0x00)),
             exit=bytes((
-                0x46, 42, 0,       # record the EXCD prefix once
+            0x46, 142, 0,      # record the EXCD prefix once
                 0x80,              # first breakHere returns to startScene
                 0x68, 0, 0, 200,  # would observe the suspended local caller
                 0x28, 0, 0, 0xF6, 0xFF,  # repeat if still live
@@ -240,12 +240,12 @@ class CookedRoomTests(unittest.TestCase):
                 0x00,
             )),
             locals=((200, bytes((
-                0x46, 41, 0,       # persistent local counter
+                0x46, 141, 0,      # persistent local counter
                 0x80,
                 0x18, 0xF9, 0xFF, # loop while room remains active
             ))),),
         )
-        room2 = raw_room(entry=bytes((0x46, 43, 0, 0x00)), exit=b"\x00", locals=())
+        room2 = raw_room(entry=bytes((0x46, 143, 0, 0x00)), exit=b"\x00", locals=())
         resources = MemoryResourceProvider({
             "script.boot": bytes((0x72, 1, 0x80, 0x72, 2, 0x00)),
             "room.1": room1, "room.2": room2,
@@ -265,10 +265,10 @@ class CookedRoomTests(unittest.TestCase):
 
         state = host.engine.inspect_state()
         self.assertEqual(state["room"], 2)
-        self.assertEqual(state["variables"].get("42"), 1)
-        self.assertEqual(state["variables"].get("43"), 1)
-        self.assertEqual(state["variables"].get("44", 0), 0)
-        self.assertGreaterEqual(state["variables"].get("41", 0), 1)
+        self.assertEqual(state["variables"].get("142"), 1)
+        self.assertEqual(state["variables"].get("143"), 1)
+        self.assertEqual(state["variables"].get("144", 0), 0)
+        self.assertGreaterEqual(state["variables"].get("141", 0), 1)
         self.assertFalse(any(
             item["active"] and item["room"] == 1 and item["script_kind"] == "LSCR"
             for item in state["scripts"]
@@ -288,12 +288,12 @@ class CookedRoomTests(unittest.TestCase):
                 return super().read(key, offset, length)
 
         local = bytes((
-            0x46, 11, 0,       # increment old-room local counter
+            0x46, 101, 0,      # increment old-room local counter
             0x80,              # yield
             0x18, 0xF9, 0xFF, # loop to the increment
         ))
         global_program = bytes((
-            0x46, 20, 0,
+            0x46, 120, 0,
             0x80,
             0x18, 0xF9, 0xFF,
         ))
@@ -303,7 +303,7 @@ class CookedRoomTests(unittest.TestCase):
                 0x0A, 200, 0xFF,  # room-local must be retired
                 0x00,
             )),
-            exit=bytes((0x46, 12, 0, 0x00)),
+            exit=bytes((0x46, 102, 0, 0x00)),
             locals=((200, local),),
         )
         boot = bytes((0x72, 1, 0x80, 0x72, 0, 0x00))
@@ -328,21 +328,21 @@ class CookedRoomTests(unittest.TestCase):
         self.assertEqual(state["room"], 0)
         self.assertNotIn("room.0", resources.read_keys)
         self.assertNotIn("cooked.room.0", resources.read_keys)
-        self.assertEqual(state["variables"].get("12"), 1)  # old EXCD exactly once
+        self.assertEqual(state["variables"].get("102"), 1)  # old EXCD exactly once
         self.assertFalse(any(
             slot["active"] and slot["room"] == 1 and slot["script_kind"] == "LSCR"
             for slot in state["scripts"]
         ))
-        local_value = state["variables"].get("11", 0)
-        global_value = state["variables"].get("20", 0)
+        local_value = state["variables"].get("101", 0)
+        global_value = state["variables"].get("120", 0)
         self.assertTrue(any(
             slot["active"] and slot["number"] == 75 and slot["script_kind"] == "global"
             for slot in state["scripts"]
         ))
         host.tick()
         after = host.engine.inspect_state()
-        self.assertEqual(after["variables"].get("11", 0), local_value)
-        self.assertGreater(after["variables"].get("20", 0), global_value)
+        self.assertEqual(after["variables"].get("101", 0), local_value)
+        self.assertGreater(after["variables"].get("120", 0), global_value)
         phases = [item["phase"] for item in host.engine.inspect_room_lifecycle()]
         self.assertEqual(phases.count("old_exit_completed"), 1)
         self.assertIn("old_room_scripts_retired", phases)
@@ -397,11 +397,11 @@ class CookedRoomTests(unittest.TestCase):
 
     def test_room_entry_outer_context_survives_immediate_child_stop_and_yield(self) -> None:
         entry = bytes((
-            0x1A, 10, 0, 0x10, 0x10,
+            0x1A, 100, 0, 0x10, 0x10,
             0x0A, 200, 0xFF,
-            0x1A, 11, 0, 0x11, 0x11,
+            0x1A, 101, 0, 0x11, 0x11,
             0x80,
-            0x1A, 12, 0, 0x12, 0x12,
+            0x1A, 102, 0, 0x12, 0x12,
             0x00,
         ))
         child = bytes((0x1A, 0, 0x40, 0x20, 0x20, 0x00))
@@ -420,21 +420,21 @@ class CookedRoomTests(unittest.TestCase):
         host.boot()
         host.tick()
         first = host.engine.inspect_state()
-        self.assertEqual(first["variables"]["10"], 0x1010)
-        self.assertEqual(first["variables"]["11"], 0x1111)
-        self.assertNotIn("12", first["variables"])
+        self.assertEqual(first["variables"]["100"], 0x1010)
+        self.assertEqual(first["variables"]["101"], 0x1111)
+        self.assertNotIn("102", first["variables"])
         child_slot = next(item for item in first["scripts"] if item["resource"] == "room.1/LSCR.200")
         self.assertFalse(child_slot["active"])
         self.assertEqual(child_slot["locals"][0], 0x2020)
 
         host.tick()
         second = host.engine.inspect_state()
-        self.assertEqual(second["variables"]["12"], 0x1212)
+        self.assertEqual(second["variables"]["102"], 0x1212)
         entry_slot = next(item for item in second["scripts"] if item["script_kind"] == "ENCD")
         self.assertFalse(entry_slot["active"])
 
     def test_host_rejects_new_room_before_exit_or_registry_mutation(self) -> None:
-        room1 = raw_room(entry=b"\x00", exit=bytes((0x46, 12, 0, 0x00)), locals=())
+        room1 = raw_room(entry=b"\x00", exit=bytes((0x46, 112, 0, 0x00)), locals=())
         room2 = raw_room(entry=b"\x00", exit=b"\x00", locals=())
         damaged = bytearray(cooked(2, room2))
         damaged[-40] ^= 1
@@ -456,7 +456,7 @@ class CookedRoomTests(unittest.TestCase):
             host.tick()
         after = host.engine.inspect_state()
         self.assertEqual(after["room"], 1)
-        self.assertEqual(after["variables"].get("12", 0), 0)
+        self.assertEqual(after["variables"].get("112", 0), 0)
         self.assertEqual(after["room_resource"]["record_sha256"],
                          before["room_resource"]["record_sha256"])
 

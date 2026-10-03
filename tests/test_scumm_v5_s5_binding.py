@@ -20,7 +20,10 @@ class ScummV5S5BindingTests(unittest.TestCase):
         self.assertEqual(first.operations, 4)
         self.assertTrue(first.yielded)
         self.assertEqual(state["scripts"][0]["pc"], 10)
-        self.assertEqual(state["variables"], {"0": 0x1234})
+        self.assertEqual(
+            state["variables"],
+            {"0": 0x1234, "9": 11, "11": 1, "12": 1, "13": 1, "40": 1400},
+        )
         self.assertEqual(host.services.audio.music_track, 7)
         self.assertEqual(host.services.audio.sfx_history[-1]["sound"], 9)
 
@@ -39,6 +42,10 @@ class ScummV5S5BindingTests(unittest.TestCase):
         self.assertEqual(second.operations, 3)
         self.assertTrue(second.halted)
         self.assertEqual(state["scripts"][0]["pc"], 14)
+        self.assertEqual(
+            (state["variables"]["11"], state["variables"]["12"], state["variables"]["13"]),
+            (2, 2, 2),
+        )
         self.assertIsNone(host.services.audio.music_track)
         audio_packets = [
             packet

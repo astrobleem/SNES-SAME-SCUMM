@@ -277,6 +277,47 @@ class ScummV5RawRoomTests(unittest.TestCase):
         self.assertEqual(host.engine.state.scripts[0].pc, len(script))
         self.assertTrue(host.engine.state.scripts[0].yielded)
 
+    def test_created_walkbox_matrix_and_route_survive_fresh_host_restore(self) -> None:
+        boxes = (
+            struct.pack("<hhhhhhhhBBH", -100, -100, -90, -100, -90, -90,
+                        -100, -90, 0, 0x80, 255),
+            struct.pack("<hhhhhhhhBBH", 0, 0, 10, 0, 10, 10, 0, 10, 0, 0, 255),
+            struct.pack("<hhhhhhhhBBH", 10, 0, 20, 0, 20, 10, 10, 10, 0, 0, 255),
+            struct.pack("<hhhhhhhhBBH", 20, 0, 30, 0, 30, 10, 20, 10, 0, 0, 255),
+            struct.pack("<hhhhhhhhBBH", 0, 10, 10, 10, 10, 20, 0, 20, 0, 0, 255),
+            struct.pack("<hhhhhhhhBBH", 10, 10, 20, 10, 20, 20, 10, 20, 0, 0, 255),
+            struct.pack("<hhhhhhhhBBH", 20, 10, 30, 10, 30, 20, 20, 20, 0, 0, 255),
+        )
+        room_data = raw_room(bytes((1,)) + bytes(16), walkboxes=boxes)
+        script = bytes((0x30, 0x01, 2, 0x80, 0x30, 0x04, 0x80))
+        host = self._matrix_host(script, room_data)
+        host.tick()
+        routes = host.engine._dynamic_box_routes
+        self.assertIsNotNone(routes)
+        assert routes is not None
+        self.assertEqual(routes[1][3], 4)
+
+        host.engine.state.actors[1] = ActorState(
+            room=0, visible=True, position=(5, 5), walkbox=1,
+        )
+        envelope = host.save(0)
+
+        def take_first_routed_step(engine) -> tuple[int, int, int]:
+            actor = engine.state.actors[1]
+            engine._start_actor_walk(actor, (25, 5))
+            engine._advance_actor_movement()
+            return actor.walkbox, actor.walk_current_box, actor.walk_destination_box
+
+        original_route = take_first_routed_step(host.engine)
+        self.assertEqual(original_route[1], 4)
+
+        restored = self._matrix_host(script, room_data)
+        restored.services.saves.write(0, envelope.pack())
+        restored.load(0)
+        self.assertEqual(restored.engine._dynamic_box_routes[1][3], 4)
+        restored_route = take_first_routed_step(restored.engine)
+        self.assertEqual(restored_route, original_route)
+
     def test_put_actor_applies_bounded_canonical_v5_placement_side_effects(self) -> None:
         boxes = (
             struct.pack("<hhhhhhhhBBH", -32000, -32000, -32000, -32000,

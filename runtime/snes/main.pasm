@@ -171,7 +171,7 @@ reset_diag_valid:
     lda #$31
     jsr ScummV5_RequestRoom
 .endif
-.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE_NO_ROOT_ROOM
     ; Standalone conformance root: enter the normal room-request lifecycle
     ; after engine state is initialized, without writing active-room state.
     sep #$20

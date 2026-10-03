@@ -723,8 +723,35 @@ ScummV5_Engine_Frame:
     lda.l SAME_INPUT_PRESSED
     and #$0040
     beq ScummV5_Engine_Frame__skip_done
+    .if SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE
+    ; Capture the logical skip edge at the actual gate, not at a later debugger
+    ; memory-read/drain boundary.
+    sta.l SAME_SCUMM_C19_NATIVE_SKIP_SAMPLE
+    .endif
     jsl ScummV5_C19_AbortOverride_Far
 ScummV5_Engine_Frame__skip_done:
+    .if SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE
+    ; Native-control-only stack witness: save caller SP immediately after the
+    ; long abort helper returns. PHP/PLP make the TSX width change transparent.
+    php
+    rep #$30
+    .a16
+    .i16
+    tsx
+    txa
+    sta.l SAME_SCUMM_C19_NATIVE_STACK_CALLER
+    plp
+    .endif
+ScummV5_Engine_Frame__skip_caller_recorded:
+    sep #$20
+    .a8
+    .if SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE
+    ; Isolated no-room C19 conformance frame: select the generated fixture
+    ; after processing ordinary skip input, then bypass unrelated room services.
+    lda #SCUMM_C2_FIXTURE_C19_CUTSCENE
+    sta.l SAME_SCUMM_FIXTURE_REQUEST
+    jmp ScummV5_Engine_Frame__fixture_check
+    .endif
     jsr ScummV5_AdvanceTimers
     sep #$20
     .a8
@@ -1529,6 +1556,11 @@ ScummV5_Engine_Frame__matrix_state_ready:
     lda #$00
     sta.l SAME_SCUMM_RETURN_MODE
     lda.l SAME_SCUMM_FIXTURE_ACTIVE
+    cmp #SCUMM_C2_FIXTURE_C19_CUTSCENE
+    bne ScummV5_Engine_Frame__check_init_c3
+    jmp ScummV5_Engine_Frame__init_c19_scheduler
+ScummV5_Engine_Frame__check_init_c3:
+    .a8
     cmp #SCUMM_C2_FIXTURE_C3_SCHEDULER
     beq ScummV5_Engine_Frame__init_c3
     cmp #SCUMM_C2_FIXTURE_C4_LIFECYCLE
@@ -1651,6 +1683,9 @@ ScummV5_Engine_Frame__fixture_ready:
     sep #$20
     .a8
     lda.l SAME_SCUMM_FIXTURE_ACTIVE
+    cmp #SCUMM_C2_FIXTURE_C19_CUTSCENE
+    beq ScummV5_Engine_Frame__run_c4
+    lda.l SAME_SCUMM_FIXTURE_ACTIVE
     cmp #SCUMM_C2_FIXTURE_C3_SCHEDULER
     beq ScummV5_Engine_Frame__run_c3
     cmp #SCUMM_C2_FIXTURE_C4_LIFECYCLE
@@ -1666,6 +1701,25 @@ ScummV5_Engine_Frame__fixture_ready:
     cmp #SCUMM_C2_FIXTURE_C6_CAPACITY
     beq ScummV5_Engine_Frame__run_c4
     bra ScummV5_Engine_Frame__single_fixture
+ScummV5_Engine_Frame__init_c19_scheduler:
+    ; Run the native cutscene regression as a real C4-owned activation. The
+    ; production abort path restores a yielded descriptor, not an outer slot.
+    jsr ScummV5_C4_ResetState
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C19_NATIVE_SELECTION_COUNT
+    lda #SCUMM_VM_RUNNING
+    sta.l SAME_SCUMM_C4_SLOT_STATUS+1
+    lda #$01
+    sta.l SAME_SCUMM_C4_SLOT_NUMBER+1
+    lda #SCUMM_C2_FIXTURE_C19_CUTSCENE
+    sta.l SAME_SCUMM_C4_SLOT_PROGRAM+1
+    lda #$01
+    sta.l SAME_SCUMM_C4_ACTIVE_COUNT
+    lda #$FF
+    sta.l SAME_SCUMM_C4_LAST_ALLOCATED
+    jmp ScummV5_C4_Scheduler_Frame
 ScummV5_Engine_Frame__run_c3:
     jmp ScummV5_C3_Scheduler_Frame
 ScummV5_Engine_Frame__run_c4:
@@ -1676,6 +1730,23 @@ ScummV5_Engine_Frame__single_fixture:
     lda #$00
     sta.l SAME_SCUMM_RETURN_MODE
 ScummV5_Engine_RunSelected:
+    .if SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_C19_NATIVE_SELECTED_SLOT
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    sta.l SAME_SCUMM_C19_NATIVE_SELECTED_PROGRAM
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_C19_NATIVE_SELECTED_PC
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C19_NATIVE_SELECTION_COUNT
+    inc
+    sta.l SAME_SCUMM_C19_NATIVE_SELECTION_COUNT
+    .endif
     rep #$30
     .a16
     .i16
@@ -7094,6 +7165,16 @@ ScummV5_C19_ResetState__loop:
 ; and code context through the ordinary scheduler path.
 ScummV5_C19_AbortOverride_Far:
     php
+    .if SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE
+    php
+    rep #$30
+    .a16
+    .i16
+    tsx
+    txa
+    sta.l SAME_SCUMM_C19_NATIVE_STACK_ENTRY
+    plp
+    .endif
     rep #$30
     .a16
     .i16
@@ -7113,8 +7194,18 @@ ScummV5_C19_AbortOverride_Far__has_override:
     sta.l SAME_SCUMM_OPERAND
     sep #$20
     .a8
+    ; X remains 16-bit. Loading a byte into A8 preserves the old B byte,
+    ; which still contains the high byte of the saved override PC ($12 in
+    ; the regression case). Explicitly widen/mask every byte slot index
+    ; before TAX so descriptor accesses use $0000..$0018, never $1200+slot.
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_C19_STACK_POINTER
+    and #$00FF
     tax
+    sep #$20
+    .a8
+ScummV5_C19_AbortOverride_Far__override_slot_read:
     lda.l SAME_SCUMM_C19_OVERRIDE_SLOT,x
     cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
     bcc ScummV5_C19_AbortOverride_Far__slot_valid
@@ -7122,9 +7213,16 @@ ScummV5_C19_AbortOverride_Far__has_override:
 ScummV5_C19_AbortOverride_Far__slot_valid:
     .a8
     sta.l SAME_SCUMM_C19_SELECTOR
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C19_SELECTOR
+    and #$00FF
     tax
+    sep #$20
+    .a8
     ; A retired/stopped activation must not be resurrected from a stale
     ; override record. Normal stop/room-retirement paths clear these records.
+ScummV5_C19_AbortOverride_Far__slot_status_read:
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
     beq ScummV5_C19_AbortOverride_Far__done
     cmp #SCUMM_VM_STOPPED
@@ -7135,8 +7233,14 @@ ScummV5_C19_AbortOverride_Far__slot_valid:
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda #$00
     sta.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_C19_SELECTOR
+    and #$00FF
     tax
+    sep #$20
+    .a8
+ScummV5_C19_AbortOverride_Far__slot_depth_read:
     lda.l SAME_SCUMM_C19_SLOT_DEPTH,x
     beq ScummV5_C19_AbortOverride_Far__slot_depth_done
     dec
@@ -7149,13 +7253,20 @@ ScummV5_C19_AbortOverride_Far__slot_depth_done:
     and #$00FF
     asl
     tax
+ScummV5_C19_AbortOverride_Far__slot_pc_write:
     lda.l SAME_SCUMM_OPERAND
     sta.l SAME_SCUMM_C4_SLOT_PC,x
     sep #$20
     .a8
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_C19_STACK_POINTER
+    and #$00FF
     tax
+    sep #$20
+    .a8
     lda #$00
+ScummV5_C19_AbortOverride_Far__override_slot_clear:
     sta.l SAME_SCUMM_C19_OVERRIDE_SLOT,x
     rep #$30
     .a16
@@ -7165,12 +7276,23 @@ ScummV5_C19_AbortOverride_Far__slot_depth_done:
     asl
     tax
     lda #$0000
+ScummV5_C19_AbortOverride_Far__override_pc_clear:
     sta.l SAME_SCUMM_C19_OVERRIDE_PC,x
     lda #$0001
     sta.l SAME_SCUMM_VARIABLES+(5 * 2)
 ScummV5_C19_AbortOverride_Far__done:
     plx
     plp
+    .if SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE
+    php
+    rep #$30
+    .a16
+    .i16
+    tsx
+    txa
+    sta.l SAME_SCUMM_C19_NATIVE_STACK_PRE_RTL
+    plp
+    .endif
     rtl
 
 ScummV5_Op_CutsceneDispatch:
@@ -7432,8 +7554,16 @@ ScummV5_Op_BeginOverride__active:
     sta.l SAME_SCUMM_C19_OVERRIDE_PC,x
     sep #$20
     .a8
+    ; The preceding A16 load leaves the saved PC high byte in B. X is still
+    ; 16-bit, so zero-extend the byte-sized cutscene depth before indexing
+    ; the override-slot table.
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_C19_STACK_POINTER
+    and #$00FF
     tax
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_C4_CURRENT_SLOT
     sta.l SAME_SCUMM_C19_OVERRIDE_SLOT,x
     jsr ScummV5_FetchByte
@@ -19247,6 +19377,6 @@ ScummV5_SetError:
     sta.l SAME_SCUMM_STATUS
     rts
 
-.if SAME_BUILD_SCUMM_PHASE6LA1D == $00
+.if SAME_BUILD_SCUMM_PHASE6LA1D == $00 && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 .include "../generated/scumm_v5_conformance.inc.pasm"
 .endif

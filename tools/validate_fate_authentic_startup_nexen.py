@@ -21,6 +21,12 @@ NEXEN_DEFAULT = Path(
     "/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/linux-x64/publish/Nexen"
 )
 sys.path.insert(0, str(ROOT / "tools"))
+from fate_replay import (  # noqa: E402
+    ControllerInputLease,
+    activation_observation,
+    advance_bounded,
+    next_input_safe_window,
+)
 from validate_scumm_startup42_nexen import (  # noqa: E402
     mapped_cpu_address_for_rom,
     verified_symbol_map_for_rom,
@@ -414,7 +420,7 @@ def main() -> int:
         rom=rom, mesen=nexen, cwd=ROOT, port=args.port,
         boot_wait=2.0, socket_timeout=600.0,
         stderr_log=args.output.with_suffix(".nexen-stderr.log"),
-    ) as session:
+    ) as session, ControllerInputLease(session) as controller:
         session.pause()
         session.tool("reset_emulator", {"power": True})
         session.pause()
@@ -518,10 +524,9 @@ def main() -> int:
                     "trace_tail": rows[-96:],
                 })
             if name == "ScummV5_Engine_RunSelected":
-                # This hook runs once per selected activation, not once per VM
-                # opcode. Keep every selected descriptor: startup and null-room
-                # failures can originate in an activation whose script number
-                # was not anticipated by an older targeted trace.
+                # Notifications are drained in batches. Preserve the hook's
+                # frame/cycle as event data, but label current WRAM separately
+                # as a drain-time snapshot; it may describe a later slot.
                 current_slot = session.read_memory("snesMemory", 0x7E2A88, 1)[0]
                 slot_number = session.read_memory(
                     "snesMemory", 0x7E2399 + current_slot, 1)[0]
@@ -529,13 +534,18 @@ def main() -> int:
                 common = session.read_memory("snesMemory", COMMON, 0x64)
                 events.append({
                     "symbol": name,
-                    **params,
-                    "slot": current_slot,
-                    "script": slot_number,
-                    "program": common[0x62],
-                    "pc": u16(common),
-                    "room": room[1],
-                    "phase": room[4],
+                    **activation_observation(
+                        params,
+                        snapshot={
+                            "slot": current_slot,
+                            "script": slot_number,
+                            "program": common[0x62],
+                            "pc": u16(common),
+                            "room": room[1],
+                            "phase": room[4],
+                        },
+                        synchronized=False,
+                    ),
                 })
                 return
             if name in {
@@ -679,10 +689,7 @@ def main() -> int:
                 # host_frame loop below is frame-exact, so hold the level and
                 # let run_frames own the full 40-frame interval.
                 input_start_frame = session.get_state()["frameCount"]
-                session.tool("set_input", {
-                    "port": 0, "buttons": args.title_start_buttons,
-                    "hold": True, "frames": 0,
-                })
+                controller.hold(args.title_start_buttons)
                 start_sent = True
                 start_release = host_frame + 40
                 input_events.append({"frame": host_frame,
@@ -694,28 +701,39 @@ def main() -> int:
             elif (args.drive_title and start_sent and not title_ack
                   and room == 68 and talk_active):
                 input_start_frame = session.get_state()["frameCount"]
-                session.tool("set_input", {
-                    "port": 0, "buttons": 1, "hold": True, "frames": 0,
-                })
+                controller.hold(1)
                 title_ack = True
                 start_release = host_frame + 2
                 input_events.append({"frame": host_frame, "buttons": ["A"],
                                      "emulator_frame": input_start_frame,
                                      "duration": 2, "room": room, "phase": phase})
-            if args.stop_at_engine_error and start_sent:
-                remaining = args.frames - host_frame
-                error_stop = session.run_until(
-                    max_frames=remaining,
-                    hook_handle=handles["ScummV5_Engine_Frame__error"],
-                )
+            if start_release is not None and host_frame >= start_release:
+                controller.release()
+                start_release = None
+            # Advance in bounded batches. During a held input, never cross its
+            # release boundary; message acknowledgements are sampled before
+            # each batch and remain active until acknowledged.
+            step = next_input_safe_window(
+                host_frame,
+                args.frames,
+                release_frame=start_release,
+                sample_interval=args.sample_interval,
+            )
+            if step == 0:
+                break
+            advancement = advance_bounded(
+                session,
+                step,
+                error_hook=(
+                    handles["ScummV5_Engine_Frame__error"]
+                    if args.stop_at_engine_error and start_sent else None
+                ),
+            )
+            host_frame += int(advancement["frames_advanced"])
+            if advancement["hook_fired"]:
                 session.pause()
-                for message in session.drain_notifications(timeout=0.0):
-                    params = message.get("params", message)
-                    handle = params.get("handle")
-                    name = next((n for n, h in handles.items() if h == handle), None)
-                    if name is not None:
-                        capture_hook(name, params)
-                error_stop.update({
+                error_stop = {
+                    **advancement,
                     "cpu_at_stop": session.get_cpu_state(),
                     "phase": session.read_u8(0x7FF2C2),
                     "room": session.read_u8(0x7FF2BF),
@@ -727,24 +745,15 @@ def main() -> int:
                     "error": session.read_u8(COMMON + 3),
                     "lifecycle": session.read_u8(0x7E2221),
                     "trace_tail": (session.trace_log(256).get("rows", [])[-96:]),
-                })
-                break
-            if start_release is not None and host_frame >= start_release:
-                session.tool("set_input", {
-                    "port": 0, "buttons": 0, "hold": True, "frames": 0,
-                })
-                start_release = None
-            # Advance in bounded batches. During a held input, never cross its
-            # release boundary; message acknowledgements are sampled before
-            # each batch and remain active until acknowledged.
-            if start_release is not None:
-                step = min(10, args.sample_interval,
-                           start_release - host_frame,
-                           args.frames - host_frame)
-            else:
-                step = min(10, args.sample_interval, args.frames - host_frame)
-            session.run_frames(step)
-            host_frame += step
+                }
+                for message in session.drain_notifications(timeout=0.0):
+                    params = message.get("params", message)
+                    handle = params.get("handle")
+                    name = next((n for n, h in handles.items() if h == handle), None)
+                    if name is not None:
+                        capture_hook(name, params)
+                if error_stop["error"] != 0:
+                    break
             for message in session.drain_notifications(timeout=0.0):
                 params = message.get("params", message)
                 handle = params.get("handle")

@@ -1332,6 +1332,15 @@ SAME_SCUMM_SCENARIO_LAST_OP_OPCODE         = $7E5F03 ; u8, persistent breadcrumb
 SAME_SCUMM_M25A_QUERY_SP_BEFORE            = $7E56A0 ; u16
 SAME_SCUMM_M25A_QUERY_SP_AFTER             = $7E56A2 ; u16
 SAME_SCUMM_M25A_QUERY_RETURNED             = $7E56A4 ; u8
+; Isolated C19 native-control witnesses; never read by production execution.
+SAME_SCUMM_C19_NATIVE_STACK_ENTRY          = $7E56B0 ; u16 after helper PHP
+SAME_SCUMM_C19_NATIVE_STACK_PRE_RTL        = $7E56B2 ; u16 before RTL
+SAME_SCUMM_C19_NATIVE_STACK_CALLER         = $7E56B4 ; u16 after JSL returns
+SAME_SCUMM_C19_NATIVE_SKIP_SAMPLE          = $7E56B6 ; u16 logical X edge at gate
+SAME_SCUMM_C19_NATIVE_SELECTED_SLOT        = $7E56B8 ; u8 selected C4 slot
+SAME_SCUMM_C19_NATIVE_SELECTED_PROGRAM     = $7E56B9 ; u8 selected program
+SAME_SCUMM_C19_NATIVE_SELECTED_PC          = $7E56BA ; u16 PC at LoadSlot handoff
+SAME_SCUMM_C19_NATIVE_SELECTION_COUNT      = $7E56BC ; u8 selected activations
 SAME_SCUMM_SCENARIO_C25_ERROR_LAST_PROGRAM = $7E5F04 ; u8, snapshot at C25 error
 SAME_SCUMM_SCENARIO_C25_ERROR_LAST_PC      = $7E5F05 ; u16, snapshot at C25 error
 SAME_SCUMM_SCENARIO_C25_ERROR_LAST_OPCODE  = $7E5F07 ; u8, snapshot at C25 error

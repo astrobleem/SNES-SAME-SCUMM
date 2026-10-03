@@ -642,21 +642,30 @@ def scumm_c18_expression_script() -> bytes:
 
 
 def scumm_c19_cutscene_script() -> bytes:
-    """Nested cutscenes plus canonical begin/end override markers."""
-    return bytes(
+    """Nested cutscenes; hold in a yield loop until skip, above $00FF."""
+    body = bytes(
         [
             0x1A, 0, 0, 7, 0,                 # v0 = 7
+            0x1A, 4, 0, 0, 0,                 # v4 = 0
+            0x1A, 6, 0, 0, 0,                 # v6 = 0; skip-only marker
             0x40, 0x01, 0x34, 0x12, 0xFF,     # cutscene([0x1234])
             0x40, 0x81, 0, 0, 0xFF,           # cutscene([v0])
-            0x58, 0x01, 0x18, 0x08, 0x00,     # beginOverride; skip its jump
-            0x1A, 4, 0, 1, 0,                 # normal path v4 = 1
-            0x80,
-            0x58, 0x00,                       # endOverride
+            0x58, 0x01, 0x18, 0x04, 0x00,     # beginOverride; branch to skip-only path
+            0x80,                             # ordinary frames keep yielding here
+            0x18, 0xFC, 0xFF,                 # loop back to breakHere until skip
+            0x1A, 6, 0, 1, 0,                 # skip-only marker v6 = 1
+            0x58, 0x00,                       # endOverride on skipped path
             0xC0,                             # end inner cutscene
             0xC0,                             # end outer cutscene
             0x80,
         ]
     )
+    # Exercise the native byte-index width bug without spending an instruction
+    # per padding byte. The relative jump lands exactly at $0100; skipped bytes
+    # are never decoded, and the ordinary cutscene fixture then records its
+    # beginOverride continuation above the low-byte boundary. The normal path
+    # yields in a loop so input-sampling latency cannot consume the override.
+    return bytes((0x18, 0xFD, 0x00)) + bytes((0xEA,)) * 253 + body
 
 
 def scumm_c20_do_sentence_script() -> bytes:
@@ -1357,12 +1366,12 @@ def write_text(path: Path, data: str) -> None:
 
 
 def far_fixture_include(data: str) -> str:
-    """Place fixture data in a far bank while preserving its source labels."""
+    """Place fixture data in bank 9 with bank-qualified compatibility aliases."""
     labels = re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):", data, re.MULTILINE)
     far = data.replace("ScummV5_", "ScummV5_Far_")
     aliases = "\n; Bank-zero compatibility aliases for cold fixture fetchers.\n"
     aliases += "\n".join(
-        f"{label} = {label.replace('ScummV5_', 'ScummV5_Far_')}"
+        f"{label} = $090000+{label.replace('ScummV5_', 'ScummV5_Far_')}"
         for label in labels
     )
     return far + aliases + "\n"

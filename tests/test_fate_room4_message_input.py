@@ -7,7 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from trace_fate_first_scumm_error_nexen import room4_message_ready  # noqa: E402
+from fate_replay import room4_message_ready  # noqa: E402
 
 
 class FateRoom4MessageInputTests(unittest.TestCase):

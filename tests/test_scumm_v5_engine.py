@@ -442,6 +442,79 @@ class ScummV5EngineTests(unittest.TestCase):
                 self.assertIn(32, host.engine.state.object_classes[88])
                 self.assertEqual(host.engine.state.object_draw_queue, [])
 
+    def test_pickup_ownership_survives_save_restore_on_fresh_host(self) -> None:
+        script = bytes((
+            0x1A, 1, 0, 2, 0,       # ego = 2
+            0x1A, 2, 0, 88, 0,      # first pickup target
+            0xA5, 2, 0, 0, 0x80,    # pickupObject(variable object, current room)
+            0x1A, 2, 0, 89, 0,
+            0xA5, 2, 0, 0,
+            0x80,
+        ))
+
+        def prepare(host: EngineHost) -> None:
+            host.engine.state.room_objects[88] = RoomObjectState(
+                88, 8, 8, 4, 4, 10, 12, state=0
+            )
+            host.engine.state.room_objects[89] = RoomObjectState(
+                89, 16, 8, 4, 4, 18, 12, state=0
+            )
+            owners = bytearray(host.engine._object_owners)
+            owners[88] = owners[89] = 0x0F
+            host.engine._object_owners = bytes(owners)
+            host.engine.state.object_draw_queue[:] = [88, 89]
+
+        host = self._host(script)
+        prepare(host)
+        host.tick()
+        self.assertEqual(host.engine._object_owners[88], 2)
+        self.assertEqual(host.engine._object_owners[89], 0x0F)
+        self.assertNotIn(88, host.engine.state.room_objects)
+        earlier = host.save(0)
+
+        host.tick()
+        self.assertEqual(host.engine._object_owners[89], 2)
+        self.assertNotIn(89, host.engine.state.room_objects)
+        host.load(0)
+        self.assertEqual(host.engine._object_owners[88], 2)
+        self.assertEqual(host.engine._object_owners[89], 0x0F)
+        self.assertIn(89, host.engine.state.room_objects)
+
+        fresh = self._host(script)
+        prepare(fresh)
+        fresh.services.saves.write(0, earlier.pack())
+        fresh.load(0)
+        self.assertEqual(fresh.engine._object_owners[88], 2)
+        self.assertEqual(fresh.engine._object_owners[89], 0x0F)
+        self.assertNotIn(88, fresh.engine.state.room_objects)
+        self.assertIn(89, fresh.engine.state.room_objects)
+        fresh.tick()
+        self.assertEqual(fresh.engine._object_owners[89], 2)
+
+    def test_old_save_defaults_new_pickup_ownership_to_archive_defaults(self) -> None:
+        import json
+
+        from same.savegame import SaveEnvelope
+
+        host = self._host(bytes((0x80,)))
+        owners = bytearray(host.engine._object_owners)
+        owners[88] = 2
+        host.engine._object_owners = bytes(owners)
+        envelope = host.save(0)
+        payload = json.loads(envelope.payload)
+        payload.pop("object_owners")
+        payload.pop("dynamic_box_routes")
+        old_schema_payload = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        old_save = SaveEnvelope(
+            envelope.engine_id, envelope.game_id, envelope.schema, old_schema_payload
+        )
+
+        fresh = self._host(bytes((0x80,)))
+        fresh.services.saves.write(0, old_save.pack())
+        fresh.load(0)
+        self.assertEqual(fresh.engine._object_owners[88], 0)
+        self.assertIsNone(fresh.engine._dynamic_box_routes)
+
     def test_c22_room_zero_is_a_resource_less_null_scene_and_saves(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/c22_null_room.scrp").read_bytes()
         host = self._host(
@@ -1886,14 +1959,19 @@ class ScummV5EngineTests(unittest.TestCase):
 
     def test_c19_cutscene_nested_override_and_save(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/c19_cutscene.scrp").read_bytes()
+        self.assertEqual(script[:3], bytes((0x18, 0xFD, 0x00)))
         host = self._host(script)
         host.tick()
         first = host.engine.inspect_state()
-        self.assertEqual(first["scripts"][0]["pc"], 26)
+        self.assertEqual(first["scripts"][0]["pc"], 287)
         self.assertEqual(first["scripts"][0]["cutscene_override"], 2)
         self.assertEqual(first["cutscenes"]["stack_pointer"], 2)
         self.assertEqual([item["data"] for item in first["cutscenes"]["records"]], [0x1234, 7])
-        self.assertEqual(first["cutscenes"]["records"][1]["override_pc"], 17)
+        self.assertEqual(first["cutscenes"]["records"][1]["override_pc"], 283)
+        self.assertGreater(first["cutscenes"]["records"][1]["override_pc"], 0xFF)
+        self._assert_variables(first, {"0": 7})
+        self.assertEqual(first["variables"].get("4", 0), 0)
+        self.assertEqual(first["variables"].get("6", 0), 0)
         saved = host.save(0)
         host.engine.state.cutscenes.clear()
         host.engine.state.scripts[0].cutscene_override = 0
@@ -1901,10 +1979,13 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(host.engine.inspect_state()["cutscenes"], first["cutscenes"])
         host.tick()
         terminal = host.engine.inspect_state()
-        self.assertEqual(terminal["scripts"][0]["pc"], 31)
-        self.assertEqual(terminal["scripts"][0]["cutscene_override"], 0)
-        self.assertEqual(terminal["cutscenes"]["stack_pointer"], 0)
-        self._assert_variables(terminal, {"0": 7, "4": 1})
+        self.assertEqual(terminal["scripts"][0]["pc"], 287)
+        self.assertEqual(terminal["scripts"][0]["cutscene_override"], 2)
+        self.assertEqual(terminal["cutscenes"]["stack_pointer"], 2)
+        self.assertEqual(terminal["cutscenes"]["records"][1]["override_pc"], 283)
+        self._assert_variables(terminal, {"0": 7})
+        self.assertEqual(terminal["variables"].get("4", 0), 0)
+        self.assertEqual(terminal["variables"].get("6", 0), 0)
         self.assertEqual(saved.schema, 6)
 
     def test_c19_cutscene_callbacks_and_skip_override(self) -> None:

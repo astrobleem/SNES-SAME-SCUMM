@@ -7,9 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from trace_fate_room5_interaction_nexen import (  # noqa: E402
-    world_point_direction_mask,
-)
+from fate_replay import world_point_direction_mask  # noqa: E402
 
 
 class FateRoom5NavigationTests(unittest.TestCase):

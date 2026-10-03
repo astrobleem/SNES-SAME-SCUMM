@@ -564,6 +564,7 @@ class ScummV5Engine(Engine):
         self._num_global_objects = _MAX_OBJECT_STATES
         self._num_global_scripts = 200
         self._object_owners = bytes(_MAX_OBJECT_STATES)
+        self._default_object_owners = self._object_owners
         self._audio: ScummV5AudioAdapter | ScummV5EmbeddedAudioAdapter | None = None
         self._room_scripts: dict[int, bytes] = {}
         self._room_script_descriptors: dict[int, CookedScriptSource] = {}
@@ -847,6 +848,7 @@ class ScummV5Engine(Engine):
             self._num_global_objects = _MAX_OBJECT_STATES
             self._num_global_scripts = int(context.profile.options.get("num_global_scripts", 200))
             self._object_owners = bytes(self._num_global_objects)
+        self._default_object_owners = bytes(self._object_owners)
         if not 0 <= self._num_global_scripts <= 256:
             raise ResourceError("SCUMM global script count must be in 0..256")
         self._room_scripts = {}
@@ -4249,6 +4251,15 @@ class ScummV5Engine(Engine):
                 str(object_id): state
                 for object_id, state in sorted(self.state.object_states.items())
             },
+            "object_owners": list(self._object_owners),
+            # None means use the destination room's authored BOXM routes.
+            # A concrete matrix is script-controlled runtime state and must
+            # not be silently rebuilt during restoration.
+            "dynamic_box_routes": (
+                None if self._dynamic_box_routes is None else [
+                    list(row) for row in self._dynamic_box_routes
+                ]
+            ),
             "room_objects": {
                 str(object_id): item.to_dict()
                 for object_id, item in sorted(self.state.room_objects.items())
@@ -4737,6 +4748,47 @@ class ScummV5Engine(Engine):
             if str(object_id) != object_key or not 1 <= object_id <= 0xFFFF or not 0 <= state <= 255:
                 raise SaveFormatError("SCUMM save object-state entry is invalid")
             object_states[object_id] = state
+        object_owners_raw = data.get("object_owners")
+        if object_owners_raw is None:
+            # Schema-6 saves predate this optional field. Their compatible
+            # default is the archive's initial ownership table, not whatever
+            # transient ownership the destination host happened to hold.
+            object_owners = self._default_object_owners
+        else:
+            if (
+                not isinstance(object_owners_raw, list)
+                or len(object_owners_raw) != len(self._default_object_owners)
+                or any(
+                    isinstance(value, bool) or not isinstance(value, int)
+                    or not 0 <= value <= 255
+                    for value in object_owners_raw
+                )
+            ):
+                raise SaveFormatError("SCUMM save object-owner table is invalid")
+            object_owners = bytes(object_owners_raw)
+        dynamic_routes_raw = data.get("dynamic_box_routes")
+        if dynamic_routes_raw is None:
+            dynamic_box_routes = None
+        else:
+            if (
+                not isinstance(dynamic_routes_raw, list)
+                or len(dynamic_routes_raw) > 256
+                or any(not isinstance(row, list) for row in dynamic_routes_raw)
+            ):
+                raise SaveFormatError("SCUMM save dynamic box matrix is invalid")
+            route_count = len(dynamic_routes_raw)
+            parsed_routes: list[tuple[int | None, ...]] = []
+            for row in dynamic_routes_raw:
+                if len(row) != route_count or any(
+                    value is not None and (
+                        isinstance(value, bool) or not isinstance(value, int)
+                        or not 0 <= value < route_count
+                    )
+                    for value in row
+                ):
+                    raise SaveFormatError("SCUMM save dynamic box matrix is invalid")
+                parsed_routes.append(tuple(row))
+            dynamic_box_routes = tuple(parsed_routes)
         room_objects_raw = data.get("room_objects", {})
         if not isinstance(room_objects_raw, dict) or len(room_objects_raw) > _MAX_LOCAL_OBJECTS:
             raise SaveFormatError("SCUMM save room-object table is invalid")
@@ -5055,6 +5107,7 @@ class ScummV5Engine(Engine):
         self.state.actors = actors
         self.state.object_classes = object_classes
         self.state.object_states = object_states
+        self._object_owners = object_owners
         self.state.verbs = verbs
         self.state.saved_verbs = saved_verbs
         self.state.cutscene_sentinel = cutscene_sentinel
@@ -5123,6 +5176,7 @@ class ScummV5Engine(Engine):
             raise SaveFormatError("SCUMM save room-object table does not match the room resource")
         self.state.room_objects = room_objects
         self.state.object_draw_queue = object_draw_queue
+        self._dynamic_box_routes = dynamic_box_routes
         headless = bool(context.profile.options.get("headless_presentation", False))
         if not headless and self.state.print_messages and self._video is not None:
             target = self._video.prepare_composition()

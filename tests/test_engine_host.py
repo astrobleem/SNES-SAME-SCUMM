@@ -69,11 +69,17 @@ class EngineHostTests(unittest.TestCase):
         host.save(1)
         for _ in range(2):
             host.tick()
-        self.assertEqual(host.engine.inspect_state()["variables"], {"20": 5})
+        variables = host.engine.inspect_state()["variables"]
+        self.assertEqual(variables["20"], 5)
+        self.assertEqual((variables["9"], variables["40"]), (11, 1400))
         host.load(1)
-        self.assertEqual(host.engine.inspect_state()["variables"], {"20": 3})
+        variables = host.engine.inspect_state()["variables"]
+        self.assertEqual(variables["20"], 3)
+        self.assertEqual((variables["9"], variables["40"]), (11, 1400))
         host.tick()
-        self.assertEqual(host.engine.inspect_state()["variables"], {"20": 4})
+        variables = host.engine.inspect_state()["variables"]
+        self.assertEqual(variables["20"], 4)
+        self.assertEqual((variables["9"], variables["40"]), (11, 1400))
         self.assertEqual(len(host.services.events.ring), 0)
         host.shutdown()
         self.assertIs(host.lifecycle, Lifecycle.STOPPED)

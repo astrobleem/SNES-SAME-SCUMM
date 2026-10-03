@@ -1325,6 +1325,21 @@ def main() -> int:
             ) if record["verb_entries"] else "    .word $0000,$0000,$0000",
         ))
         bank += 1
+    if not records:
+        # The shared far verb-query closure names the first record's verb
+        # table while preparing its diagnostic context, even though its room
+        # dispatch will fall through to the no-room result. Provide a real
+        # empty table for the supported resource-less profile instead of
+        # leaving that shared reference undefined.
+        bank = next_free_bank(bank)
+        data_lines.extend((
+            f".bank {bank}", ".org $8000",
+            f"ScummV5_Verb_Record_0_Count = $0000",
+            f"ScummV5_Verb_Record_0_Entries_Address = {cpu_rom_address(bank)}",
+            "ScummV5_Verb_Record_0_Entries:",
+            "    .word $0000,$0000,$0000",
+        ))
+        bank += 1
     # C16 is a bounded sparse runtime table.  A Fate profile can describe
     # more initially-classed objects than the runtime can hold at once; keep
     # Keep a small mutation reserve for authored setClass operations.  The

@@ -10,6 +10,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ScummV5ControllerFixtureTests(unittest.TestCase):
+    def test_far_fixture_aliases_preserve_the_data_bank(self) -> None:
+        import sys
+        sys.path.insert(0, str(ROOT / "tools"))
+        try:
+            from generate_engine_fixtures import far_fixture_include
+        finally:
+            sys.path.pop(0)
+
+        far = far_fixture_include("ScummV5_C2_Program_c19_cutscene:\n    .byte $18\n")
+        self.assertIn(
+            "ScummV5_C2_Program_c19_cutscene = $090000+ScummV5_Far_C2_Program_c19_cutscene",
+            far,
+        )
+
     def test_controller_uses_production_sentence_tuple_and_supports_secondary_object(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         self.assertGreaterEqual(source.count("sta.l SAME_SCUMM_SENTENCE_API_PENDING"), 2)
@@ -388,7 +402,56 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
             self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE = $01", config)
             self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = $01", config)
             self.assertIn("SAME_BUILD_M24RB = $00", config)
+            self.assertIn(
+                "SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE_NO_ROOT_ROOM = $00", config
+            )
+            self.assertIn("SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE = $00", config)
 
+            no_room_output = Path(tmp) / "no-room-active_engine.inc.pasm"
+            subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--scumm-controller-conformance",
+                    "--scumm-controller-conformance-no-root-room",
+                    "--output", str(no_room_output),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            no_room_config = no_room_output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn(
+                "SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE_NO_ROOT_ROOM = $01",
+                no_room_config,
+            )
+
+            native_fixture_output = Path(tmp) / "c19-active_engine.inc.pasm"
+            subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--scumm-controller-conformance",
+                    "--scumm-controller-conformance-no-root-room",
+                    "--scumm-c19-native-fixture",
+                    "--output", str(native_fixture_output),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            native_fixture_config = native_fixture_output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn("SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE = $01", native_fixture_config)
+
+            invalid_no_room = subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--scumm-controller-conformance-no-root-room",
+                    "--output", str(no_room_output),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(invalid_no_room.returncode, 0)
+            self.assertIn("requires SCUMM v5 controller conformance", invalid_no_room.stderr)
             output_m24rb = Path(tmp) / "m24rb-active_engine.inc.pasm"
             subprocess.run(
                 [

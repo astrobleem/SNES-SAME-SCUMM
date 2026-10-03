@@ -45,6 +45,16 @@ def main() -> int:
     parser.add_argument("--scumm-room-visual", action="store_true")
     parser.add_argument("--scumm-controller", action="store_true")
     parser.add_argument("--scumm-controller-conformance", action="store_true")
+    parser.add_argument(
+        "--scumm-controller-conformance-no-root-room",
+        action="store_true",
+        help="omit the synthetic controller root room for a bounded standalone native fixture",
+    )
+    parser.add_argument(
+        "--scumm-c19-native-fixture",
+        action="store_true",
+        help="run the C19 cutscene fixture directly from the conformance boot profile",
+    )
     parser.add_argument("--scumm-controller-fixture", action="store_true")
     parser.add_argument("--scumm-controller-behavior-mask", type=lambda value: int(value, 0), default=7)
     parser.add_argument("--scumm-controller-witness", action="store_true")
@@ -74,6 +84,22 @@ def main() -> int:
         parser.error("--scumm-m25a-pending-only requires --scumm-m25a-validator")
     if args.scumm_m25a_pending_only and args.engine != "scumm_v5":
         parser.error("--scumm-m25a-pending-only is only valid for scumm_v5")
+    if args.scumm_controller_conformance_no_root_room and (
+        args.engine != "scumm_v5" or not args.scumm_controller_conformance
+    ):
+        parser.error(
+            "--scumm-controller-conformance-no-root-room requires SCUMM v5 "
+            "controller conformance"
+        )
+    if args.scumm_c19_native_fixture and (
+        args.engine != "scumm_v5"
+        or not args.scumm_controller_conformance
+        or not args.scumm_controller_conformance_no_root_room
+    ):
+        parser.error(
+            "--scumm-c19-native-fixture requires SCUMM controller conformance "
+            "with the synthetic root-room request disabled"
+        )
     if args.scumm_synthetic_bootstrap_room is not None:
         if args.engine != "scumm_v5" or not args.scumm_m23a:
             parser.error("--scumm-synthetic-bootstrap-room requires SCUMM v5 room services")
@@ -130,6 +156,8 @@ def main() -> int:
         f"SAME_BUILD_SCUMM_ROOM_VISUAL = ${1 if args.engine == 'scumm_v5' and args.scumm_room_visual else 0:02X}\n"
         f"SAME_BUILD_SCUMM_CONTROLLER = ${1 if args.engine == 'scumm_v5' and (args.scumm_controller or args.scumm_controller_fixture) else 0:02X}\n"
         f"SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_conformance else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE_NO_ROOT_ROOM = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_conformance_no_root_room else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE = ${1 if args.engine == 'scumm_v5' and args.scumm_c19_native_fixture else 0:02X}\n"
         f"SAME_BUILD_SCUMM_CONTROLLER_FIXTURE = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_fixture else 0:02X}\n"
         f"SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK = ${args.scumm_controller_behavior_mask & 0x07:02X}\n"
         f"SAME_SCUMM_CONTROLLER_WITNESS = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_witness else 0:02X}\n"
