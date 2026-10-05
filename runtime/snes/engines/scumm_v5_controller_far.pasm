@@ -52,6 +52,7 @@ ScummV5_Controller_ResetInteractionOnRoomInstall_Far:
     sep #$20
     .a8
     lda #$00
+    sta.l SAME_INPUT_TALK_OWNED_VALID
     sta.l SAME_SCUMM_CONTROLLER_ROOM_READY
     sta.l SAME_SCUMM_CONTROLLER_MODE
     sta.l SAME_SCUMM_CONTROLLER_VERB
@@ -159,6 +160,44 @@ ScummV5_Controller_Frame__room68_request:
     jsl ScummV5_M23A_RequestRoom_FarEntry
     jmp ScummV5_Controller_Frame__done
 ScummV5_Controller_Frame__generic_ready:
+    sep #$20
+    .a8
+    ; Input_Poll tags every edge sampled while dialogue is active. Keep the
+    ; token while talk remains active; after Talk_Stop, consume and drop the
+    ; same edge before it can act on a retained selection. A newer edge has
+    ; a different sequence and remains eligible.
+    lda.l SAME_INPUT_TALK_OWNED_VALID
+    beq ScummV5_Controller_Frame__talk_edge_unowned
+    rep #$20
+    .a16
+    lda.l SAME_INPUT_EDGE_SEQUENCE
+    cmp.l SAME_INPUT_TALK_OWNED_SEQUENCE
+    sep #$20
+    .a8
+    bne ScummV5_Controller_Frame__talk_edge_superseded
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    beq ScummV5_Controller_Frame__talk_edge_talk_stopped
+    jmp ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__talk_edge_talk_stopped:
+    .a8
+    lda #$00
+    sta.l SAME_INPUT_TALK_OWNED_VALID
+    jmp ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__talk_edge_superseded:
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    beq ScummV5_Controller_Frame__talk_edge_after_stop
+    rep #$20
+    .a16
+    lda.l SAME_INPUT_EDGE_SEQUENCE
+    sta.l SAME_INPUT_TALK_OWNED_SEQUENCE
+    sep #$20
+    .a8
+    jmp ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__talk_edge_after_stop:
+    .a8
+    lda #$00
+    sta.l SAME_INPUT_TALK_OWNED_VALID
+ScummV5_Controller_Frame__talk_edge_unowned:
     sep #$20
     .a8
     .if SAME_BUILD_SCUMM_CONTROLLER

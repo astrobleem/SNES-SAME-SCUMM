@@ -117,6 +117,26 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         )[1].split("ScummV5_Controller_Frame__talk_ok:", 1)[0]
         self.assertIn("SAME_SCUMM_TALK_ACTIVE", active_talk_gate)
 
+    def test_talk_owned_input_edge_cannot_reach_generic_controller_after_talk(self) -> None:
+        controller = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        generic = controller.split(
+            "ScummV5_Controller_Frame__generic_ready:", 1
+        )[1].split("ScummV5_Controller_Frame__stack_ok:", 1)[0]
+        self.assertIn("SAME_INPUT_TALK_OWNED_VALID", generic)
+        self.assertIn("SAME_INPUT_EDGE_SEQUENCE", generic)
+        self.assertLess(
+            generic.index("SAME_INPUT_TALK_OWNED_VALID"),
+            generic.index("SAME_SCUMM_CONTROLLER_ROOM_READY"),
+        )
+        input_service = (ROOT / "runtime/snes/services/input.pasm").read_text()
+        poll = input_service.split("Same_Input_Poll:", 1)[1]
+        self.assertIn("SAME_INPUT_EDGE_SEQUENCE", poll)
+        self.assertIn("SAME_SCUMM_TALK_ACTIVE", poll)
+        self.assertIn("sta.l SAME_INPUT_TALK_OWNED_SEQUENCE", poll)
+        self.assertIn("sta.l SAME_INPUT_TALK_OWNED_VALID", poll)
+        memory = (ROOT / "runtime/snes/kernel/memory.pasm").read_text()
+        self.assertIn("SAME_INPUT_EDGE_SEQUENCE    = $7E2208", memory)
+
     def test_generated_room_metadata_exports_generic_hit_and_verb_services(self) -> None:
         source = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
         self.assertIn('"ScummV5_Generic_Object_HitTest_Far:"', source)

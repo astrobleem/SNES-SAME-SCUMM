@@ -12,6 +12,12 @@ Same_Input_Reset:
     sta.l SAME_INPUT_PRESSED
     lda #$0000
     sta.l SAME_INPUT_RELEASED
+    sta.l SAME_INPUT_EDGE_SEQUENCE
+    sta.l SAME_INPUT_TALK_OWNED_SEQUENCE
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_INPUT_TALK_OWNED_VALID
     plp
     rts
 
@@ -61,6 +67,33 @@ Same_Input_Poll__wait_autojoy:
     eor #$FFFF
     and.l SAME_INPUT_HELD
     sta.l SAME_INPUT_PRESSED
+
+    ; Give every newly observed physical press an identity independent of the
+    ; number of host polls before SCUMM's controller phase runs.
+    beq Same_Input_Poll__edge_sequence_done
+    lda.l SAME_INPUT_EDGE_SEQUENCE
+    inc
+    sta.l SAME_INPUT_EDGE_SEQUENCE
+    .if SAME_BUILD_SCUMM_CONTROLLER
+    ; Assign ownership at the instant the physical edge is sampled. Talk's
+    ; frame routine can run later (or on a different scheduling cadence),
+    ; after PRESSED has already been cleared by another poll.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    beq Same_Input_Poll__edge_sequence_done
+    lda #$01
+    sta.l SAME_INPUT_TALK_OWNED_VALID
+    rep #$20
+    .a16
+    lda.l SAME_INPUT_EDGE_SEQUENCE
+    sta.l SAME_INPUT_TALK_OWNED_SEQUENCE
+    sep #$20
+    .a8
+    .endif
+Same_Input_Poll__edge_sequence_done:
+    rep #$20
+    .a16
 
     lda.l SAME_INPUT_PRESSED
     ora.l SAME_INPUT_RELEASED

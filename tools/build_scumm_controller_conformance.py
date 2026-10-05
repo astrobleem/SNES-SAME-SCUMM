@@ -32,7 +32,10 @@ def object_payload() -> bytes:
     # The ordinary action has one observable fixture-local effect, then STOPs
     # normally.  Completion is still determined by sentence/script retirement,
     # never by this variable.
-    verb_program = bytes.fromhex("26 05 00 01 01 00")
+    # The action publishes a one-glyph authored message after its observable
+    # effect. This gives the native controller test a copyright-free talk /
+    # input-ownership boundary without changing the two-object sentence path.
+    verb_program = bytes.fromhex("26 05 00 01 01 D8 0F 54 00 00")
     verb = bytes((3, 12, 0, 0)) + verb_program
     primary = chunk(b"OBCD", chunk(b"CDHD", cdhd) + chunk(b"OBNA", b"test console") + chunk(b"VERB", verb))
     secondary_cdhd = struct.pack("<HBBBBBBhhB", 8, 12, 1, 7, 5, 0, 0, 128, 56, 0)
@@ -49,7 +52,11 @@ def room() -> bytes:
     # Set VAR_SENTENCE_SCRIPT=2 through authored SetVarRange.  This is the
     # normal SCUMM incoming-state contract consumed by SentenceProcess.
     sentence_script = bytes((0x26, 0x21, 0x00, 0x01, 0x02))
-    local_script = bytes((200,)) + sentence_script + verb_ops + b"\0"
+    # Keep an ordinary local activation yielded in the scheduler so its
+    # completion/talk epilogue continues to run after the one-shot verb ends.
+    # The existing terminal breakHere is followed by jump -4: on resume it
+    # returns to that yield without consuming scheduler slots or input.
+    local_script = bytes((200,)) + sentence_script + verb_ops + bytes((0x18, 0xFC, 0xFF, 0x00))
     return b"".join((
         chunk(b"RMHD", struct.pack("<HHH", 8, 2, 2)),
         chunk(b"TRNS", struct.pack("<H", 255)), chunk(b"CLUT", palette),
