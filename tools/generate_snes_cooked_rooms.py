@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 import struct
@@ -122,6 +123,10 @@ def main() -> int:
     )
     parser.add_argument("--long-object-fail-branch", action="store_true")
     parser.add_argument("--binary-dir", type=Path, required=True)
+    parser.add_argument(
+        "--relative-binary-paths", action="store_true",
+        help="emit .incbin paths relative to the generated room include's directory",
+    )
     parser.add_argument("--report", type=Path)
     parser.add_argument("--first-bank", type=int, default=3)
     parser.add_argument(
@@ -1210,9 +1215,13 @@ def main() -> int:
             binary = args.binary_dir / f"record-{record_index}-segment-{segment_index}.bin"
             binary.write_bytes(payload)
             label = f"ScummV5_M23A_Record_{record_index}_Segment_{segment_index}"
+            include_path = (
+                Path(os.path.relpath(binary, start=args.output.parent)).as_posix()
+                if args.relative_binary_paths else str(binary.resolve())
+            )
             data_lines.extend((
                 f".bank {bank}", ".org $8000", f"{label}:",
-                f'    .incbin "{binary.resolve()}"',
+                f'    .incbin "{include_path}"',
             ))
             segments.append((label, len(payload), start))
             bank += 1

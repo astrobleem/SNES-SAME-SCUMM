@@ -8,7 +8,7 @@ groups, not counts of every numeric literal in tests.
 | Classification | Count | Meaning |
 |---|---:|---|
 | `GENERIC_SCUMM_SEMANTIC` | 2 | Reusable VM and interaction contracts exercised by FATE. |
-| `COMPILER_DERIVABLE_DATA` | 8 | Source facts and deterministic target records derivable offline. |
+| `COMPILER_DERIVABLE_DATA` | 9 | Source facts and deterministic target records derivable offline. |
 | `FATE_PROFILE_DATA` | 3 | Edition/content selection and title-specific source import policy. |
 | `TEMPORARY_BRINGUP_HOOK` | 2 | Compile-gated scenario-root/controller bootstrap code. |
 | `TEST_FIXTURE_ONLY` | 5 | Replay expectations, provenance checks and fixture-profile data. |
@@ -34,6 +34,12 @@ MAXS limits and selector mappings are `COMPILER_DERIVABLE_DATA`. Fate edition,
 archive member names, selected source rooms and script groups are
 `FATE_PROFILE_DATA`. Program-ID allocation is generic backend policy; the
 choice of which Fate executables to ship is not.
+
+The source-bound room compiler (`room_compiler.py`, surfaced by
+`compile_scumm_room.py`) is now itself recorded as `COMPILER_DERIVABLE_DATA`.
+It contains generic SCUMM v5 resource/operand knowledge and no room-, object-,
+script- or bit-specific FATE rules. FATE room 7 values appear in the optional
+integration expectations only.
 
 Title audio converters and Fate sound IDs are source import/profile data. In
 particular, `embedded_audio.py` currently contains a special logical

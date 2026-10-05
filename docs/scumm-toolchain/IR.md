@@ -1,5 +1,28 @@
 # Minimum Useful SCUMM IR
 
+## Implemented bounded room IR v1
+
+`src/same/engines/scumm_v5/room_compiler.py` currently implements a room-only
+slice: `SourceIdentity`, `RoomIR`, `ObjectIR`, `ObjectVerbIR`, `ScriptIR`,
+`InstructionIR`, `Dependency`, and `CapabilityReport`. Stable JSON
+serialization is provided for room IR and analysis. It distinguishes the
+source container offset from the ROOM payload's member-relative offset and
+retains script/object source spans, raw source body bytes through the
+compilation object, hashes, script kind/number, object/verb identity, source
+PCs and raw instruction bytes.
+
+`InstructionIR` is a bounded decoded record, not yet a complete semantic
+operation algebra or basic-block graph. Known branch instructions retain
+relative target PCs, but global branch-boundary validation is not implemented.
+When operand width is unknown or truncated, one `opaque_bytecode_tail` holds
+the remaining original bytes and source offset; `decode_complete` is false.
+This is an explicit partial-analysis boundary, not a runtime no-op. Global
+scripts, standalone string/costume/sound nodes and backend addresses are not in
+this initial RoomIR.
+
+The broader model below is the target vocabulary, not a claim that all of it
+has been implemented.
+
 The first IR is a small typed interchange between existing parsers, analysis
 passes and cookers—not a universal adventure-game model. The host interpreter
 remains a behavioral oracle while the IR grows.

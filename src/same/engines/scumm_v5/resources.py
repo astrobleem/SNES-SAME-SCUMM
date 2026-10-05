@@ -245,6 +245,52 @@ class LucasartsScummV5ResourceProvider:
         """Return the authoritative v5 global/local script namespace boundary."""
         return len(self._directories["DSCR"].rooms)
 
+    def source_location(self, key: str) -> dict[str, int | str]:
+        """Return original member-relative chunk/body offsets for a derived key.
+
+        Offsets refer to the decoded resource container.  The raw v5 archive
+        uses bytewise XOR encryption, so offsets are unchanged in the
+        corresponding external member.  The caller supplies the archive
+        member name; this provider only knows the profile resource key.
+        """
+        try:
+            kind, number = self._derived[key]
+        except KeyError as exc:
+            raise ResourceError(f"resource {key!r} has no raw SCUMM source location") from exc
+        if kind == "ROOM":
+            lflf = self._rooms[number]
+            room = next(
+                (item for item in _chunks(lflf.payload, owner=f"room {number} LFLF")
+                 if item.tag == "ROOM"),
+                None,
+            )
+            if room is None:
+                raise ResourceError(f"raw SCUMM room {number} has no ROOM chunk")
+            chunk_offset = lflf.offset + 8 + room.offset
+            return {
+                "resource_key": key,
+                "kind": "ROOM",
+                "number": number,
+                "container_offset": lflf.offset,
+                "chunk_offset": chunk_offset,
+                "payload_offset": chunk_offset + 8,
+            }
+        if kind == "SCRP":
+            directory = self._directories["DSCR"]
+            source_room = directory.rooms[number]
+            lflf = self._rooms[source_room]
+            chunk_offset = lflf.offset + 8 + directory.offsets[number]
+            return {
+                "resource_key": key,
+                "kind": "SCRP",
+                "number": number,
+                "source_room": source_room,
+                "container_offset": lflf.offset,
+                "chunk_offset": chunk_offset,
+                "payload_offset": chunk_offset + 8,
+            }
+        raise ResourceError(f"resource {key!r} is not a room or global script")
+
     def _add_key(self, key: str, kind: str, number: int) -> None:
         if key in self._derived or self.backing.contains(key):
             raise ResourceError(f"raw SCUMM derived resource key {key!r} is ambiguous")

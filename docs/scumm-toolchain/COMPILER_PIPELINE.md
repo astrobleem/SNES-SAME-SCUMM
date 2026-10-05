@@ -12,6 +12,12 @@ external game files + thin edition profile
   -> existing generic SCUMM/SAME runtime
 ```
 
+**Status:** the room-executable slice is implemented, with bounded analysis.
+`tools/compile_scumm_room.py` and the room cooker use the same
+`room_compiler.compile_room_payload` API. The cooker remains available as the
+legacy selection/visual CLI, and its output continues to use the existing
+SC5C record format.
+
 This is incremental. Existing profile loading,
 `LucasartsScummV5ResourceProvider`, room decoders, cooked-room codecs and
 cookers are retained and adapted; a second resource parser is not proposed.
@@ -44,6 +50,22 @@ Do not hand-maintain hundreds of room/script/object records in profile JSON.
 The front end should derive resource inventories and metadata from source;
 the profile should identify which source edition and any genuine policy
 exceptions.
+
+## Implemented room-bundle slice
+
+The adapter emits source-bound room, entry/exit/local, object and verb records;
+instructions in the currently decoded generic v5 subset; direct/dynamic call,
+room, sound, music, costume and resource-routine dependencies; variable/bit
+read/write observations; and simple room capacity counts. A width that is not
+known becomes an opaque tail retaining the remaining bytes and source location.
+The report says `partial` when such tails exist. It does not yet prove complete
+control-flow boundaries, validate jump targets, compute whole-game/transitive
+closure, or establish that every operation is supported by a selected runtime.
+
+The encoded SC5C record is byte-identical to the prior cooker for the checked
+synthetic fixture and FATE room 7. `generate_snes_cooked_rooms.py` remains the
+single selector allocator and emits the existing runtime tables. The standalone
+CLI can invoke that generator with portable relative `.incbin` paths.
 
 ## Dependency graph
 
@@ -97,6 +119,10 @@ directories/banked code and data. Specialized generators handle variables,
 visuals, charset, actor/object sprites, engine selection and save identity.
 These are pipeline assets to modularize, not replace.
 
-The missing seam is a compiler-owned semantic result between parsing and
-target generation: typed IR and analysis that can be tested without Poppy and
-consumed by current generators before the runtime ABI changes.
+The first compiler-owned result now exists between parsing and target
+generation: typed room/script records and analysis testable without Poppy and
+consumable by current generators before the runtime ABI changes. Global-script
+bundles, whole-game dependency closure and complete opcode coverage remain
+future work. A full compiler-backed profile build reproduced ROM SHA-256
+`f5492f1c…76471fd`; a previously executed bounded Nexen result is reusable for
+that exact ROM. Nexen was not rerun as part of the compiler milestone.

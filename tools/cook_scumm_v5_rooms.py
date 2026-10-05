@@ -7,16 +7,14 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import struct
 import zipfile
 
-from same.engines.scumm_v5.cooked_room import (
-    FLAG_REGISTRATION_ONLY, HEADER, SCRIPT, ScriptChunkInput, decode_cooked_room,
-    encode_cooked_room,
-)
 from same.engines.scumm_v5.policy import parse_game_policy
 from same.engines.scumm_v5.resources import LucasartsScummV5ResourceProvider
-from same.engines.scumm_v5.room import decode_room
+from same.engines.scumm_v5.room import decode_room, iter_scumm_chunks
+from same.engines.scumm_v5.room_compiler import (
+    compile_room_payload, profile_game_identity, source_member_pair,
+)
 from same.engines.scumm_v5.room_visual import encode_room_visual, decode_room_visual
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
@@ -37,33 +35,18 @@ def sha(data: bytes) -> str:
 
 def source_members(bundle: zipfile.ZipFile) -> dict[str, str]:
     """Locate the standard SCUMM pair in demo or full-game archives."""
-    names = bundle.namelist()
-    result = {}
-    for key, basename in (("game.index", ".000"), ("game.data", ".001")):
-        matches = [name for name in names if name.upper().endswith(basename)]
-        if len(matches) != 1:
-            raise RuntimeError(f"archive must contain one SCUMM {basename} member")
-        result[key] = matches[0]
-    return result
+    return source_member_pair(bundle.namelist())
 
 
 def chunks(data: bytes) -> list[tuple[str, int, int, bytes]]:
-    result = []
-    offset = 0
-    while offset < len(data):
-        if offset + 8 > len(data):
-            raise RuntimeError(f"chunk header at {offset} is truncated")
-        tag = data[offset:offset + 4].decode("ascii")
-        size = struct.unpack_from(">I", data, offset + 4)[0]
-        if size < 8 or offset + size > len(data):
-            raise RuntimeError(f"chunk {tag} at {offset} has invalid size {size}")
-        result.append((tag, offset, size, data[offset + 8:offset + size]))
-        offset += size
-    return result
+    return [
+        (item.tag, item.offset, item.size, item.payload)
+        for item in iter_scumm_chunks(data, owner="SCUMM room cooker")
+    ]
 
 
 def game_identity(profile) -> str:
-    return sha(f"{profile.engine_id}\0{profile.game_id}\0{profile.variant}".encode())
+    return profile_game_identity(profile)
 
 
 def prepend_fixture_global_script(
@@ -168,72 +151,24 @@ def main() -> int:
         key = f"room.{room_number}"
         room_payload = provider.read(key)
         decoded_room = decode_room(room_payload, key=key)
-        lflf = provider._rooms[room_number]  # exact offset retained by raw provider
-        room_child = next(item for item in chunks(lflf.payload) if item[0] == "ROOM")
-        original_room_file_offset = lflf.offset + 8 + room_child[1] + 8
-        script_inputs: list[ScriptChunkInput] = []
-        chunk_manifest = []
-        for tag, offset, size, payload in chunks(room_payload):
-            if tag not in {"ENCD", "EXCD", "LSCR"}:
-                continue
-            if tag == "LSCR":
-                if not payload:
-                    raise RuntimeError(f"{key} LSCR at {offset} has no script number")
-                number = payload[0]
-                body_chunk_offset = 9
-                body_length = len(payload) - 1
-                identity = f"{key}/LSCR.{number}"
-                if number < provider.global_script_count:
-                    raise RuntimeError(
-                        f"{key} LSCR {number} is below global-script boundary "
-                        f"{provider.global_script_count}"
-                    )
-            else:
-                number = 10002 if tag == "ENCD" else 10001
-                body_chunk_offset = 8
-                body_length = len(payload)
-                identity = f"{key}/{tag}"
-            script_inputs.append(ScriptChunkInput(
-                tag, number, identity, offset, body_chunk_offset, body_length,
-            ))
-            body_room_offset = offset + body_chunk_offset
-            body = room_payload[body_room_offset:body_room_offset + body_length]
-            chunk_manifest.append({
-                "kind": tag,
-                "number": number,
-                "identity": identity,
-                "chunk_length": size,
-                "program_length": body_length,
-                "sha256": sha(body),
-                "original_file_offset": original_room_file_offset + body_room_offset,
-                "original_room_offset": body_room_offset,
-                "original_chunk_offset": body_chunk_offset,
-                "normalized_script_offset": 0,
-                **({"local_script_index": number - provider.global_script_count}
-                   if tag == "LSCR" else {}),
-            })
-        cooked = encode_cooked_room(
-            room_payload,
-            room=room_number,
-            flags=0 if args.executable else FLAG_REGISTRATION_ONLY,
+        source_location = provider.source_location(key)
+        original_room_file_offset = int(source_location["payload_offset"])
+        compilation = compile_room_payload(
+            room_payload, room_number=room_number,
+            game_name=f"{profile.game_id}:{profile.variant}", resource_key=key,
+            source_member=members["game.data"],
+            source_container_offset=int(source_location["container_offset"]),
             original_room_file_offset=original_room_file_offset,
-            profile_sha256=profile_hash,
-            game_identity_sha256=game_hash,
-            archive_sha256=archive_hash,
-            index_sha256=index_hash,
-            data_sha256=data_hash,
-            scripts=tuple(script_inputs),
-        )
-        decoded = decode_cooked_room(
-            cooked, expected_room=room_number,
-            expected_profile_sha256=profile_hash,
-            expected_game_identity_sha256=game_hash,
-            expected_archive_sha256=archive_hash,
-            expected_index_sha256=index_hash,
-            expected_data_sha256=data_hash,
+            profile_sha256=profile_hash, game_identity_sha256=game_hash,
+            archive_sha256=archive_hash, index_sha256=index_hash, data_sha256=data_hash,
+            global_script_count=provider.global_script_count,
+            global_object_states=provider.global_objects.states,
+            global_object_owners=provider.global_objects.owners,
+            global_object_classes=provider.global_objects.classes,
+            executable=args.executable,
         )
         output = args.output_dir / f"room-{room_number}.sc5c"
-        output.write_bytes(cooked)
+        output.write_bytes(compilation.cooked_record)
         visual_manifest = None
         visual_rooms = set(args.rooms if args.visuals == [] else (args.visuals or ()))
         if room_number in visual_rooms:
@@ -258,42 +193,8 @@ def main() -> int:
                 "decoded_pixels_sha256": decoded_visual.decoded_pixels_sha256,
                 "decoded_palette_sha256": decoded_visual.decoded_palette_sha256,
             }
-        cooked_offsets = {item.identity: item.cooked_record_offset for item in decoded.scripts}
-        for item in chunk_manifest:
-            item["cooked_record_offset"] = cooked_offsets[item["identity"]]
-        cooked_room_offset = HEADER.size + len(script_inputs) * SCRIPT.size
-        object_manifest = []
-        for local_index, item in enumerate(decoded_room.objects, 1):
-            object_manifest.append({
-                "object_id": item.object_id,
-                "local_object_index": local_index,
-                "obcd_original_file_offset": original_room_file_offset + item.obcd_room_offset,
-                "obcd_room_offset": item.obcd_room_offset,
-                "obcd_length": len(item.obcd),
-                "obcd_sha256": sha(item.obcd),
-                "cdhd_offset": 8,
-                "verb_table_offset": item.verb_table_offset,
-                "verb_table_length": item.verb_table_length,
-                "verb_entries": [
-                    {"verb": verb, "entry_offset": entry}
-                    for verb, entry in item.verb_entries
-                ],
-                "cooked_record_offset": cooked_room_offset + item.obcd_room_offset,
-            })
-        record_manifest = {
-            "room": room_number,
-            "resource_key": key,
-            "output": output.name,
-            "registration_only": decoded.registration_only,
-            "original_room_file_offset": original_room_file_offset,
-            "original_room_length": len(room_payload),
-            "original_room_sha256": sha(room_payload),
-            "record_length": len(cooked),
-            "record_sha256": sha(cooked),
-            "compact_checksum": decoded.compact_checksum,
-            "scripts": chunk_manifest,
-            "objects": object_manifest,
-        }
+        record_manifest = dict(compilation.record_manifest)
+        record_manifest["output"] = output.name
         if visual_manifest is not None:
             record_manifest["visual"] = visual_manifest
         records.append(record_manifest)
@@ -310,11 +211,10 @@ def main() -> int:
             program, transformation = prepend_fixture_global_script(
                 original_program, number, prepend_script
             )
-        directory = provider._directories["DSCR"]
-        source_room = directory.rooms[number]
-        directory_offset = directory.offsets[number]
-        lflf = provider._rooms[source_room]
-        chunk_header_offset = lflf.offset + 8 + directory_offset
+        source_location = provider.source_location(key)
+        source_room = int(source_location["source_room"])
+        directory_offset = int(source_location["chunk_offset"]) - int(source_location["container_offset"]) - 8
+        chunk_header_offset = int(source_location["chunk_offset"])
         payload_offset = chunk_header_offset + 8
         output = args.output_dir / f"script-{number}.scrp"
         output.write_bytes(program)

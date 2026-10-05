@@ -1,8 +1,10 @@
 # Current SCUMM/SAME Architecture
 
-This map describes the implementation at the audited checkpoint, not a claim
-that a compiler-owned IR already exists. “Current layer” is the dominant
-responsibility of a component; some modules cross boundaries.
+This map records both the audited baseline and the first implemented room
+compiler slice. The compiler is deliberately partial: it creates a small
+source-bound room IR and analysis report, but it does not replace the VM or
+decode all SCUMM v5 operations. “Current layer” is the dominant responsibility
+of a component; some modules cross boundaries.
 
 | Component | Responsibility; inputs → outputs | Consumer | Current layer | Desired layer |
 |---|---|---|---|---|
@@ -11,9 +13,10 @@ responsibility of a component; some modules cross boundaries.
 | `src/same/engines/scumm_v5/policy.py` | Parse SCUMM-specific resource, audio, geometry/presentation and copy-protection options. | SCUMM host and adapters | `GENERIC_SCUMM` | Typed source-edition policy; split backend realization preferences from source identity. |
 | `src/same/engines/scumm_v5/resources.py` | Decrypt/validate v5 indices/containers and expose stable `room.N`, `script.N`, `sound.N`, `costume.N`, `charset.N` keys. | Host runtime and cookers | `GENERIC_SCUMM` | Front-end resource catalog with archive/member/offset provenance. |
 | `room.py`, `costume.py`, `font.py`, `text.py`, `embedded_audio.py` under the SCUMM v5 package | Decode source room/object/verb/walkbox, costume, charset, text-control and embedded-audio structures. | Host, cookers, asset generators | `GENERIC_SCUMM` | Front-end parsers producing validated target-neutral resource data. |
+| `src/same/engines/scumm_v5/room_compiler.py` | Adapt checked ROOM chunks and object/verb records into source-bound `RoomIR`/`ScriptIR`, bounded instruction decode, dependency/capability report, and existing SC5C output. | Room cooker, compiler CLI, tests | `GENERIC_SCUMM` (front end/analysis; current record encoder adapter) | Grow target-neutral IR/analysis; keep SNES selectors and layout in backend. **Implemented partial v1.** |
 | `src/same/engines/scumm_v5/engine.py` | Interpret v5 bytecode; own scheduler, variables/bits, slots, actors, object state, verbs, room lifecycle, messages, cutscenes and logical sound requests. | SAME `EngineHost`, semantic tests | `GENERIC_SCUMM` | Preserve as host runtime/behavioral oracle; compare compiled operation execution against it. |
 | `cooked_room.py`, `room_visual.py` | Encode/decode versioned SC5C/SC5VIS records, source/profile/archive hashes and executable directories. | Host provider, build generators, native runtime | `GENERIC_SCUMM` | Stable compiler interchange/backend artifact schemas with explicit provenance. |
-| `tools/cook_scumm_v5_rooms.py` | Read external archive/profile; select rooms/globals; emit cooked records, scripts, initial object tables, manifests/provenance and optional visuals. | SNES generators and validators | `BUILD_TOOLING` (front-end work embedded) | Separate parse/analysis APIs from CLI orchestration; deterministic compiler input manifest. |
+| `tools/cook_scumm_v5_rooms.py`, `tools/compile_scumm_room.py` | Cooker now routes raw room payloads through the compiler adapter; standalone CLI emits SC5C, IR, analysis, provenance manifest and optionally current SNES tables. | SNES generators, host resource service, developer/tests | `BUILD_TOOLING` + `GENERIC_SCUMM` front end | Keep legacy CLI selection/visual behavior; expand compiler inputs and expose selected roots as analysis data. **Compiler CLI and cooker adapter implemented.** |
 | `tools/generate_snes_cooked_rooms.py` | Allocate stable executable selectors, serialize directories, place data in LoROM banks, emit Poppy includes/binaries/reports. | SNES build and M23A resource service | `SNES_BACKEND` | Backend layout/encoding over analyzed identities, preserving selector stability. |
 | `tools/generate_snes_scumm_variables.py` | Derive source variable capacity or synthetic equivalent; emit WRAM symbols and identity manifest. | Assembly and memory audits | `SNES_BACKEND` | GameIR source limits plus target-specific WRAM layout report. |
 | `tools/generate_snes_room_visuals.py`, `generate_snes_scumm_charset.py`, actor/object sprite generators | Convert decoded visual/font/costume/object source to bank-safe SNES data and descriptors. | Native rendering services and ROM build | `SNES_BACKEND` | Keep source parsing upstream; retain target palette/tile/bank packing here. |
@@ -27,16 +30,17 @@ responsibility of a component; some modules cross boundaries.
 
 ## Existing seam and leakage
 
-The host and native engines share behavior through conformance, not through a
-compiler-owned semantic program representation. Both currently decode or
-dispatch source-like SCUMM operations at runtime. Parsers and cookers already
-validate and transform source, but selected payloads do not yet flow through a
-canonical GameIR/analysis API.
+The host and native engines share behavior through conformance, not yet through
+a common compiled operation representation. Both still execute source-like
+SCUMM bytecode at runtime. For cooked rooms, raw room payloads now flow through
+a bounded `RoomIR`/analysis API before the unchanged SC5C encoding; unknown
+instruction widths are preserved as opaque tails and reported as partial.
 
 The most useful existing seam is the source-bound cooked room: SC5C preserves
 the source ROOM payload while adding validated executable directory metadata;
-SC5VIS carries decoded pixels/palette and hashes. These are good adapters and
-artifacts, not yet semantic IR.
+SC5VIS carries decoded pixels/palette and hashes. The new room compiler wraps
+existing parsers and adds a narrow semantic IR before SC5C; it does not replace
+the runtime payload contract.
 
 Leakage to address incrementally:
 

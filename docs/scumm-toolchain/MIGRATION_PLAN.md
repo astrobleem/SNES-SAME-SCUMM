@@ -7,10 +7,10 @@ until a new artifact participates in acceptance.
 | Phase | Goal/components | New seam; retain/retire | Validation | Principal risk | Size |
 |---|---|---|---|---|---|
 | 0. Inventory | Current audit docs and coupling record. | No production change; preserve engines/replay. | JSON/doc consistency. | Inventory can become stale; keep it small and tested. | SMALL |
-| 1. Front-end resource model | Wrap `resources.py`, `room.py`, policy and cook discovery in typed records/source spans. | Keep APIs as adapters; no runtime-format change. | Match keys, bytes, offsets and hashes on synthetic/optional authentic data. | Two parser entry points could diverge; make old APIs adapters to shared parse results. | MEDIUM |
-| 2. Script IR slice | Decode a bounded opcode subset into `ScriptIR`/basic blocks with original byte ranges. | Interpreters remain oracle/fallback; do not rewrite handlers. | Differential lengths, targets and selected semantics; unknown mandatory ops fail analysis. | Partial decode may imply false completeness; carry unknown/raw nodes and explicit capability status. | MEDIUM |
-| 3. Capability/dependency analysis | Derive opcode needs, direct script/room/object edges and capacities. | Explicit profile roots remain; retire only redundant hand selections as closure is proven. | Synthetic graph and ROM-observed FATE edges; dynamic targets conservative. | Unsound reachability could omit code; classify dynamic edges as possible and fail unresolved required starts. | MEDIUM |
-| 4. Room executable compiler output | Route one room/local/object-verb closure through front end → IR → analysis → existing cooked format/backend. | Preserve SC5C, stable IDs and runtime ABI. | Source/selector parity and bounded native execution on FATE + tiny fixture. | Artifact drift; compare provenance and keep current runtime contract. | MEDIUM |
+| 1. Front-end resource model | **Partial/implemented for rooms:** public checked chunk adapter, provider source locations, and source-bound room compiler input. | Keep resource/provider APIs as adapters; no runtime-format change. | Synthetic plus optional authentic source bytes, offsets and hashes. | Other resource kinds still lack a common source catalog. | MEDIUM |
+| 2. Script IR slice | **Partial/implemented:** bounded v5 instruction records preserve raw bytes and stop at an opaque unknown-width tail. | Host/native interpreters remain unchanged; no basic-block IR yet. | Synthetic decoded/dynamic/opaque tests and FATE room-7 differential. | Do not present partial scripts as fully decoded. | MEDIUM |
+| 3. Capability/dependency analysis | **Partial/implemented:** direct/dynamic calls, room/sound/resource references and room capacities. | Explicit roots remain; transitive closure and backend-version support matrix remain planned. | Synthetic dependency graph and room-7 source assertions. | Static soundness is bounded by opaque tails and incomplete global inputs. | MEDIUM |
+| 4. Room executable compiler output | **Implemented adapter:** cooker routes rooms through IR/analysis and existing SC5C plus SNES selector generator; standalone CLI emits IR/report and tables. | Preserve SC5C, stable IDs and runtime ABI. Legacy selection/visual cooker behavior remains available. | Byte-identical synthetic/FATE records, host fixture runtime, deterministic selector output. Compiler-backed full-profile ROM is byte-identical to a ROM with an existing bounded Nexen report; the report is reused by exact hash, not rerun. | Current backend still packages original script bytes, not semantic operations. | MEDIUM |
 | 5. Static room/object tables | Generate object/verb/walkbox metadata from IR for current runtime. | Keep mutable state/routing runtime; retire duplicate parsing incrementally. | Compare hit tests, routes and object state against oracle. | Confusing authored initial state with mutable state; test save/load and dynamic matrices. | MEDIUM |
 | 6. Media front/back ends | Type costume/font/background/audio metadata and existing conversions. | Keep generators as backends; original archives stay external. | Per-resource provenance and visual/audio intent parity; optional title integrations. | Codec breadth and redistribution inputs; preserve explicit optional-source boundaries. | LARGE |
 | 7. Selected compiled operations | Lower measured/high-value operations to compact SNES form. | Keep VM fallback for unsupported/rare operations. | Differential traces plus native fixtures and cycle/capacity comparison. | Dual execution paths increase maintenance; lower one operation family at a time. | LARGE |
@@ -26,6 +26,12 @@ until a new artifact participates in acceptance.
 5. Original archives remain external; generated outputs are reproducible.
 6. Parsing an opcode does not imply backend support.
 7. Gameplay can continue between phases; architecture work is incremental.
+
+The first implementation establishes a reusable room compiler API and backend
+seam across phases 1–4, without completing those phases. Transitive analysis
+and full operation coverage remain explicit next gates. Native evidence is
+linked only where the compiler-backed build reproduces an already-tested ROM
+byte-for-byte; no new Nexen execution is claimed.
 
 ## Fixture ladder
 

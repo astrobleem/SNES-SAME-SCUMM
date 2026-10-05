@@ -1,5 +1,16 @@
 # Runtime Versus Offline Compilation
 
+## Current implementation status
+
+The room compiler now moves checked resource/chunk traversal, a bounded
+instruction decode, source provenance, direct/dynamic dependency reporting,
+and existing SC5C record assembly into host-side compilation. The runtime
+still receives the original ROOM payload plus executable directory metadata
+and continues interpreting original SCUMM bytecode. No compiled-operation
+format or runtime ABI was introduced. Most rows below remain design direction;
+the initial compiler only implements the room-bundle subset described in
+`FIRST_MILESTONE.md`.
+
 Offline work is valuable when it removes repeated parsing, uncertain lookup,
 target-size logic or runtime failure paths. Mutable game behavior and
 frame-dependent scheduling remain runtime work.

@@ -580,6 +580,30 @@ def _chunks(data: bytes, *, owner: str) -> tuple[_Chunk, ...]:
     return tuple(result)
 
 
+@dataclass(frozen=True, slots=True)
+class ScummV5Chunk:
+    """Public, offset-preserving view of one source SCUMM chunk."""
+
+    tag: str
+    offset: int
+    size: int
+    payload: bytes
+
+
+def iter_scumm_chunks(
+    data: bytes, *, owner: str = "SCUMM resource"
+) -> tuple[ScummV5Chunk, ...]:
+    """Expose the room decoder's checked chunk walk to compiler adapters.
+
+    This delegates to the canonical bounds checks so cookers and front ends
+    do not grow independent chunk parsers.
+    """
+    return tuple(
+        ScummV5Chunk(item.tag.decode("ascii"), item.offset, len(item.raw), item.payload)
+        for item in _chunks(data, owner=owner)
+    )
+
+
 def _one(chunks: tuple[_Chunk, ...], tag: bytes, *, owner: str) -> _Chunk:
     matches = tuple(chunk for chunk in chunks if chunk.tag == tag)
     name = tag.decode("ascii")

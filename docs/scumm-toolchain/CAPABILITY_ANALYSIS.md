@@ -1,5 +1,45 @@
 # Capability and Dependency Analysis
 
+## Implemented room report (partial v1)
+
+`room_compiler.analyze_room` currently reports the SCUMM v5 operations decoded
+in the bounded room-script subset, corresponding runtime primitive names,
+opaque/unclassified tails, incomplete scripts, direct and dynamic dependency
+records, variable/bit reads and writes, object-state/class writes, and counts
+for room scripts, objects, verb entries, decoded operations and source bytes.
+The CLI emits this as deterministic JSON alongside human-readable counts.
+
+An indirect script/room/resource operand is a dynamic edge with an expression;
+it is never turned into a guessed selector. A direct room-local `startScript`
+or direct `startObject` must resolve against the current room's decoded local
+namespace/object verb directory or is reported missing. A direct global script
+is currently marked external because this room-only compilation unit does not
+yet ingest a global bundle.
+
+FATE room 7 compiles through this path with 79 executable body records, 110
+static edges, one dynamic edge, no unclassified *known-width* operation, and
+21 incomplete scripts with opaque tails. The bit69 read is reported generically
+as `bit:69`; the compiler assigns it no title-specific meaning. Because these
+scripts have opaque boundaries, the report is explicitly `partial`; no later
+control-flow dependency is inferred across those boundaries. It resolves the
+literal object-verb calls to room-local LSCR 201 and 207, and fully decodes
+LSCR 201's actor placement into room 3 followed by a dynamic
+`actorFollowCamera` scene edge. The latter remains dynamic because the followed
+actor's room is runtime state; no room number is inferred from a title-specific
+rule.
+
+The source manifest records hashes for the compiler/front-end/record source
+components, CLI, IR, analysis, cooked record, and—when selected—the SNES
+generator and every generated backend file. Archive, index/data members,
+profile identity, distinct LFLF-container and ROOM-payload offsets, and body
+hashes are recorded without embedding machine-specific absolute paths.
+
+Not implemented yet: per-opcode support status against a named backend/runtime
+version, selected-root reachability, transitive global closure, conservative
+branch reachability, script-slot pressure, room-wide resource inventories,
+costume codec and save-capacity analysis. An operation appearing in the report
+means it was decoded, not that the SNES backend has certified its semantics.
+
 The analyzer should answer what a source game requires, what the selected
 backend implements, and what remains uncertain before a long native replay.
 Initially it is a conservative static report, not perfect whole-game
