@@ -18,6 +18,7 @@ from fate_replay import (  # noqa: E402
     replay_room4_trapdoor_use,
     replay_room6_books_interaction,
     replay_room7_lost_dialogue_interaction,
+    replay_room7_cat_figure_use,
     replay_room5_rope_to_room6,
     skip_room4_authored_override,
     room4_message_ready,
@@ -353,10 +354,94 @@ class FakeRoom7Session(FakeRoom4Session):
                 self.values[0x7E5FE5] = 11
 
 
+class FakeRoom7CatSession(FakeRoom4Session):
+    """Controller model for the authored two-distinct-cat progression gate."""
+
+    VARIABLE_BASE = 0x7E0800
+    VARIABLE_COUNT = 0x0320
+
+    def __init__(self) -> None:
+        super().__init__(cursor=(188, 125))
+        self.values.update({
+            0x7FF2BF: 7, 0x7FF2C2: 0, 0x7E2303: 0, 0x7E2221: 2,
+            0x7E5E8A: 1, 0x7E7A20: 0, 0x7E5FE0: 1,
+            0x7E5FE5: 9, 0x7E5FE6: 133, 0x7E5FE9: 128,
+            0x7F3716: 7, 0x7E2BA8: 0,
+        })
+        self.variables = bytearray(self.VARIABLE_COUNT * 2)
+        self.owners = bytearray(2048)
+        for object_id in (118, 119, 133):
+            self.owners[object_id] = 15
+        self.owners[937] = 1
+        self.object_states = {118: 0, 119: 0, 133: 0}
+
+    def read_u8(self, address: int) -> int:
+        if 0x7E8000 <= address < 0x7E8000 + len(self.owners):
+            return self.owners[address - 0x7E8000]
+        if address in (0x7E6000 + 118, 0x7E6000 + 119, 0x7E6000 + 133):
+            return self.object_states[address - 0x7E6000]
+        return super().read_u8(address)
+
+    def read_memory(self, mem_type: str, address: int, length: int) -> bytes:
+        if address == self.VARIABLE_BASE:
+            return bytes(self.variables[:length])
+        if address == 0x7E8000:
+            return bytes(self.owners[:length])
+        if address == 0x7E6000 + 112:
+            raw = bytearray(length)
+            for object_id, state in self.object_states.items():
+                offset = object_id - 112
+                if 0 <= offset < length:
+                    raw[offset] = state
+            return bytes(raw)
+        return super().read_memory(mem_type, address, length)
+
+    def _apply_edge(self, buttons: int) -> None:
+        if buttons in (0x040, 0x080, 0x010, 0x020):
+            if buttons == 0x040:
+                self.values[0x7E5FE1] -= 2
+            elif buttons == 0x080:
+                self.values[0x7E5FE1] += 2
+            elif buttons == 0x010:
+                self.values[0x7E5FE3] -= 2
+            else:
+                self.values[0x7E5FE3] += 2
+            if self.values[0x7E5FE0] == 1:
+                self.values.update({0x7E5FE0: 0, 0x7E5FE5: 0, 0x7E5FE6: 0})
+            self.values[0x7E5F94] = 0
+        elif buttons == 0x001:
+            mode = self.values[0x7E5FE0]
+            x, y = self.values[0x7E5FE1], self.values[0x7E5FE3]
+            hit = (118 if 104 <= x < 120 and 112 <= y < 136 else
+                   119 if 120 <= x < 136 and 112 <= y < 136 else 0)
+            self.values[0x7E5F94] = hit
+            if mode == 0 and hit:
+                self.values.update({0x7E5FE0: 1, 0x7E5FE5: 9, 0x7E5FE6: hit})
+            elif mode == 1:
+                self.values[0x7E5FE0] = 2
+                self.values[0x7E5FE9] = (self.values[0x7E5FE9] + 1) & 0xFF
+        elif buttons == 0x800 and self.values[0x7E5FE0] == 1:
+            self.values[0x7E5FE5] = 10
+
+    def complete_cat_action(self, object_id: int) -> None:
+        """Apply the source-described result after the fake sentence executes."""
+        if object_id not in (118, 119) or self.values[0x7E5FE6] != object_id:
+            raise AssertionError("unexpected cat-action completion")
+        marker = 217 if object_id == 118 else 218
+        self.variables[marker * 2:marker * 2 + 2] = (1).to_bytes(2, "little")
+        value = int.from_bytes(self.variables[428:430], "little") + 1
+        self.variables[428:430] = value.to_bytes(2, "little")
+        self.values.update({0x7E5FE0: 1, 0x7E5FE5: 9})
+        if object_id == 119:
+            self.values[0x7F3716] = 3
+
+
 class FateReplayTests(unittest.TestCase):
     def test_room7_runtime_snapshot_reads_authored_vars_bits_and_objects(self) -> None:
         class Ram:
             def read_u8(self, address: int) -> int:
+                if address == 0x7E8000 + 937:
+                    return 1
                 self_outer.assertEqual(address, 0x7F6F1B)
                 return 1
 
@@ -372,6 +457,8 @@ class FateReplayTests(unittest.TestCase):
                     raw[4] = 3
                 elif address == 0x7E8000 + 112:
                     raw[4] = 1
+                elif address == 0x7E8000:
+                    raw[937] = 1
                 elif address == 0x7F5F10:
                     # Empty class table for this fixture; production reads
                     # the same 0x1000-byte table to report room-7 classes.
@@ -394,6 +481,8 @@ class FateReplayTests(unittest.TestCase):
         self.assertEqual(result["object_classes"], {})
         self.assertEqual(result["object_classes_initialized"], 1)
         self.assertIn({"index": 214, "value": 1}, result["nonzero_global_variables"])
+        self.assertEqual(result["book_inventory_object937_owner"], 1)
+        self.assertEqual(result["inventory_owner1_objects"], [937])
 
     def test_room7_variable_layout_comes_from_rom_bound_listing_constants(self) -> None:
         listing = """; SAME_SCUMM_VARIABLE_COUNT = $0320      (Constant)
@@ -729,6 +818,61 @@ ScummV5_M23A_FetchProgramByte_Far:
             count == 1 and end - start == 1
             for start, end, count, _mask in session.advances
         ))
+
+    def test_room7_distinct_cat_verbs_follow_authored_progression_gate(self) -> None:
+        session = FakeRoom7CatSession()
+        first = replay_room7_cat_figure_use(
+            session, object_id=118,
+            variable_base=session.VARIABLE_BASE,
+            variable_count=session.VARIABLE_COUNT,
+        )
+        self.assertEqual(first["target"]["world"], [112, 123])
+        self.assertEqual(first["selection"]["after"]["object"], 118)
+        self.assertEqual(first["selected_verb_cycle"]["after"]["verb"], 10)
+        self.assertEqual(first["submission_count_before"], 128)
+        self.assertEqual(first["submission_count_after"], 129)
+        self.assertEqual(len(first["movement_edges"]), 39)
+        self.assertEqual(
+            [step["mask"] for step in first["movement_edges"]],
+            [0x040] * 38 + [0x010],
+        )
+        self.assertEqual(first["submission"]["attempts"], 1)
+        self.assertIn("set V217", first["expected_authored_effect"])
+        session.complete_cat_action(118)
+
+        second = replay_room7_cat_figure_use(
+            session, object_id=119,
+            variable_base=session.VARIABLE_BASE,
+            variable_count=session.VARIABLE_COUNT,
+        )
+        self.assertEqual(second["precondition"]["V214"], 1)
+        self.assertEqual(second["precondition"]["variables215_218"],
+                         (0, 0, 1, 0))
+        self.assertEqual(second["target"]["world"], [128, 123])
+        self.assertEqual(second["selection"]["after"]["object"], 119)
+        self.assertEqual(second["selected_verb_cycle"]["after"]["verb"], 10)
+        self.assertEqual(second["submission_count_before"], 129)
+        self.assertEqual(second["submission_count_after"], 130)
+        self.assertEqual(len(second["movement_edges"]), 8)
+        self.assertEqual([step["mask"] for step in second["movement_edges"]],
+                         [0x080] * 8)
+        self.assertIn("start LSCR207", second["expected_authored_effect"])
+        self.assertEqual(second["submission"]["attempts"], 1)
+        session.complete_cat_action(119)
+        self.assertEqual(session.values[0x7F3716], 3)
+        self.assertEqual(session.values[0x7E2303], 0)
+        self.assertEqual(session.held_buttons, 0)
+        self.assertEqual(session.dangerous_set_input_calls, [])
+
+    def test_room7_cat_replay_rejects_unjustified_order_without_input(self) -> None:
+        session = FakeRoom7CatSession()
+        with self.assertRaisesRegex(RuntimeError, "precondition mismatch"):
+            replay_room7_cat_figure_use(
+                session, object_id=119,
+                variable_base=session.VARIABLE_BASE,
+                variable_count=session.VARIABLE_COUNT,
+            )
+        self.assertEqual(session.controller_events, [])
 
     def test_cold_room4_replay_reaches_authentic_hitbox_from_cursor_origin(self) -> None:
         session = FakeRoom4Session(cursor=(0, 0))

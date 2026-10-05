@@ -122,7 +122,10 @@ def _authentic_room4_object61_use_source(archive: Path) -> dict[str, Any]:
     from same.profile import load_profile
     from same.resources import MemoryResourceProvider
     from same.engines.scumm_v5.policy import parse_game_policy
-    from same.engines.scumm_v5.resources import LucasartsScummV5ResourceProvider
+    from same.engines.scumm_v5.resources import (
+        LucasartsScummV5ResourceProvider,
+        _chunks,
+    )
     from same.engines.scumm_v5.room import decode_room
 
     profile = load_profile(
@@ -485,6 +488,155 @@ def _authentic_room7_book_source(
     }
 
 
+def _authentic_room7_cat_source(
+    archive: Path, identity_path: Path,
+) -> dict[str, Any]:
+    """Authenticate the two room-7 cat verbs and their reached local scripts."""
+    sys.path.insert(0, str(ROOT / "src"))
+    from same.profile import load_profile
+    from same.resources import MemoryResourceProvider
+    from same.engines.scumm_v5.policy import parse_game_policy
+    from same.engines.scumm_v5.resources import (
+        LucasartsScummV5ResourceProvider,
+        _chunks,
+    )
+    from same.engines.scumm_v5.room import decode_room
+
+    profile = load_profile(
+        ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
+        verify_resources=False,
+    )
+    with zipfile.ZipFile(archive) as bundle:
+        index = bundle.read("ATLANTIS/ATLANTIS.000")
+        data = bundle.read("ATLANTIS/ATLANTIS.001")
+    provider = LucasartsScummV5ResourceProvider(
+        MemoryResourceProvider({"game.index": index, "game.data": data}),
+        parse_game_policy(profile),
+    )
+    payload = provider.read("room.7")
+    decoded = decode_room(payload, key="room.7")
+    source = provider._rooms[7]
+    room_chunk = next(
+        item for item in _chunks(source.payload, owner="room7 LFLF")
+        if item.tag == "ROOM"
+    )
+    room_body_source_offset = source.offset + 8 + room_chunk.offset + 8
+    expected = {
+        118: {
+            "name": "cat figurine", "rect": (104, 112, 16, 24),
+            "walk": (102, 133), "verbs": (9, 10, 11, 90),
+            "obcd_sha256": "4ed263b154cc3b39937b95c69f863f909fb686428bd19e1335b9761153700466",
+            "verb10_sha256": "db3c27c938cc4c0ab3e92be69c558a4ba6236dc4367115ffa795d352df9324a0",
+            "selector": 0x77,
+        },
+        119: {
+            "name": "cat figurine", "rect": (120, 112, 16, 24),
+            "walk": (118, 129), "verbs": (9, 10, 11, 90),
+            "obcd_sha256": "540496ef75dd3037d5d82debb4d9df1e63256dfdaa1116773dd7094fcb41bd19",
+            "verb10_sha256": "441b5f1854b8f427c204396e1ee91f2f7ecce3db4ac4fc2e2cb63a8ce4c0dc32",
+            "selector": 0x76,
+        },
+    }
+    observed: dict[str, Any] = {}
+    for object_id, want in expected.items():
+        obj = next(item for item in decoded.objects if item.object_id == object_id)
+        entry = next(offset for verb, offset in obj.verb_entries if verb == 10)
+        body = obj.obcd[entry:]
+        actual = {
+            "name": obj.object_name.rstrip(b"\0").decode("latin1"),
+            "rect": (obj.x, obj.y, obj.width, obj.height),
+            "walk": (obj.walk_x, obj.walk_y),
+            "verbs": obj.authored_verbs,
+            "obcd_sha256": hashlib.sha256(obj.obcd).hexdigest(),
+            "verb10_sha256": hashlib.sha256(body).hexdigest(),
+        }
+        for key, value in actual.items():
+            if value != want[key]:
+                raise RuntimeError(
+                    f"authentic room7 object{object_id} {key} changed: "
+                    f"{value!r} != {want[key]!r}"
+                )
+        observed[str(object_id)] = {
+            **actual,
+            "rectangle_half_open": [obj.x, obj.y, obj.x + obj.width, obj.y + obj.height],
+            "verb10_entry_offset": entry,
+            "obcd_chunk_source_offset": room_body_source_offset + obj.obcd_room_offset,
+            "verb10_source_offset": room_body_source_offset + obj.obcd_room_offset + entry,
+            "verb10_body_size": len(body),
+            "verb10_body_prefix_hex": body[:32].hex(),
+            "program_selector": f"${want['selector']:02X}",
+        }
+
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    explicit = identity.get("explicit_environment", {})
+    selected = set(explicit.get(
+        "SAME_SCUMM_APPEND_TERMINAL_EXECUTABLE_LOCAL_OBJECTS", ""
+    ).split(","))
+    if not {"7:118", "7:119"}.issubset(selected):
+        raise RuntimeError("current ROM identity does not select both room7 cat OBCDs")
+    room_data = ROOT / "runtime/snes/generated/scumm_v5_room_data.inc.pasm"
+    room_data_rel = str(room_data.relative_to(ROOT))
+    data_identity = next((item for item in identity.get("generated_inputs", [])
+                          if item.get("path") == room_data_rel), None)
+    if (data_identity is None
+            or hashlib.sha256(room_data.read_bytes()).hexdigest() != data_identity.get("sha256")):
+        raise RuntimeError("generated object programs are not bound to this ROM identity")
+    generated_text = room_data.read_text(encoding="utf-8")
+    for item in expected.values():
+        if f"ScummV5_M23A_Program_{item['selector']:02X}:" not in generated_text:
+            raise RuntimeError(
+                f"ROM-bound object program ${item['selector']:02X} is missing"
+            )
+    local_table = _room_local_program_table(7, identity_path)
+    local_selectors = local_table["script_to_program"]
+    if local_selectors.get(201) != 0x89 or local_selectors.get(207) != 0x88:
+        raise RuntimeError(
+            "current ROM does not map room7 LSCR201/207 to their authenticated selectors: "
+            f"{local_selectors!r}"
+        )
+    local_bodies = dict(decoded.local_scripts)
+    local_expected = {
+        201: (291, "6a3565652f8d72261d357eb6ef0d497a0a15448f15a6842d6afd22f7a8eda752"),
+        207: (112, "8aaee88643be64efdc3b8826b4ff7569517e7493b658ad596a09eb29ad41cc6f"),
+    }
+    local_report = {}
+    for number, (size, digest) in local_expected.items():
+        body = local_bodies.get(number)
+        if body is None or len(body) != size or hashlib.sha256(body).hexdigest() != digest:
+            raise RuntimeError(f"authentic room7 LSCR{number} body is missing/changed")
+        local_report[str(number)] = {
+            "size": len(body), "sha256": digest,
+            "program_selector": f"${local_selectors[number]:02X}",
+            "source_body_offset": room_body_source_offset + next(
+                item.offset + 9 for item in _chunks(payload, owner="room7 ROOM")
+                if item.tag == "LSCR" and item.payload[0] == number
+            ),
+        }
+    return {
+        "classification": "authentic external SCUMM v5 resources; unchanged",
+        "archive": str(archive.resolve()),
+        "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        "room": 7,
+        "source_member": "ATLANTIS/ATLANTIS.001",
+        "lflf_source_offset": source.offset,
+        "room_chunk_source_offset": source.offset + 8 + room_chunk.offset,
+        "room_body_source_offset": room_body_source_offset,
+        "room_payload_size": len(payload),
+        "room_payload_sha256": hashlib.sha256(payload).hexdigest(),
+        "objects": observed,
+        "local_scripts": local_report,
+        "generated_object_data": {
+            "path": room_data_rel,
+            "sha256": data_identity["sha256"],
+        },
+        "generated_room_local_table": local_table,
+        "authored_progression": (
+            "first distinct cat verb10 sets its object-specific variable and increments V214; "
+            "the second distinct cat starts LSCR207 and chains LSCR201"
+        ),
+    }
+
+
 def _authentic_room_source(archive: Path, room_number: int) -> dict[str, Any]:
     """Return provenance for an executed room from the external game archive."""
     sys.path.insert(0, str(ROOT / "src"))
@@ -692,7 +844,8 @@ def _room7_runtime_context(
         },
         "selected_variables": {
             str(index): variables[index]
-            for index in (0, 35, 53, 69, 209, 210, 212, 214, 215, 219, 442, 443)
+            for index in (0, 35, 53, 69, 209, 210, 212, 214, 215, 216,
+                          217, 218, 219, 220, 221, 442, 443)
             if index < variable_count
         },
         "nonzero_global_variables": [
@@ -705,6 +858,12 @@ def _room7_runtime_context(
              "owner": owners[object_id - first_object]}
             for object_id in range(first_object, object_end)
         ],
+        "inventory_owner1_objects": [
+            object_id for object_id, owner in enumerate(
+                session.read_memory("snesMemory", 0x7E8000, 2048)
+            ) if object_id and owner == 1
+        ],
+        "book_inventory_object937_owner": session.read_u8(0x7E8000 + 937),
         "object_classes_initialized": session.read_u8(0x7F6F1B),
         "object_classes": class_masks,
     }
@@ -1475,6 +1634,7 @@ def main() -> int:
     parser.add_argument("--continue-room5-rope", action="store_true")
     parser.add_argument("--continue-room6-books", action="store_true")
     parser.add_argument("--continue-room7-book", action="store_true")
+    parser.add_argument("--continue-room7-cats", action="store_true")
     parser.add_argument("--room5-action-frames", type=int, default=9000)
     parser.add_argument("--room6-action-frames", type=int, default=12000)
     parser.add_argument("--room7-action-frames", type=int, default=12000)
@@ -1487,6 +1647,8 @@ def main() -> int:
         parser.error("--continue-room6-books requires --continue-room5-rope")
     if args.continue_room7_book and not args.continue_room6_books:
         parser.error("--continue-room7-book requires --continue-room6-books")
+    if args.continue_room7_cats and not args.continue_room7_book:
+        parser.error("--continue-room7-cats requires --continue-room7-book")
 
     rom = args.rom.resolve()
     nexen = args.nexen.resolve()
@@ -1506,6 +1668,7 @@ def main() -> int:
         replay_room4_trapdoor_use,
         replay_room6_books_interaction,
         replay_room7_lost_dialogue_interaction,
+        replay_room7_cat_figure_use,
         replay_room5_rope_to_room6,
         room4_synchronous_input_edge,
         skip_room4_authored_override,
@@ -1893,6 +2056,138 @@ def main() -> int:
                                     )
                                     if report["post_room7_book"]["final"]["room"] == 7
                                     else None
+                                )
+                            if args.continue_room7_cats:
+                                if report["post_room7_book"]["status"] != (
+                                    "authored-action-quiescent-in-room7"
+                                ):
+                                    raise RuntimeError(
+                                        "room7 cat path requires the book action to "
+                                        "complete in room7: "
+                                        f"{report['post_room7_book']!r}"
+                                    )
+                                report["room7_cat_source"] = _authentic_room7_cat_source(
+                                    args.archive.resolve(), identity_path,
+                                )
+                                report["room7_cat118_action"] = (
+                                    replay_room7_cat_figure_use(
+                                        session, object_id=118,
+                                        variable_base=variable_layout["base"],
+                                        variable_count=variable_layout["count"],
+                                        pulse=exact_edge_pulse,
+                                    )
+                                )
+                                cat118_baseline = report["room7_cat118_action"][
+                                    "submission_count_before"
+                                ]
+                                if report["room7_cat118_action"][
+                                    "submission_count_after"
+                                ] != ((cat118_baseline + 1) & 0xFF):
+                                    raise RuntimeError(
+                                        "room7 object118 verb10 did not submit once"
+                                    )
+                                report["post_room7_cat118"] = _observe_action(
+                                    session,
+                                    baseline=cat118_baseline,
+                                    max_frames=args.room7_action_frames,
+                                    rom=rom,
+                                    symbol_banks=symbols,
+                                    exact_frame_observation=True,
+                                    variable_base=variable_layout["base"],
+                                    variable_count=variable_layout["count"],
+                                )
+                                if report["post_room7_cat118"]["status"] != (
+                                    "authored-action-quiescent-in-room7"
+                                ):
+                                    raise RuntimeError(
+                                        "first room7 cat action did not settle in room7: "
+                                        f"{report['post_room7_cat118']!r}"
+                                    )
+                                context_after_first_cat = _room7_runtime_context(
+                                    session,
+                                    variable_base=variable_layout["base"],
+                                    variable_count=variable_layout["count"],
+                                )
+                                report["room7_after_cat118_context"] = (
+                                    context_after_first_cat
+                                )
+                                if (context_after_first_cat["selected_variables"]["214"] != 1
+                                        or context_after_first_cat["selected_variables"]["217"] != 1
+                                        or context_after_first_cat["selected_variables"]["218"] != 0):
+                                    raise RuntimeError(
+                                        "object118 did not produce its authored first-figure "
+                                        "state (V214=1, V217=1, V218=0): "
+                                        f"{context_after_first_cat!r}"
+                                    )
+                                report["room7_cat119_action"] = (
+                                    replay_room7_cat_figure_use(
+                                        session, object_id=119,
+                                        variable_base=variable_layout["base"],
+                                        variable_count=variable_layout["count"],
+                                        pulse=exact_edge_pulse,
+                                    )
+                                )
+                                cat119_baseline = report["room7_cat119_action"][
+                                    "submission_count_before"
+                                ]
+                                if report["room7_cat119_action"][
+                                    "submission_count_after"
+                                ] != ((cat119_baseline + 1) & 0xFF):
+                                    raise RuntimeError(
+                                        "room7 object119 verb10 did not submit once"
+                                    )
+                                report["post_room7_cat119"] = _observe_action(
+                                    session,
+                                    baseline=cat119_baseline,
+                                    max_frames=args.room7_action_frames,
+                                    rom=rom,
+                                    symbol_banks=symbols,
+                                    exact_frame_observation=True,
+                                    variable_base=variable_layout["base"],
+                                    variable_count=variable_layout["count"],
+                                )
+                                second_dispatches = [
+                                    {"frame": sample["frame"], "room": sample["room"],
+                                     "slot": slot["slot"], "script": slot["script"],
+                                     "program": slot["program"],
+                                     "saved_pc": slot["saved_pc"],
+                                     "room_owner": slot["room_owner"]}
+                                    for sample in report["post_room7_cat119"].get(
+                                        "frame_boundary_execution_samples", []
+                                    )
+                                    for slot in sample["slots"]
+                                    if slot["script"] in (201, 207)
+                                ]
+                                report["room7_cat_local_dispatches"] = second_dispatches
+                                if {item["script"] for item in second_dispatches} != {
+                                    201, 207
+                                }:
+                                    raise RuntimeError(
+                                        "second distinct cat action did not execute both "
+                                        "room7 LSCR207 and LSCR201: "
+                                        f"{second_dispatches!r}"
+                                    )
+                                if report["post_room7_cat119"]["status"] != "room-transition":
+                                    raise RuntimeError(
+                                        "room7 LSCR201 did not produce its authored actor "
+                                        "room transition: "
+                                        f"{report['post_room7_cat119']!r}"
+                                    )
+                                resulting_room = report["post_room7_cat119"]["final"]["room"]
+                                report["room7_cat_transition_source"] = (
+                                    _authentic_room_source(
+                                        args.archive.resolve(), resulting_room
+                                    )
+                                )
+                                report["room7_cat_result_entry"] = (
+                                    _observe_no_input_lifecycle(
+                                        session,
+                                        rom=rom,
+                                        symbol_banks=symbols,
+                                        archive=args.archive.resolve(),
+                                        variable_base=variable_layout["base"],
+                                        variable_count=variable_layout["count"],
+                                    )
                                 )
             report["final_snapshot"] = _snapshot(session)
             report["result"] = "pass"

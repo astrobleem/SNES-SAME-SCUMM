@@ -965,6 +965,155 @@ def replay_room7_lost_dialogue_interaction(
     }
 
 
+def replay_room7_cat_figure_use(
+    session: Any,
+    *,
+    object_id: int,
+    variable_base: int,
+    variable_count: int,
+    pulse: Any = None,
+) -> dict[str, Any]:
+    """Use one source-authentic room-7 cat figure, exactly once.
+
+    This follows the authored two-distinct-figure gate: object 118 sets V217
+    and increments V214 from zero; object 119 then sets V218 and
+    dispatches LSCR207 followed by LSCR201.  This recipe keeps that observed
+    authored order fixed and never probes alternative objects.
+    """
+    if object_id not in (118, 119):
+        raise ValueError("room-7 deterministic cat replay accepts only objects 118/119")
+    if variable_count <= 218:
+        raise RuntimeError("ROM variable table does not contain room-7 V214-V218")
+
+    initial = room4_controller_snapshot(session)
+    variables = session.read_memory("snesMemory", variable_base, variable_count * 2)
+    v214 = int.from_bytes(variables[428:430], "little")
+    variables_215_218 = {
+        index: int.from_bytes(variables[index * 2:index * 2 + 2], "little")
+        for index in (215, 216, 217, 218)
+    }
+    actor_room = session.read_u8(0x7F3716)
+    item937_owner = session.read_u8(0x7E8000 + 937)
+    states = {item: session.read_u8(0x7E6000 + item) for item in (118, 119, 133)}
+    owners = {item: session.read_u8(0x7E8000 + item) for item in (118, 119, 133)}
+
+    if object_id == 118:
+        expected_controller = (1, 133, 9, 188, 125)
+        expected_v214 = 0
+        expected_vars = (0, 0, 0, 0)
+        prior = "room7 book interaction has completed; first distinct figurine is available"
+    else:
+        expected_controller = (1, 118, 9, 112, 123)
+        expected_v214 = 1
+        expected_vars = (0, 0, 1, 0)
+        prior = "object118 verb10 completed and wrote V217; second distinct figurine is available"
+    observed_controller = (
+        initial["mode"], initial["object"], initial["verb"],
+        initial["x"], initial["y"],
+    )
+    observed_vars = tuple(
+        variables_215_218[index] for index in (215, 216, 217, 218)
+    )
+    expected = {
+        "room": 7, "phase": 0, "error": 0, "lifecycle": 2,
+        "talk_active": 0, "actor1_room": 7,
+        "controller": expected_controller, "V214": expected_v214,
+        "variables215_218": expected_vars,
+        "object_states": {118: 0, 119: 0, 133: 0},
+        "room_object_owners": {118: 15, 119: 15, 133: 15},
+        "book_inventory_object937_owner": 1,
+    }
+    observed = {
+        "room": initial["room"], "phase": initial["phase"],
+        "error": initial["error"], "lifecycle": initial["lifecycle"],
+        "talk_active": initial["talk_active"], "actor1_room": actor_room,
+        "controller": observed_controller, "V214": v214,
+        "variables215_218": observed_vars,
+        "object_states": states,
+        "room_object_owners": owners,
+        "book_inventory_object937_owner": item937_owner,
+    }
+    if observed != expected:
+        raise RuntimeError(
+            f"room-7 object{object_id} replay precondition mismatch ({prior}): "
+            f"{observed!r} != {expected!r}"
+        )
+
+    target = (112, 123) if object_id == 118 else (128, 123)
+
+    def send(mask: int, predicate: Any) -> dict[str, Any]:
+        if pulse is not None:
+            return pulse(session, mask, predicate)
+        return controller_synchronous_input_edge(session, mask, predicate)
+
+    movement: list[dict[str, Any]] = []
+    cursor = initial
+    while (cursor["x"], cursor["y"]) != target:
+        if len(movement) >= 64:
+            raise RuntimeError(
+                f"room-7 object{object_id} target exceeded its bounded cursor route"
+            )
+        mask = world_point_direction_mask(cursor["x"], cursor["y"], *target)
+        if mask is None:
+            break
+        next_xy = (
+            cursor["x"] + (2 if mask == 0x080 else -2 if mask == 0x040 else 0),
+            cursor["y"] + (2 if mask == 0x020 else -2 if mask == 0x010 else 0),
+        )
+        movement.append(send(mask, lambda _old, after, xy=next_xy: (
+            after["room"] == 7 and after["error"] == 0
+            and (after["x"], after["y"]) == xy and after["mode"] == 0
+        )))
+        cursor = movement[-1]["after"]
+
+    target_state = room4_controller_snapshot(session)
+    if (target_state["x"], target_state["y"]) != target or target_state["mode"] != 0:
+        raise RuntimeError(
+            f"room-7 object{object_id} cursor did not reach its unselected target: "
+            f"{target_state!r}"
+        )
+    selection = send(0x001, lambda _old, after: (
+        after["room"] == 7 and after["error"] == 0
+        and after["mode"] == 1 and after["object"] == object_id
+        and after["hit_object"] == object_id and after["verb"] == 9
+    ))
+    verb_cycle = send(0x800, lambda _old, after: (
+        after["room"] == 7 and after["error"] == 0
+        and after["mode"] == 1 and after["object"] == object_id
+        and after["hit_object"] == object_id and after["verb"] == 10
+    ))
+    submissions_before = verb_cycle["after"]["submissions"]
+    submission = send(0x001, lambda _old, after: (
+        after["room"] == 7 and after["error"] == 0
+        and after["mode"] == 2 and after["object"] == object_id
+        and after["verb"] == 10
+        and after["submissions"] == ((submissions_before + 1) & 0xFF)
+    ))
+    return {
+        "precondition": observed,
+        "precondition_explanation": prior,
+        "target": {
+            "object": object_id,
+            "world": list(target),
+            "rectangle_half_open": [104, 112, 120, 136] if object_id == 118
+                                   else [120, 112, 136, 136],
+            "expected_walk_point": [102, 133] if object_id == 118 else [118, 129],
+        },
+        "movement_edges": movement,
+        "selection": selection,
+        "selected_verb_cycle": verb_cycle,
+        "submission": submission,
+        "submission_count_before": submissions_before,
+        "submission_count_after": submission["after"]["submissions"],
+        "expected_authored_effect": (
+            "set V217; increment V214 to 1"
+            if object_id == 118 else
+            "set V218; start LSCR207([119]); chain LSCR201"
+        ),
+        "result": f"submitted authentic room7 object{object_id} verb10 once",
+    }
+
+
 def replay_room4_open_trapdoor_from_origin(session: Any) -> dict[str, Any]:
     """Reach object 61's authored hitbox and submit Open from cursor origin.
 

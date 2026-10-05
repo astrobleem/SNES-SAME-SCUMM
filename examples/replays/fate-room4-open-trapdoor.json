@@ -6,8 +6,8 @@
   "source_report_sha256": "1b7729189c64620d895dedd2dbd1db64d2ca697cb49d0da4cc13e634c0e560c5",
   "rom": {
     "sha256": "f5492f1cb1bce093ad88baf67fb1fe9c9a09823d5ece082bc4f3ccd9b76471fd",
-    "map_sha256": "0e993aa0d8d4690cd0229b40d1744ec68c307e3d7f39c536e8a8931f1c233713",
-    "build_identity_sha256": "e467e795d56f3ad09d34ef9173ce1e2c56e814235537104a81163859ff3bc56b",
+    "map_sha256": "151a977ae71fac9959fa92db39e3e9503a4cb1d19247c7733dd591cc86564eec",
+    "build_identity_sha256": "2ccab8b140f6ca5f3c16ab01651320f02aee827c5193cc6e26feb207f3a5f424",
     "nexen_sha256": "17d243c404b8ef32bbb1754a5b026584f2ae24cb047f54b9f250a6f4b721650a"
   },
   "entry": {
@@ -243,7 +243,8 @@
       "global144_global145_chain": "completed; Global145 local counter reached 155 and both descriptors retired",
       "object133_state": 0,
       "object133_class32_untouchable": true,
-      "bit218": 0,
+      "global_bit218": 0,
+      "V218": 0,
       "final_frame": 14487,
       "final_room": 7,
       "actor1": {"room": 7, "x": 175, "y": 134, "moving": 0},
@@ -252,12 +253,104 @@
       "scumm_error": 0,
       "engine_lifecycle": "RUNNING"
     },
-    "next_authored_gate": {
-      "resource": "authentic room7 object113 (coal chute), verb10",
-      "condition": "bit69 != 0 starts room7 LSCR203; with bit69 == 0 the false branch invokes object113 verb9 instead",
-      "observed_bit69": 0,
-      "classification": "authored gameplay-state boundary; this replay does not guess an action to set bit69"
+    "next_authored_progression": {
+      "classification": "resource-derived deterministic progression; no walkthrough input",
+      "starting_state": "post-book interaction; V214=0 and V215-V218=0, object937 owned by ego",
+      "actions": [
+        {
+          "room": 7,
+          "target_object": 118,
+          "target_name": "cat figurine",
+          "target_world": [112, 123],
+          "selected_verb": 10,
+          "input": "move cursor left 38 exact two-pixel edges, up 1 edge, A, Y, A",
+          "precondition": "controller mode1 retains object133/verb9; bit69=0; V214=0; object118 is room-owned/state0",
+          "authored_effect": "set V217 and increment V214 to 1",
+          "success": "one sentence submission; action settles in room7 with V214=1, V217=1, V218=0 and error0"
+        },
+        {
+          "room": 7,
+          "target_object": 119,
+          "target_name": "cat figurine",
+          "target_world": [128, 123],
+          "selected_verb": 10,
+          "input": "move cursor right 8 exact two-pixel edges, A, Y, A",
+          "precondition": "first figure action settled; controller mode1 retains object118/verb9; V214=1; V217=1; V218=0; object119 is room-owned/state0",
+          "authored_effect": "set V218, start LSCR207([119]), chain LSCR201; LSCR201 puts ego in room3 and follows the camera",
+          "success": "one sentence submission; native execution observes LSCR207 and LSCR201, then room3 installs without error"
+        }
+      ],
+      "resource_provenance": {
+        "archive_sha256": "0f3fc396642c800069d31ab9a087b314f1bb1612d37accbe13b6013219ac94f0",
+        "room7_lflf_offset": 730022,
+        "room7_payload_sha256": "58cf45c4d2bd15cea5c4a3606003bdd6907d9586eb4864e0b672707ef18b269a",
+        "object118_obcd_sha256": "4ed263b154cc3b39937b95c69f863f909fb686428bd19e1335b9761153700466",
+        "object118_verb10_sha256": "db3c27c938cc4c0ab3e92be69c558a4ba6236dc4367115ffa795d352df9324a0",
+        "object119_obcd_sha256": "540496ef75dd3037d5d82debb4d9df1e63256dfdaa1116773dd7094fcb41bd19",
+        "object119_verb10_sha256": "441b5f1854b8f427c204396e1ee91f2f7ecce3db4ac4fc2e2cb63a8ce4c0dc32",
+        "lscr207_sha256": "8aaee88643be64efdc3b8826b4ff7569517e7493b658ad596a09eb29ad41cc6f",
+        "lscr201_sha256": "6a3565652f8d72261d357eb6ef0d497a0a15448f15a6842d6afd22f7a8eda752",
+        "room3": "resolved from the authentic archive after native transition"
+      }
     }
+  },
+  "room7_cat_forward_validation": {
+    "evidence_class": "fresh-power-on native Nexen replay; controller input only; no game-state debugger writes and no savestate load",
+    "report": "build/fate-authentic-room4-to-map/room4-cold-cats-v65.json",
+    "rom_sha256": "f5492f1cb1bce093ad88baf67fb1fe9c9a09823d5ece082bc4f3ccd9b76471fd",
+    "map_sha256": "6cd711c476b997f1241393be61e31ccac2709fe0aab56acf3dd6a541c324ad5e",
+    "build_identity_sha256": "1c7a38fe9ba1b811f33a5a5212e237d9cfa5becef275be5035cb4ef5f490c2cf",
+    "nexen_sha256": "17d243c404b8ef32bbb1754a5b026584f2ae24cb047f54b9f250a6f4b721650a",
+    "command": "python3 tools/replay_fate_room4_cold_nexen.py --rom build/fate-authentic-room4-to-map/fate-auth-room4-ownership-v64.sfc --output build/fate-authentic-room4-to-map/room4-cold-cats-v65.json --archive /home/chad/ATLANTIS.zip --continue-trapdoor-use --continue-room5-rope --continue-room6-books --continue-room7-book --continue-room7-cats",
+    "room_sequence": [0, 68, 0, 4, 5, 6, 7, 3],
+    "controller_actions": [
+      {"room": 4, "verb": 3, "object": 61, "name": "Open trapdoor", "submissions": "191 -> 192"},
+      {"room": 4, "verb": 10, "object": 61, "name": "Use trapdoor", "submissions": "192 -> 193"},
+      {"room": 5, "verb": 9, "object": 77, "name": "rope", "submissions": "193 -> 194"},
+      {"room": 6, "verb": 10, "object": 91, "name": "books on statues", "submissions": "194 -> 195"},
+      {"room": 7, "verb": 11, "object": 133, "name": "Lost Dialogue of Plato", "submissions": "195 -> 196"},
+      {"room": 7, "verb": 10, "object": 118, "name": "first distinct cat figurine", "submissions": "196 -> 197"},
+      {"room": 7, "verb": 10, "object": 119, "name": "second distinct cat figurine", "submissions": "197 -> 198"}
+    ],
+    "note": "Each action entry reports its own immediately-before/after submission count. Every controller sentence advanced the count by exactly one.",
+    "room7_authored_results": {
+      "first_figure": {"object": 118, "precondition": "V214=0; V215-V218 all zero; object118 room-owned/state0", "result": "V214=1, V217=1; exactly one sentence submission; settled in room7 with error0"},
+      "second_figure": {"object": 119, "precondition": "V214=1; V217=1, V218=0; object119 room-owned/state0", "result": "exactly one sentence submission; LSCR207 then LSCR201 execute before room3 installs"},
+      "native_dispatches": [
+        {"frame": 15497, "room": 7, "script": 207, "program": "$88", "slot": 6},
+        {"frame": 15503, "room": 7, "script": 201, "program": "$89", "slot": 5}
+      ]
+    },
+    "room3_result": {
+      "installed_frame": 15783,
+      "settled_frame": 18181,
+      "room": 3,
+      "phase": 0,
+      "scumm_error": 0,
+      "engine_lifecycle": "RUNNING",
+      "actor1": {"room": 3, "x": 71, "y": 142, "moving": 0},
+      "live_room_local": {"script": 213, "program": "$80", "slot": 3, "saved_pc": 19},
+      "live_globals": [
+        {"script": 75, "program": "$D7", "slot": 2, "status": "yielded"},
+        {"script": 79, "program": "$F5", "slot": 4, "status": "running"}
+      ]
+    },
+    "room3_authentic_provenance": {
+      "source_member": "ATLANTIS/ATLANTIS.001",
+      "archive_sha256": "0f3fc396642c800069d31ab9a087b314f1bb1612d37accbe13b6013219ac94f0",
+      "lflf_source_offset": 352294,
+      "room_payload_size": 55590,
+      "room_payload_sha256": "3f7700ab0cdacbf7db6b3d5712e95fcfa6e6bd5fbd8b641da04d443aeec49a42",
+      "encd": {"source_body_offset": 405368, "size": 115, "sha256": "ab3e9693d009c666948256224b348fc73170d0c2a0b60d82ead8b20479e32c3e", "program": "$A2"},
+      "live_lscr213": {"source_body_offset": 407823, "size": 77, "sha256": "f4d56881433ef0aa6f8f337b5f7c17023765f5ace1d50beb948155f8f3fef089", "program": "$80"}
+    },
+    "post_run_rebuild_linkage": {
+      "rom_sha256": "f5492f1cb1bce093ad88baf67fb1fe9c9a09823d5ece082bc4f3ccd9b76471fd",
+      "map_sha256": "151a977ae71fac9959fa92db39e3e9503a4cb1d19247c7733dd591cc86564eec",
+      "build_identity_sha256": "2ccab8b140f6ca5f3c16ab01651320f02aee827c5193cc6e26feb207f3a5f424",
+      "result": "recorded FATE-profile rebuild after host tests reproduced byte-identical ROM; current ROM-bound symbol validation passed and all nine recorded event-hook PC offsets matched the run map. Nexen result is reused by exact ROM SHA; it was not rerun. The rebuild tree was tracked-dirty for replay/docs/tests only; no SNES production source changed after the native run."
+    },
+    "result": "PASS; this is a room3 entry checkpoint, not a claim that room3's next gameplay puzzle is solved"
   },
   "input_execution": {
     "controller_level_changes_advance_frames": false,
