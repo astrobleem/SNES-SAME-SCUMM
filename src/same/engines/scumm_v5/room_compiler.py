@@ -614,7 +614,7 @@ def decode_script(
             else:
                 raise ValueError("instruction width is not in the current decoder subset")
         except (ValueError, IndexError) as exc:
-            opaque_from = start
+            opaque_from = pc_base + start
             instructions.append(InstructionIR(
                 pc_base + start, opcode, "opaque_bytecode_tail", (), program[start:].hex(),
                 source_offset + start, False, None, str(exc),

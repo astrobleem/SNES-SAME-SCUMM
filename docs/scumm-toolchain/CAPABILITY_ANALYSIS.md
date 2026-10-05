@@ -39,6 +39,11 @@ version, selected-root reachability, transitive global closure, conservative
 branch reachability, script-slot pressure, room-wide resource inventories,
 costume codec and save-capacity analysis. An operation appearing in the report
 means it was decoded, not that the SNES backend has certified its semantics.
+In particular, `unsupported_operations == 0` is not a support certification.
+It only reflects the current bounded decoder's classification of operations
+it successfully decoded. Opaque tails remain unknown, and no backend/runtime
+capability claim is implied by an empty unsupported list. Per-operation
+certification against a named backend/runtime is future work.
 
 The analyzer should answer what a source game requires, what the selected
 backend implements, and what remains uncertain before a long native replay.

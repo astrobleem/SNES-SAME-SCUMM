@@ -99,6 +99,21 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
         self.assertEqual(result.instructions[0].source_offset, 123)
         self.assertIn("instruction width", result.instructions[0].diagnostic or "")
 
+    def test_object_verb_opaque_boundary_uses_source_pc_coordinates(self) -> None:
+        program = b"\xFD\x0A\xC8\xFF"
+        result = decode_script(
+            program, identity="room.7/object.118/verb.10", kind="OBCD", number=None,
+            room=7, resource_key="room.7", game_name="synthetic",
+            source_member="fixture", resource_offset=0, source_offset=1000,
+            object_id=118, verb_id=10, pc_base=76,
+        )
+
+        opaque_instruction = result.instructions[0]
+        self.assertFalse(result.decode_complete)
+        self.assertEqual(opaque_instruction.operation, "opaque_bytecode_tail")
+        self.assertEqual(opaque_instruction.pc, 76)
+        self.assertEqual(result.opaque_from_pc, opaque_instruction.pc)
+
     def test_print_operand_width_does_not_overwrite_script_identity_kind(self) -> None:
         result = decode_script(
             bytes((0x14, 1, 0x02, 0x11, 0, 0xFF, 0)),
