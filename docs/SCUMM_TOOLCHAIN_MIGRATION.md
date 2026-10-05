@@ -1,10 +1,21 @@
-# SCUMM Toolchain Migration Ledger
+# SCUMM Toolchain Migration Ledger (historical seed)
 
 FATE is the first serious customer and integration corpus for a reusable
 SCUMM-to-SNES toolchain. Its observed behavior is evidence for generic SCUMM
-semantics, not a runtime specification by itself. This is an opportunistic
-coupling ledger for mechanisms encountered during the room-4-to-room-7 replay;
-it is not yet a repository-wide architecture audit.
+semantics, not a runtime specification by itself. The small table below is the
+historical opportunistic ledger created during the room-4-to-room-7 replay; it
+is retained as evidence, but is no longer the canonical architecture plan.
+The repository-wide audit and current migration plan live in
+[`docs/scumm-toolchain/`](scumm-toolchain/CURRENT_ARCHITECTURE.md):
+
+- [FATE coupling audit](scumm-toolchain/FATE_COUPLING_AUDIT.md) and
+  [machine-readable inventory](scumm-toolchain/fate_coupling.json)
+- [Minimum SCUMM IR](scumm-toolchain/IR.md)
+- [Compiler pipeline](scumm-toolchain/COMPILER_PIPELINE.md)
+- [Capability analysis](scumm-toolchain/CAPABILITY_ANALYSIS.md)
+- [Runtime/offline boundary](scumm-toolchain/RUNTIME_BOUNDARY.md)
+- [Migration plan](scumm-toolchain/MIGRATION_PLAN.md)
+- [First implementation milestone](scumm-toolchain/FIRST_MILESTONE.md)
 
 | Current file/component | Current behavior | Classification | Why | Desired eventual layer | Migration note |
 |---|---|---|---|---|---|
