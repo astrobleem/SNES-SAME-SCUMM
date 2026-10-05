@@ -21,13 +21,19 @@ class FateRoom4MessageInputTests(unittest.TestCase):
         raw[6:8] = generation.to_bytes(2, "little")
         return bytes(raw)
 
-    def test_waits_for_authored_display_delay_before_acknowledging(self) -> None:
+    def test_timed_message_completion_does_not_request_synthetic_ack(self) -> None:
         self.assertFalse(room4_message_ready(self.state(delay=1), None))
-        self.assertTrue(room4_message_ready(self.state(delay=0), None))
+        self.assertFalse(room4_message_ready(self.state(delay=0), None))
 
-    def test_acknowledges_each_ready_generation_once(self) -> None:
+    def test_explicit_ff03_wait_is_ready_once_after_its_delay(self) -> None:
         self.assertFalse(room4_message_ready(self.state(generation=7), 7))
-        self.assertTrue(room4_message_ready(self.state(generation=8), 7))
+        self.assertFalse(room4_message_ready(self.state(generation=8), 7))
+        self.assertFalse(room4_message_ready(
+            self.state(have_message=0xFF, delay=1, generation=8), 7
+        ))
+        self.assertTrue(room4_message_ready(
+            self.state(have_message=0xFF, delay=0, generation=8), 7
+        ))
 
     def test_requires_active_message_and_complete_state(self) -> None:
         self.assertFalse(room4_message_ready(self.state(active=0), None))

@@ -11,11 +11,26 @@ from fate_replay import (  # noqa: E402
     ControllerInputLease,
     activation_observation,
     advance_bounded,
+    finish_room4_authored_cutscene,
     next_input_safe_window,
     replay_room4_open_trapdoor_prefix,
+    replay_room4_open_trapdoor_from_origin,
+    replay_room4_trapdoor_use,
+    replay_room6_books_interaction,
+    replay_room7_lost_dialogue_interaction,
+    replay_room5_rope_to_room6,
+    skip_room4_authored_override,
     room4_message_ready,
     room4_controller_snapshot,
+    room4_synchronous_input_edge,
     world_point_direction_mask,
+)
+from validate_fate_authentic_startup_nexen import _button_names  # noqa: E402
+from replay_fate_room4_cold_nexen import (  # noqa: E402
+    _parse_global_script_selector,
+    _parse_room_local_program_table,
+    _parse_rom_variable_layout,
+    _room7_runtime_context,
 )
 
 
@@ -56,13 +71,17 @@ class FakeSession:
 
 
 class FakeRoom4Session:
-    def __init__(self, *, ready: int = 1) -> None:
+    def __init__(self, *, ready: int = 1,
+                 cursor: tuple[int, int] = (117, 138)) -> None:
         self.frame = 100
         self.values = {
             0x7FF2BF: 4, 0x7FF2C2: 0, 0x7E2303: 0, 0x7E2221: 2,
             0x7E5E8A: ready, 0x7E7A20: 0, 0x7E5FE0: 0,
-            0x7E5FE1: 117, 0x7E5FE3: 138, 0x7E5FE5: 0,
+            0x7E5FE1: cursor[0], 0x7E5FE3: cursor[1], 0x7E5FE5: 0,
             0x7E5FE6: 0, 0x7E5F94: 0, 0x7E5FE9: 22,
+            0x7FD348: 0,
+            0x7E2200: 0, 0x7E2202: 0, 0x7E2204: 0, 0x7E2206: 0,
+            0x7E2208: 0, 0x7E220A: 0, 0x7E220C: 0,
         }
         self.inputs: list[tuple[int, int]] = []
         self.controller_events: list[tuple[int, int, bool, int]] = []
@@ -71,17 +90,19 @@ class FakeRoom4Session:
         self.held_buttons = 0
         self.pending_edge = 0
         self.fail_next_advance = False
+        self.cutscene_finish_after = 0
+        self.pending_edge_delay = 0
 
     def get_state(self) -> dict[str, int]:
         return {"frameCount": self.frame}
 
     def read_u8(self, address: int) -> int:
-        return self.values[address] & 0xFF
+        return self.values.get(address, 0) & 0xFF
 
     def read_memory(self, mem_type: str, address: int, length: int) -> bytes:
         if mem_type != "snesMemory":
             raise AssertionError(mem_type)
-        value = self.values[address]
+        value = self.values.get(address, 0)
         return value.to_bytes(length, "little")
 
     def tool(self, name: str, args: dict[str, object]) -> dict[str, object]:
@@ -115,12 +136,38 @@ class FakeRoom4Session:
             self.fail_next_advance = False
             raise RuntimeError("simulated frame runner failure")
         start = self.frame
-        self.frame += count
         held = self.held_buttons
-        self.advances.append((start, self.frame, count, held))
-        if self.pending_edge:
-            self._apply_edge(self.pending_edge)
-            self.pending_edge = 0
+        self.advances.append((start, start + count, count, held))
+        previous = self.values[0x7E2200]
+        for _ in range(count):
+            current = self._internal_buttons(held)
+            self.values[0x7E2202] = previous
+            self.values[0x7E2200] = current
+            self.values[0x7E2204] = current & ~previous
+            self.values[0x7E2206] = previous & ~current
+            if self.values[0x7E2204]:
+                self.values[0x7E2208] = (self.values[0x7E2208] + 1) & 0xFFFF
+                if self.values[0x7E7A20]:
+                    self.values[0x7E220A] = self.values[0x7E2208]
+                    self.values[0x7E220C] = 1
+            if self.pending_edge:
+                talk_owns_edge = (
+                    self.values[0x7E220C]
+                    and self.values[0x7E220A] == self.values[0x7E2208]
+                    and self.values[0x7E7A20]
+                )
+                if self.pending_edge_delay:
+                    self.pending_edge_delay -= 1
+                else:
+                    if not talk_owns_edge:
+                        self._apply_edge(self.pending_edge)
+                    self.pending_edge = 0
+            if self.cutscene_finish_after and held == 0:
+                self.cutscene_finish_after -= 1
+                if self.cutscene_finish_after <= 0:
+                    self.values[0x7FD348] = 0
+            previous = current
+            self.frame += 1
         return {
             "startFrame": start,
             "endFrame": self.frame,
@@ -128,11 +175,30 @@ class FakeRoom4Session:
             "timedOut": False,
         }
 
+    @staticmethod
+    def _internal_buttons(buttons: int) -> int:
+        return {
+            0x001: 0x0080,
+            0x010: 0x0800,
+            0x020: 0x0400,
+            0x040: 0x0200,
+            0x080: 0x0100,
+            0x100: 0x0040,
+            0x800: 0x4000,
+        }.get(buttons, 0)
+
     def _apply_edge(self, buttons: int) -> None:
         if buttons == 0x040:
             self.values[0x7E5FE1] -= 2
+        elif buttons == 0x080:
+            self.values[0x7E5FE1] += 2
         elif buttons == 0x010:
             self.values[0x7E5FE3] -= 2
+        elif buttons == 0x020:
+            self.values[0x7E5FE3] += 2
+        if buttons in (0x040, 0x080, 0x010, 0x020):
+            x, y = self.values[0x7E5FE1], self.values[0x7E5FE3]
+            self.values[0x7E5F94] = int(64 <= x < 104 and 128 <= y < 136) * 61
         elif buttons == 0x001:
             if self.values[0x7E5FE0] == 0:
                 self.values[0x7E5FE0] = 1
@@ -142,9 +208,244 @@ class FakeRoom4Session:
             else:
                 self.values[0x7E5FE0] = 2
                 self.values[0x7E5FE9] += 1
+        elif buttons == 0x100:
+            if self.values[0x7FD348]:
+                self.values[0x7FD356] = 0
+                self.values[0x7FD35F] = 0
+                self.values[0x7FD366] = 0
+                self.cutscene_finish_after = 5
+        elif buttons == 0x800:
+            if self.values[0x7E5FE0] == 1 and self.values[0x7E5FE6] == 61:
+                verbs = (3, 4, 9, 10)
+                current = self.values[0x7E5FE5]
+                self.values[0x7E5FE5] = verbs[(verbs.index(current) + 1) % len(verbs)]
+
+    def activate_room4_override(self) -> None:
+        self.values.update({
+            0x7FD348: 1,
+            0x7FD356: 0x0019,
+            0x7FD35F: 3,
+            0x7E239C: 206,
+            0x7E23B5: 0xF9,
+            0x7FF2EA: 4,
+            0x7FD366: 1,
+        })
+
+
+class FakeRoom5Session(FakeRoom4Session):
+    """Copyright-free controller fixture for the authored room5 rope step."""
+
+    def __init__(self) -> None:
+        super().__init__(cursor=(145, 134))
+        self.values.update({
+            0x7FF2BF: 5,
+            0x7E5FE5: 0,
+            0x7E5FE6: 0,
+            0x7E5FE9: 40,
+            0x7F3716: 5,
+            0x7E2BA8: 0,
+        })
+
+    def _apply_edge(self, buttons: int) -> None:
+        if buttons in (0x040, 0x080, 0x010, 0x020):
+            super()._apply_edge(buttons)
+            # This room's controller hit test is performed on selection, not
+            # continuously while the cursor moves.
+            self.values[0x7E5F94] = 0
+        elif buttons == 0x001:
+            if self.values[0x7E5FE0] == 0:
+                x, y = self.values[0x7E5FE1], self.values[0x7E5FE3]
+                if not (224 <= x < 264 and 120 <= y < 128):
+                    return
+                self.values[0x7E5FE0] = 1
+                self.values[0x7E5FE5] = 8
+                self.values[0x7E5FE6] = 77
+                self.values[0x7E5F94] = 77
+            else:
+                self.values[0x7E5FE0] = 2
+                self.values[0x7E5FE9] += 1
+        elif buttons == 0x800:
+            if self.values[0x7E5FE0] == 1 and self.values[0x7E5FE6] == 77:
+                self.values[0x7E5FE5] = 9
+
+
+class FakeRoom6Session(FakeRoom4Session):
+    """Copyright-free controller fixture for the room6 authored books verb."""
+
+    def __init__(self) -> None:
+        super().__init__(cursor=(226, 139))
+        self.values.update({
+            0x7FF2BF: 6,
+            0x7E5FE5: 0,
+            0x7E5FE6: 0,
+            0x7E5FE9: 70,
+            0x7F3716: 6,
+            0x7E2BA8: 0,
+        })
+
+    def _apply_edge(self, buttons: int) -> None:
+        if buttons in (0x040, 0x080, 0x010, 0x020):
+            super()._apply_edge(buttons)
+            # This room recomputes hit ownership on the A selection edge.
+            self.values[0x7E5F94] = 0
+        elif buttons == 0x001:
+            if self.values[0x7E5FE0] == 0:
+                x, y = self.values[0x7E5FE1], self.values[0x7E5FE3]
+                if not (0 <= x < 40 and 40 <= y < 128):
+                    return
+                self.values[0x7E5FE0] = 1
+                self.values[0x7E5FE5] = 9
+                self.values[0x7E5FE6] = 91
+                self.values[0x7E5F94] = 91
+            else:
+                self.values[0x7E5FE0] = 2
+                self.values[0x7E5FE9] += 1
+        elif buttons == 0x800:
+            if (self.values[0x7E5FE0] == 1
+                    and self.values[0x7E5FE6] == 91
+                    and self.values[0x7E5FE5] == 9):
+                self.values[0x7E5FE5] = 10
+
+
+class FakeRoom7Session(FakeRoom4Session):
+    """Copyright-free model for the source-derived room7 book sentence."""
+
+    VARIABLE_BASE = 0x7E0800
+    VARIABLE_COUNT = 0x0320
+
+    def __init__(self) -> None:
+        super().__init__(cursor=(162, 129))
+        self.values.update({
+            0x7FF2BF: 7,
+            0x7E5FE5: 0,
+            0x7E5FE6: 0,
+            0x7E5FE9: 90,
+            0x7F3716: 7,
+            0x7E2BA8: 0,
+        })
+        self.variables = bytearray(self.VARIABLE_COUNT * 2)
+
+    def read_memory(self, mem_type: str, address: int, length: int) -> bytes:
+        if address == self.VARIABLE_BASE:
+            return bytes(self.variables[:length])
+        return super().read_memory(mem_type, address, length)
+
+    def _apply_edge(self, buttons: int) -> None:
+        if buttons in (0x040, 0x080, 0x010, 0x020):
+            super()._apply_edge(buttons)
+            self.values[0x7E5F94] = 0
+        elif buttons == 0x001:
+            if self.values[0x7E5FE0] == 0:
+                x, y = self.values[0x7E5FE1], self.values[0x7E5FE3]
+                if not (176 <= x < 200 and 120 <= y < 128):
+                    return
+                self.values[0x7E5FE0] = 1
+                self.values[0x7E5FE5] = 9
+                self.values[0x7E5FE6] = 133
+                self.values[0x7E5F94] = 133
+            else:
+                self.values[0x7E5FE0] = 2
+                self.values[0x7E5FE9] += 1
+        elif buttons == 0x800:
+            if (self.values[0x7E5FE0] == 1
+                    and self.values[0x7E5FE6] == 133
+                    and self.values[0x7E5FE5] == 9):
+                self.values[0x7E5FE5] = 11
 
 
 class FateReplayTests(unittest.TestCase):
+    def test_room7_runtime_snapshot_reads_authored_vars_bits_and_objects(self) -> None:
+        class Ram:
+            def read_u8(self, address: int) -> int:
+                self_outer.assertEqual(address, 0x7F6F1B)
+                return 1
+
+            def read_memory(self, memory_type: str, address: int, length: int) -> bytes:
+                self_outer.assertEqual(memory_type, "snesMemory")
+                raw = bytearray(length)
+                if address == 0x7E0800:
+                    raw[214 * 2:214 * 2 + 2] = b"\x01\x00"
+                    raw[215 * 2:215 * 2 + 2] = b"\x02\x00"
+                elif address == 0x7E2BA0:
+                    raw[69 >> 3] = 1 << (69 & 7)
+                elif address == 0x7E6000 + 112:
+                    raw[4] = 3
+                elif address == 0x7E8000 + 112:
+                    raw[4] = 1
+                elif address == 0x7F5F10:
+                    # Empty class table for this fixture; production reads
+                    # the same 0x1000-byte table to report room-7 classes.
+                    pass
+                else:
+                    raise AssertionError(hex(address))
+                return bytes(raw)
+
+        self_outer = self
+        result = _room7_runtime_context(
+            Ram(), variable_base=0x7E0800, variable_count=0x0320
+        )
+        self.assertEqual(result["selected_variables"]["214"], 1)
+        self.assertEqual(result["selected_variables"]["215"], 2)
+        self.assertEqual(
+            result["global_variables"], {"base": "$7E0800", "count": 0x0320}
+        )
+        self.assertIn(69, result["set_bits"])
+        self.assertEqual(result["objects"][4], {"object": 116, "state": 3, "owner": 1})
+        self.assertEqual(result["object_classes"], {})
+        self.assertEqual(result["object_classes_initialized"], 1)
+        self.assertIn({"index": 214, "value": 1}, result["nonzero_global_variables"])
+
+    def test_room7_variable_layout_comes_from_rom_bound_listing_constants(self) -> None:
+        listing = """; SAME_SCUMM_VARIABLE_COUNT = $0320      (Constant)
+; SOME_OTHER_CONSTANT = $1234 (Constant)
+; SAME_SCUMM_VARIABLES = $7e0800    (Constant)
+"""
+        self.assertEqual(
+            _parse_rom_variable_layout(listing),
+            {"base": 0x7E0800, "count": 0x0320},
+        )
+        with self.assertRaisesRegex(RuntimeError, "lacks SCUMM variable layout"):
+            _parse_rom_variable_layout("; SAME_SCUMM_VARIABLES = $7e0800 (Constant)\n")
+
+    def test_room_local_selector_parser_keeps_room_identity_distinct(self) -> None:
+        generated = """; Complete executable-local directory for room 6.
+ScummV5_M23A_RoomLocalNumbers_5:
+    .byte $C8,$C9
+ScummV5_M23A_RoomLocalIndices_5:
+    .word $0000,$0001
+ScummV5_M23A_RoomLocalPrograms_5:
+    .byte $93,$9A
+; Complete executable-local directory for room 7.
+ScummV5_M23A_RoomLocalNumbers_6:
+    .byte $C8,$D0
+ScummV5_M23A_RoomLocalIndices_6:
+    .word $0000,$0008
+ScummV5_M23A_RoomLocalPrograms_6:
+    .byte $91,$92
+"""
+        self.assertEqual(_parse_room_local_program_table(generated, 6)[0xC8], 0x93)
+        self.assertEqual(_parse_room_local_program_table(generated, 7)[0xC8], 0x91)
+        with self.assertRaisesRegex(RuntimeError, "missing for room 8"):
+            _parse_room_local_program_table(generated, 8)
+
+    def test_global_script_selector_is_read_from_the_generated_resolver(self) -> None:
+        generated = """ScummV5_M23A_ResolveGlobalScript_Far:
+    cmp #$90
+    bne next
+    lda #$84
+    sec
+    rtl
+ScummV5_M23A_FetchProgramByte_Far:
+"""
+        self.assertEqual(_parse_global_script_selector(generated, 144), 0x84)
+        with self.assertRaisesRegex(RuntimeError, "does not map global script 143"):
+            _parse_global_script_selector(generated, 143)
+
+    def test_native_button_mask_names_match_the_nexen_set_input_abi(self) -> None:
+        self.assertEqual(_button_names(0x004), ["SELECT"])
+        self.assertEqual(_button_names(0x100), ["X"])
+        self.assertEqual(_button_names(0x800), ["Y"])
+
     @staticmethod
     def talk_state(*, active: int = 1, message: int = 1,
                    delay: int = 0, generation: int = 1) -> bytes:
@@ -155,10 +456,15 @@ class FateReplayTests(unittest.TestCase):
         raw[6:8] = generation.to_bytes(2, "little")
         return bytes(raw)
 
-    def test_room4_ack_waits_for_unique_ready_message_generation(self) -> None:
+    def test_room4_only_treats_explicit_wait_segment_as_acknowledgeable(self) -> None:
         self.assertFalse(room4_message_ready(self.talk_state(delay=1), None))
-        self.assertTrue(room4_message_ready(self.talk_state(generation=2), 1))
-        self.assertFalse(room4_message_ready(self.talk_state(generation=2), 2))
+        self.assertFalse(room4_message_ready(self.talk_state(generation=2), 1))
+        self.assertTrue(room4_message_ready(
+            self.talk_state(message=0xFF, generation=2), 1
+        ))
+        self.assertFalse(room4_message_ready(
+            self.talk_state(message=0xFF, generation=2), 2
+        ))
         self.assertFalse(room4_message_ready(self.talk_state(active=0), None))
         self.assertFalse(room4_message_ready(self.talk_state(message=0), None))
 
@@ -304,6 +610,12 @@ class FateReplayTests(unittest.TestCase):
             self.assertEqual(step["attempt"], 1)
             self.assertEqual(step["press_frames_advanced"], 4)
             self.assertEqual(step["release_frames_advanced"], 1)
+            self.assertTrue(step["release_sampled"])
+            self.assertEqual(
+                step["input_state_after_release_sample"]["input_held"] &
+                step["input_state_at_press_end"]["input_held"],
+                0,
+            )
         self.assertEqual(session.dangerous_set_input_calls, [])
         self.assertEqual((result["final"]["x"], result["final"]["y"]), (89, 132))
         self.assertEqual(result["final"]["verb"], 3)
@@ -323,6 +635,149 @@ class FateReplayTests(unittest.TestCase):
         self.assertEqual(safe.dangerous_set_input_calls, [])
         self.assertEqual((result["final"]["x"], result["final"]["y"]), (89, 132))
 
+    def test_room5_rope_step_is_exact_bounded_and_submits_once(self) -> None:
+        session = FakeRoom5Session()
+        result = replay_room5_rope_to_room6(session)
+        self.assertEqual(result["precondition"]["room"], 5)
+        self.assertEqual(result["precondition"]["actor1_room"], 5)
+        self.assertFalse(result["precondition"]["bit69"])
+        self.assertEqual(result["target"], {
+            "world": [225, 124],
+            "preselection_hit_object": 0,
+            "selected_hit_object": 77,
+        })
+        self.assertEqual(len(result["movement_edges"]), 45)
+        self.assertEqual(
+            [step["mask"] for step in result["movement_edges"]],
+            [0x080] * 40 + [0x010] * 5,
+        )
+        self.assertEqual(result["selection"]["after"]["verb"], 8)
+        self.assertEqual(result["selected_verb_cycle"]["after"]["verb"], 9)
+        self.assertEqual(result["submission_count_before"], 40)
+        self.assertEqual(result["submission_count_after"], 41)
+        self.assertEqual(result["submission"]["after"]["mode"], 2)
+        self.assertEqual(result["submission"]["attempts"], 1)
+        self.assertEqual(session.dangerous_set_input_calls, [])
+        self.assertEqual(session.held_buttons, 0)
+        self.assertEqual(session.values[0x7E2303], 0)
+        self.assertTrue(all(
+            count == 1 and end - start == 1
+            for start, end, count, _mask in session.advances
+        ))
+
+    def test_room5_rope_step_rejects_non_authentic_branch_before_input(self) -> None:
+        session = FakeRoom5Session()
+        session.values[0x7E2BA8] = 0x20
+        with self.assertRaisesRegex(RuntimeError, "precondition mismatch"):
+            replay_room5_rope_to_room6(session)
+        self.assertEqual(session.controller_events, [])
+
+    def test_room6_books_step_replays_the_source_selected_verb_once(self) -> None:
+        session = FakeRoom6Session()
+        result = replay_room6_books_interaction(session)
+        self.assertEqual(result["precondition"]["room"], 6)
+        self.assertEqual(result["precondition"]["actor1_room"], 6)
+        self.assertFalse(result["precondition"]["bit69"])
+        self.assertEqual(result["target"]["world"], [4, 81])
+        self.assertEqual(result["target"]["selected_hit_object"], 91)
+        self.assertEqual(len(result["movement_edges"]), 140)
+        self.assertEqual(
+            [step["mask"] for step in result["movement_edges"]],
+            [0x040] * 111 + [0x010] * 29,
+        )
+        self.assertEqual(result["selection"]["after"]["verb"], 9)
+        self.assertEqual(result["selected_verb_cycle"]["after"]["verb"], 10)
+        self.assertEqual(result["submission_count_before"], 70)
+        self.assertEqual(result["submission_count_after"], 71)
+        self.assertEqual(result["submission"]["after"]["mode"], 2)
+        self.assertEqual(result["submission"]["attempts"], 1)
+        self.assertEqual(session.dangerous_set_input_calls, [])
+        self.assertEqual(session.held_buttons, 0)
+        self.assertEqual(session.values[0x7E2303], 0)
+        self.assertTrue(all(
+            count == 1 and end - start == 1
+            for start, end, count, _mask in session.advances
+        ))
+
+    def test_room7_book_step_selects_authored_verb11_and_submits_once(self) -> None:
+        session = FakeRoom7Session()
+        result = replay_room7_lost_dialogue_interaction(
+            session,
+            variable_base=session.VARIABLE_BASE,
+            variable_count=session.VARIABLE_COUNT,
+        )
+        self.assertEqual(result["precondition"]["room"], 7)
+        self.assertEqual(result["precondition"]["actor1_room"], 7)
+        self.assertEqual((result["target"]["world"]), [188, 125])
+        self.assertEqual(result["target"]["source_order_winner"], 133)
+        self.assertEqual(result["target"]["selected_hit_object"], 133)
+        self.assertEqual(len(result["movement_edges"]), 15)
+        self.assertEqual(
+            [step["mask"] for step in result["movement_edges"]],
+            [0x080] * 13 + [0x010] * 2,
+        )
+        self.assertEqual(result["selection"]["after"]["verb"], 9)
+        self.assertEqual(result["selected_verb_cycle"]["after"]["verb"], 11)
+        self.assertEqual(result["submission_count_before"], 90)
+        self.assertEqual(result["submission_count_after"], 91)
+        self.assertEqual(result["submission"]["after"]["mode"], 2)
+        self.assertEqual(result["submission"]["attempts"], 1)
+        self.assertEqual(session.dangerous_set_input_calls, [])
+        self.assertEqual(session.held_buttons, 0)
+        self.assertEqual(session.values[0x7E2303], 0)
+        self.assertTrue(all(
+            count == 1 and end - start == 1
+            for start, end, count, _mask in session.advances
+        ))
+
+    def test_cold_room4_replay_reaches_authentic_hitbox_from_cursor_origin(self) -> None:
+        session = FakeRoom4Session(cursor=(0, 0))
+        result = replay_room4_open_trapdoor_from_origin(session)
+        self.assertEqual(result["target"]["world"], [90, 132])
+        self.assertEqual(result["target"]["hit_object"], 61)
+        self.assertEqual(result["movement_pulses"], 111)
+        self.assertEqual((result["final"]["x"], result["final"]["y"]), (90, 132))
+        self.assertEqual(result["final"]["hit_object"], 61)
+        self.assertEqual(result["final"]["object"], 61)
+        self.assertEqual(result["final"]["verb"], 3)
+        self.assertEqual(result["final"]["submissions"], 23)
+        self.assertEqual(session.dangerous_set_input_calls, [])
+        self.assertEqual(session.held_buttons, 0)
+
+    def test_room4_authored_override_uses_one_normal_x_edge_and_unwinds(self) -> None:
+        session = FakeRoom4Session(cursor=(0, 0))
+        session.activate_room4_override()
+        result = skip_room4_authored_override(session)
+        self.assertEqual(result["button"], "X")
+        self.assertEqual(result["step"]["mask"], 0x100)
+        self.assertEqual(result["step"]["press_frames_advanced"], 4)
+        self.assertEqual(result["step"]["release_frames_advanced"], 1)
+        self.assertEqual(result["cleared_override_record"], {
+            "stack_index": 1, "override_pc": 0,
+            "override_slot": 0, "owner_slot_depth": 0,
+        })
+        self.assertEqual(session.controller_events, [
+            (100, 0x100, True, 0),
+            (104, 0, True, 0),
+        ])
+        self.assertEqual(session.advances, [
+            (100, 104, 4, 0x100),
+            (104, 105, 1, 0),
+        ])
+        self.assertEqual(result["after"]["c19_stack_pointer"], 1)
+        completion = finish_room4_authored_cutscene(session)
+        self.assertEqual(completion["idle_frames"], 4)
+        self.assertEqual(completion["final"]["c19_stack_pointer"], 0)
+        self.assertEqual(session.held_buttons, 0)
+
+    def test_room4_override_replay_rejects_unexpected_owner_without_input(self) -> None:
+        session = FakeRoom4Session(cursor=(0, 0))
+        session.activate_room4_override()
+        session.values[0x7E239C] = 201
+        with self.assertRaisesRegex(RuntimeError, "precondition mismatch"):
+            skip_room4_authored_override(session)
+        self.assertEqual(session.controller_events, [])
+
     def test_room4_replay_releases_input_when_frame_advance_raises(self) -> None:
         session = FakeRoom4Session()
         session.fail_next_advance = True
@@ -335,11 +790,112 @@ class FateReplayTests(unittest.TestCase):
         )
         self.assertEqual(session.held_buttons, 0)
 
+    def test_room4_authored_use_cycles_source_verbs_then_submits_once(self) -> None:
+        session = FakeRoom4Session()
+        session.values.update({
+            0x7FF2BF: 4,
+            0x7E2221: 2,
+            0x7E2303: 0,
+            0x7E7A20: 0,
+            0x7E5FE0: 1,
+            0x7E5FE5: 3,
+            0x7E5FE6: 61,
+            0x7E5FE9: 79,
+        })
+        result = replay_room4_trapdoor_use(
+            session, pulse=lambda current, mask, predicate: room4_synchronous_input_edge(
+                current, mask, predicate
+            )
+        )
+        self.assertEqual([step["after"]["verb"] for step in result["verb_cycle_edges"]], [4, 9, 10])
+        self.assertEqual([step["mask"] for step in result["verb_cycle_edges"]], [0x800] * 3)
+        self.assertEqual(result["submission_count_before"], 79)
+        self.assertEqual(result["submission_count_after"], 80)
+        self.assertEqual(result["submission"]["after"]["mode"], 2)
+        self.assertEqual(session.held_buttons, 0)
+        self.assertEqual(session.dangerous_set_input_calls, [])
+
     def test_room4_replay_driver_rejects_wrong_start_state_without_input(self) -> None:
         session = FakeRoom4Session(ready=0)
         with self.assertRaisesRegex(RuntimeError, "precondition mismatch"):
             replay_room4_open_trapdoor_prefix(session)
         self.assertEqual(session.inputs, [])
+
+    def test_room4_edge_waits_for_exact_frame_sample_and_neutral_release(self) -> None:
+        session = FakeRoom4Session()
+        result = room4_synchronous_input_edge(
+            session,
+            0x040,
+            lambda before, after: after["x"] == before["x"] - 2,
+        )
+        self.assertEqual(result["attempts"], 1)
+        self.assertEqual(result["press_frames_to_sample"], 1)
+        self.assertEqual(result["action_state_at_sample_frame_end"]["x"], 115)
+        self.assertTrue(result["release_sampled"])
+        self.assertEqual(result["after"]["input_held"], 0)
+        self.assertEqual(result["after"]["input_released"] & 0x0200, 0x0200)
+        self.assertEqual(result["after"]["edge_sequence"], 1)
+        self.assertEqual(len(result["press_frames"]), 1)
+        self.assertEqual(len(result["release_frames"]), 1)
+        self.assertEqual(result["press_frames"][0]["advance"]["frames_advanced"], 1)
+        self.assertEqual(result["release_frames"][0]["advance"]["frames_advanced"], 1)
+
+    def test_room4_edge_waits_for_dispatch_without_sending_another_press(self) -> None:
+        session = FakeRoom4Session()
+        session.pending_edge_delay = 1
+        result = room4_synchronous_input_edge(
+            session,
+            0x040,
+            lambda before, after: after["x"] == before["x"] - 2,
+        )
+        self.assertEqual(result["attempts"], 1)
+        self.assertEqual(result["after"]["edge_sequence"], 1)
+        self.assertEqual(len(result["press_frames"]), 2)
+        self.assertTrue(result["press_frames"][1]["same_held_edge"])
+        self.assertEqual(
+            [buttons for _frame, buttons, hold, _frames in session.controller_events
+             if hold and buttons],
+            [0x040],
+        )
+
+    def test_room4_edge_does_not_repeat_after_semantic_mismatch(self) -> None:
+        session = FakeRoom4Session()
+        with self.assertRaisesRegex(RuntimeError, "no retry was sent"):
+            room4_synchronous_input_edge(
+                session,
+                0x040,
+                lambda _before, after: after["x"] == 100,
+            )
+        self.assertEqual(session.values[0x7E2208], 1)
+        self.assertEqual(session.held_buttons, 0)
+        self.assertEqual(
+            [buttons for _frame, buttons, hold, _frames in session.controller_events
+             if hold and buttons],
+            [0x040],
+        )
+
+    def test_talk_owned_edge_is_not_reused_for_retained_selection_model(self) -> None:
+        session = FakeRoom4Session()
+        session.values.update({
+            0x7E7A20: 1,
+            0x7E7A21: 1,
+            0x7E5FE0: 1,
+            0x7E5FE5: 3,
+            0x7E5FE6: 61,
+            0x7E5FE9: 77,
+            0x7E2208: 12,
+        })
+        result = room4_synchronous_input_edge(
+            session,
+            0x001,
+            lambda _before, after: after["submissions"] == 77,
+        )
+        edge = result["press_frames"][-1]["state_at_frame_end"]
+        self.assertEqual(edge["talk_owned_valid"], 1)
+        self.assertEqual(edge["talk_owned_sequence"], edge["edge_sequence"])
+        self.assertEqual(result["action_state_at_sample_frame_end"]["submissions"], 77)
+        self.assertEqual(result["after"]["submissions"], 77)
+        self.assertEqual(result["after"]["edge_sequence"], 13)
 
 
 if __name__ == "__main__":

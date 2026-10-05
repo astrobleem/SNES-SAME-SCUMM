@@ -1,12 +1,13 @@
 {
   "schema": "same-scumm-fate-input-replay-v1",
   "name": "room4-open-trapdoor-input-prefix",
-  "evidence_class": "historical native observation; not a replay on the repair HEAD",
-  "source_report": "build/fate-authentic-resume/room4-open-trapdoor-accepted-20260928.json",
+  "evidence_class": "fresh-power-on native replay through room7 plus a reusable room4-ready checkpoint path; not full original-game FATE acceptance",
+  "source_report": "build/fate-authentic-room4-to-map/room4-cold-action-v64-r43-room7-script-progress.json",
+  "source_report_sha256": "1b7729189c64620d895dedd2dbd1db64d2ca697cb49d0da4cc13e634c0e560c5",
   "rom": {
-    "sha256": "aa85cc2e8f26279b7e9254d711f352e4caf4a5202008d8b0de75488bd4d346b0",
-    "map_sha256": "6f7de8b6006cb63399446877dfb709633ba54b70e92e05999dd25702799d037b",
-    "build_identity_sha256": "ca7c2804a926a65a57bf0fa5795de7a2eeadb043a4cd5b966e6f7826140d850f",
+    "sha256": "f5492f1cb1bce093ad88baf67fb1fe9c9a09823d5ece082bc4f3ccd9b76471fd",
+    "map_sha256": "0e993aa0d8d4690cd0229b40d1744ec68c307e3d7f39c536e8a8931f1c233713",
+    "build_identity_sha256": "e467e795d56f3ad09d34ef9173ce1e2c56e814235537104a81163859ff3bc56b",
     "nexen_sha256": "17d243c404b8ef32bbb1754a5b026584f2ae24cb047f54b9f250a6f4b721650a"
   },
   "entry": {
@@ -31,6 +32,7 @@
       "button_mask": "0x001",
       "press_frames": 2,
       "release": "neutral before observing/acknowledging another generation",
+      "timed_message_rule": "HAVE_MSG values other than $FF are authored timed messages; do not send A merely because their delay is zero",
       "observed_generations_in_historical_cold_run": [1, 8, 10, 11, 12],
       "note": "Generation 12 followed the object-61 action; acknowledge it only if the replay is continued past the prefix."
     }
@@ -69,7 +71,145 @@
       "success": "sentence submission counter increments once"
     }
   ],
+  "known_forward_replay": {
+    "evidence_class": "authentic source-derived action, cold-native validated on the ROM identity above; not walkthrough-derived",
+    "room5_precondition": {
+      "room": 5,
+      "phase": 0,
+      "error": 0,
+      "lifecycle": "RUNNING",
+      "controller_ready": true,
+      "talk_active": false,
+      "controller_mode": 0,
+      "cursor_world": [145, 134],
+      "actor1_room": 5,
+      "bit69": 0
+    },
+    "action": {
+      "target_object": 77,
+      "target_name": "rope",
+      "target_world": [225, 124],
+      "target_hit_test": "the A selection edge must execute the active-room hit test and return 77; a zero hit_object before that edge is not a failed selection",
+      "cursor_route": {
+        "coordinate_lattice": [2, 2],
+        "direction_policy": "move X to target, then Y; require each exact two-pixel state delta",
+        "expected_edges": {"right": 40, "up": 5}
+      },
+      "selection": "one A edge must select object77; accept the observed authored/default verb only if it is 8 or 9",
+      "verb": 9,
+      "verb_adjustment": "if selection is verb8, one Y edge must select verb9; if already verb9, send no Y edge",
+      "submission": "one A edge; require submission counter +1 and controller mode 2",
+      "authentic_branch": "object77 verb9 checks bit69; when clear it starts room5 LSCR201",
+      "success": "room5 LSCR201 completes endCutscene/loadRoom(6), room6 reaches phase0 without SCUMM error",
+      "failure": "any other hit object, initial verb, submission count, room, or error is a hard replay boundary; no equivalent retry"
+    },
+    "resource_provenance": {
+      "archive_sha256": "0f3fc396642c800069d31ab9a087b314f1bb1612d37accbe13b6013219ac94f0",
+      "room5_lflf_offset": 539159,
+      "room5_payload_sha256": "2ffe299a284039e91171ba450c99f56c9acac4f2b418079f86531483fb5ce892",
+      "object77_verb9_sha256": "3baa836bb3e9404f8868a92d1a4e459d858b2bc552cd1f824b2c896526de9d68",
+      "lscr201_sha256": "acc3ff872266a4838c814d7c4faf50f96513a81cdb9724b8d829cbed82a2a30f",
+      "lscr201_size": 137
+    },
+    "runner": "python3 tools/replay_fate_room4_cold_nexen.py --rom <matching-rom> --output <report.json> --continue-trapdoor-use --continue-room5-rope"
+  },
+  "room6_forward_replay": {
+    "evidence_class": "authentic room6 source-derived controller step; cold-native validated on the ROM identity above",
+    "precondition": {
+      "room": 6,
+      "phase": 0,
+      "error": 0,
+      "engine_lifecycle": "RUNNING",
+      "controller_ready": true,
+      "talk_active": false,
+      "controller_mode": 0,
+      "cursor_world": [226, 139],
+      "actor1_room": 6,
+      "bit69": 0
+    },
+    "action": {
+      "target_object": 91,
+      "target_name": "books on statues",
+      "target_world": [4, 81],
+      "cursor_route": {
+        "coordinate_lattice": [2, 2],
+        "direction_policy": "move X to target, then Y; require each exact two-pixel state delta",
+        "expected_edges": {"left": 111, "up": 29}
+      },
+      "selection": "one A edge must select object91 with verb9",
+      "verb": 10,
+      "verb_adjustment": "one Y edge must change the selected object91 verb from 9 to 10",
+      "submission": "one A edge; require submission counter +1 and controller mode 2",
+      "authentic_branch": "object91 verb10 tests bit69 and starts room6 LSCR200 when bit69 is clear",
+      "success": "current-ROM descriptor observes room6/script200 at the selector from the ROM-bound room-local table (currently $93); any subsequent room-local identity is checked against that room's selector table; the authored lifecycle reaches room7 without SCUMM error",
+      "failure": "any different target, verb, branch flag, mapping, submission count, room, or error is a hard boundary; no equivalent retry"
+    },
+    "resource_provenance": {
+      "archive_sha256": "0f3fc396642c800069d31ab9a087b314f1bb1612d37accbe13b6013219ac94f0",
+      "room6_lflf_offset": 633461,
+      "room6_payload_sha256": "8c3ba33d378b1053cb57092f1a78cfa6a7d48430cd3c02895cad081f8f5cde17",
+      "object91_verb10_sha256": "0f3d2f67fefb5cf0b29ee31faa79a045a975312c2289bf4036af7746118de306",
+      "lscr200_size": 259,
+      "lscr200_sha256": "0f3f0e9f4b9fb5105bc187bc941450ddd3acf4337793a3bbf278ff78de099b50",
+      "generated_program_selector": "room-local selector table, currently room6 LSCR200=$93 and room7 LSCR200=$91"
+    },
+    "runner": "python3 tools/replay_fate_room4_cold_nexen.py --rom <matching-rom> --output <report.json> --continue-trapdoor-use --continue-room5-rope --continue-room6-books"
+  },
+  "room7_book_forward_replay": {
+    "evidence_class": "authentic source-derived continuation; cold-native validated with --continue-room7-book",
+    "build_content_closure": {
+      "environment": "SAME_SCUMM_APPEND_TERMINAL_EXECUTABLE_LOCAL_OBJECTS",
+      "required_entry": "7:133",
+      "reason": "room7 is entry-only in the startup profile; selecting its authentic book OBCD is required both to expose its verb table and to execute verb11",
+      "allocation": "append after established program identities; do not renumber earlier selections"
+    },
+    "precondition": {
+      "room": 7,
+      "phase": 0,
+      "error": 0,
+      "engine_lifecycle": "RUNNING",
+      "controller_ready": true,
+      "talk_active": false,
+      "controller_mode": 0,
+      "cursor_world": [162, 129],
+      "actor1_room": 7,
+      "bit69": 0,
+      "V214": 0,
+      "V215": 0,
+      "V219": 0
+    },
+    "action": {
+      "target_object": 133,
+      "target_name": "book",
+      "target_world": [188, 125],
+      "hit_test": "point overlaps object130 and object133; source object order places object133 first and selection must confirm object133",
+      "cursor_route": {
+        "coordinate_lattice": [2, 2],
+        "direction_policy": "move X to target, then Y; require each exact two-pixel state delta",
+        "expected_edges": {"right": 13, "up": 2}
+      },
+      "selection": "one A edge selects object133 with its first authored verb9",
+      "verb": 11,
+      "verb_adjustment": "one Y edge advances from authored verb9 to authored verb11",
+      "submission": "one A edge; require submission counter +1 and controller mode 2",
+      "authored_prefix": "cutscene; startScript(144,[21,4]); setObjectState(133,0); setClass(object133); clearBit(218)",
+      "success": "cold replay submits once; Global144/145 complete, object133 changes to state0/class32, and room7 settles with zero error",
+      "failure": "any changed precondition, selected identity, verb, submission count, or error is a hard stop; no equivalent retry"
+    },
+    "resource_provenance": {
+      "archive_sha256": "0f3fc396642c800069d31ab9a087b314f1bb1612d37accbe13b6013219ac94f0",
+      "room7_lflf_offset": 730022,
+      "room7_payload_sha256": "58cf45c4d2bd15cea5c4a3606003bdd6907d9586eb4864e0b672707ef18b269a",
+      "object133_verb11_sha256": "1acfe00eda91102d47a2c2c5fe92a92aa2549f00a52acfe5ff1d07b397176fda",
+      "global144_sha256": "236f9df44c9e4e5998267970077c01c3e72d64b7d7166abcffc7cd91a3f22c77",
+      "global144_generated_selector": "$84",
+      "global145_sha256": "7a3a36fc11f13679fbc85eb577111ad42593d62b41724fe2bb192e084be6d09d",
+      "global145_generated_selector": "$83"
+    },
+    "runner": "python3 tools/replay_fate_room4_cold_nexen.py --rom <matching-rom> --output <report.json> --continue-trapdoor-use --continue-room5-rope --continue-room6-books --continue-room7-book"
+  },
   "observed_result": {
+    "evidence_class": "historical room4-ready checkpoint result; superseded for current-ROM route coverage by cold_forward_validation",
     "room": 4,
     "phase": 0,
     "error": 0,
@@ -84,6 +224,39 @@
     "historical_input_attempts": {
       "left_pulses_retried": [1, 7],
       "all_other_pulses_retried": false
+    }
+  },
+  "cold_forward_validation": {
+    "evidence_class": "fresh-power-on native replay on the exact ROM/map/build identity above; no game-state writes and no savestate load",
+    "report": "build/fate-authentic-room4-to-map/room4-cold-action-v64-r43-room7-script-progress.json",
+    "room_sequence": [0, 68, 0, 4, 5, 6, 7],
+    "controller_actions": [
+      {"room": 4, "verb": 3, "object": 61, "name": "Open trapdoor", "submissions": "123 -> 124"},
+      {"room": 4, "verb": 10, "object": 61, "name": "Use trapdoor", "submissions": "124 -> 125"},
+      {"room": 5, "verb": 9, "object": 77, "name": "rope", "submissions": "125 -> 126"},
+      {"room": 6, "verb": 10, "object": 91, "name": "books on statues", "submissions": "126 -> 127"},
+      {"room": 7, "verb": 11, "object": 133, "name": "Lost Dialogue of Plato", "submissions": "127 -> 128"}
+    ],
+    "acknowledgements": 0,
+    "extra_sentence_submissions": 0,
+    "room7_book_outcome": {
+      "global144_global145_chain": "completed; Global145 local counter reached 155 and both descriptors retired",
+      "object133_state": 0,
+      "object133_class32_untouchable": true,
+      "bit218": 0,
+      "final_frame": 14487,
+      "final_room": 7,
+      "actor1": {"room": 7, "x": 175, "y": 134, "moving": 0},
+      "controller": {"mode": 1, "object": 133, "verb": 9, "sentence_pending": 0, "c20_count": 0},
+      "talk_active": 0,
+      "scumm_error": 0,
+      "engine_lifecycle": "RUNNING"
+    },
+    "next_authored_gate": {
+      "resource": "authentic room7 object113 (coal chute), verb10",
+      "condition": "bit69 != 0 starts room7 LSCR203; with bit69 == 0 the false branch invokes object113 verb9 instead",
+      "observed_bit69": 0,
+      "classification": "authored gameplay-state boundary; this replay does not guess an action to set bit69"
     }
   },
   "input_execution": {

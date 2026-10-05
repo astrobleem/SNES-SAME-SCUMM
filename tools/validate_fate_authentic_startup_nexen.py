@@ -41,6 +41,11 @@ SLOT_PC = 0x7E23E4
 SLOT_OWNER = 0x7FF2E7
 SLOT_WHERE = 0x7E7F46
 SLOT_COUNT = 25
+# This cold-start diagnostic uses the compact SCUMM bootstrap profile
+# (PHASE6HB/PHASE6LA1D are false), so VAR_EGO lives at variables[1] in the
+# legacy table rooted at $7E2320. The authored full-MAXS builds select a
+# different table and must use their own generated profile identity.
+STARTUP_VAR_EGO = 0x7E2322
 
 
 def u16(raw: bytes, offset: int = 0) -> int:
@@ -56,6 +61,9 @@ def snapshot(session) -> dict[str, object]:
     pcs = session.read_memory("snesMemory", SLOT_PC, SLOT_COUNT * 2)
     owners = session.read_memory("snesMemory", SLOT_OWNER, SLOT_COUNT)
     where = session.read_memory("snesMemory", SLOT_WHERE, SLOT_COUNT)
+    actor1 = session.read_memory("snesMemory", 0x7F3700, 64)
+    ego_position = session.read_memory("snesMemory", 0x7FF1A4, 4)
+    controller = session.read_memory("snesMemory", 0x7E5FE0, 10)
     live = []
     for slot in range(SLOT_COUNT):
         if statuses[slot] or numbers[slot] or programs[slot]:
@@ -74,6 +82,21 @@ def snapshot(session) -> dict[str, object]:
         "active_record": room[0],
         "pending_room": room[3],
         "phase": room[4],
+        "var_ego": u16(session.read_memory("snesMemory", STARTUP_VAR_EGO, 2)),
+        "actor1": {
+            "room": actor1[0x16],
+            "present": actor1[0x1F],
+            "visible": actor1[0x15],
+            "position": [u16(ego_position), u16(ego_position, 2)],
+        },
+        "controller": {
+            "mode": controller[0],
+            "cursor": [u16(controller, 1), u16(controller, 3)],
+            "verb": controller[5],
+            "object": u16(controller, 6),
+            "submissions": controller[9],
+            "ready": session.read_memory("snesMemory", 0x7E5E8A, 1)[0],
+        },
         "m23a_phase": session.read_memory("snesMemory", 0x7FF2C2, 1)[0],
         "m23a_hold": session.read_memory("snesMemory", 0x7FF2C4, 1)[0],
         "m23a_current_kind": session.read_memory("snesMemory", 0x7FF2CF, 1)[0],
@@ -155,9 +178,10 @@ def _drive_title_saw_prior_scene(
 def _button_names(mask: int) -> list[str]:
     """Return the SNES pad buttons represented by the recorded input mask."""
     names = (
-        (0x001, "A"), (0x002, "B"), (0x004, "X"), (0x008, "START"),
+        (0x001, "A"), (0x002, "B"), (0x004, "SELECT"), (0x008, "START"),
         (0x010, "UP"), (0x020, "DOWN"), (0x040, "LEFT"),
-        (0x080, "RIGHT"), (0x100, "Y"), (0x200, "L"), (0x400, "R"),
+        (0x080, "RIGHT"), (0x100, "X"), (0x200, "L"),
+        (0x400, "R"), (0x800, "Y"),
     )
     return [name for bit, name in names if mask & bit]
 
@@ -347,6 +371,16 @@ def main() -> int:
         RESET_DIAG_BASE: "reset_diag_count_low",
         RESET_DIAG_BASE + 1: "reset_diag_count_high",
         0x7E2200: "input_held",
+        STARTUP_VAR_EGO: "var_ego_low",
+        0x7F3776: "actor1_room",
+        0x7FF1A4: "actor1_x_low",
+        0x7FF1A5: "actor1_x_high",
+        0x7FF1A6: "actor1_y_low",
+        0x7FF1A7: "actor1_y_high",
+        0x7E5FE1: "controller_x_low",
+        0x7E5FE2: "controller_x_high",
+        0x7E5FE3: "controller_y_low",
+        0x7E5FE4: "controller_y_high",
         0x7E2300: "shared_vm_pc_low",
         0x7E2301: "shared_vm_pc_high",
         0x7E2306: "shared_vm_last_opcode",
@@ -589,7 +623,11 @@ def main() -> int:
             if name is not None:
                 capture_hook(name, params)
             elif handle in watched:
-                watched_writes.append({"write": watched[handle], **params})
+                watched_writes.append({
+                    "write": watched[handle], **params,
+                    "drain_time_snapshot": snapshot(session),
+                    "snapshot_timing": "drain-time; hook frame/cycle are event-time",
+                })
         samples.append(snapshot(session))
         second_boot_stop: dict[str, object] | None = None
         if args.stop_at_second_boot:
@@ -616,6 +654,8 @@ def main() -> int:
                     watched_writes.append({
                         "write": write,
                         **params,
+                        "drain_time_snapshot": snapshot(session),
+                        "snapshot_timing": "drain-time; hook frame/cycle are event-time",
                         **({
                             "error_context_at_drain": snapshot(session),
                             "trace_tail_at_drain": session.trace_log(256).get(
@@ -655,7 +695,11 @@ def main() -> int:
                     # get_cpu_state() alone is not proof of the address hit.
                     low_pc_notifications.append(params)
                 elif handle in watched:
-                    watched_writes.append({"write": watched[handle], **params})
+                    watched_writes.append({
+                        "write": watched[handle], **params,
+                        "drain_time_snapshot": snapshot(session),
+                        "snapshot_timing": "drain-time; hook frame/cycle are event-time",
+                    })
             low_pc_stop = {
                 "address": args.stop_at_low_pc,
                 "run_until": stopped,
