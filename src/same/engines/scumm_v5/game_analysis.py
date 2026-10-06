@@ -20,6 +20,7 @@ from .room_compiler import (
     RoomBundleCompilation, ScriptIR, _static_value, compile_room_payload,
     decode_script, profile_game_identity, sha256,
 )
+from .v5_opcode_schema import opcode_schema, schema_coverage
 
 
 def canonical_json(value: Any) -> bytes:
@@ -48,6 +49,12 @@ def executable_analysis_status(script: ScriptIR) -> str:
         return "COMPLETE"
     tail = next((item for item in script.instructions
                  if item.operation == "opaque_bytecode_tail"), None)
+    if tail is not None and tail.structural_status in {"TRUNCATED", "MALFORMED"}:
+        return "MALFORMED"
+    if tail is not None and tail.structural_status in {
+        "STRUCTURAL_UNKNOWN", "UNSUPPORTED_DECODE",
+    }:
+        return "UNSUPPORTED_DECODE"
     diagnostic = (tail.diagnostic or "") if tail is not None else ""
     lowered = diagnostic.lower()
     if lowered.startswith("truncated") or "exceeds bounded" in lowered:
@@ -97,6 +104,7 @@ class GameAnalysis:
     unsupported_frontier: dict[str, Any]
     opaque_analysis: dict[str, Any]
     capacity: dict[str, Any]
+    opcode_coverage: dict[str, Any]
     room_compilations: dict[int, RoomBundleCompilation]
 
     def files(self) -> dict[str, bytes]:
@@ -110,6 +118,7 @@ class GameAnalysis:
             "unsupported_frontier.json": canonical_json(self.unsupported_frontier),
             "opaque_analysis.json": canonical_json(self.opaque_analysis),
             "capacity.json": canonical_json(self.capacity),
+            "opcode_coverage.json": canonical_json(self.opcode_coverage),
             "summary.md": self.summary_markdown().encode(),
         }
 
@@ -129,6 +138,11 @@ class GameAnalysis:
             f"{graph['CONDITIONAL_STATIC']}, dynamic {graph['DYNAMIC']}, "
             f"unresolved {graph['UNRESOLVED']}",
             f"Reachability: {', '.join(f'{key.lower()} {value}' for key, value in reach.items())}",
+            f"Structural opcode families observed: {self.opcode_coverage['counts']['semantic_families_observed']}",
+            "Structural frontiers: "
+            f"unknown {self.opcode_coverage['counts']['structurally_unknown_occurrences']}, "
+            f"truncated {self.opcode_coverage['counts']['truncated_occurrences']}, "
+            f"malformed {self.opcode_coverage['counts']['malformed_occurrences']}",
             f"Static closure complete: {'yes' if complete else 'no'}", "",
             "Opaque analysis remains incomplete; absence of a decoded edge is not proof "
             "that an opaque tail contains no dependency or capability.", "",
@@ -313,13 +327,13 @@ def _control_flow_certainty(script: ScriptIR) -> dict[int, str]:
         certainty[pc] = ("CONDITIONAL_STATIC" if conditional else "STATIC")
         ins = by_pc[pc]
         next_pc = pc + len(ins.raw_hex) // 2
-        if ins.operation == "stop_script" or ins.operation == "opaque_bytecode_tail":
+        if ins.operation == "opaque_bytecode_tail" or ins.control_flow == "TERMINATOR":
             continue
-        if ins.operation == "jump":
+        if ins.control_flow == "UNCONDITIONAL_BRANCH":
             if ins.branch_target is not None:
                 pending.append((ins.branch_target, conditional))
             continue
-        if ins.operation.startswith("branch_"):
+        if ins.control_flow == "CONDITIONAL_BRANCH":
             if ins.branch_target is not None:
                 pending.append((ins.branch_target, True))
             if next_pc in by_pc:
@@ -345,6 +359,56 @@ def _edge(source: str, target: str | None, kind: str, certainty: str,
         "candidate_targets": sorted(set(candidates)),
         "detail": detail, "domain": domain,
     }
+
+
+_STRUCTURAL_FAMILIES_WITH_DEPENDENCIES = {
+    "startScript": ("start_script", ("script", "arguments")),
+    "chainScript": ("chain_script", ("script", "arguments")),
+    "startObject": ("start_object", ("object", "entry", "arguments")),
+    "loadRoom": ("load_room", ("room",)),
+    "loadRoomWithEgo": ("load_room_with_ego", ("entry_object", "room", "x", "y")),
+    "actorFollowCamera": ("actor_follow_camera", ("actor",)),
+    "putActorInRoom": ("put_actor_in_room", ("actor", "room")),
+    "startSound": ("start_sound", ("resource",)),
+    "stopSound": ("stop_sound", ("resource",)),
+    "startMusic": ("start_music", ("resource",)),
+}
+
+
+def _dependency_view(instruction: Any) -> tuple[str, dict[str, Any]]:
+    """Expose provable source references without claiming semantic IR support."""
+    operation = instruction.operation
+    operands = dict(instruction.operands)
+    family = instruction.opcode_family
+    if not operation.startswith("structural_only:") or family is None:
+        return operation, operands
+    mapping = _STRUCTURAL_FAMILIES_WITH_DEPENDENCIES.get(family)
+    if mapping is not None:
+        operation, names = mapping
+        for index, name in enumerate(names):
+            key = f"operand_{index}"
+            if key in operands:
+                operands[name] = operands[key]
+    elif family == "actorOps":
+        commands = operands.get("commands", [])
+        operands["selectors"] = [
+            {"subop": int(item["subopcode"]) & 0x1F,
+             "values": item.get("values", [])}
+            for item in commands
+        ]
+    elif family == "resourceRoutines":
+        operands["subop"] = int(operands.get("subopcode", 0)) & 0x3F
+    return operation, operands
+
+
+def _ensure_resource_reference_node(
+    nodes: dict[str, dict[str, Any]], identity: str | None, category: str,
+) -> None:
+    if identity is not None and identity not in nodes:
+        nodes[identity] = {
+            "identity": identity, "node_type": "resource", "category": category,
+            "status": "UNRESOLVED_REFERENCE",
+        }
 
 
 def build_dependency_graph(
@@ -413,7 +477,7 @@ def build_dependency_graph(
         certainty_by_pc = _control_flow_certainty(script)
         room = script.source.room if script.kind != "SCRP" else None
         for ins in script.instructions:
-            operands = dict(ins.operands)
+            operation, operands = _dependency_view(ins)
             certainty = certainty_by_pc.get(ins.pc, "UNRESOLVED")
             if ins.operation == "opaque_bytecode_tail":
                 continue
@@ -432,7 +496,7 @@ def build_dependency_graph(
                     edges.append(_edge(source, None, "actor-reference", "DYNAMIC",
                                        ins.pc, expression=f"actor selector {actor_operand!r}",
                                        domain="resource"))
-            if ins.operation in {"start_script", "chain_script"}:
+            if operation in {"start_script", "chain_script"}:
                 target_number = _direct(operands.get("script"))
                 if target_number is None:
                     candidates = [f"GlobalScript({number})" for number in sorted(global_ids)]
@@ -442,7 +506,7 @@ def build_dependency_graph(
                                            if owner_room == room)
                     else:
                         candidates.extend(room_to_scripts.values())
-                    edges.append(_edge(source, None, ins.operation, "DYNAMIC", ins.pc,
+                    edges.append(_edge(source, None, operation, "DYNAMIC", ins.pc,
                                        expression=f"script selector {operand!r}",
                                        candidates=candidates,
                                        detail="indirect selector is not guessed"))
@@ -452,7 +516,7 @@ def build_dependency_graph(
                         nodes[target] = {"identity": target, "node_type": "executable",
                                          "analysis_status": "UNRESOLVED",
                                          "diagnostic": "directory slot has no available script body"}
-                    edges.append(_edge(source, target, ins.operation,
+                    edges.append(_edge(source, target, operation,
                                        "UNRESOLVED" if target_number not in global_ids else certainty,
                                        ins.pc, detail="global script namespace"))
                 elif room is not None:
@@ -472,7 +536,7 @@ def build_dependency_graph(
                                        expression=f"current room + local selector {target_number}",
                                        candidates=candidates,
                                        detail="global script has no statically known current room"))
-            elif ins.operation == "start_object":
+            elif operation == "start_object":
                 object_id, verb_id = _direct(operands.get("object")), _direct(operands.get("entry"))
                 if object_id is None or verb_id is None or room is None:
                     edges.append(_edge(source, None, "object-verb", "DYNAMIC", ins.pc,
@@ -486,10 +550,10 @@ def build_dependency_graph(
                     edges.append(_edge(source, target,
                                        "start-object", certainty if target in scripts else "UNRESOLVED",
                                        ins.pc))
-            elif ins.operation in {"load_room", "load_room_with_ego"}:
+            elif operation in {"load_room", "load_room_with_ego"}:
                 room_number = _direct(operands.get("room"))
                 if room_number is None:
-                    edges.append(_edge(source, None, ins.operation, "DYNAMIC", ins.pc,
+                    edges.append(_edge(source, None, operation, "DYNAMIC", ins.pc,
                                        expression=f"room operand {operands.get('room')!r}"))
                 else:
                     target = f"RoomEntry({room_number})"
@@ -498,14 +562,14 @@ def build_dependency_graph(
                                          "analysis_status": "UNRESOLVED",
                                          "diagnostic": "target room has no decoded ENCD body"}
                     edges.append(_edge(source, target,
-                                       ins.operation, certainty if target in scripts else "UNRESOLVED",
+                                       operation, certainty if target in scripts else "UNRESOLVED",
                                        ins.pc))
                     if room is not None:
                         exit_target = f"RoomExit({room})"
                         if exit_target in scripts:
                             edges.append(_edge(source, exit_target, "outgoing-room-exit",
                                                "CONDITIONAL_STATIC", ins.pc))
-                    if ins.operation == "load_room_with_ego":
+                    if operation == "load_room_with_ego":
                         entry_object = _direct(operands.get("entry_object"))
                         if entry_object is None:
                             candidates = [f"RoomObject(room={room_number},object={obj.object_id})"
@@ -525,14 +589,17 @@ def build_dependency_graph(
                                 }
                             edges.append(_edge(source, object_node, "room-entry-object",
                                                certainty, ins.pc))
-            elif ins.operation == "actor_follow_camera":
+            elif operation == "actor_follow_camera":
                 actor = _direct(operands.get("actor"))
-                placements = [item for item in script.instructions
-                              if item.operation == "put_actor_in_room"
-                              and _direct(dict(item.operands).get("actor")) == actor
-                              and _direct(dict(item.operands).get("room")) is not None]
+                placements = []
+                for item in script.instructions:
+                    item_operation, item_operands = _dependency_view(item)
+                    if (item_operation == "put_actor_in_room"
+                            and _direct(item_operands.get("actor")) == actor
+                            and _direct(item_operands.get("room")) is not None):
+                        placements.append(item_operands)
                 if actor is not None and placements:
-                    followed_room = _direct(dict(placements[-1].operands).get("room"))
+                    followed_room = _direct(placements[-1].get("room"))
                     target = f"RoomEntry({followed_room})"
                     edges.append(_edge(source, target,
                                        "actor-follow-camera-room",
@@ -541,7 +608,7 @@ def build_dependency_graph(
                     edges.append(_edge(source, None, "actor-follow-camera-room", "DYNAMIC", ins.pc,
                                        expression="followed actor's room is runtime state",
                                        candidates=[f"RoomEntry({number})" for number in room_ids]))
-            elif ins.operation == "put_actor_in_room":
+            elif operation == "put_actor_in_room":
                 target_room = _direct(operands.get("room"))
                 target = None if target_room is None else f"RoomEntry({target_room})"
                 edges.append(_edge(source, target, "actor-placement-room",
@@ -549,14 +616,15 @@ def build_dependency_graph(
                                    expression=None if target_room is not None else
                                    "actor destination room operand is indirect",
                                    detail="actor room assignment; does not itself assert a scene transition"))
-            elif ins.operation in {"start_sound", "stop_sound", "start_music"}:
+            elif operation in {"start_sound", "stop_sound", "start_music"}:
                 resource = _direct(operands.get("resource"))
                 target = None if resource is None else f"Sound({resource})"
+                _ensure_resource_reference_node(nodes, target, "sound")
                 edges.append(_edge(source, target, "sound-reference",
                                    certainty if resource is not None else "DYNAMIC", ins.pc,
                                    expression=None if resource is not None else "resource operand is indirect",
                                    domain="resource"))
-            elif ins.operation == "actor_ops":
+            elif operation == "actor_ops":
                 for selector in operands.get("selectors", []):
                     subop = int(selector["subop"])
                     if subop not in (1, 3):
@@ -564,6 +632,8 @@ def build_dependency_graph(
                     raw = selector["values"][0] if selector.get("values") else None
                     number = _direct(raw)
                     target = f"{'Costume' if subop == 1 else 'Sound'}({number})" if number is not None else None
+                    _ensure_resource_reference_node(
+                        nodes, target, "costume" if subop == 1 else "sound")
                     edges.append(_edge(source, target, "costume-reference" if subop == 1 else "sound-reference",
                                        certainty if number is not None else "DYNAMIC", ins.pc,
                                        expression=None if number is not None else f"actorOps operand {raw!r}",
@@ -572,12 +642,13 @@ def build_dependency_graph(
                     if subop == 1 and actor_id is not None and number is not None:
                         edges.append(_edge(f"Actor({actor_id})", target, "actor-uses-costume",
                                            certainty, ins.pc, domain="resource"))
-            elif ins.operation == "resource_routines":
+            elif operation == "resource_routines":
                 subop = int(operands.get("subop", 0))
                 number = _direct(operands.get("resource"))
                 category = {1: "GlobalScript", 2: "Sound", 3: "Costume", 4: "RoomResource",
                             18: "Charset", 19: "Charset"}.get(subop, "Resource")
                 target = f"{category}({number})" if number is not None else None
+                _ensure_resource_reference_node(nodes, target, category.lower())
                 edges.append(_edge(source, target, "resource-routine-reference",
                                    certainty if number is not None else "DYNAMIC", ins.pc,
                                    expression=None if number is not None else "resource selector is indirect",
@@ -783,17 +854,26 @@ def analyze_capabilities(
     frontier_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
     statuses = reachability["status_by_executable"]
     for operation, occurrences in sorted(operations.items()):
-        group = _capability_group(operation)
+        declared_groups = {instruction.semantic_capability for _, instruction in occurrences
+                           if instruction.semantic_capability}
+        group = (next(iter(declared_groups)) if len(declared_groups) == 1
+                 else _capability_group(operation))
         opcodes = sorted({instruction.opcode for _, instruction in occurrences})
         is_opaque = operation == "opaque_bytecode_tail"
+        semantic_unsupported = any(
+            instruction.semantic_status == "SEMANTIC_UNSUPPORTED"
+            for _, instruction in occurrences
+        )
         if is_opaque:
             frontend = "UNSUPPORTED"
             ir_status = "PARTIAL"
+            semantic_ir = "UNKNOWN"
             host_status = "UNKNOWN"
-            reason = "instruction width/semantics are not decoded; tail remains opaque"
+            reason = "instruction boundary/control flow is unknown; tail remains opaque"
         else:
             frontend = "SUPPORTED"
             ir_status = "SUPPORTED"
+            semantic_ir = "UNSUPPORTED" if semantic_unsupported else "SUPPORTED"
             handler_hits = [opcode in handlers for opcode in opcodes]
             host_status = ("UNSUPPORTED" if handler_hits and not any(handler_hits) else
                            "PARTIAL" if not all(handler_hits) else "PARTIAL")
@@ -808,6 +888,10 @@ def analyze_capabilities(
                                  "evidence": "shared SCUMM v5 decode_script result"},
             "ir_representation": {"status": ir_status,
                                   "evidence": "InstructionIR retains source PC and operands"},
+            "semantic_ir": {"status": semantic_ir,
+                            "evidence": ("structural-only form; semantics are not normalized"
+                                         if semantic_unsupported else
+                                         "semantic operation and operands are normalized")},
             "snes_backend": {"status": "PARTIAL",
                              "evidence": "source script bytes are retained in SC5C; no per-op lowering certification"},
             "host_runtime": {"status": host_status, "evidence": reason},
@@ -843,7 +927,7 @@ def analyze_capabilities(
                 continue
             dimensions = record
             non_supported = [name for name in (
-                "front_end_decode", "ir_representation", "snes_backend",
+                "front_end_decode", "ir_representation", "semantic_ir", "snes_backend",
                 "host_runtime", "snes_runtime", "save_restore", "native_conformance")
                 if dimensions[name]["status"] in {"PARTIAL", "UNSUPPORTED", "UNKNOWN"}]
             if non_supported:
@@ -883,11 +967,12 @@ def analyze_capabilities(
         if isinstance(dimension, dict) and name not in {"occurrences"}
     )
     groups: dict[str, dict[str, Any]] = {}
-    dimension_names = ("front_end_decode", "ir_representation", "snes_backend",
+    dimension_names = ("front_end_decode", "ir_representation", "semantic_ir", "snes_backend",
                        "host_runtime", "snes_runtime", "save_restore", "native_conformance")
     severity = {"SUPPORTED": 0, "NOT_APPLICABLE": 0, "PARTIAL": 1,
                 "UNKNOWN": 2, "UNSUPPORTED": 3}
-    for group in sorted(set(_OP_TO_CAPABILITY.values()) | {"other-or-opaque"}):
+    for group in sorted(set(_OP_TO_CAPABILITY.values()) | {"other-or-opaque"}
+                        | {str(record["capability"]) for record in registry.values()}):
         records = [record for record in registry.values() if record["capability"] == group]
         if not records:
             continue
@@ -939,6 +1024,114 @@ def analyze_capabilities(
     }
 
 
+def build_opcode_coverage(
+    scripts: dict[str, ScriptIR], reachability: dict[str, Any],
+    capabilities: dict[str, Any],
+) -> dict[str, Any]:
+    """Summarize byte-structure and semantic status without merging layers."""
+    registry = capabilities["registry_by_operation"]
+    reach = reachability["status_by_executable"]
+    raw_counts: Counter[int] = Counter()
+    family_counts: Counter[str] = Counter()
+    structural_counts: Counter[str] = Counter()
+    semantic_counts: Counter[str] = Counter()
+    groups: dict[tuple[int, int | None], list[tuple[str, Any]]] = defaultdict(list)
+    family_rows: dict[str, dict[str, Any]] = {}
+    backend_supported = runtime_supported = 0
+    total = 0
+    for identity, script in sorted(scripts.items()):
+        for instruction in script.instructions:
+            total += 1
+            raw_counts[instruction.opcode] += 1
+            structural_counts[instruction.structural_status] += 1
+            semantic_counts[instruction.semantic_status] += 1
+            if instruction.opcode_family:
+                family_counts[instruction.opcode_family] += 1
+                row = family_rows.setdefault(instruction.opcode_family, {
+                    "occurrences": 0, "raw_variants": set(),
+                    "structural_statuses": Counter(), "semantic_statuses": Counter(),
+                })
+                row["occurrences"] += 1
+                row["raw_variants"].add(instruction.opcode)
+                row["structural_statuses"][instruction.structural_status] += 1
+                row["semantic_statuses"][instruction.semantic_status] += 1
+            if instruction.structural_status != "STRUCTURALLY_DECODED":
+                groups[(instruction.opcode, instruction.subopcode)].append((identity, instruction))
+            record = registry.get(instruction.operation, {})
+            backend_supported += record.get("snes_backend", {}).get("status") == "SUPPORTED"
+            runtime_supported += record.get("snes_runtime", {}).get("status") == "SUPPORTED"
+    examples_by_unknown = []
+    for (opcode, subopcode), occurrences in sorted(groups.items()):
+        rows = []
+        for identity, instruction in occurrences[:5]:
+            script = scripts[identity]
+            rows.append({
+                "source_identity": identity, "source_pc": instruction.pc,
+                "source": asdict(script.source),
+                "source_body_sha256": script.source.source_sha256,
+                "opcode_family": instruction.opcode_family,
+                "structural_status": instruction.structural_status,
+                "reason": instruction.diagnostic,
+                "reachability": reach.get(identity, "UNRESOLVED"),
+            })
+        known_reach = [(reach.get(identity, "UNRESOLVED"), instruction.pc, identity)
+                       for identity, instruction in occurrences
+                       if reach.get(identity) in {"ROOT", "DEFINITE", "CONDITIONAL", "POSSIBLE"}]
+        earliest = min(known_reach, key=lambda item: (
+            {"ROOT": 0, "DEFINITE": 1, "CONDITIONAL": 2, "POSSIBLE": 3}[item[0]],
+            item[2], item[1])) if known_reach else None
+        examples_by_unknown.append({
+            "opcode": f"0x{opcode:02X}",
+            "subopcode": None if subopcode is None else f"0x{subopcode:02X}",
+            "occurrences": len(occurrences),
+            "affected_executables": len({identity for identity, _ in occurrences}),
+            "examples": rows,
+            "earliest_reachable_occurrence": (None if earliest is None else {
+                "reachability": earliest[0], "source_identity": earliest[2],
+                "source_pc": earliest[1],
+            }),
+        })
+    family_report = {
+        name: {
+            "occurrences": row["occurrences"],
+            "raw_variants": [f"0x{value:02X}" for value in sorted(row["raw_variants"])],
+            "structural_statuses": dict(sorted(row["structural_statuses"].items())),
+            "semantic_statuses": dict(sorted(row["semantic_statuses"].items())),
+            "schema": (None if not row["raw_variants"] else asdict(
+                opcode_schema(min(row["raw_variants"]))
+            )),
+        }
+        for name, row in sorted(family_rows.items())
+    }
+    return {
+        "schema": "same_scumm_v5_opcode_structural_coverage_v1",
+        "source_scope": "all parsed executable identities; unsupported room containers excluded",
+        "counts": {
+            "instruction_occurrences": total,
+            "raw_opcode_variants_observed": len(raw_counts),
+            "semantic_families_observed": len(family_counts),
+            "structurally_decoded_occurrences": structural_counts.get("STRUCTURALLY_DECODED", 0),
+            "structurally_unknown_occurrences": structural_counts.get("STRUCTURAL_UNKNOWN", 0),
+            "truncated_occurrences": structural_counts.get("TRUNCATED", 0),
+            "malformed_occurrences": structural_counts.get("MALFORMED", 0),
+            "structurally_not_decoded_occurrences": sum(
+                count for status, count in structural_counts.items()
+                if status != "STRUCTURALLY_DECODED"),
+            "semantic_ir_available_occurrences": semantic_counts.get("SEMANTIC_IR_AVAILABLE", 0),
+            "semantic_unsupported_occurrences": semantic_counts.get("SEMANTIC_UNSUPPORTED", 0),
+            "semantic_unknown_occurrences": semantic_counts.get("SEMANTIC_UNKNOWN", 0),
+            "backend_supported_occurrences": backend_supported,
+            "snes_runtime_supported_occurrences": runtime_supported,
+        },
+        "opcode_schema": schema_coverage(),
+        "raw_opcode_occurrences": {f"0x{opcode:02X}": count
+                                   for opcode, count in sorted(raw_counts.items())},
+        "families": family_report,
+        "structural_unknowns": examples_by_unknown,
+        "invariant": "STRUCTURAL DECODE != SEMANTIC IR != BACKEND SUPPORT != RUNTIME SUPPORT",
+    }
+
+
 def analyze_game(
     provider: LucasartsScummV5ResourceProvider,
     *, profile: EngineProfile, profile_bytes: bytes,
@@ -952,6 +1145,7 @@ def analyze_game(
     graph, scripts = build_dependency_graph(game, compilations)
     reachability, paths = compute_reachability(profile, scripts, graph)
     capabilities, frontier = analyze_capabilities(scripts, reachability, paths)
+    opcode_coverage = build_opcode_coverage(scripts, reachability, capabilities)
     resource_counts = Counter(str(item["category"]) for item in game.resources)
     status_counts = Counter(str(item["status"]) for item in game.resources)
     executable_status = Counter(executable_analysis_status(item)
@@ -1083,7 +1277,8 @@ def analyze_game(
                                    "reason": "dynamic scheduling and runtime coexistence are not bounded by static graph depth"},
     }
     return GameAnalysis(game, census, executable_report, graph, reachability,
-                        capabilities, frontier, opaque, capacity, compilations)
+                        capabilities, frontier, opaque, capacity, opcode_coverage,
+                        compilations)
 
 
 def game_analysis_hash(files: dict[str, bytes]) -> str:

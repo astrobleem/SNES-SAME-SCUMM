@@ -25,6 +25,7 @@ from .cooked_room import (
 )
 from .room import ScummV5Room, ScummV5RoomObject, decode_room, iter_scumm_chunks
 from .text import control_argument_count
+from .v5_opcode_schema import OpcodeSchema, opcode_schema
 
 
 def sha256(data: bytes) -> str:
@@ -74,6 +75,19 @@ class InstructionIR:
     boundary_known: bool = True
     branch_target: int | None = None
     diagnostic: str | None = None
+    base_opcode: int | None = None
+    opcode_family: str | None = None
+    parameter_flags: int = 0
+    instruction_width: int = 0
+    raw_operand_hex: str = ""
+    subopcode: int | None = None
+    structural_status: str = "STRUCTURALLY_DECODED"
+    semantic_status: str = "SEMANTIC_IR_AVAILABLE"
+    semantic_capability: str | None = None
+    control_flow: str = "FALLTHROUGH"
+    fallthrough: bool | None = True
+    branch_targets: tuple[int, ...] = ()
+    opcode_variant_flags: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +339,452 @@ _END_CUTSCENE = frozenset((0xC0,))
 _STOP = frozenset((0x00, 0xA0))
 
 
+class _StructuralUnknown(ValueError):
+    """The opcode family is known, but this operand/control-flow form is not."""
+
+    def __init__(self, message: str, *, subopcode: int | None = None) -> None:
+        super().__init__(message)
+        self.subopcode = subopcode
+
+
+def _read_structural_family(
+    cursor: _Cursor, opcode: int, schema: OpcodeSchema, *, depth: int = 0,
+) -> tuple[dict[str, Any], int | None, int | None]:
+    """Read a known v5 instruction shape without asserting semantic support.
+
+    The return values are decoded operands, one relative branch target, and
+    an optional command subopcode. Unknown variable layouts fail closed.
+    """
+    if depth > 8:
+        raise _StructuralUnknown("nested opcode structure exceeds bounded depth")
+    family = schema.family
+    form, _capability = (schema.operand_form, schema.semantic_capability)
+    if form is None:
+        raise _StructuralUnknown(f"no structural operand form registered for {family}")
+    operands: dict[str, Any] = {}
+    target: int | None = None
+    subopcode: int | None = None
+
+    def result() -> dict[str, Any]:
+        return cursor.varref()
+
+    def word_args() -> list[dict[str, Any]]:
+        values = []
+        while True:
+            selector = cursor.u8()
+            if selector == 0xFF:
+                return values
+            values.append({"selector": selector, "value": cursor.u16(),
+                           "mode": "variable" if selector & 0x80 else "direct"})
+            if len(values) > 256:
+                raise _StructuralUnknown("argument list exceeds structural bound")
+
+    if form == "string_ops":
+        selector = cursor.u8()
+        subopcode = selector
+        key = selector & 0x1F
+        operands["subopcode"] = selector
+        if key == 1:
+            operands["string"] = cursor.byte_operand(selector, 0x80)
+            operands["text_hex"] = cursor.encoded_string().hex()
+        elif key == 2:
+            operands["destination"] = cursor.byte_operand(selector, 0x80)
+            operands["source"] = cursor.byte_operand(selector, 0x40)
+        elif key == 3:
+            operands["string"] = cursor.byte_operand(selector, 0x80)
+            operands["index"] = cursor.byte_operand(selector, 0x40)
+            operands["character"] = cursor.byte_operand(selector, 0x20)
+        elif key == 4:
+            operands["result"] = result()
+            operands["string"] = cursor.byte_operand(selector, 0x80)
+            operands["index"] = cursor.byte_operand(selector, 0x40)
+        elif key == 5:
+            operands["string"] = cursor.byte_operand(selector, 0x80)
+            operands["size"] = cursor.byte_operand(selector, 0x40)
+        # ScummVM v5's default arm consumes only the selector.  The instruction
+        # is structurally bounded, while its unrecognized semantic stays opaque
+        # at the semantic layer.
+    elif form == "if_class_of_is":
+        operands["object"] = cursor.word_operand(opcode, 0x80)
+        classes = []
+        while True:
+            selector = cursor.u8()
+            if selector == 0xFF:
+                break
+            classes.append(cursor.word_operand(selector, 0x80))
+            if len(classes) > 256:
+                raise _StructuralUnknown("class list exceeds structural bound")
+        operands["classes"] = classes
+        displacement = cursor.signed16()
+        operands["displacement"] = displacement
+        target = cursor.pc + displacement
+    elif form in {"room_ops", "actor_ops", "verb_ops", "resource_routines",
+                  "cursor_command", "matrix_ops", "draw_object", "draw_box",
+                  "expression", "print", "print_ego", "set_var_range",
+                  "set_class", "wait", "sentence", "pseudo_room",
+                  "save_restore_verbs"}:
+        subopcode, command_operands, target = _read_structural_command(
+            cursor, opcode, family, form, depth=depth,
+        )
+        operands.update(command_operands)
+    else:
+        # Declarative fixed-width operand grammar.  Every field consumes from
+        # the same cursor used by semantic decoding and honors flag bits.
+        for index, token in enumerate(form.split(",")):
+            key = f"operand_{index}"
+            if token == "none":
+                continue
+            if token == "result":
+                operands[key] = result()
+            elif token.startswith("p8_"):
+                operands[key] = cursor.byte_operand(opcode, int(token.split("_", 1)[1], 16))
+            elif token.startswith("p16_"):
+                operands[key] = cursor.word_operand(opcode, int(token.split("_", 1)[1], 16))
+            elif token == "p16":
+                operands[key] = cursor.word_operand(opcode, 0x80)
+            elif token == "varref":
+                operands[key] = cursor.varref()
+            elif token == "u8":
+                operands[key] = cursor.u8()
+            elif token == "u16":
+                operands[key] = cursor.u16()
+            elif token == "i16":
+                operands[key] = cursor.signed16()
+            elif token == "rel16":
+                displacement = cursor.signed16()
+                operands["displacement"] = displacement
+                target = cursor.pc + displacement
+            elif token == "word_args":
+                operands[key] = word_args()
+            elif token == "u8_string":
+                start = cursor.pc
+                while cursor.u8() != 0:
+                    if cursor.pc - start > 4096:
+                        raise _StructuralUnknown("string exceeds structural bound")
+                operands[key] = cursor.data[start:cursor.pc].hex()
+            elif token == "encoded_string":
+                operands[key] = cursor.encoded_string().hex()
+            else:
+                raise _StructuralUnknown(f"unknown structural operand token {token}")
+    return operands, target, subopcode
+
+
+def _read_structural_command(
+    cursor: _Cursor, opcode: int, family: str, form: str, *, depth: int,
+) -> tuple[int | None, dict[str, Any], int | None]:
+    """Read selected variable-form v5 instructions and command lists."""
+    value: dict[str, Any] = {}
+    sub: int | None = None
+    target: int | None = None
+
+    def p8(selector: int, mask: int) -> dict[str, Any]:
+        return cursor.byte_operand(selector, mask)
+
+    def p16(selector: int, mask: int = 0x80) -> dict[str, Any]:
+        return cursor.word_operand(selector, mask)
+
+    def result() -> dict[str, Any]:
+        return cursor.varref()
+
+    def cstring() -> str:
+        start = cursor.pc
+        while cursor.u8() != 0:
+            if cursor.pc - start > 4096:
+                raise _StructuralUnknown("string exceeds structural bound")
+        return cursor.data[start:cursor.pc].hex()
+
+    if form == "sentence":
+        verb = p8(opcode, 0x80)
+        value["verb"] = verb
+        if verb.get("mode") == "direct" and verb.get("value") == 0xFE:
+            value["special"] = "stop_sentence"
+        else:
+            value["object_a"] = p16(opcode, 0x40)
+            value["object_b"] = p16(opcode, 0x20)
+    elif form == "room_ops":
+        sub = cursor.u8()
+        key = sub & 0x1F
+        value["subopcode"] = sub
+        fixed = {
+            1: ("p16", "p16"), 2: (), 3: ("p16", "p16"),
+            5: (), 6: (), 8: ("p8", "p8", "p8"),
+            9: ("p8", "p8"), 10: ("p16",), 16: ("p8", "p8"),
+        }
+        if key in (1, 3):
+            value["values"] = [p16(sub, 0x80), p16(sub, 0x40)]
+        elif key == 2 or key in (5, 6):
+            value["values"] = []
+        elif key == 4:
+            value["values"] = [p16(sub, mask) for mask in (0x80, 0x40, 0x20)]
+            aux = cursor.u8()
+            value["aux_selector"] = aux
+            value["index"] = p8(aux, 0x80)
+        elif key == 7:
+            value["values"] = [p8(sub, 0x80), p8(sub, 0x40)]
+            aux = cursor.u8()
+            value["aux_selectors"] = [aux]
+            value["values"].extend((p8(aux, 0x80), p8(aux, 0x40)))
+            aux = cursor.u8()
+            value["aux_selectors"].append(aux)
+            value["values"].append(p8(aux, 0x40))
+        elif key == 8:
+            value["values"] = [p8(sub, mask) for mask in (0x80, 0x40, 0x20)]
+        elif key == 9:
+            value["values"] = [p8(sub, 0x80), p8(sub, 0x40)]
+        elif key == 10:
+            value["values"] = [p16(sub, 0x80)]
+        elif key in (11, 12):
+            value["values"] = [p16(sub, mask) for mask in (0x80, 0x40, 0x20)]
+            aux = cursor.u8()
+            value["aux_selector"] = aux
+            value["values"].extend((p8(aux, 0x80), p8(aux, 0x40)))
+        elif key in (13, 14):
+            value["resource"] = p8(sub, 0x80)
+            value["filename_hex"] = cstring()
+        elif key == 15:
+            value["resource"] = p8(sub, 0x80)
+            aux = cursor.u8()
+            value["aux_selectors"] = [aux]
+            value["range"] = [p8(aux, 0x80), p8(aux, 0x40)]
+            aux = cursor.u8()
+            value["aux_selectors"].append(aux)
+            value["time"] = p8(aux, 0x80)
+        elif key == 16:
+            value["values"] = [p8(sub, 0x80), p8(sub, 0x40)]
+        else:
+                raise _StructuralUnknown(f"roomOps sub-op {key} has unknown width", subopcode=sub)
+    elif form == "actor_ops":
+        value["actor"] = p8(opcode, 0x80)
+        commands = []
+        while True:
+            selector = cursor.u8()
+            if selector == 0xFF:
+                break
+            key = selector & 0x1F
+            counts = {0: (0x80,), 1: (0x80,), 2: (0x80, 0x40),
+                      3: (0x80,), 4: (0x80,), 5: (0x80, 0x40),
+                      6: (0x80,), 7: (0x80, 0x40, 0x20), 8: (),
+                      9: ("p16_80",), 10: (), 11: (0x80, 0x40),
+                      12: (0x80,), 13: ("encoded_string",), 14: (0x80,),
+                      16: (0x80,), 17: (0x80, 0x40), 18: (),
+                      19: (0x80,), 20: (), 21: (), 22: (0x80,),
+                      23: (0x80,)}
+            if key not in counts:
+                raise _StructuralUnknown(f"actorOps sub-op {key} has unknown width", subopcode=selector)
+            widths = counts[key]
+            args = ([p16(selector, 0x80)] if widths == ("p16_80",) else
+                    [cursor.encoded_string().hex()] if widths == ("encoded_string",) else
+                    [p8(selector, mask) for mask in widths])
+            commands.append({"subopcode": selector, "values": args})
+            if len(commands) > 256:
+                raise _StructuralUnknown("actorOps list exceeds structural bound")
+        value["commands"] = commands
+    elif form == "verb_ops":
+        value["verb"] = p8(opcode, 0x80)
+        commands = []
+        while True:
+            selector = cursor.u8()
+            if selector == 0xFF:
+                break
+            key = selector & 0x1F
+            forms = {
+                1: ("p16_80",), 2: ("encoded_string",), 3: (0x80,), 4: (0x80,),
+                5: ("p16_80", "p16_40"), 6: (), 7: (), 8: (), 9: (),
+                16: (0x80,), 17: (), 18: (0x80,), 19: (),
+                20: ("p16_80",), 22: ("p16_80", 0x40), 23: (0x80,),
+            }
+            if key not in forms:
+                raise _StructuralUnknown(f"verbOps sub-op {key} has unknown width", subopcode=selector)
+            args = []
+            for item in forms[key]:
+                if isinstance(item, str) and item.startswith("p16_"):
+                    args.append(p16(selector, int(item.split("_", 1)[1], 16)))
+                elif item == "encoded_string":
+                    args.append(cursor.encoded_string().hex())
+                else:
+                    args.append(p8(selector, item))
+            commands.append({"subopcode": selector, "values": args})
+            if len(commands) > 256:
+                raise _StructuralUnknown("verbOps list exceeds structural bound")
+        value["commands"] = commands
+    elif form in {"print", "print_ego"}:
+        if form == "print":
+            value["actor"] = p8(opcode, 0x80)
+        commands = []
+        while True:
+            selector = cursor.u8()
+            if selector == 0xFF:
+                break
+            key = selector & 0x0F
+            if key == 0:
+                args = [cursor.word_operand(selector, 0x80),
+                        cursor.word_operand(selector, 0x40)]
+            elif key == 1:
+                args = [p8(selector, 0x80)]
+            elif key == 2:
+                args = [p16(selector, 0x80)]
+            elif key == 3:
+                args = [p16(selector, 0x80), p16(selector, 0x40)]
+            elif key in (4, 6, 7):
+                args = []
+            elif key == 8:
+                args = [p16(selector, 0x80), p16(selector, 0x40)]
+            elif key == 15:
+                args = [cursor.encoded_string().hex()]
+            else:
+                raise _StructuralUnknown(f"print sub-op {key} has unknown width", subopcode=selector)
+            commands.append({"subopcode": selector, "values": args})
+            if key == 15:
+                break
+            if len(commands) > 256:
+                raise _StructuralUnknown("print command list exceeds structural bound")
+        value["commands"] = commands
+    elif form == "set_var_range":
+        value["destination"] = result()
+        count = cursor.u8()
+        value["count"] = count
+        value["values"] = ([cursor.u16() for _ in range(count)] if opcode & 0x80
+                           else [cursor.u8() for _ in range(count)])
+    elif form == "set_class":
+        value["object"] = p16(opcode, 0x80)
+        classes = []
+        while True:
+            selector = cursor.u8()
+            if selector == 0xFF:
+                break
+            classes.append(p16(selector, 0x80))
+            if len(classes) > 256:
+                raise _StructuralUnknown("setClass list exceeds structural bound")
+        value["classes"] = classes
+    elif form == "draw_object":
+        value["object"] = p16(opcode, 0x80)
+        sub = cursor.u8()
+        key = sub & 0x1F
+        value["subopcode"] = sub
+        if key == 1:
+            value["values"] = [p16(sub, 0x80), p16(sub, 0x40)]
+        elif key == 2:
+            value["values"] = [p16(sub, 0x80)]
+        elif key == 0x1F:
+            value["values"] = []
+        else:
+            raise _StructuralUnknown(f"drawObject sub-op {key} has unknown width", subopcode=sub)
+    elif form == "draw_box":
+        value["values"] = [p16(opcode, 0x80), p16(opcode, 0x40)]
+        aux = cursor.u8()
+        value["aux_selector"] = aux
+        value["values"].extend((p16(aux, 0x80), p16(aux, 0x40), p8(aux, 0x20)))
+    elif form == "matrix_ops":
+        sub = cursor.u8()
+        key = sub & 0x1F
+        value["subopcode"] = sub
+        if key in (1, 2, 3):
+            value["values"] = [p8(sub, 0x80), p8(sub, 0x40)]
+        elif key == 4:
+            value["values"] = []
+        else:
+            raise _StructuralUnknown(f"matrixOps sub-op {key} has unknown width", subopcode=sub)
+    elif form == "cursor_command":
+        sub = cursor.u8()
+        key = sub & 0x1F
+        value["subopcode"] = sub
+        counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0,
+                  10: 2, 11: 3, 12: 1, 13: 1}
+        if key == 14:
+            items = []
+            while True:
+                selector = cursor.u8()
+                if selector == 0xFF:
+                    break
+                items.append(cursor.word_operand(selector, 0x80))
+                if len(items) > 32:
+                    raise _StructuralUnknown("cursor color list exceeds structural bound")
+            value["values"] = items
+        elif key in counts:
+            value["values"] = [p8(sub, mask) for mask in (0x80, 0x40, 0x20)[:counts[key]]]
+        else:
+            raise _StructuralUnknown(f"cursorCommand sub-op {key} has unknown width", subopcode=sub)
+    elif form == "resource_routines":
+        sub = cursor.u8()
+        key = sub & 0x3F
+        value["subopcode"] = sub
+        if key in set(range(1, 17)) | {18, 19, 32, 33, 34}:
+            value["resource"] = p8(sub, 0x80)
+        elif key == 17:
+            pass
+        elif key == 20:
+            value["resource"] = p8(sub, 0x80)
+            value["object"] = cursor.word_operand(sub, 0x40)
+        elif key in (35, 37):
+            value["resource"] = p8(sub, 0x80)
+            value["parameter_2"] = p8(sub, 0x40)
+        elif key == 36:
+            value["resource"] = p8(sub, 0x80)
+            value["parameter_2"] = p8(sub, 0x40)
+            value["literal"] = cursor.u8()
+        else:
+            raise _StructuralUnknown(f"resourceRoutines sub-op {key} has unknown width", subopcode=sub)
+    elif form == "expression":
+        value["result"] = result()
+        operations = []
+        while True:
+            selector = cursor.u8()
+            if selector == 0xFF:
+                break
+            key = selector & 0x1F
+            operation: dict[str, Any] = {"subopcode": selector}
+            if key == 1:
+                operation["operand"] = cursor.word_operand(selector, 0x80)
+            elif key in (2, 3, 4, 5):
+                pass
+            elif key == 6:
+                nested = cursor.u8()
+                nested_schema = opcode_schema(nested)
+                if nested_schema is None:
+                    raise _StructuralUnknown(f"expression embeds unknown opcode ${nested:02X}")
+                nested_args, nested_target, nested_sub = _read_structural_family(
+                    cursor, nested, nested_schema, depth=depth + 1,
+                )
+                operation["nested"] = {
+                    "opcode": nested, "family": nested_schema.family,
+                    "operands": nested_args, "target": nested_target,
+                    "subopcode": nested_sub,
+                }
+            else:
+                raise _StructuralUnknown(f"expression sub-op {key} has unknown width", subopcode=selector)
+            operations.append(operation)
+            if len(operations) > 256:
+                raise _StructuralUnknown("expression exceeds structural bound")
+        value["operations"] = operations
+    elif form == "wait":
+        sub = cursor.u8()
+        key = sub & 0x1F
+        value["subopcode"] = sub
+        if key == 1:
+            value["actor"] = p8(sub, 0x80)
+        elif key not in (2, 3, 4):
+            raise _StructuralUnknown(f"wait sub-op {key} has unknown width", subopcode=sub)
+    elif form == "pseudo_room":
+        pairs = []
+        resource = cursor.u8()
+        while True:
+            room = cursor.u8()
+            if room == 0:
+                break
+            pairs.append((resource, room))
+            resource = cursor.u8()
+            if len(pairs) > 256:
+                raise _StructuralUnknown("pseudoRoom list exceeds structural bound")
+        value["room_map"] = pairs
+    elif form == "save_restore_verbs":
+        sub = cursor.u8()
+        value["subopcode"] = sub
+        value["values"] = [p8(sub, mask) for mask in (0x80, 0x40, 0x20)]
+    else:
+        raise _StructuralUnknown(f"structural command form {form} is not implemented")
+    return sub, value, target
+
+
 def decode_script(
     program: bytes,
     *,
@@ -342,17 +802,22 @@ def decode_script(
     source_body_sha256: str | None = None,
     pc_base: int = 0,
 ) -> ScriptIR:
-    """Decode the bounded v5 instruction subset without guessing unknown widths."""
+    """Decode v5 instruction structure, keeping semantic gaps explicit."""
     instructions: list[InstructionIR] = []
     pc = 0
     opaque_from = None
     while pc < len(program):
         start = pc
         opcode = program[pc]
+        schema = opcode_schema(opcode)
         cursor = _Cursor(program, pc + 1)
         operation = "unknown"
         operands: dict[str, Any] = {}
         branch_target = None
+        semantic_status = "SEMANTIC_IR_AVAILABLE"
+        structural_status = "STRUCTURALLY_DECODED"
+        diagnostic = None
+        subopcode = None
         try:
             if opcode in _STOP:
                 operation = "stop_script"
@@ -613,18 +1078,62 @@ def decode_script(
                     raise ValueError(f"wait sub-op {selector & 0x1F} has unknown width")
             else:
                 raise ValueError("instruction width is not in the current decoder subset")
-        except (ValueError, IndexError) as exc:
-            opaque_from = pc_base + start
-            instructions.append(InstructionIR(
-                pc_base + start, opcode, "opaque_bytecode_tail", (), program[start:].hex(),
-                source_offset + start, False, None, str(exc),
-            ))
-            break
+        except (ValueError, IndexError) as semantic_error:
+            fallback_cursor = _Cursor(program, start + 1)
+            try:
+                if schema is None:
+                    raise _StructuralUnknown(
+                        "instruction width is not in the SCUMM v5 opcode schema"
+                    ) from semantic_error
+                operands, branch_target, subopcode = _read_structural_family(
+                    fallback_cursor, opcode, schema,
+                )
+                cursor = fallback_cursor
+                operation = f"structural_only:{schema.family}"
+                semantic_status = "SEMANTIC_UNSUPPORTED"
+                diagnostic = f"semantic IR unavailable: {semantic_error}"
+            except (ValueError, IndexError) as structural_error:
+                opaque_from = pc_base + start
+                text = str(structural_error)
+                truncated = text.startswith("truncated") or "truncated" in text.lower()
+                structural_status = "TRUNCATED" if truncated else "STRUCTURAL_UNKNOWN"
+                instructions.append(InstructionIR(
+                    pc_base + start, opcode, "opaque_bytecode_tail", (), program[start:].hex(),
+                    source_offset + start, False, None, text,
+                    None if schema is None else schema.opcode,
+                    None if schema is None else schema.family,
+                    0 if schema is None else opcode & schema.parameter_flag_mask,
+                    0, program[start + 1:].hex(), getattr(structural_error, "subopcode", None),
+                    structural_status, "SEMANTIC_UNKNOWN",
+                    None if schema is None else schema.semantic_capability,
+                    "UNKNOWN", None, (),
+                    0 if schema is None else opcode ^ schema.opcode,
+                ))
+                break
         pc = cursor.pc
+        flow = (schema.control_flow if schema is not None else "UNKNOWN")
+        if operation == "jump":
+            flow = "UNCONDITIONAL_BRANCH"
+        elif operation.startswith("branch_"):
+            flow = "CONDITIONAL_BRANCH"
+        elif operation == "stop_script":
+            flow = "TERMINATOR"
+        next_targets = () if branch_target is None else (pc_base + branch_target,)
         instructions.append(InstructionIR(
             pc_base + start, opcode, operation, tuple(sorted(operands.items())),
             program[start:pc].hex(), source_offset + start, True,
             None if branch_target is None else pc_base + branch_target,
+            diagnostic,
+            None if schema is None else schema.opcode,
+            None if schema is None else schema.family,
+            0 if schema is None else opcode & schema.parameter_flag_mask,
+            pc - start, program[start + 1:pc].hex(), subopcode,
+            structural_status, semantic_status,
+            None if schema is None else schema.semantic_capability,
+            flow,
+            flow not in {"UNCONDITIONAL_BRANCH", "TERMINATOR", "UNKNOWN"},
+            next_targets,
+            0 if schema is None else opcode ^ schema.opcode,
         ))
         if operation == "stop_script":
             # Trailing padding/data is retained in the program; it is not
@@ -984,6 +1493,7 @@ def compiler_source_manifest() -> dict[str, str]:
     components = (
         "src/same/engines/scumm_v5/room_compiler.py",
         "src/same/engines/scumm_v5/game_analysis.py",
+        "src/same/engines/scumm_v5/v5_opcode_schema.py",
         "src/same/engines/scumm_v5/room.py",
         "src/same/engines/scumm_v5/resources.py",
         "src/same/engines/scumm_v5/cooked_room.py",

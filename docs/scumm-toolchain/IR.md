@@ -12,13 +12,20 @@ compilation object, hashes, script kind/number, object/verb identity, source
 PCs and raw instruction bytes.
 
 `InstructionIR` is a bounded decoded record, not yet a complete semantic
-operation algebra or basic-block graph. Known branch instructions retain
-relative target PCs, but global branch-boundary validation is not implemented.
-When operand width is unknown or truncated, one `opaque_bytecode_tail` holds
-the remaining original bytes and source offset; `decode_complete` is false.
-This is an explicit partial-analysis boundary, not a runtime no-op. Global
-scripts, standalone string/costume/sound nodes and backend addresses are not in
-this initial RoomIR.
+operation algebra or basic-block graph. The SCUMM v5 structural schema records
+raw opcode, canonical family base, family-variant flags, operand-parameter
+flags, operand bytes, width, source PC, semantic status, capability identity
+and control-flow/fallthrough data independently.
+Known branch instructions retain targets, but global branch-boundary
+validation is not complete. A structurally known but semantically unsupported
+instruction stays in the stream and does not by itself stop decoding. Only an
+unknown width/control-flow form or truncated encoding creates one
+`opaque_bytecode_tail`; `decode_complete` is then false. This is an explicit
+partial-analysis boundary, not a runtime no-op. Semantic IR, backend support,
+host/SNES runtime support and native evidence remain distinct questions.
+Global scripts, standalone string/costume/sound nodes and backend addresses
+are not fields in the initial room-only IR, although the same ScriptIR decoder
+is reused by whole-game analysis.
 
 The broader model below is the target vocabulary, not a claim that all of it
 has been implemented.

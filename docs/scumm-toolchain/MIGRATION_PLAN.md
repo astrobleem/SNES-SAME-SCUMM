@@ -8,8 +8,8 @@ until a new artifact participates in acceptance.
 |---|---|---|---|---|---|
 | 0. Inventory | Current audit docs and coupling record. | No production change; preserve engines/replay. | JSON/doc consistency. | Inventory can become stale; keep it small and tested. | SMALL |
 | 1. Front-end resource model | **Partial/implemented:** checked raw v5 directories, source catalog for rooms/scripts/sounds/costumes/charsets, member/container/payload offsets and hashes. | Keep provider API as adapter; no runtime-format change. | Synthetic raw pair and external DOS-CD archive census. | Several types remain inventoried rather than semantically normalized. | MEDIUM |
-| 2. Script IR slice | **Partial/implemented:** room and global scripts use shared bounded v5 decoder and source-bound InstructionIR; opaque tails are explicit. | Host/native interpreters unchanged; no full CFG/SSA IR. | Synthetic graph fixture and exact room-7 projection cross-check. | Decoder coverage is incomplete; opaque bytes remain unknown. | MEDIUM |
-| 3. Whole-game census/analysis | **Partial/implemented:** canonical identities, resource/execution graph, conditional/dynamic certainty, root reachability, capability dimensions and frontier. | Runs before allocation; selected build/profile path unchanged. | Synthetic uncertainty fixture, FATE census and determinism. | FATE boot global reaches an opaque tail early; three rooms exceed current BOXD decoder. Closure remains incomplete. | MEDIUM |
+| 2. Script IR slice | **Partial/implemented:** room and global scripts use a shared v5 opcode-family/operand schema plus source-bound `InstructionIR`; structural status is independent from semantic IR status. Opaque tails now mean unknown boundaries/truncation, not merely unmodeled semantics. | Host/native interpreters unchanged; no full CFG/SSA IR. | Synthetic structural uncertainty, opcode coverage census and room-7 projection cross-check. | Some v5 subcommand layouts remain genuinely unknown; malformed source endings remain visible. | MEDIUM |
+| 3. Whole-game census/analysis | **Partial/implemented:** canonical identities, resource/execution graph, conditional/dynamic certainty, root reachability, capability dimensions and frontier. | Runs before allocation; selected build/profile path unchanged. | Synthetic uncertainty fixture, canonical FATE census and two-directory determinism. | GlobalScript(1) is structurally complete; closure remains incomplete from dynamic/unresolved references and reachable opaque bodies. Three rooms exceed current BOXD decoder. | MEDIUM |
 | 4. Room executable compiler output | **Implemented adapter:** cooker and game analysis reuse room compiler and existing SC5C; selector generation remains a backend step. | Preserve SC5C, stable IDs and runtime ABI. Legacy selection/visual cooker remains available. | Byte parity, synthetic host fixture, source-bound room-7 IR equality. | Backend still preserves source script bytes rather than lowering operations. | MEDIUM |
 | 5. Static room/object tables | Generate object/verb/walkbox metadata from IR for current runtime. | Keep mutable state/routing runtime; retire duplicate parsing incrementally. | Compare hit tests, routes and object state against oracle. | Confusing authored initial state with mutable state; test save/load and dynamic matrices. | MEDIUM |
 | 6. Media front/back ends | Type costume/font/background/audio metadata and existing conversions. | Keep generators as backends; original archives stay external. | Per-resource provenance and visual/audio intent parity; optional title integrations. | Codec breadth and redistribution inputs; preserve explicit optional-source boundaries. | LARGE |
@@ -27,9 +27,11 @@ until a new artifact participates in acceptance.
 6. Parsing an opcode does not imply backend support.
 7. Gameplay can continue between phases; architecture work is incremental.
 
-The first two compiler milestones establish a reusable room compiler API and
-a partial whole-source analysis seam across phases 1–4, without completing all
-source formats, closure or capability certification. Native evidence is
+The first compiler milestone establishes a reusable room compiler API; the
+second provides a partial whole-source graph; the structural decoder update
+separates boundary knowledge from semantic/runtime support. These establish
+the seam across phases 1–4 without completing all source formats, closure or
+capability certification. Native evidence is
 linked only where the compiler-backed build reproduces an already-tested ROM
 byte-for-byte; no new Nexen execution is claimed.
 

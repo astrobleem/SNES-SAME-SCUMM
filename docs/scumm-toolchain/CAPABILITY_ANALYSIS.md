@@ -1,9 +1,10 @@
 # Capability and Dependency Analysis
 
-Status is **IMPLEMENTED, PARTIAL v1** for whole-source census, the decoded
-operation subset, known dependency edges, conservative roots/reachability, and
-explicit opaque boundaries. Complete v5 decoding, perfect control-flow
-certainty, resource-specific codec analysis, and per-version backend/runtime
+Status is **IMPLEMENTED, PARTIAL v1** for whole-source census, the SCUMM v5
+structural opcode schema, the semantic-operation subset, known dependency
+edges, conservative roots/reachability, and explicit structural frontiers.
+Complete v5 structural coverage, perfect control-flow certainty,
+resource-specific codec analysis, and per-version backend/runtime
 certification remain **PLANNED**.
 
 ## Current outputs
@@ -38,10 +39,15 @@ and are not guessed into a target. Room containment/object-verb ownership is
 reported in the resource graph, separately from executable reachability.
 
 Each executable reports `COMPLETE`, `PARTIAL_OPAQUE`, `UNSUPPORTED_DECODE`, or
-`MALFORMED`. Unknown instruction width/semantics are `UNSUPPORTED_DECODE`;
-truncated operands or bounded-format violations are `MALFORMED`. Opaque reports
-retain the last decoded PC, absolute `opaque_from_pc`, reason, known operations,
-and known dependencies before the boundary. The invariant is:
+`MALFORMED`. These are structural-analysis statuses, not semantic-support
+statuses. `UNSUPPORTED_DECODE` means the decoder cannot establish the next
+instruction boundary or control-flow continuation. `MALFORMED` includes a
+truncated operand. A structurally decoded operation may instead have
+`SEMANTIC_UNSUPPORTED`; it keeps its width, operands, flags, source PC and
+control-flow information and does not create an opaque tail solely because
+the runtime semantics are not modeled. Opaque reports retain the last decoded
+PC, absolute `opaque_from_pc`, reason, known operations, and known dependencies
+before the boundary. The invariant is:
 
 > OPAQUE TAIL != COMPLETE ANALYSIS
 
@@ -54,7 +60,9 @@ opaque boundary.
 ## Capability registry
 
 The registry is keyed by generic decoded operation/capability, never by FATE
-room/script/object identities. It tracks these dimensions independently:
+room/script/object identities. Structural byte decoding, semantic IR, backend
+representation, runtime behavior and native conformance are separate claims.
+It tracks these dimensions independently:
 
 | Dimension | Current evidence/status rule |
 |---|---|
@@ -93,14 +101,22 @@ boot blocker.
 
 ## Current limits
 
-The current decoder covers a bounded generic SCUMM v5 subset. FATE's boot
-global reaches an opaque tail early, so the exact executable closure is not
-claimed; much of the corpus remains unresolved from roots even though its
-source bodies and decoded prefix are inventoried. Three FATE rooms currently
-exceed the room decoder's BOXD z-plane representation and remain explicitly
-unsupported. Actor metadata is inferred from decoded references rather than
-claimed as a complete actor table. Text literals are counted/retained as
-encoded IR operands, not normalized into a complete string table.
+The opcode schema covers the registered SCUMM v5 byte forms, while this FATE
+source still contains nine structurally unknown occurrences and two
+truncated operands among parsed-room executables. The configured
+`GlobalScript(1)` now decodes completely; root closure remains incomplete due
+to dynamic references, unresolved room/resource identities, and reachable
+opaque frontiers elsewhere. Three FATE rooms still exceed the room decoder's
+BOXD z-plane representation and remain explicitly unsupported. Actor metadata
+is inferred from decoded references rather than claimed as a complete actor
+table. Text literals are retained as encoded IR operands, not normalized into
+a complete string table.
+
+In the opcode census, zero `SUPPORTED` backend/runtime occurrences means
+“none certified as fully supported by this whole-source registry,” not that
+the existing runtime implements no operations. Existing bytecode preservation,
+handler presence and prior conformance evidence are deliberately not promoted
+to whole-corpus per-operation certification.
 
 Capacity values distinguish exact indexed/cooked counts, static lower bounds,
 and unknown runtime scheduling pressure. Static graph depth is not a runtime

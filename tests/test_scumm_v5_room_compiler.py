@@ -85,7 +85,7 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
         self.assertEqual(first.capabilities.unsupported_operations, ())
 
     def test_unknown_opcode_is_an_explicit_opaque_tail_not_a_noop(self) -> None:
-        program = b"\xFD\x0A\xC8\xFF"
+        program = b"\x2F\x0A\xC8\xFF"
         result = decode_script(
             program, identity="synthetic/unknown", kind="LSCR", number=200,
             room=1, resource_key="room.1/LSCR.200", game_name="synthetic",
@@ -99,8 +99,21 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
         self.assertEqual(result.instructions[0].source_offset, 123)
         self.assertIn("instruction width", result.instructions[0].diagnostic or "")
 
+    def test_semantic_gap_diagnostic_does_not_claim_structural_gap(self) -> None:
+        result = decode_script(
+            bytes((0x03, 0, 0, 1, 0x0A, 4, 0xFF, 0)),
+            identity="synthetic/semantic-gap", kind="SCRP", number=1,
+            room=None, resource_key="script.1", game_name="synthetic",
+            source_member="fixture", resource_offset=0, source_offset=0,
+        )
+        query = result.instructions[0]
+        self.assertTrue(query.boundary_known)
+        self.assertEqual(query.structural_status, "STRUCTURALLY_DECODED")
+        self.assertEqual(query.semantic_status, "SEMANTIC_UNSUPPORTED")
+        self.assertTrue((query.diagnostic or "").startswith("semantic IR unavailable:"))
+
     def test_object_verb_opaque_boundary_uses_source_pc_coordinates(self) -> None:
-        program = b"\xFD\x0A\xC8\xFF"
+        program = b"\x2F\x0A\xC8\xFF"
         result = decode_script(
             program, identity="room.7/object.118/verb.10", kind="OBCD", number=None,
             room=7, resource_key="room.7", game_name="synthetic",

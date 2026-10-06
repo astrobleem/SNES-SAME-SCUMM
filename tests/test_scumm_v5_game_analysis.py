@@ -82,6 +82,48 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
                     for item in result.executables["items"]}
         self.assertEqual(statuses["GlobalScript(2)"], "UNSUPPORTED_DECODE")
         self.assertEqual(statuses["GlobalScript(5)"], "MALFORMED")
+        script3 = next(item for item in result.game_ir.global_scripts if item.number == 3)
+        self.assertTrue(script3.decode_complete)
+        conditional_actor_query = script3.instructions[0]
+        self.assertEqual(conditional_actor_query.operation,
+                         "structural_only:getActorRoom")
+        self.assertEqual(conditional_actor_query.structural_status,
+                         "STRUCTURALLY_DECODED")
+        self.assertEqual(conditional_actor_query.semantic_status,
+                         "SEMANTIC_UNSUPPORTED")
+        self.assertTrue(any(edge["source"] == "GlobalScript(3)"
+                            and edge["target"] == "GlobalScript(4)"
+                            and edge["kind"] == "start_script"
+                            and edge["resolution"] == "STATIC"
+                            for edge in result.dependency_graph["edges"]))
+        self.assertTrue(any(edge["source"] == "GlobalScript(1)"
+                            and edge["target"] == "GlobalScript(3)"
+                            and edge["resolution"] == "CONDITIONAL_STATIC"
+                            for edge in result.dependency_graph["edges"]))
+        script2 = next(item for item in result.game_ir.global_scripts if item.number == 2)
+        actor_query = next(item for item in script2.instructions
+                           if item.operation == "structural_only:getActorRoom")
+        self.assertEqual(actor_query.structural_status, "STRUCTURALLY_DECODED")
+        self.assertEqual(actor_query.semantic_status, "SEMANTIC_UNSUPPORTED")
+        self.assertTrue(any(edge["source"] == "GlobalScript(2)"
+                            and edge["target"] == "GlobalScript(4)"
+                            and edge["kind"] == "start_script"
+                            for edge in result.dependency_graph["edges"]))
+        self.assertTrue(any(edge["source"] == "GlobalScript(2)"
+                            and edge["target"] == "Sound(5)"
+                            and edge["kind"] == "resource-routine-reference"
+                            and edge["resolution"] == "STATIC"
+                            and edge["domain"] == "resource"
+                            for edge in result.dependency_graph["edges"]))
+        sound_node = next(item for item in result.dependency_graph["nodes"]
+                          if item["identity"] == "Sound(5)")
+        self.assertEqual(sound_node["status"], "UNRESOLVED_REFERENCE")
+        self.assertTrue(any(item["opcode"] == "0x2F"
+                            for item in result.opcode_coverage["structural_unknowns"]))
+        operation_capability = result.capabilities["registry_by_operation"][
+            "structural_only:getActorRoom"]
+        self.assertEqual(operation_capability["front_end_decode"]["status"], "SUPPORTED")
+        self.assertEqual(operation_capability["semantic_ir"]["status"], "UNSUPPORTED")
 
     def test_reachability_lattice_and_frontier_path(self) -> None:
         result = fixture_analysis()
@@ -89,7 +131,7 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
         self.assertEqual(statuses["GlobalScript(1)"], "ROOT")
         self.assertEqual(statuses["GlobalScript(2)"], "DEFINITE")
         self.assertEqual(statuses["GlobalScript(3)"], "CONDITIONAL")
-        self.assertEqual(statuses["GlobalScript(4)"], "CONDITIONAL")
+        self.assertEqual(statuses["GlobalScript(4)"], "DEFINITE")
         unsupported = [item for item in result.unsupported_frontier["items"]
                        if item["source_identity"] == "GlobalScript(2)"]
         self.assertTrue(unsupported)
@@ -142,6 +184,7 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
         self.assertEqual(compilations[1].room_ir.to_dict(), direct.room_ir.to_dict())
 
     def test_analysis_files_are_canonical_and_deterministic(self) -> None:
+        self.assertEqual(source_zip(), source_zip())
         first, second = fixture_analysis(), fixture_analysis()
         self.assertEqual(first.files(), second.files())
         self.assertEqual(game_analysis_hash(first.files()), game_analysis_hash(second.files()))
@@ -200,7 +243,7 @@ class ScummV5FateWholeGameIntegrationTests(unittest.TestCase):
                                                           "ObjectVerb(room=7,"))]
         self.assertEqual(len(room7_scripts), 79)
         self.assertEqual(sum(item["analysis_status"] != "COMPLETE"
-                             for item in room7_scripts), 21)
+                             for item in room7_scripts), 0)
         self.assertTrue(any(edge["source"] == "ObjectVerb(room=7,object=118,verb=10)"
                             and edge["kind"] == "room-local-script"
                             and edge["target"] == "RoomLocal(room=7,local=207)"

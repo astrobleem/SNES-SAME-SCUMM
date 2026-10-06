@@ -12,9 +12,11 @@ external game files + thin edition profile
   -> existing generic SCUMM/SAME runtime
 ```
 
-**Status:** room-executable compilation and whole-source analysis are
-implemented as partial v1 stages. Neither is a complete SCUMM v5 decoder or
-full backend/runtime certification.
+**Status:** room-executable compilation, whole-source analysis, and a
+SCUMM-v5 structural opcode schema are implemented as partial stages. Structural
+decode, semantic IR availability, backend support, and runtime support are
+separate. The dialect schema is not yet a complete parser for every v5 form,
+and it does not certify backend/runtime behavior.
 `tools/compile_scumm_room.py` and the room cooker use the same
 `room_compiler.compile_room_payload` API. The cooker remains available as the
 legacy selection/visual CLI, and its output continues to use the existing
@@ -22,11 +24,15 @@ SC5C record format.
 
 `tools/compile_scumm_game.py --analyze` enumerates a raw source edition through
 the same resource provider, invokes `compile_room_payload()` for each room,
-and invokes the same `decode_script()` for global scripts. It emits canonical
-semantic identities and resource identities, graph certainty, root-based
-reachability, capability dimensions and opaque frontiers. It runs without
+and invokes the same `decode_script()` for global scripts. `v5_opcode_schema.py`
+defines opcode families, parameter flags, operand forms and default control
+flow; operation decoders add subcommand-specific boundaries. A known-width
+semantic-unsupported instruction remains in the IR and dependency walk. Only
+unknown structure/truncation becomes an opaque frontier. The CLI emits
+canonical semantic identities and resource identities, graph certainty,
+root-based reachability, capability dimensions and opaque frontiers without
 SNES selector allocation. A source room rejected by the current room decoder
-remains in the census with an explicit unsupported status and diagnostic.
+remains inventoried with an explicit unsupported status and diagnostic.
 
 This is incremental. Existing profile loading,
 `LucasartsScummV5ResourceProvider`, room decoders, cooked-room codecs and
@@ -64,15 +70,17 @@ exceptions.
 ## Implemented room-bundle slice
 
 The adapter emits source-bound room, entry/exit/local, object and verb records;
-instructions in the currently decoded generic v5 subset; direct/dynamic call,
-room, sound, music, costume and resource-routine dependencies; variable/bit
-read/write observations; and simple room capacity counts. A width that is not
-known becomes an opaque tail retaining the remaining bytes and source location.
-The report says `partial` when such tails exist. It does not yet prove complete
-control-flow boundaries or establish that every operation is supported by a
-selected runtime. Whole-game graph walking now exists, but closure remains
-explicitly incomplete at dynamic references, unsupported room parses and
-reachable opaque bodies.
+instructions with separate structural and semantic status in the currently
+covered generic v5 forms; direct/dynamic call, room, sound, music, costume and
+resource-routine dependencies; variable/bit read/write observations; and
+simple room capacity counts. A boundary that cannot be established becomes an
+opaque tail retaining the remaining bytes and source location. The report
+says `partial` when such tails exist. It does not prove all control-flow paths
+or establish that every operation is supported by a selected runtime.
+Whole-game graph walking exists, but closure remains explicitly incomplete at
+dynamic references, unsupported room parses and reachable opaque bodies. Exact
+structural coverage and residuals are in
+`MILESTONE_3_STRUCTURAL_DECODER.md`.
 
 The encoded SC5C record is byte-identical to the prior cooker for the checked
 synthetic fixture and FATE room 7. `generate_snes_cooked_rooms.py` remains the

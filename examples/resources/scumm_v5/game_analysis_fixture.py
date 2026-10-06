@@ -27,13 +27,23 @@ def _script(number: int, body: bytes) -> bytes:
 
 def raw_pair() -> tuple[bytes, bytes]:
     # Global 1 has an unconditional start, a conditional start, a direct room
-    # transition, and a variable script selector. Global 2 intentionally has
-    # an unknown-width opcode so analysis must stop at an opaque tail.
+    # transition, and a variable script selector. Global 2 contains a known-
+    # width semantic-only actor query before a StartScript dependency, then an
+    # unregistered byte to prove only genuine structural uncertainty stops it.
     globals_ = {
         1: bytes((0x0A, 2, 0xFF, 0x28, 0x45, 0xC0, 3, 0,
-                  0x0A, 3, 0xFF, 0x72, 2, 0x8A, 0, 0, 0xFF, 0)),
-        2: bytes((0x24, 0, 0, 1, 0, 0, 0, 0, 0xFD, 0x72, 1, 0)),
-        3: bytes((0x0A, 4, 0xFF, 0)),
+                  0x0A, 3, 0xFF, 0x03, 0, 0, 1,
+                  0x72, 2, 0x8A, 0, 0, 0xFF, 0)),
+        2: bytes((0x24, 0, 0, 1, 0, 0, 0, 0,
+                  0x03, 0, 0, 1, 0x0A, 4, 0xFF,
+        # ResourceRoutines LOAD_SOUND is structurally understood even though
+        # its runtime semantics are not certified. The final unregistered
+        # byte is genuine structural uncertainty.
+                  0x0C, 2, 5, 0x2F, 0x72, 1, 0)),
+        # Global 3 is conditionally started by Global 1. Its known-width,
+        # semantically unsupported actor query must not hide the following
+        # static StartScript dependency.
+        3: bytes((0x03, 0, 0, 1, 0x0A, 4, 0xFF, 0)),
         4: bytes((0x00,)),
         # A known-width jump with a truncated word operand is malformed rather
         # than an unknown-width/unsupported decode.
@@ -75,6 +85,9 @@ def source_zip() -> bytes:
     index, data = raw_pair()
     output = BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
-        archive.writestr("fixture/ANALYSIS.000", index)
-        archive.writestr("fixture/ANALYSIS.001", data)
+        for name, payload in (("fixture/ANALYSIS.000", index),
+                              ("fixture/ANALYSIS.001", data)):
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_STORED
+            archive.writestr(info, payload)
     return output.getvalue()

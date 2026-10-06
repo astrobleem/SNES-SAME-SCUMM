@@ -9,10 +9,13 @@ through the same path with canonical provenance from the full DOS-CD profile.
 A separate legacy demo-profile test retains the historical SC5C byte match
 only for compatibility/native-result linkage; it is not canonical provenance
 for the full archive. This is not yet a complete SCUMM v5 decoder or a claim
-that every room-7 dependency has been proven. The current room-7 analysis
-contains 79 executable records; 21 scripts end at an explicitly unclassified
-bytecode tail. Raw code remains intact for the existing VM, and the report
-stays partial rather than inferring beyond those boundaries.
+that every room-7 dependency has been proven. At the original Milestone-1
+implementation checkpoint, room 7 had 79 executable records and 21 scripts
+ended at an explicitly unclassified bytecode tail. The later structural
+decoder milestone now gives all 79 room-7 records known boundaries; see
+`MILESTONE_3_STRUCTURAL_DECODER.md` for the updated source-bound result. Raw
+code remains intact for the existing VM, and no claim extends beyond genuine
+opaque boundaries.
 
 ## Decision
 

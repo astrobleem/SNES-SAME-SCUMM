@@ -31,9 +31,11 @@ of a component; some modules cross boundaries.
 
 The host and native engines share behavior through conformance, not yet through
 a common compiled operation representation. Both still execute source-like
-SCUMM bytecode at runtime. For cooked rooms, raw room payloads now flow through
-a bounded `RoomIR`/analysis API before the unchanged SC5C encoding; unknown
-instruction widths are preserved as opaque tails and reported as partial.
+SCUMM bytecode at runtime. For cooked rooms and whole-game analysis, raw source
+flows through the shared v5 family/operand schema and bounded `RoomIR`/
+`InstructionIR` API before unchanged SC5C encoding. Known instruction width is
+kept distinct from semantic-IR and target support; only unknown boundaries,
+truncated operands or uncertain control flow create opaque frontiers.
 
 The most useful existing seam is the source-bound cooked room: SC5C preserves
 the source ROOM payload while adding validated executable directory metadata;
@@ -44,8 +46,12 @@ the runtime payload contract.
 `game_analysis.py` builds whole-edition inventory and graph projections from
 the same `RoomBundleCompilation` and `decode_script()` implementations. It
 allocates no native selectors. Dynamic/opaque dependencies preserve closure
-uncertainty. Three FATE rooms are presently inventoried but unsupported by
-the room semantic decoder, with diagnostics retained instead of omission.
+uncertainty. The configured boot global now decodes structurally to completion
+and the source-wide known-boundary count has expanded substantially; three
+FATE rooms remain inventoried but unsupported by the room BOXD representation,
+with diagnostics retained instead of omission. See
+`MILESTONE_3_STRUCTURAL_DECODER.md` for exact external-corpus counts and
+remaining boundaries.
 
 Leakage to address incrementally:
 

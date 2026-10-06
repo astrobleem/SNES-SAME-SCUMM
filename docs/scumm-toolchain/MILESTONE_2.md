@@ -27,8 +27,8 @@ room compiler's canonical IR, not a parallel room/script parser.
 Outputs include `game.json`, `census.json`, `executables.json`,
 `dependency_graph.json`, `reachability.json`, `capabilities.json`,
 `unsupported_frontier.json`, `opaque_analysis.json`, `capacity.json`,
-`summary.md`, and a content-hash manifest. Canonical output does not include
-machine-local paths or timestamps.
+`opcode_coverage.json`, `summary.md`, and a content-hash manifest. Canonical
+output does not include machine-local paths or timestamps.
 
 Execution identities are source-semantic and selector-free. Resource nodes
 are distinct from execution nodes. Edge resolution and reachability are
@@ -36,11 +36,15 @@ separate: static/conditional/dynamic/unresolved edges feed
 root/definite/conditional/possible/unresolved/unreached statuses. A variable
 selector retains its expression and possible candidates; it is not guessed.
 
-Each executable reports complete or partial-opaque analysis. The source PC is
-the same absolute coordinate used by Milestone 1, including OBCD entry bases.
-No dependency or capability is inferred after an opaque boundary. A reached
-opaque body makes global closure incomplete; graph-unvisited executables are
-then unresolved rather than proved unreachable.
+Executable structure status is independent from semantic-model and target
+support status. Structurally known but semantically unsupported operations
+retain their width/operands/control flow and do not create an opaque tail. A
+genuinely unknown boundary or truncated form creates an explicit opaque tail.
+The source PC is the same absolute coordinate used by Milestone 1, including
+OBCD entry bases. No dependency or capability is inferred after an opaque
+boundary. A reached opaque body makes global closure incomplete;
+graph-unvisited executables are then unresolved rather than proved
+unreachable.
 
 Capability dimensions separately record decode, IR representation, SNES
 backend representation, host dispatch, SNES runtime, save/restore and native
@@ -66,10 +70,12 @@ direct room compiler representation; expected room-7 facts are assertions,
 not compiler rules. Proprietary resource payloads and analysis output are not
 committed. The test is enabled with `SAME_SCUMM_SOURCE_ARCHIVE`.
 
-The whole-source analysis is expected to reveal unsupported room structures
-and an early opaque boot-script boundary. It must not be interpreted as a
-complete reachable-game closure or as approval to replace selected build
-manifests.
+The initial Milestone-2 snapshot had an opaque boundary in the boot global.
+Milestone 3 now decodes `GlobalScript(1)` completely and expands root
+reachability, but dynamic selectors, unresolved logical/resource room
+references, remaining opaque bodies and three unsupported room containers
+still prevent a complete closure. The analysis is not approval to replace
+selected build manifests.
 
 ## Explicit partial boundaries
 
@@ -85,17 +91,16 @@ manifests.
   layouts beyond the current z-plane representation. They remain inventoried
   with diagnostics, so parsed object and executable totals are explicitly
   static lower bounds, not complete source totals.
-- The analysis currently emits 4,100 known executable identities (1,996
+- The original Milestone-2 snapshot emitted 4,100 known executable identities (1,996
   complete, 2,102 unsupported-decode tails and 2 malformed/truncated bodies),
   14,029 graph edges (813 static, 3,298
   conditional-static, 50 dynamic, 76 unresolved execution edges; the balance
   are resource relations), and 6,391 graph nodes. These are observed analysis
   counts, not claims that all source executables were normalized.
-- The configured boot root is GlobalScript(1), which becomes opaque at an
-  early source PC. It is the only `ROOT`; the other 4,099 known identities
-  remain `UNRESOLVED`, not unreachable. Static closure is incomplete. The
-  frontier contains unverified known operations plus uncertainty records; it
-  does not assert that every corpus operation is a definite gameplay blocker.
+- In that original snapshot, GlobalScript(1) became opaque at an early source
+  PC; it was the only `ROOT`, and the other 4,099 known identities remained
+  `UNRESOLVED`, not unreachable. Structural-closure results are recorded in
+  `MILESTONE_3_STRUCTURAL_DECODER.md`.
 - Actor and string metadata are partial projections; costume/audio resource
   inventory does not certify all codecs or playback semantics.
 - Runtime scheduling pressure remains unknown. Static dependency depth is
