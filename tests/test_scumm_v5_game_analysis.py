@@ -7,19 +7,25 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-from types import SimpleNamespace
+from dataclasses import replace
 import unittest
 import zipfile
 
 from examples.resources.scumm_v5.game_analysis_fixture import source_zip, raw_pair
 from same.engines.scumm_v5.game_analysis import (
-    analyze_game, build_game_ir, canonical_json, execution_cycles,
+    analyze_game, build_game_ir, canonical_json, executable_identity, execution_cycles,
     game_analysis_hash,
 )
 from same.engines.scumm_v5.policy import parse_game_policy
 from same.engines.scumm_v5.resources import LucasartsScummV5ResourceProvider
 from same.engines.scumm_v5.room_compiler import compile_room_payload
 from same.engines.scumm_v5.residency import build_residency_plan
+from same.engines.scumm_v5.program_units import (
+    build_program_unit_model, build_residency_manifest,
+)
+from same.engines.scumm_v5.residency_contract import (
+    ResidentBindingSimulator, ResidencyExhausted,
+)
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
 
@@ -216,53 +222,112 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
     def test_residency_separates_source_corpus_from_room_working_sets(self) -> None:
         result = fixture_analysis(selector_capacity=178)
         plan = result.residency
-        self.assertFalse(plan["identity_model"]["selector_allocation_performed"])
-        self.assertEqual(plan["counts"]["by_scope"]["GLOBAL"], 5)
+        self.assertFalse(result.program_units["selector_allocation_performed"])
+        self.assertEqual(plan["counts"]["semantic_by_scope"]["GLOBAL"], 5)
         self.assertEqual(plan["selector_capacity"]["capacity"], 178)
         self.assertLess(plan["selector_capacity"]["scenarios"][0]["value"], 178)
         self.assertTrue(all(item["epistemic"] in {
-            "EXACT", "STATIC_LOWER_BOUND", "CONSERVATIVE_UPPER_BOUND", "UNKNOWN",
+            "EXACT", "STATIC_LOWER_BOUND", "CONSERVATIVE_CANDIDATE_BOUND", "UNKNOWN",
         } for item in plan["selector_capacity"]["scenarios"]))
         self.assertTrue(any(edge["kind"] == "load_room"
                             and edge["phase"] == "ROOM_TRANSITION"
                             and "STAGED" in edge["coexistence"]
-                            for edge in plan["residency_edges"]))
-        global4 = next(item for item in plan["global_residency"]["records"]
-                       if item["identity"] == "GlobalScript(4)")
+                            for edge in plan["program_unit_dependencies"]))
+        global4 = next(item for item in plan["global_program_units"]["records"]
+                       if item["program_unit"] == "GlobalProgram(4)")
         self.assertTrue(global4["may_yield"])
         self.assertTrue(global4["contains_room_transition"])
         self.assertTrue(global4["may_retain_identity_across_room_change"])
         self.assertEqual(global4["evidence_scope"],
                          "OPERATION_PRESENCE_ONLY_NOT_PROOF_OF_LIVE_OVERLAP")
         self.assertGreaterEqual(
-            len(plan["global_residency"]["dynamic_global_candidate_union"]), 5)
-        room1 = next(item for item in plan["rooms"] if item["room"] == 1)
-        self.assertGreater(room1["room_bundle_executable_count"], 0)
-        self.assertEqual(room1["room_plus_dynamic_global_candidates"]["epistemic"],
-                         "CONSERVATIVE_UPPER_BOUND")
-        self.assertIn("GlobalScript(4)", plan["global_residency"]["yield_and_room_transition_operation_presence"])
+            len(plan["global_program_units"]["dynamic_candidate_universe"]), 5)
+        room1 = next(item for item in plan["room_bundles"] if item["room"] == 1)
+        self.assertGreater(room1["program_unit_count"], 0)
+        self.assertEqual(room1["total_conservative_candidate_program_units"]["epistemic"],
+                         "CONSERVATIVE_CANDIDATE_BOUND")
+        self.assertIn("GlobalProgram(4)", plan["global_program_units"]["room_transition_capable_with_yield"])
+        self.assertIsNone(plan["simultaneous_residency"]["largest_proven_exact_set"]["value"])
+        self.assertEqual(plan["simultaneous_residency"]["distinct_active_binding_upper_bound"]["upper_bound"], 25)
 
-    def test_many_source_executables_can_have_small_room_partitions(self) -> None:
-        scripts = {}
-        for number in range(300):
-            room = number // 30
-            identity = f"ObjectVerb(room={room},object={number},verb=10)"
-            scripts[identity] = SimpleNamespace(
-                kind="OBCD", source=SimpleNamespace(room=room), instructions=(),
-                decode_complete=True,
-            )
+    def test_program_unit_projection_and_dynamic_candidate_pinning(self) -> None:
+        base = fixture_analysis(selector_capacity=178)
+        scripts = {executable_identity(item): item for item in base.game_ir.global_scripts}
+        for compilation in base.room_compilations.values():
+            scripts.update({executable_identity(item): item
+                            for item in compilation.room_ir.scripts})
+        base_global = scripts["GlobalScript(1)"]
+        base_verb = next(item for item in scripts.values() if item.kind == "OBCD")
+        statuses = {identity: "UNREACHED" for identity in scripts}
+
+        synthetic_global_ids = []
+        for number in range(1000, 1200):
+            identity = f"GlobalScript({number})"
+            source = replace(base_global.source, room=0, script_number=number)
+            scripts[identity] = replace(base_global, number=number, source=source,
+                                         identity=f"synthetic/global/{number}")
+            statuses[identity] = "UNREACHED"
+            synthetic_global_ids.append(identity)
+
+        for room in range(10, 20):
+            for object_index in range(3):
+                object_id = 2000 + object_index
+                for verb_id in range(10):
+                    identity = f"ObjectVerb(room={room},object={object_id},verb={verb_id})"
+                    source = replace(base_verb.source, room=room, object_id=object_id,
+                                     verb_id=verb_id, source_offset=room * 10000 + object_id * 10 + verb_id)
+                    scripts[identity] = replace(
+                        base_verb, identity=f"synthetic/r{room}/o{object_id}/v{verb_id}",
+                        source=source, object_id=object_id, verb_id=verb_id,
+                        program=b"\x00", instructions=(), decode_complete=True,
+                        opaque_from_pc=None)
+                    statuses[identity] = "UNREACHED"
+
+        graph = {"edges": list(base.dependency_graph["edges"])}
+        graph["edges"].append({
+            "source": "GlobalScript(1)", "target": None, "kind": "start_script",
+            "domain": "execution", "resolution": "DYNAMIC", "source_pc": 3,
+            "expression": "variable-selected global", "detail": None,
+            "candidate_targets": synthetic_global_ids,
+        })
+        model = build_program_unit_model(
+            scripts, {}, graph, {"status_by_executable": statuses})
         plan = build_residency_plan(
-            scripts, {"edges": []},
-            {"status_by_executable": {identity: "UNREACHED" for identity in scripts}},
-            backend_selector_capacity=178,
-        )
-        scenarios = {item["name"]: item for item in plan["selector_capacity"]["scenarios"]}
-        self.assertEqual(plan["counts"]["known_source_executables"], 300)
-        self.assertEqual(scenarios["largest_room_directory_alone"]["value"], 30)
-        self.assertEqual(scenarios["largest_room_directory_alone"]["selector_capacity_fit"],
-                         "DEFINITELY_FITS")
-        self.assertEqual(scenarios["whole_known_source_corpus"]["selector_capacity_fit"],
-                         "DEFINITELY_EXCEEDS")
+            scripts, graph, {"status_by_executable": statuses},
+            backend_selector_capacity=178, program_unit_model=model)
+
+        synthetic_object_units = [unit for unit in model["program_units"]
+                                  if unit["kind"] == "OBJECT"
+                                  and unit["owner"].get("room", -1) in range(10, 20)]
+        self.assertEqual(len(synthetic_object_units), 30)
+        self.assertEqual(sum(len(unit["semantic_executable_identities"])
+                             for unit in synthetic_object_units), 300)
+        self.assertEqual(model["counts"]["semantic_executable_identities"], len(scripts))
+        self.assertGreater(model["counts"]["semantic_executable_identities"], 178)
+        self.assertGreater(model["counts"]["program_units"], 178)
+        self.assertGreater(plan["global_program_units"]["dynamic_candidate_universe_count"], 178)
+        self.assertEqual(plan["working_set_questions"]["C_simultaneously_live_or_pinned"]["epistemic"],
+                         "UNKNOWN")
+        manifest = build_residency_manifest(model)
+        self.assertFalse(manifest["selector_values_emitted"])
+        self.assertEqual(len(model["semantic_to_program_unit"]), len(scripts))
+        self.assertTrue(all("selector" not in unit
+                            for unit in manifest["program_units"]))
+
+        simulator = ResidentBindingSimulator(3)
+        yielded_global = "GlobalProgram(4)"
+        old_selector = simulator.pin(yielded_global, "YIELDED_ROOM_TRANSITION")
+        simulator.pin("RoomEntryProgram(22)", "ACTIVE_ROOM")
+        selected_dynamic = "GlobalProgram(1199)"
+        simulator.pin(selected_dynamic, "ACTIVE_DYNAMIC_CALL")
+        self.assertEqual(simulator.resolve(yielded_global), old_selector)
+        self.assertNotIn("GlobalProgram(1000)", simulator.snapshot()["bindings"])
+        with self.assertRaises(ResidencyExhausted):
+            simulator.resolve("GlobalProgram(1198)")
+        simulator.unpin("RoomEntryProgram(22)", "ACTIVE_ROOM")
+        reused = simulator.resolve("GlobalProgram(1198)")
+        self.assertEqual(simulator.unit_for_selector(reused), "GlobalProgram(1198)")
+        self.assertEqual(simulator.unit_for_selector(old_selector), yielded_global)
 
 
 @unittest.skipUnless(FATE_ARCHIVE, "set SAME_SCUMM_SOURCE_ARCHIVE for full FATE census integration")
@@ -281,6 +346,10 @@ class ScummV5FateWholeGameIntegrationTests(unittest.TestCase):
             provider, profile=profile, profile_bytes=profile_bytes,
             archive_sha256=hashlib.sha256(archive_path.read_bytes()).hexdigest(),
             source_members=members,
+            backend_selector_capacity={
+                "value": 178, "epistemic": "EXACT", "selectors_allocated": False,
+                "source": "current generator pool verified by CLI acceptance",
+            },
         )
         self.assertEqual(analysis.game_ir.game_id, "indy4-fate-dos-cd-en")
         self.assertEqual(analysis.game_ir.game_variant, "DOS CD English, full voice (1993)")
@@ -300,6 +369,61 @@ class ScummV5FateWholeGameIntegrationTests(unittest.TestCase):
         self.assertEqual(len(room7_scripts), 79)
         self.assertEqual(sum(item["analysis_status"] != "COMPLETE"
                              for item in room7_scripts), 0)
+        room7_units = next(item for item in analysis.residency["room_bundles"]
+                           if item["room"] == 7)
+        self.assertEqual(room7_units["semantic_executable_count"], 79)
+        self.assertEqual(room7_units["program_unit_count"], 44)
+        self.assertEqual(room7_units["room_lifecycle_units"], 2)
+        self.assertEqual(room7_units["local_units"], 18)
+        self.assertEqual(room7_units["object_units"], 24)
+        self.assertEqual(room7_units["semantic_object_verb_count"], 59)
+        room7_object_units = [unit for unit in analysis.program_units["program_units"]
+                              if unit["kind"] == "OBJECT"
+                              and unit["owner"].get("room") == 7]
+        self.assertEqual(len(room7_object_units), 24)
+        self.assertEqual(sum(len(unit["semantic_executable_identities"])
+                             for unit in room7_object_units), 59)
+        self.assertTrue(all(item["program_unit"].startswith("ObjectProgram(room=7,")
+                            for item in analysis.program_units["semantic_to_program_unit"]
+                            if item["semantic_executable"].startswith("ObjectVerb(room=7,")))
+        self.assertEqual(analysis.program_units["counts"]["program_units"], 2788)
+        self.assertEqual(analysis.program_units["counts"]["object_program_units"], 1362)
+        self.assertEqual(analysis.program_units["counts"]["object_verb_semantic_identities"], 2674)
+        room43 = next(item for item in analysis.residency["room_bundles"] if item["room"] == 43)
+        self.assertEqual(room43["semantic_executable_count"], 174)
+        self.assertEqual(room43["program_unit_count"], 40)
+        self.assertEqual(len(room43["global_program_units_required"]), 11)
+        self.assertEqual(room43["total_static_addressable_program_units"]["value"], 51)
+        self.assertLess(room43["total_static_addressable_program_units"]["value"], 178)
+        room46 = next(item for item in analysis.residency["room_bundles"] if item["room"] == 46)
+        self.assertEqual(room46["program_unit_count"], 64)
+        self.assertEqual(len(room46["dynamic_global_candidate_units"]), 163)
+        self.assertEqual(room46["total_conservative_candidate_program_units"]["value"], 227)
+        self.assertGreater(room46["total_conservative_candidate_program_units"]["value"], 178)
+        room98 = analysis.residency["room_bundles"][0]
+        self.assertEqual((room98["room"], room98["program_unit_count"]), (98, 128))
+        self.assertEqual(analysis.residency["simultaneous_residency"][
+            "distinct_active_binding_upper_bound"]["upper_bound"], 25)
+        self.assertFalse(analysis.residency_manifest["selector_values_emitted"])
+        self.assertEqual(len(analysis.program_units["semantic_to_program_unit"]), 4100)
+        object118 = next(edge for edge in analysis.program_units["dependencies"]
+                         if edge["source_semantic_identity"] ==
+                         "ObjectVerb(room=7,object=118,verb=10)"
+                         and edge["kind"] == "room-local-script")
+        self.assertEqual(object118["source_program_unit"],
+                         "ObjectProgram(room=7,object=118)")
+        self.assertEqual(object118["target_program_unit"],
+                         "RoomLocalProgram(room=7,local=207)")
+        object119 = next(edge for edge in analysis.program_units["dependencies"]
+                         if edge["source_semantic_identity"] ==
+                         "ObjectVerb(room=7,object=119,verb=10)"
+                         and edge["kind"] == "room-local-script"
+                         and edge["target_semantic_identity"] ==
+                         "RoomLocal(room=7,local=201)")
+        self.assertEqual(object119["source_program_unit"],
+                         "ObjectProgram(room=7,object=119)")
+        self.assertEqual(object119["target_program_unit"],
+                         "RoomLocalProgram(room=7,local=201)")
         self.assertTrue(any(edge["source"] == "ObjectVerb(room=7,object=118,verb=10)"
                             and edge["kind"] == "room-local-script"
                             and edge["target"] == "RoomLocal(room=7,local=207)"
@@ -365,7 +489,8 @@ class ScummV5GameAnalysisCliTests(unittest.TestCase):
                 target = Path(report_path)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n")
-            self.assertEqual(maps[0], maps[1])
+            self.assertEqual(differences, [],
+                             f"FATE analysis outputs differ: {differences}")
 
 
 if __name__ == "__main__":

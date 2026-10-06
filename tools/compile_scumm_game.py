@@ -104,9 +104,12 @@ def main() -> int:
           f"{result.dependency_graph['counts']['edges']} graph edges")
     print(f"Analysis identity SHA-256: {manifest['analysis_file_set_sha256']}")
     print(f"Static closure complete: {result.opaque_analysis['closure_complete']}")
-    print("Largest parsed room bundle: "
-          f"{result.residency['working_set_scenarios']['steady_state_room']['maximum_room_bundle_executables']} executables; "
-          f"selector capacity {result.residency['selector_capacity']['capacity']}")
+    print("Semantic executable identities / backend ProgramUnits: "
+          f"{result.program_units['counts']['semantic_executable_identities']} / "
+          f"{result.program_units['counts']['program_units']}")
+    print("Largest parsed room ProgramUnit bundle / selector capacity: "
+          f"{result.residency['working_set_questions']['B_addressable_program_unit_set']['largest_room_bundle']} / "
+          f"{result.residency['selector_capacity']['capacity']}")
     return 0
 
 

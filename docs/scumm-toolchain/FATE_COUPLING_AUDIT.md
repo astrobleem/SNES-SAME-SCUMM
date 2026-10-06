@@ -8,7 +8,7 @@ groups, not counts of every numeric literal in tests.
 | Classification | Count | Meaning |
 |---|---:|---|
 | `GENERIC_SCUMM_SEMANTIC` | 2 | Reusable VM and interaction contracts exercised by FATE. |
-| `COMPILER_DERIVABLE_DATA` | 11 | Source facts and deterministic target records derivable offline. |
+| `COMPILER_DERIVABLE_DATA` | 12 | Source facts and deterministic target records derivable offline. |
 | `FATE_PROFILE_DATA` | 3 | Edition/content selection and title-specific source import policy. |
 | `TEMPORARY_BRINGUP_HOOK` | 2 | Compile-gated scenario-root/controller bootstrap code. |
 | `TEST_FIXTURE_ONLY` | 5 | Replay expectations, provenance checks and fixture-profile data. |
@@ -48,7 +48,11 @@ roots are supplied by profile data.
 
 The residency planner (`residency.py`) is another compiler-derived analysis:
 it classifies global/room executable scopes and annotates lifecycle edges
-without allocating selectors or treating title room numbers as policy.
+without allocating selectors or treating title room numbers as policy. The
+ProgramUnit projection preserves per-verb semantic identities while grouping
+the full OBCD object body that the SNES backend actually assigns one selector
+to. Its pure binding simulator is test-only; it does not change runtime
+dispatch.
 
 Title audio converters and Fate sound IDs are source import/profile data. In
 particular, `embedded_audio.py` currently contains a special logical

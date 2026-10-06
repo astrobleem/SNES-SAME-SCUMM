@@ -12,7 +12,7 @@ of a component; some modules cross boundaries.
 | `src/same/engines/scumm_v5/policy.py` | Parse SCUMM-specific resource, audio, geometry/presentation and copy-protection options. | SCUMM host and adapters | `GENERIC_SCUMM` | Typed source-edition policy; split backend realization preferences from source identity. |
 | `src/same/engines/scumm_v5/resources.py` | Decrypt/validate v5 indices/containers and expose stable `room.N`, `script.N`, `sound.N`, `costume.N`, `charset.N` keys. | Host runtime and cookers | `GENERIC_SCUMM` | Front-end resource catalog with archive/member/offset provenance. |
 | `room.py`, `costume.py`, `font.py`, `text.py`, `embedded_audio.py` under the SCUMM v5 package | Decode source room/object/verb/walkbox, costume, charset, text-control and embedded-audio structures. | Host, cookers, asset generators | `GENERIC_SCUMM` | Front-end parsers producing validated target-neutral resource data. |
-| `src/same/engines/scumm_v5/room_compiler.py`, `game_analysis.py`, `residency.py` | Reuse checked room compiler/decoder; enumerate source identities, graph/reachability/capabilities, and estimate global/room executable residency without allocating selectors. | Room/game compiler CLIs, tests, backend planning | `GENERIC_SCUMM` | Emit a source-identity residency manifest before backend placement. **Whole-game analysis and partition estimates implemented, conservative/partial.** |
+| `src/same/engines/scumm_v5/room_compiler.py`, `game_analysis.py`, `program_units.py`, `residency.py`, `residency_contract.py` | Reuse checked room compiler/decoder; enumerate semantic identities, project them into selector-bearing backend ProgramUnits, and emit selector-free bundle/residency analysis. | Room/game compiler CLIs, tests, backend planning | `GENERIC_SCUMM` | Feed typed ProgramUnit manifests to a backend resolver/binder. **Projection and pure contract simulator implemented; runtime binding remains planned.** |
 | `src/same/engines/scumm_v5/engine.py` | Interpret v5 bytecode; own scheduler, variables/bits, slots, actors, object state, verbs, room lifecycle, messages, cutscenes and logical sound requests. | SAME `EngineHost`, semantic tests | `GENERIC_SCUMM` | Preserve as host runtime/behavioral oracle; compare compiled operation execution against it. |
 | `cooked_room.py`, `room_visual.py` | Encode/decode versioned SC5C/SC5VIS records, source/profile/archive hashes and executable directories. | Host provider, build generators, native runtime | `GENERIC_SCUMM` | Stable compiler interchange/backend artifact schemas with explicit provenance. |
 | `tools/cook_scumm_v5_rooms.py`, `tools/compile_scumm_room.py`, `tools/compile_scumm_game.py` | Room compiler emits SC5C/IR; game analyzer emits source census, GameIR projection, graph, reachability, capabilities and frontiers deterministically. | SNES generators, source-build tooling, developer/tests | `BUILD_TOOLING` + `GENERIC_SCUMM` front end | Keep legacy room cooker; Milestone 3 may consume trusted analysis to derive backend manifests. **Room compilation and game analysis implemented, partial.** |
@@ -53,12 +53,28 @@ with diagnostics retained instead of omission. See
 `MILESTONE_3_STRUCTURAL_DECODER.md` for exact external-corpus counts and
 remaining boundaries.
 
-`residency.py` adds a separate addressability/lifecycle view: the backend's
-byte selector is build-global today, while the scheduler has 25 C4 activation
-descriptors. These are not interchangeable capacity measures. Room bundles
-can be staged at transitions; active global continuations still require stable
-identity resolution. See `MILESTONE_4_RESIDENCY.md` for exact estimates and
-their epistemic limits.
+`program_units.py` distinguishes three layers: source semantic executable,
+selector-bearing backend ProgramUnit, and any future resident binding/selector.
+One OBCD object program can contain multiple independently decoded verb
+scripts; the existing SNES backend assigns the object record one selector.
+`residency.py` now computes room addressability from those ProgramUnits, not
+from semantic script count. The 25 C4 activation descriptors are a separate
+runtime limit, not a code-addressability count. `residency_contract.py` is a
+pure test model only; it verifies that pinned bindings cannot be overwritten.
+See `MILESTONE_5_PROGRAM_UNITS.md` for the corrected FATE measurements and
+the selector-reference migration boundary.
+
+The architectural invariant is:
+
+```text
+semantic source corpus size != selector-bearing ProgramUnit count
+                         != addressable ProgramUnit set
+                         != simultaneously pinned/live ProgramUnit set
+```
+
+The earlier Milestone-4 report counted object verb IR records as though each
+required a backend selector. Its room-43 185-selector claim is superseded by
+the ProgramUnit-aware analysis; it was not a demonstrated overflow.
 
 Leakage to address incrementally:
 

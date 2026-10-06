@@ -133,6 +133,23 @@ residency report therefore separates directory addressability from the
 25-slot active-script bound and does not assume selector reuse is safe.
 Paging/reuse needs a resolver plus pinned live bindings or canonical IDs.
 
+The source compiler now explicitly projects semantic executables into
+selector-bearing `ProgramUnit`s before residency comparison. Global scripts,
+room entry/exit, and local scripts each map to one unit. All semantic
+`ObjectVerb(room,object,verb)` records for a single OBCD map to that object's
+`ObjectProgram`; verb source spans and hashes remain independently preserved.
+The current generator emits one complete OBCD object record, verb-entry table,
+and selector for that unit. `program_units.json` records the projection and
+dependencies; `residency_manifest.json` records bundle-local identities and
+pinning needs without allocating or emitting selector values.
+
+The capacity analysis keeps separate answers for source semantic identities,
+addressable ProgramUnits, and simultaneous live/pinned bindings. Dynamic
+candidate unions are not interpreted as live sets. Whole-game output counts
+remain lower bounds where source rooms are unparsed. See
+`MILESTONE_5_PROGRAM_UNITS.md` for the runtime-reference audit and proposed
+resolver contract.
+
 Representation may vary by item:
 
 - scripts: retain SCUMM bytecode initially; later use compact semantic ops or

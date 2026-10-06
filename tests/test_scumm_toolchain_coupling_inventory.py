@@ -18,7 +18,7 @@ CLASSIFICATIONS = {
 }
 EXPECTED_COUNTS = {
     "GENERIC_SCUMM_SEMANTIC": 2,
-    "COMPILER_DERIVABLE_DATA": 11,
+    "COMPILER_DERIVABLE_DATA": 12,
     "FATE_PROFILE_DATA": 3,
     "TEMPORARY_BRINGUP_HOOK": 2,
     "TEST_FIXTURE_ONLY": 5,
@@ -62,6 +62,7 @@ class ScummToolchainCouplingInventoryTests(unittest.TestCase):
             "RUNTIME_BOUNDARY.md", "MIGRATION_PLAN.md", "FIRST_MILESTONE.md",
             "MILESTONE_2.md",
             "MILESTONE_4_RESIDENCY.md",
+            "MILESTONE_5_PROGRAM_UNITS.md",
         ):
             self.assertIn(name, ledger)
             self.assertTrue((ROOT / "docs/scumm-toolchain" / name).is_file())
@@ -69,6 +70,9 @@ class ScummToolchainCouplingInventoryTests(unittest.TestCase):
     def test_whole_game_analyzer_has_no_fate_progression_constants(self) -> None:
         production = (
             ROOT / "src/same/engines/scumm_v5/game_analysis.py",
+            ROOT / "src/same/engines/scumm_v5/program_units.py",
+            ROOT / "src/same/engines/scumm_v5/residency.py",
+            ROOT / "src/same/engines/scumm_v5/residency_contract.py",
             ROOT / "tools/compile_scumm_game.py",
         )
         forbidden = ("GlobalScript(144)", "RoomLocal(room=7", "object=118",

@@ -21,6 +21,7 @@ from .room_compiler import (
     decode_script, profile_game_identity, sha256,
 )
 from .residency import build_residency_plan
+from .program_units import build_program_unit_model, build_residency_manifest
 from .v5_opcode_schema import opcode_schema, schema_coverage
 
 
@@ -106,6 +107,8 @@ class GameAnalysis:
     opaque_analysis: dict[str, Any]
     capacity: dict[str, Any]
     opcode_coverage: dict[str, Any]
+    program_units: dict[str, Any]
+    residency_manifest: dict[str, Any]
     residency: dict[str, Any]
     room_compilations: dict[int, RoomBundleCompilation]
 
@@ -121,6 +124,8 @@ class GameAnalysis:
             "opaque_analysis.json": canonical_json(self.opaque_analysis),
             "capacity.json": canonical_json(self.capacity),
             "opcode_coverage.json": canonical_json(self.opcode_coverage),
+            "program_units.json": canonical_json(self.program_units),
+            "residency_manifest.json": canonical_json(self.residency_manifest),
             "residency.json": canonical_json(self.residency),
             "summary.md": self.summary_markdown().encode(),
         }
@@ -147,10 +152,12 @@ class GameAnalysis:
             f"truncated {self.opcode_coverage['counts']['truncated_occurrences']}, "
             f"malformed {self.opcode_coverage['counts']['malformed_occurrences']}",
             f"Static closure complete: {'yes' if complete else 'no'}", "",
-            f"Largest parsed room executable bundle: {self.residency['selector_capacity']['scenarios'][0]['value']}",
+            f"Semantic executable identities: {self.program_units['counts']['semantic_executable_identities']}",
+            f"Backend ProgramUnits: {self.program_units['counts']['program_units']}",
+            f"Largest parsed room ProgramUnit bundle: {self.residency['working_set_questions']['B_addressable_program_unit_set']['largest_room_bundle']}",
             f"Current selector capacity: {self.residency['selector_capacity']['capacity']}",
             f"Residency model recommendation: {self.residency['recommendation']['choice']}",
-            "Source executable count is not a simultaneous active-script count; see residency.json.", "",
+            "Semantic corpus size, ProgramUnit addressability, and simultaneous pinned bindings are separate quantities; see program_units.json and residency.json.", "",
             "Opaque analysis remains incomplete; absence of a decoded edge is not proof "
             "that an opaque tail contains no dependency or capability.", "",
         ))
@@ -1151,12 +1158,15 @@ def analyze_game(
     )
     graph, scripts = build_dependency_graph(game, compilations)
     reachability, paths = compute_reachability(profile, scripts, graph)
+    program_units = build_program_unit_model(scripts, compilations, graph, reachability)
+    residency_manifest = build_residency_manifest(program_units)
     selector_capacity_value = (backend_selector_capacity or {}).get("value")
     residency = build_residency_plan(
         scripts, graph, reachability,
         backend_selector_capacity=(None if selector_capacity_value is None
                                    else int(selector_capacity_value)),
         runtime_script_slot_capacity=25,
+        program_unit_model=program_units,
     )
     capabilities, frontier = analyze_capabilities(scripts, reachability, paths)
     opcode_coverage = build_opcode_coverage(scripts, reachability, capabilities)
@@ -1266,23 +1276,37 @@ def analyze_game(
     }
     total_programs = len(scripts)
     max_room_bundle = max((len(item.room_ir.scripts) for item in compilations.values()), default=0)
+    max_room_program_units = max((row["program_unit_count"]
+                                  for row in residency["room_bundles"]), default=0)
     max_body = max((len(script.program) for script in scripts.values()), default=0)
     max_fanout = max((sum(edge["source"] == node and edge["domain"] == "execution"
                           for edge in graph["edges"]) for node in scripts), default=0)
     capacity = {
-        "executable_identities": {"value": total_programs,
+        "semantic_executable_identities": {"value": total_programs,
+                                            "epistemic": parsed_room_epistemic},
+        "backend_program_units": {"value": program_units["counts"]["program_units"],
                                   "epistemic": parsed_room_epistemic},
+        "whole_known_program_unit_corpus_if_one_static_selector_map": {
+            "value": program_units["counts"]["program_units"],
+            "epistemic": parsed_room_epistemic,
+            "comparison": "ProgramUnits only; semantic executable count is not selector demand",
+        },
         "rooms_inventoried": {"value": len(game.rooms), "epistemic": "EXACT"},
         "rooms_semantically_parsed": {"value": len(compilations), "epistemic": "EXACT"},
         "objects": {"value": object_count, "epistemic": parsed_room_epistemic},
         "object_verb_entries": {"value": verb_count,
                                  "epistemic": parsed_room_epistemic},
-        "largest_room_executable_bundle": {"value": max_room_bundle,
-                                           "epistemic": parsed_room_epistemic},
+        "largest_room_semantic_executable_bundle": {"value": max_room_bundle,
+                                                     "epistemic": parsed_room_epistemic},
+        "largest_room_backend_program_unit_bundle": {
+            "value": max_room_program_units,
+            "epistemic": "STATIC_LOWER_BOUND_IF_SOURCE_ROOMS_UNSUPPORTED"
+            if any(item.get("analysis_status") == "UNSUPPORTED" for item in game.rooms)
+            else "EXACT_FOR_PARSED_ROOMS",
+        },
         "largest_script_body_bytes": {"value": max_body,
                                        "epistemic": parsed_room_epistemic},
         "largest_known_execution_fanout": {"value": max_fanout, "epistemic": "EXACT_FOR_DECODED_EDGES"},
-        "possible_program_selector_demand": {"value": total_programs, "epistemic": "STATIC_LOWER_BOUND"},
         "current_default_backend_selector_pool": (backend_selector_capacity or {
             "value": None, "epistemic": "UNKNOWN",
             "reason": "no SNES backend capacity provider was supplied; analysis allocates no selectors",
@@ -1292,7 +1316,7 @@ def analyze_game(
     }
     return GameAnalysis(game, census, executable_report, graph, reachability,
                         capabilities, frontier, opaque, capacity, opcode_coverage,
-                        residency, compilations)
+                        program_units, residency_manifest, residency, compilations)
 
 
 def game_analysis_hash(files: dict[str, bytes]) -> str:

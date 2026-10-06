@@ -1493,6 +1493,9 @@ def compiler_source_manifest() -> dict[str, str]:
     components = (
         "src/same/engines/scumm_v5/room_compiler.py",
         "src/same/engines/scumm_v5/game_analysis.py",
+        "src/same/engines/scumm_v5/program_units.py",
+        "src/same/engines/scumm_v5/residency.py",
+        "src/same/engines/scumm_v5/residency_contract.py",
         "src/same/engines/scumm_v5/v5_opcode_schema.py",
         "src/same/engines/scumm_v5/room.py",
         "src/same/engines/scumm_v5/resources.py",
