@@ -18,7 +18,7 @@ CLASSIFICATIONS = {
 }
 EXPECTED_COUNTS = {
     "GENERIC_SCUMM_SEMANTIC": 2,
-    "COMPILER_DERIVABLE_DATA": 9,
+    "COMPILER_DERIVABLE_DATA": 10,
     "FATE_PROFILE_DATA": 3,
     "TEMPORARY_BRINGUP_HOOK": 2,
     "TEST_FIXTURE_ONLY": 5,
@@ -60,9 +60,22 @@ class ScummToolchainCouplingInventoryTests(unittest.TestCase):
             "CURRENT_ARCHITECTURE.md", "FATE_COUPLING_AUDIT.md", "fate_coupling.json",
             "IR.md", "COMPILER_PIPELINE.md", "CAPABILITY_ANALYSIS.md",
             "RUNTIME_BOUNDARY.md", "MIGRATION_PLAN.md", "FIRST_MILESTONE.md",
+            "MILESTONE_2.md",
         ):
             self.assertIn(name, ledger)
             self.assertTrue((ROOT / "docs/scumm-toolchain" / name).is_file())
+
+    def test_whole_game_analyzer_has_no_fate_progression_constants(self) -> None:
+        production = (
+            ROOT / "src/same/engines/scumm_v5/game_analysis.py",
+            ROOT / "tools/compile_scumm_game.py",
+        )
+        forbidden = ("GlobalScript(144)", "RoomLocal(room=7", "object=118",
+                     "object=119", "local=207", "bit:69", "RoomEntry(42)")
+        for path in production:
+            content = path.read_text(encoding="utf-8")
+            for identity in forbidden:
+                self.assertNotIn(identity, content, f"{path} hardcodes {identity}")
 
 
 if __name__ == "__main__":

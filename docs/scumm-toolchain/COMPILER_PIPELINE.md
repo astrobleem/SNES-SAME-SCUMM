@@ -12,11 +12,21 @@ external game files + thin edition profile
   -> existing generic SCUMM/SAME runtime
 ```
 
-**Status:** the room-executable slice is implemented, with bounded analysis.
+**Status:** room-executable compilation and whole-source analysis are
+implemented as partial v1 stages. Neither is a complete SCUMM v5 decoder or
+full backend/runtime certification.
 `tools/compile_scumm_room.py` and the room cooker use the same
 `room_compiler.compile_room_payload` API. The cooker remains available as the
 legacy selection/visual CLI, and its output continues to use the existing
 SC5C record format.
+
+`tools/compile_scumm_game.py --analyze` enumerates a raw source edition through
+the same resource provider, invokes `compile_room_payload()` for each room,
+and invokes the same `decode_script()` for global scripts. It emits canonical
+semantic identities and resource identities, graph certainty, root-based
+reachability, capability dimensions and opaque frontiers. It runs without
+SNES selector allocation. A source room rejected by the current room decoder
+remains in the census with an explicit unsupported status and diagnostic.
 
 This is incremental. Existing profile loading,
 `LucasartsScummV5ResourceProvider`, room decoders, cooked-room codecs and
@@ -59,8 +69,10 @@ room, sound, music, costume and resource-routine dependencies; variable/bit
 read/write observations; and simple room capacity counts. A width that is not
 known becomes an opaque tail retaining the remaining bytes and source location.
 The report says `partial` when such tails exist. It does not yet prove complete
-control-flow boundaries, validate jump targets, compute whole-game/transitive
-closure, or establish that every operation is supported by a selected runtime.
+control-flow boundaries or establish that every operation is supported by a
+selected runtime. Whole-game graph walking now exists, but closure remains
+explicitly incomplete at dynamic references, unsupported room parses and
+reachable opaque bodies.
 
 The encoded SC5C record is byte-identical to the prior cooker for the checked
 synthetic fixture and FATE room 7. `generate_snes_cooked_rooms.py` remains the
@@ -69,8 +81,11 @@ CLI can invoke that generator with portable relative `.incbin` paths.
 
 ## Dependency graph
 
-Nodes use typed identities such as `Global(n)`, `Room(r)`, `RoomLocal(r,n)`,
-`ObjectVerb(r,o,v)`, `Costume(n)`, `String(n)` and `Sound(n)`. Each edge records
+Execution nodes use typed source identities such as `GlobalScript(n)`,
+`RoomEntry(r)`, `RoomExit(r)`, `RoomLocal(room=r,local=n)` and
+`ObjectVerb(room=r,object=o,verb=v)`. Resource nodes use distinct identities
+such as `ScriptResource(n)`, `RoomResource(r)`, `Costume(n)`, `Charset(n)` and
+`Sound(n)`. Each edge records
 kind, source span, confidence and resolution:
 
 | Edge | Static source | Confidence policy |
@@ -84,10 +99,12 @@ kind, source span, confidence and resolution:
 | Actor → costume | Actor setup and costume operations | Definite or possible based on operand constancy |
 | Script → string/sound | Text/audio operands and source directories | `definite` for literal IDs; `possible` for indirect IDs |
 
-Runtime events add `observed` edges containing ROM/build identity, frame and
-executing source span. They supplement rather than overwrite static
-uncertainty. Static analysis distinguishes selected roots from proven
-transitive closure; dynamic IDs and conditional branches remain possible.
+Edges distinguish `STATIC`, `CONDITIONAL_STATIC`, `DYNAMIC` and `UNRESOLVED`.
+Reachability is a lattice (`ROOT`, `DEFINITE`, `CONDITIONAL`, `POSSIBLE`,
+`UNRESOLVED`, or `UNREACHED`) and retains known paths. Dynamic selectors are
+not guessed. A reached opaque body makes closure incomplete; bytes beyond its
+boundary provide no negative evidence about calls, capabilities or effects.
+Native observed events remain separate from this source graph.
 
 ## SNES backend boundary
 
@@ -119,10 +136,10 @@ directories/banked code and data. Specialized generators handle variables,
 visuals, charset, actor/object sprites, engine selection and save identity.
 These are pipeline assets to modularize, not replace.
 
-The first compiler-owned result now exists between parsing and target
-generation: typed room/script records and analysis testable without Poppy and
-consumable by current generators before the runtime ABI changes. Global-script
-bundles, whole-game dependency closure and complete opcode coverage remain
-future work. A full compiler-backed profile build reproduced ROM SHA-256
+The first compiler-owned result exists between parsing and target generation:
+typed room/script records and existing SC5C output. Milestone 2 adds
+whole-edition inventory and conservative graph/capability closure, but does
+not select or emit a complete FATE build. Full closure and support certification
+remain future work. A full compiler-backed profile build reproduced ROM SHA-256
 `f5492f1c…76471fd`; a previously executed bounded Nexen result is reusable for
 that exact ROM. Nexen was not rerun as part of the compiler milestone.

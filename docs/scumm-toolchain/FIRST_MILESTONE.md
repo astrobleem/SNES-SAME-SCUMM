@@ -82,6 +82,10 @@ names the external source edition, not “when object 119 runs, use PC X.”
 This does not require whole-game symbolic execution, all-opcode IR, direct
 native code generation, a new SNES interpreter or a complete gameplay route.
 
+The follow-on whole-game census/dependency analysis is documented separately
+in `MILESTONE_2.md`. It consumes this same room compiler representation and
+decoder; it does not change this milestone's SC5C ABI or selector allocation.
+
 ## Capability-field scope
 
 `unsupported_operations == 0` means only that the bounded room decoder did

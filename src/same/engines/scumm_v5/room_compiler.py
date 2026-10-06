@@ -983,6 +983,7 @@ def compiler_source_manifest() -> dict[str, str]:
     repository_root = Path(__file__).resolve().parents[4]
     components = (
         "src/same/engines/scumm_v5/room_compiler.py",
+        "src/same/engines/scumm_v5/game_analysis.py",
         "src/same/engines/scumm_v5/room.py",
         "src/same/engines/scumm_v5/resources.py",
         "src/same/engines/scumm_v5/cooked_room.py",
@@ -990,6 +991,7 @@ def compiler_source_manifest() -> dict[str, str]:
         "src/same/engines/scumm_v5/policy.py",
         "src/same/profile.py",
         "src/same/resources.py",
+        "tools/compile_scumm_game.py",
     )
     return {
         component: sha256((repository_root / component).read_bytes())

@@ -1,0 +1,80 @@
+"""Deterministic copyright-free two-room raw SCUMM v5 analysis fixture."""
+
+from __future__ import annotations
+
+import struct
+import zipfile
+from io import BytesIO
+
+from .room_bundle_fixture import room1, room2
+
+XOR_KEY = 0x69
+
+
+def _chunk(tag: bytes, payload: bytes) -> bytes:
+    return tag + struct.pack(">I", len(payload) + 8) + payload
+
+
+def _directory(rooms: bytes, offsets: list[int]) -> bytes:
+    return struct.pack("<H", len(rooms)) + rooms + b"".join(
+        struct.pack("<I", value) for value in offsets
+    )
+
+
+def _script(number: int, body: bytes) -> bytes:
+    return _chunk(b"SCRP", body)
+
+
+def raw_pair() -> tuple[bytes, bytes]:
+    # Global 1 has an unconditional start, a conditional start, a direct room
+    # transition, and a variable script selector. Global 2 intentionally has
+    # an unknown-width opcode so analysis must stop at an opaque tail.
+    globals_ = {
+        1: bytes((0x0A, 2, 0xFF, 0x28, 0x45, 0xC0, 3, 0,
+                  0x0A, 3, 0xFF, 0x72, 2, 0x8A, 0, 0, 0xFF, 0)),
+        2: bytes((0x24, 0, 0, 1, 0, 0, 0, 0, 0xFD, 0x72, 1, 0)),
+        3: bytes((0x0A, 4, 0xFF, 0)),
+        4: bytes((0x00,)),
+        # A known-width jump with a truncated word operand is malformed rather
+        # than an unknown-width/unsupported decode.
+        5: bytes((0x18,)),
+    }
+    room1_container = bytearray(_chunk(b"ROOM", room1()))
+    offsets = [0] * 200
+    room_slots = bytearray(200)
+    for number, body in globals_.items():
+        offsets[number] = len(room1_container)
+        room_slots[number] = 1
+        room1_container.extend(_script(number, body))
+    room2_container = _chunk(b"ROOM", room2())
+    lflf1 = _chunk(b"LFLF", bytes(room1_container))
+    lflf2 = _chunk(b"LFLF", room2_container)
+
+    loff_size = 8 + 11
+    first_header_offset = 8 + loff_size
+    first_payload_offset = first_header_offset + 8
+    second_header_offset = first_header_offset + len(lflf1)
+    second_payload_offset = second_header_offset + 8
+    loff = bytes((2, 1)) + struct.pack("<I", first_payload_offset) + bytes((2,)) + struct.pack(
+        "<I", second_payload_offset
+    )
+    data_plain = _chunk(b"LECF", _chunk(b"LOFF", loff) + lflf1 + lflf2)
+
+    object_count = 256
+    dobj = struct.pack("<H", object_count) + bytes(object_count) + b"".join(
+        struct.pack("<I", 0) for _ in range(object_count)
+    )
+    dscr = _directory(bytes(room_slots), offsets)
+    dsou = _directory(b"", [])
+    index_plain = _chunk(b"DOBJ", dobj) + _chunk(b"DSCR", dscr) + _chunk(b"DSOU", dsou)
+    return (bytes(value ^ XOR_KEY for value in index_plain),
+            bytes(value ^ XOR_KEY for value in data_plain))
+
+
+def source_zip() -> bytes:
+    index, data = raw_pair()
+    output = BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("fixture/ANALYSIS.000", index)
+        archive.writestr("fixture/ANALYSIS.001", data)
+    return output.getvalue()

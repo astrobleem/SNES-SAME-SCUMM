@@ -1,100 +1,108 @@
 # Capability and Dependency Analysis
 
-## Implemented room report (partial v1)
+Status is **IMPLEMENTED, PARTIAL v1** for whole-source census, the decoded
+operation subset, known dependency edges, conservative roots/reachability, and
+explicit opaque boundaries. Complete v5 decoding, perfect control-flow
+certainty, resource-specific codec analysis, and per-version backend/runtime
+certification remain **PLANNED**.
 
-`room_compiler.analyze_room` currently reports the SCUMM v5 operations decoded
-in the bounded room-script subset, corresponding runtime primitive names,
-opaque/unclassified tails, incomplete scripts, direct and dynamic dependency
-records, variable/bit reads and writes, object-state/class writes, and counts
-for room scripts, objects, verb entries, decoded operations and source bytes.
-The CLI emits this as deterministic JSON alongside human-readable counts.
+## Current outputs
 
-An indirect script/room/resource operand is a dynamic edge with an expression;
-it is never turned into a guessed selector. A direct room-local `startScript`
-or direct `startObject` must resolve against the current room's decoded local
-namespace/object verb directory or is reported missing. A direct global script
-is currently marked external because this room-only compilation unit does not
-yet ingest a global bundle.
+`tools/compile_scumm_game.py --analyze` writes deterministic JSON for the
+source GameIR, resource census, executable records, dependency/resource graph,
+reachability, capability registry, unsupported frontier, opaque analysis, and
+capacity observations. Its Markdown summary is generated from those reports.
+Output is source-bound by archive/member, profile, compiler component and body
+hashes; no absolute input paths are placed in canonical artifacts.
 
-FATE room 7 compiles through this path with 79 executable body records, 110
-static edges, one dynamic edge, no unclassified *known-width* operation, and
-21 incomplete scripts with opaque tails. The bit69 read is reported generically
-as `bit:69`; the compiler assigns it no title-specific meaning. Because these
-scripts have opaque boundaries, the report is explicitly `partial`; no later
-control-flow dependency is inferred across those boundaries. It resolves the
-literal object-verb calls to room-local LSCR 201 and 207, and fully decodes
-LSCR 201's actor placement into room 3 followed by a dynamic
-`actorFollowCamera` scene edge. The latter remains dynamic because the followed
-actor's room is runtime state; no room number is inferred from a title-specific
-rule.
+The source catalog keeps indexed directory slots, including unavailable or
+unresolved entries. Rooms are passed through the same `compile_room_payload()`
+used by `compile_scumm_room.py`; global scripts are passed through the same
+`decode_script()`. A room the current semantic parser rejects stays inventoried
+with an `UNSUPPORTED` diagnostic and contributes no fabricated executable
+records. Object/actor/string metadata indicates when it is only a lower bound
+or partial projection.
 
-The source manifest records hashes for the compiler/front-end/record source
-components, CLI, IR, analysis, cooked record, and—when selected—the SNES
-generator and every generated backend file. Archive, index/data members,
-profile identity, distinct LFLF-container and ROOM-payload offsets, and body
-hashes are recorded without embedding machine-specific absolute paths.
+Canonical execution identities are source-level (`GlobalScript(n)`,
+`RoomEntry(n)`, `RoomExit(n)`, `RoomLocal(room=n,local=m)`, and
+`ObjectVerb(room=n,object=m,verb=v)`). Resource identities are distinct
+(`ScriptResource(n)`, `RoomResource(n)`, `Sound(n)`, `Costume(n)`, `Charset(n)`).
+No SNES selector is allocated by game analysis.
 
-Not implemented yet: per-opcode support status against a named backend/runtime
-version, selected-root reachability, transitive global closure, conservative
-branch reachability, script-slot pressure, room-wide resource inventories,
-costume codec and save-capacity analysis. An operation appearing in the report
-means it was decoded, not that the SNES backend has certified its semantics.
-In particular, `unsupported_operations == 0` is not a support certification.
-It only reflects the current bounded decoder's classification of operations
-it successfully decoded. Opaque tails remain unknown, and no backend/runtime
-capability claim is implied by an empty unsupported list. Per-operation
-certification against a named backend/runtime is future work.
+## Certainty and completeness
 
-The analyzer should answer what a source game requires, what the selected
-backend implements, and what remains uncertain before a long native replay.
-Initially it is a conservative static report, not perfect whole-game
-reachability.
+Dependency edges use `STATIC`, `CONDITIONAL_STATIC`, `DYNAMIC`, or
+`UNRESOLVED`. Reachability uses `ROOT`, `DEFINITE`, `CONDITIONAL`, `POSSIBLE`,
+`UNRESOLVED`, or `UNREACHED`. Dynamic selectors retain the source expression
+and are not guessed into a target. Room containment/object-verb ownership is
+reported in the resource graph, separately from executable reachability.
 
-## Evidence levels
+Each executable reports `COMPLETE`, `PARTIAL_OPAQUE`, `UNSUPPORTED_DECODE`, or
+`MALFORMED`. Unknown instruction width/semantics are `UNSUPPORTED_DECODE`;
+truncated operands or bounded-format violations are `MALFORMED`. Opaque reports
+retain the last decoded PC, absolute `opaque_from_pc`, reason, known operations,
+and known dependencies before the boundary. The invariant is:
 
-- **Definitely required** — in mandatory/selected roots or statically reached
-  by literal references.
-- **Possibly reachable** — target/resource is dynamic, conditional, or hidden
-  behind a conservative branch/call edge.
-- **Observed during execution** — event seen in a named ROM/build, with
-  program identity, source PC/span and frame.
+> OPAQUE TAIL != COMPLETE ANALYSIS
 
-An observed path does not prove all game branches are covered; a decoded
-opcode need not execute on the current route.
+If an opaque or dynamic edge is reachable from configured roots, global
+closure is incomplete. Other unvisited executables then remain `UNRESOLVED`,
+not proven unreachable. The report provides a known path where one exists and
+an uncertainty witness otherwise. No absence-of-edge claim extends beyond an
+opaque boundary.
 
-## Initial report categories
+## Capability registry
 
-| Category | Static evidence and report |
+The registry is keyed by generic decoded operation/capability, never by FATE
+room/script/object identities. It tracks these dimensions independently:
+
+| Dimension | Current evidence/status rule |
 |---|---|
-| SCUMM dialect/version | Profile and resource headers; parser support and unsupported dialect features. |
-| Opcode usage | Decode selected script bodies; per-opcode counts, malformed/truncated instructions and unknown opcodes. |
-| Script constructs | Branches, waits, starts/stops/chains, cutscenes, messages; construct support state. |
-| Script count/dependencies | Global directories, ENCD/EXCD/LSCR, object verbs and literal edges; selected closure and unresolved/dynamic refs. |
-| Slot pressure | Literal call graph and conservative recursion/dynamic edges; lower bound, observed peak, conservative/unknown bound—not total scripts as exact peak. |
-| Rooms/objects/verbs | ROOM/OBCD/CDHD/verb data; counts, local scripts, malformed/duplicate records. |
-| Actor operations | Opcode use, actor defaults and costume refs; required services and capacity. |
-| Walkboxes | BOXD geometry, matrixOps and route mutations; box count, static portals, dynamic route requirements. |
-| Costumes/codecs | Headers and frame/codec fields; formats, palette/capacity needs, unsupported codecs. |
-| Text/control codes | Encoded text and print ops; character/control coverage and message limits. |
-| Cutscenes/overrides | Begin/end/override uses and structure; continuation/stack requirements. |
-| Audio/iMUSE | Sound resources and audio opcodes; commands, mapped logical resources and partial backends. |
-| Resource/capacity | Source counts/sizes plus generated data; ROM/WRAM/bank/directory requirements. |
-| Save state | Mutable fields and schema; persistent state/capacity requirements. |
-| Unsupported semantics | Unknown opcodes, unsupported fields/codecs and unresolved mandatory edges with source spans and confidence. |
+| Front-end decode | `SUPPORTED` only for operations decoded by the shared v5 decoder; unknown-width tail is `UNSUPPORTED`. |
+| IR representation | `SUPPORTED` for explicit `InstructionIR`; an opaque tail is only `PARTIAL`. |
+| SNES backend | `PARTIAL`: SC5C preserves source bytecode, but this is not semantic lowering certification. |
+| Host runtime | `PARTIAL` when dispatch exists; `UNSUPPORTED` when a decoded opcode has no handler. Dispatch presence alone is not conformance proof. |
+| SNES runtime | `UNKNOWN` in static whole-source analysis; an assembly label alone would not certify semantics. |
+| Save/restore | `UNKNOWN` unless a separate stateful regression establishes it. |
+| Native conformance | `UNKNOWN` unless a source/build-bound native control establishes it. |
 
-For each feature report `SUPPORTED`, `PARTIAL`, `UNSUPPORTED` or `UNKNOWN`,
-plus evidence and backend version. Semantic support and capacity are separate:
-a supported `startScript` may exceed selected slot capacity.
+The aggregate report is deliberately conservative: an operation being decoded
+does not imply backend, host semantic, SNES, save-state, or native acceptance.
+Likewise Milestone 1's `unsupported_operations == 0` means only that the
+bounded decoder did not classify a decoded operation as unsupported; it is not
+runtime capability certification.
 
-## Existing facts to reuse
+Required groups are reported for the whole source corpus, definite,
+conditional, possible/dynamic and unresolved scopes, plus individual parsed
+rooms and executables. Useful groups include script lifecycle, variables and
+control flow, object execution/state, room lifecycle, actors/movement,
+text/dialog, waits/timers, cutscenes, audio, and resource services. Resource
+census separately reports indexed sound/music, costumes and charsets; codec
+semantics are not certified merely by inventory.
 
-The raw provider exposes global directories/resource keys. Room decode exposes
-objects, verb offsets, walkboxes and visual geometry. Cooked manifests already
-carry room/script/object identities, hashes, source offsets, archive/index/data
-hashes and profile identity. The selector generator checks duplicate/missing
-scripts and allocates stable IDs. Host and native engines enumerate opcode
-support. Profiles/build flags currently provide much of the root set manually.
+## Unsupported/partial frontier
 
-The first analyzer can reuse these facts without perfect symbolic execution.
-Variable script IDs, pseudo-room maps, resource operations and conditional
-state widen results to `possibly reachable` with an explicit reason.
+The frontier is an engineering backlog, not a claim that every listed
+operation blocks the current game path. Each item identifies source identity,
+source PC, capability, support dimensions, reachability, a known dependency
+path or uncertainty witness, and whether dynamic/opaque analysis affects it.
+Classifications distinguish definite and conditional blockers, possible
+dynamic requirements, partial/unverified semantics, and unknown behavior
+beyond an opaque boundary. Corpus-only use is not confused with a definite
+boot blocker.
+
+## Current limits
+
+The current decoder covers a bounded generic SCUMM v5 subset. FATE's boot
+global reaches an opaque tail early, so the exact executable closure is not
+claimed; much of the corpus remains unresolved from roots even though its
+source bodies and decoded prefix are inventoried. Three FATE rooms currently
+exceed the room decoder's BOXD z-plane representation and remain explicitly
+unsupported. Actor metadata is inferred from decoded references rather than
+claimed as a complete actor table. Text literals are counted/retained as
+encoded IR operands, not normalized into a complete string table.
+
+Capacity values distinguish exact indexed/cooked counts, static lower bounds,
+and unknown runtime scheduling pressure. Static graph depth is not a runtime
+script-slot or stack maximum. This analyzer does not automatically generate a
+full FATE ROM or replace profile-selected backend inputs.
