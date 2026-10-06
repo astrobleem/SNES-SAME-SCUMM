@@ -3526,3 +3526,34 @@ ROM `416810a9b6617ebc4c6f93a43e6e18ad505db0f7820be54c49f075a910538e48`, so its
 existing startup evidence remains valid. Pinned Poppy, ROM audit, Python
 compilation, and `git diff --check` pass. The known Phase6K generated-artifact
 drift remains adjudicated and unchanged.
+
+## SCUMM resident-binding simulator milestone (2026-10-06)
+
+- Work is on local branch `scumm-resident-binding-simulator`, based exactly
+  on true-selector-demand commit `7845937d5f5b913b9897f85c4ee2fbe4c4ac9a4d`.
+- `residency_contract.py` models the existing 178-byte selector pool,
+  canonical SelectorUnit bindings, binding generations, deterministic
+  unpinned eviction, explicit multi-owner pin reasons, global lookup,
+  activation nesting/replacement, bundle lifecycle, room transitions, and
+  portable canonical-identity snapshot/restore. It is compiler-side only and
+  is not imported by the production SNES runtime.
+- The selector-free compiler directory uses schema v2 with owner data,
+  bundle-local unit indices, global lookup metadata, dynamic-resolution
+  policy, and pinning/residency metadata. The simulator CLI emits deterministic
+  simulation, trace, and human-readable summary files.
+- Synthetic resolver tests pass, including 178-selector exhaustion atomicity,
+  yielded-global transition retention, outgoing local/continuation retirement,
+  nested activation restore, and `$CE`→`$A1` portable selector reassignment.
+- Canonical DOS-CD FATE integration passed from `/home/chad/ATLANTIS.zip`:
+  93 parsed room bundles, 163 available globals, room 40 at 60 units, room 46
+  at 216 dynamic candidates, 84 room-40 scenario peak, and 85 conservative
+  modeled upper bound within the 178-selector pool. The room-40→41 transition
+  used a modeled 25 activation slots and preserved the yielded global. Exact
+  runtime liveness remains unknown; three rooms remain unparsed.
+- Two independent canonical analyses (18 files each) and simulations (3 files
+  each) were byte-identical; structured comparison is at
+  `/tmp/scumm-resident-binding-determinism.json`.
+- Final `make test`: 908 tests, 12 explicit skips, no failures. `make validate`,
+  Python compilation, Bash syntax, JSON validation, Poppy lint, and diff checks
+  pass. No gameplay, native execution, ABI, allocator, or save-format changes
+  were made.

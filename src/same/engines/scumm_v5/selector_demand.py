@@ -347,6 +347,7 @@ def build_selector_directory(model: dict[str, Any]) -> dict[str, Any]:
                 "selector_unit_identity": unit["identity"],
                 "executable_carrier_identity": unit["executable_carrier_identity"],
                 "kind": unit["kind"], "residency_scope": unit["residency_scope"],
+                "owner": unit.get("owner", {}),
                 "contained_semantic_executables": unit["contained_semantic_executable_identities"],
                 "compiled_representation": unit["compiled_representation"],
                 "dispatch_metadata": unit["dispatch_metadata"],
@@ -354,11 +355,66 @@ def build_selector_directory(model: dict[str, Any]) -> dict[str, Any]:
                 "dependencies": unit["dependencies"],
             })
         bundle_rows.append({"identity": bundle, "selector_units": unit_rows})
+    global_directory = []
+    for bundle_row in bundle_rows:
+        if bundle_row["identity"] != "GlobalBundle":
+            continue
+        for unit in bundle_row["selector_units"]:
+            script_number = unit["dispatch_metadata"].get("lookup_key", {}).get("script_number")
+            if script_number is None:
+                raise ValueError(
+                    f"global SelectorUnit lacks canonical script number: "
+                    f"{unit['selector_unit_identity']}"
+                )
+            global_directory.append({
+                "script_number": int(script_number),
+                "program_unit_identity": unit["selector_unit_identity"],
+                "bundle_identity": bundle_row["identity"],
+                "local_bundle_index": unit["local_bundle_index"],
+            })
+    global_directory.sort(key=lambda item: item["script_number"])
+    room_bundle_directory = []
+    for bundle_row in bundle_rows:
+        if bundle_row["identity"] == "GlobalBundle":
+            continue
+        units = bundle_row["selector_units"]
+        rooms = {item.get("owner", {}).get("room") for item in units
+                 if item.get("owner", {}).get("room") is not None}
+        if len(rooms) > 1:
+            raise ValueError(f"room bundle has multiple room owners: {bundle_row['identity']}")
+        room_bundle_directory.append({
+            "bundle_identity": bundle_row["identity"],
+            "room": next(iter(rooms)) if rooms else None,
+            "selector_unit_count": len(units),
+            "selector_units_by_kind": dict(sorted(Counter(
+                item["kind"] for item in units).items())),
+            "selector_unit_identities": [item["selector_unit_identity"]
+                                         for item in units],
+        })
     return {
-        "schema": "same_scumm_v5_selector_free_directory_v1",
+        "schema": "same_scumm_v5_selector_free_directory_v2",
         "selector_values_emitted": False,
         "identity_invariant": "directory indices are bundle-local compiler identities, not runtime selectors",
         "bundles": bundle_rows,
+        "room_bundle_directory": room_bundle_directory,
+        "global_directory": global_directory,
+        "dynamic_global_resolver": {
+            "input": "runtime global script number",
+            "lookup": "global_directory.script_number -> program_unit_identity",
+            "candidate_count": len(global_directory),
+            "prebind_candidates": False,
+            "missing_target": "fail with UnknownProgramUnit; never alias",
+        },
+        "residency_metadata": {
+            "room_bundle_policy": "eagerly bind selector units for the active room bundle",
+            "global_policy": "lazy resolve and bind on dispatch; preserve while pinned",
+            "selector_assignment": "deferred to runtime/backend binder",
+            "pin_reasons": [
+                "ACTIVE_SCRIPT_SLOT", "YIELDED_SCRIPT", "NESTED_PARENT",
+                "ROOM_CONTINUATION", "CUTSCENE_OVERRIDE", "ROOM_LIFECYCLE",
+                "SENTENCE_EXECUTION", "SAVE_RESTORE_RECONSTRUCTION",
+            ],
+        },
         "data_only_resource_records": [
             {"identity": row["identity"], "room": row["room"], "object": row["object"],
              "source_provenance": row["source_provenance"],

@@ -2,6 +2,11 @@
 
 Status: **IMPLEMENTED as compiler analysis; production generation/runtime unchanged.**
 
+Follow-up: the pure resident-binding simulator is now implemented in
+[`MILESTONE_7_RESIDENT_BINDING_SIMULATOR.md`](MILESTONE_7_RESIDENT_BINDING_SIMULATOR.md).
+It consumes the selector-free directory introduced here; it does not change
+the selector allocator, native ABI, or save formats.
+
 ## Identity layers
 
 | Concept | Meaning in this milestone |
@@ -120,14 +125,14 @@ Current byte-selector pool: 178 values.
   live simultaneously; at most 25 scheduler activations can hold selector
   references, but directory/resource references also need a resolver design.
 
-Recommendation remains **Model B: small indirection/resolver**. Keep source
+At the end of Milestone 6, the recommendation was **Model B: small
+indirection/resolver**. Keep source
 identities and bundle-local directory indexes stable, resolve a global or
 room-local identity on activation, and pin its resident binding while any
 selector-bearing VM state refers to it. Dynamic global candidates need not all
-be resident. The next implementation seam is a pure resolver/binding simulator
-consuming this generated directory, including dynamic global lookup, active
-room bundles, pin/unpin, and exhaustion behavior. No native ABI change should
-precede that contract test.
+be resident. The next implementation seam identified at that checkpoint was a
+pure resolver/binding simulator; that work is now the subject of Milestone 7.
+No native ABI change should precede its contract review.
 
 ## Save/restore boundary
 

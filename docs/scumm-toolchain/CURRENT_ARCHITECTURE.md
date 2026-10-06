@@ -66,6 +66,15 @@ retained as historical compatibility data. See
 `MILESTONE_6_TRUE_SELECTOR_DEMAND.md` for the backend/runtime trace and exact
 room-7/room-98 reconciliation.
 
+`residency_contract.py` now consumes that selector-free directory in a pure
+compiler-side simulator. It models temporary selector bindings, generations,
+multiple pin reasons, bundle load/release, global lookup, activation nesting,
+room transitions, and portable canonical-identity restore. The CLI
+`tools/simulate_scumm_residency.py` emits deterministic traces and capacity
+reports. This proves the proposed contract over synthetic and compiler-known
+FATE scenarios only; native runtime binding/pinning is not implemented and
+actual scheduler liveness remains unknown.
+
 The architectural invariant is:
 
 ```text

@@ -24,7 +24,8 @@ from same.engines.scumm_v5.program_units import (
     build_program_unit_model, build_residency_manifest,
 )
 from same.engines.scumm_v5.residency_contract import (
-    ResidentBindingSimulator, ResidencyExhausted,
+    DEFAULT_SELECTOR_POOL, ResidentBindingSimulator, ResidencyExhausted,
+    ResolverDirectory, simulate_analysis_directory,
 )
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
@@ -108,6 +109,12 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
                          counts["legacy_backend_program_records_that_receive_ids_if_included"] - 12)
         directory = result.selector_directory
         self.assertFalse(directory["selector_values_emitted"])
+        self.assertEqual(directory["schema"], "same_scumm_v5_selector_free_directory_v2")
+        self.assertEqual([row["script_number"] for row in directory["global_directory"]],
+                         [1, 2, 3, 4, 5])
+        self.assertFalse(directory["dynamic_global_resolver"]["prebind_candidates"])
+        self.assertEqual(directory["dynamic_global_resolver"]["missing_target"],
+                         "fail with UnknownProgramUnit; never alias")
         self.assertEqual(len(directory["data_only_resource_records"]), 12)
         directory_units = [unit for bundle in directory["bundles"]
                            for unit in bundle["selector_units"]]
@@ -364,18 +371,22 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
 
         simulator = ResidentBindingSimulator(3)
         yielded_global = "GlobalProgram(4)"
-        old_selector = simulator.pin(yielded_global, "YIELDED_ROOM_TRANSITION")
+        simulator.pin(yielded_global, "YIELDED_ROOM_TRANSITION")
+        old_selector = simulator.reference(yielded_global).selector
         simulator.pin("RoomEntryProgram(22)", "ACTIVE_ROOM")
         selected_dynamic = "GlobalProgram(1199)"
         simulator.pin(selected_dynamic, "ACTIVE_DYNAMIC_CALL")
         self.assertEqual(simulator.resolve(yielded_global), old_selector)
-        self.assertNotIn("GlobalProgram(1000)", simulator.snapshot()["bindings"])
+        self.assertNotIn(
+            "GlobalProgram(1000)",
+            {item["program_unit"] for item in simulator.resident_snapshot()["bindings"]},
+        )
         with self.assertRaises(ResidencyExhausted):
             simulator.resolve("GlobalProgram(1198)")
         simulator.unpin("RoomEntryProgram(22)", "ACTIVE_ROOM")
         reused = simulator.resolve("GlobalProgram(1198)")
-        self.assertEqual(simulator.unit_for_selector(reused), "GlobalProgram(1198)")
-        self.assertEqual(simulator.unit_for_selector(old_selector), yielded_global)
+        self.assertEqual(str(simulator.unit_for_selector(reused)), "GlobalProgram(1198)")
+        self.assertEqual(str(simulator.unit_for_selector(old_selector)), yielded_global)
 
 
 @unittest.skipUnless(FATE_ARCHIVE, "set SAME_SCUMM_SOURCE_ARCHIVE for full FATE census integration")
@@ -552,6 +563,39 @@ class ScummV5FateWholeGameIntegrationTests(unittest.TestCase):
                             and edge["kind"] == "actor-follow-camera-room"
                             and edge["resolution"] == "DYNAMIC"
                             for edge in analysis.dependency_graph["edges"]))
+
+        # Consume the exact compiler directory in the pure residency model.
+        # This is a modeled contract check, not a FATE gameplay trace.
+        resolver_directory = ResolverDirectory.from_selector_directory(
+            analysis.selector_directory)
+        self.assertEqual(len(resolver_directory.global_scripts), 163)
+        simulation = simulate_analysis_directory(
+            resolver_directory, analysis.selector_demand,
+            analysis.dependency_graph, selector_pool=DEFAULT_SELECTOR_POOL)
+        self.assertEqual(simulation["selector_capacity"], 178)
+        self.assertEqual(simulation["largest_room"]["room"], 40)
+        self.assertEqual(simulation["largest_room"]["selector_units"], 60)
+        self.assertEqual(simulation["largest_room"][
+            "modeled_peak_with_live_globals_and_dynamic_lookup"], 84)
+        self.assertTrue(simulation["largest_room"][
+            "yielded_global_preserved_across_transition"])
+        self.assertEqual(simulation["largest_room"][
+            "transition_to_compiler_discovered_room"], 41)
+        self.assertEqual(simulation["largest_room"]["transition_result"][
+            "peak_activation_slots"], 25)
+        self.assertEqual(simulation["dynamic_candidate_scenario"]["room"], 46)
+        self.assertEqual(simulation["dynamic_candidate_scenario"][
+            "candidate_universe_count"], 216)
+        self.assertEqual(simulation["dynamic_candidate_scenario"][
+            "max_additional_global_bindings_at_once"], 1)
+        self.assertFalse(simulation["dynamic_candidate_scenario"][
+            "all_candidates_prebound"])
+        self.assertEqual(simulation["capacity"][
+            "conservative_modeled_upper_bound"]["value"], 85)
+        self.assertTrue(simulation["capacity"][
+            "selector_capacity_sufficient_for_modeled_bound"])
+        self.assertEqual(simulation["capacity"][
+            "proven_concurrent_live_unit_maximum"]["epistemic"], "UNKNOWN")
 
 
 class ScummV5GameAnalysisCliTests(unittest.TestCase):
