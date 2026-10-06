@@ -101,6 +101,12 @@ boot blocker.
 
 ## Current limits
 
+Residency demand is reported independently from semantic support. A source
+corpus count, a room-bundle directory size, and simultaneous live C4 slots are
+different measurements; see `MILESTONE_4_RESIDENCY.md`. Selector capacity is
+a backend addressability limit, not evidence that every source executable
+must be resident at once.
+
 The opcode schema covers the registered SCUMM v5 byte forms, while this FATE
 source still contains nine structurally unknown occurrences and two
 truncated operands among parsed-room executables. The configured

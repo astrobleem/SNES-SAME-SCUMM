@@ -60,7 +60,7 @@ def main() -> int:
     parser.add_argument("--profile", type=Path, required=True,
                         help="thin source-edition profile with raw SCUMM v5 resource policy")
     parser.add_argument("--analyze", action="store_true", required=True,
-                        help="emit census, IR, graph, reachability, capabilities, and frontier")
+                        help="emit census, IR, graph, reachability, capabilities, frontier, and residency plan")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -104,6 +104,9 @@ def main() -> int:
           f"{result.dependency_graph['counts']['edges']} graph edges")
     print(f"Analysis identity SHA-256: {manifest['analysis_file_set_sha256']}")
     print(f"Static closure complete: {result.opaque_analysis['closure_complete']}")
+    print("Largest parsed room bundle: "
+          f"{result.residency['working_set_scenarios']['steady_state_room']['maximum_room_bundle_executables']} executables; "
+          f"selector capacity {result.residency['selector_capacity']['capacity']}")
     return 0
 
 

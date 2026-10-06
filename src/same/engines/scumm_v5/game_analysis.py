@@ -20,6 +20,7 @@ from .room_compiler import (
     RoomBundleCompilation, ScriptIR, _static_value, compile_room_payload,
     decode_script, profile_game_identity, sha256,
 )
+from .residency import build_residency_plan
 from .v5_opcode_schema import opcode_schema, schema_coverage
 
 
@@ -105,6 +106,7 @@ class GameAnalysis:
     opaque_analysis: dict[str, Any]
     capacity: dict[str, Any]
     opcode_coverage: dict[str, Any]
+    residency: dict[str, Any]
     room_compilations: dict[int, RoomBundleCompilation]
 
     def files(self) -> dict[str, bytes]:
@@ -119,6 +121,7 @@ class GameAnalysis:
             "opaque_analysis.json": canonical_json(self.opaque_analysis),
             "capacity.json": canonical_json(self.capacity),
             "opcode_coverage.json": canonical_json(self.opcode_coverage),
+            "residency.json": canonical_json(self.residency),
             "summary.md": self.summary_markdown().encode(),
         }
 
@@ -144,6 +147,10 @@ class GameAnalysis:
             f"truncated {self.opcode_coverage['counts']['truncated_occurrences']}, "
             f"malformed {self.opcode_coverage['counts']['malformed_occurrences']}",
             f"Static closure complete: {'yes' if complete else 'no'}", "",
+            f"Largest parsed room executable bundle: {self.residency['selector_capacity']['scenarios'][0]['value']}",
+            f"Current selector capacity: {self.residency['selector_capacity']['capacity']}",
+            f"Residency model recommendation: {self.residency['recommendation']['choice']}",
+            "Source executable count is not a simultaneous active-script count; see residency.json.", "",
             "Opaque analysis remains incomplete; absence of a decoded edge is not proof "
             "that an opaque tail contains no dependency or capability.", "",
         ))
@@ -1144,6 +1151,13 @@ def analyze_game(
     )
     graph, scripts = build_dependency_graph(game, compilations)
     reachability, paths = compute_reachability(profile, scripts, graph)
+    selector_capacity_value = (backend_selector_capacity or {}).get("value")
+    residency = build_residency_plan(
+        scripts, graph, reachability,
+        backend_selector_capacity=(None if selector_capacity_value is None
+                                   else int(selector_capacity_value)),
+        runtime_script_slot_capacity=25,
+    )
     capabilities, frontier = analyze_capabilities(scripts, reachability, paths)
     opcode_coverage = build_opcode_coverage(scripts, reachability, capabilities)
     resource_counts = Counter(str(item["category"]) for item in game.resources)
@@ -1278,7 +1292,7 @@ def analyze_game(
     }
     return GameAnalysis(game, census, executable_report, graph, reachability,
                         capabilities, frontier, opaque, capacity, opcode_coverage,
-                        compilations)
+                        residency, compilations)
 
 
 def game_analysis_hash(files: dict[str, bytes]) -> str:

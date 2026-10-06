@@ -44,7 +44,11 @@ def raw_pair() -> tuple[bytes, bytes]:
         # semantically unsupported actor query must not hide the following
         # static StartScript dependency.
         3: bytes((0x03, 0, 0, 1, 0x0A, 4, 0xFF, 0)),
-        4: bytes((0x00,)),
+        # Global 4 is started by known global dependencies, yields, then
+        # requests room 2. Operation presence makes its source identity a
+        # possible cross-room continuation candidate; it does not prove that
+        # a particular activation is live at the transition.
+        4: bytes((0x80, 0x72, 2, 0x00)),
         # A known-width jump with a truncated word operand is malformed rather
         # than an unknown-width/unsupported decode.
         5: bytes((0x18,)),

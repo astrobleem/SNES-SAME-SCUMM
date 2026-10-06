@@ -18,7 +18,7 @@ CLASSIFICATIONS = {
 }
 EXPECTED_COUNTS = {
     "GENERIC_SCUMM_SEMANTIC": 2,
-    "COMPILER_DERIVABLE_DATA": 10,
+    "COMPILER_DERIVABLE_DATA": 11,
     "FATE_PROFILE_DATA": 3,
     "TEMPORARY_BRINGUP_HOOK": 2,
     "TEST_FIXTURE_ONLY": 5,
@@ -61,6 +61,7 @@ class ScummToolchainCouplingInventoryTests(unittest.TestCase):
             "IR.md", "COMPILER_PIPELINE.md", "CAPABILITY_ANALYSIS.md",
             "RUNTIME_BOUNDARY.md", "MIGRATION_PLAN.md", "FIRST_MILESTONE.md",
             "MILESTONE_2.md",
+            "MILESTONE_4_RESIDENCY.md",
         ):
             self.assertIn(name, ledger)
             self.assertTrue((ROOT / "docs/scumm-toolchain" / name).is_file())

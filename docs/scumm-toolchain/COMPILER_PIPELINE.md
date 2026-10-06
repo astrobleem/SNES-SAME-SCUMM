@@ -87,6 +87,11 @@ synthetic fixture and FATE room 7. `generate_snes_cooked_rooms.py` remains the
 single selector allocator and emits the existing runtime tables. The standalone
 CLI can invoke that generator with portable relative `.incbin` paths.
 
+Whole-game analysis now also emits `residency.json`. This is a compiler
+planning report, not a selector allocation pass: canonical source identities
+remain independent of the current byte selector, and lifecycle edges describe
+whether code may overlap, is staged across room commit, or remains uncertain.
+
 ## Dependency graph
 
 Execution nodes use typed source identities such as `GlobalScript(n)`,
@@ -120,6 +125,13 @@ The backend owns selector allocation, ROM-bank layout, generated Poppy/data,
 WRAM/capacity checks, compact operation encoding, room/verb directories,
 resource packaging, image/palette/tile conversion, charset packing, audio
 binding and target-to-source maps.
+
+The current program selector is a build-global byte key consumed by generated
+size/fetch dispatch. Room directories and global resolver records share that
+key space; each live C4 slot retains its selector with PC and locals. The
+residency report therefore separates directory addressability from the
+25-slot active-script bound and does not assume selector reuse is safe.
+Paging/reuse needs a resolver plus pinned live bindings or canonical IDs.
 
 Representation may vary by item:
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 import zipfile
 
@@ -18,6 +19,7 @@ from same.engines.scumm_v5.game_analysis import (
 from same.engines.scumm_v5.policy import parse_game_policy
 from same.engines.scumm_v5.resources import LucasartsScummV5ResourceProvider
 from same.engines.scumm_v5.room_compiler import compile_room_payload
+from same.engines.scumm_v5.residency import build_residency_plan
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
 
@@ -28,7 +30,7 @@ FATE_ARCHIVE = os.environ.get("SAME_SCUMM_SOURCE_ARCHIVE")
 FATE_PROFILE = ROOT / "examples/profiles/templates/fate_of_atlantis_dos_cd.json"
 
 
-def fixture_analysis():
+def fixture_analysis(*, selector_capacity=None):
     index, data = raw_pair()
     profile_bytes = FIXTURE_PROFILE.read_bytes()
     profile = load_profile(FIXTURE_PROFILE, verify_resources=False)
@@ -40,6 +42,9 @@ def fixture_analysis():
         provider, profile=profile, profile_bytes=profile_bytes,
         archive_sha256=hashlib.sha256(source_zip()).hexdigest(),
         source_members={"game.index": "ANALYSIS.000", "game.data": "ANALYSIS.001"},
+        backend_selector_capacity=(None if selector_capacity is None else {
+            "value": selector_capacity, "epistemic": "EXACT", "selectors_allocated": False,
+        }),
     )
 
 
@@ -207,6 +212,57 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
             {"source": "B", "target": "C", "domain": "execution", "resolution": "DYNAMIC"},
         ]
         self.assertEqual(execution_cycles(nodes, edges), [["A", "B"]])
+
+    def test_residency_separates_source_corpus_from_room_working_sets(self) -> None:
+        result = fixture_analysis(selector_capacity=178)
+        plan = result.residency
+        self.assertFalse(plan["identity_model"]["selector_allocation_performed"])
+        self.assertEqual(plan["counts"]["by_scope"]["GLOBAL"], 5)
+        self.assertEqual(plan["selector_capacity"]["capacity"], 178)
+        self.assertLess(plan["selector_capacity"]["scenarios"][0]["value"], 178)
+        self.assertTrue(all(item["epistemic"] in {
+            "EXACT", "STATIC_LOWER_BOUND", "CONSERVATIVE_UPPER_BOUND", "UNKNOWN",
+        } for item in plan["selector_capacity"]["scenarios"]))
+        self.assertTrue(any(edge["kind"] == "load_room"
+                            and edge["phase"] == "ROOM_TRANSITION"
+                            and "STAGED" in edge["coexistence"]
+                            for edge in plan["residency_edges"]))
+        global4 = next(item for item in plan["global_residency"]["records"]
+                       if item["identity"] == "GlobalScript(4)")
+        self.assertTrue(global4["may_yield"])
+        self.assertTrue(global4["contains_room_transition"])
+        self.assertTrue(global4["may_retain_identity_across_room_change"])
+        self.assertEqual(global4["evidence_scope"],
+                         "OPERATION_PRESENCE_ONLY_NOT_PROOF_OF_LIVE_OVERLAP")
+        self.assertGreaterEqual(
+            len(plan["global_residency"]["dynamic_global_candidate_union"]), 5)
+        room1 = next(item for item in plan["rooms"] if item["room"] == 1)
+        self.assertGreater(room1["room_bundle_executable_count"], 0)
+        self.assertEqual(room1["room_plus_dynamic_global_candidates"]["epistemic"],
+                         "CONSERVATIVE_UPPER_BOUND")
+        self.assertIn("GlobalScript(4)", plan["global_residency"]["yield_and_room_transition_operation_presence"])
+
+    def test_many_source_executables_can_have_small_room_partitions(self) -> None:
+        scripts = {}
+        for number in range(300):
+            room = number // 30
+            identity = f"ObjectVerb(room={room},object={number},verb=10)"
+            scripts[identity] = SimpleNamespace(
+                kind="OBCD", source=SimpleNamespace(room=room), instructions=(),
+                decode_complete=True,
+            )
+        plan = build_residency_plan(
+            scripts, {"edges": []},
+            {"status_by_executable": {identity: "UNREACHED" for identity in scripts}},
+            backend_selector_capacity=178,
+        )
+        scenarios = {item["name"]: item for item in plan["selector_capacity"]["scenarios"]}
+        self.assertEqual(plan["counts"]["known_source_executables"], 300)
+        self.assertEqual(scenarios["largest_room_directory_alone"]["value"], 30)
+        self.assertEqual(scenarios["largest_room_directory_alone"]["selector_capacity_fit"],
+                         "DEFINITELY_FITS")
+        self.assertEqual(scenarios["whole_known_source_corpus"]["selector_capacity_fit"],
+                         "DEFINITELY_EXCEEDS")
 
 
 @unittest.skipUnless(FATE_ARCHIVE, "set SAME_SCUMM_SOURCE_ARCHIVE for full FATE census integration")
