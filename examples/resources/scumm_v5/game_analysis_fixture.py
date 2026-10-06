@@ -25,7 +25,16 @@ def _script(number: int, body: bytes) -> bytes:
     return _chunk(b"SCRP", body)
 
 
-def raw_pair() -> tuple[bytes, bytes]:
+def _data_only_object(object_id: int, index: int) -> bytes:
+    """An OBCD resource with ordinary metadata but no VERB program table."""
+    header = struct.pack(
+        "<HBBBBBBhhB", object_id, 1, 1, 1, 1, 0, 0,
+        40 + index, 20 + index, 0,
+    )
+    return _chunk(b"OBCD", _chunk(b"CDHD", header))
+
+
+def raw_pair(*, data_only_objects: int = 0) -> tuple[bytes, bytes]:
     # Global 1 has an unconditional start, a conditional start, a direct room
     # transition, and a variable script selector. Global 2 contains a known-
     # width semantic-only actor query before a StartScript dependency, then an
@@ -60,7 +69,8 @@ def raw_pair() -> tuple[bytes, bytes]:
         offsets[number] = len(room1_container)
         room_slots[number] = 1
         room1_container.extend(_script(number, body))
-    room2_container = _chunk(b"ROOM", room2())
+    room2_source = room2(data_only_objects=data_only_objects)
+    room2_container = _chunk(b"ROOM", room2_source)
     lflf1 = _chunk(b"LFLF", bytes(room1_container))
     lflf2 = _chunk(b"LFLF", room2_container)
 
@@ -85,8 +95,8 @@ def raw_pair() -> tuple[bytes, bytes]:
             bytes(value ^ XOR_KEY for value in data_plain))
 
 
-def source_zip() -> bytes:
-    index, data = raw_pair()
+def source_zip(*, data_only_objects: int = 0) -> bytes:
+    index, data = raw_pair(data_only_objects=data_only_objects)
     output = BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
         for name, payload in (("fixture/ANALYSIS.000", index),

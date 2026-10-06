@@ -22,6 +22,7 @@ from .room_compiler import (
 )
 from .residency import build_residency_plan
 from .program_units import build_program_unit_model, build_residency_manifest
+from .selector_demand import build_selector_demand_model, build_selector_directory
 from .v5_opcode_schema import opcode_schema, schema_coverage
 
 
@@ -110,6 +111,9 @@ class GameAnalysis:
     program_units: dict[str, Any]
     residency_manifest: dict[str, Any]
     residency: dict[str, Any]
+    selector_demand: dict[str, Any]
+    selector_directory: dict[str, Any]
+    selector_residency: dict[str, Any]
     room_compilations: dict[int, RoomBundleCompilation]
 
     def files(self) -> dict[str, bytes]:
@@ -127,6 +131,9 @@ class GameAnalysis:
             "program_units.json": canonical_json(self.program_units),
             "residency_manifest.json": canonical_json(self.residency_manifest),
             "residency.json": canonical_json(self.residency),
+            "selector_demand.json": canonical_json(self.selector_demand),
+            "selector_directory.json": canonical_json(self.selector_directory),
+            "selector_residency.json": canonical_json(self.selector_residency),
             "summary.md": self.summary_markdown().encode(),
         }
 
@@ -153,11 +160,14 @@ class GameAnalysis:
             f"malformed {self.opcode_coverage['counts']['malformed_occurrences']}",
             f"Static closure complete: {'yes' if complete else 'no'}", "",
             f"Semantic executable identities: {self.program_units['counts']['semantic_executable_identities']}",
-            f"Backend ProgramUnits: {self.program_units['counts']['program_units']}",
-            f"Largest parsed room ProgramUnit bundle: {self.residency['working_set_questions']['B_addressable_program_unit_set']['largest_room_bundle']}",
-            f"Current selector capacity: {self.residency['selector_capacity']['capacity']}",
-            f"Residency model recommendation: {self.residency['recommendation']['choice']}",
-            "Semantic corpus size, ProgramUnit addressability, and simultaneous pinned bindings are separate quantities; see program_units.json and residency.json.", "",
+            f"Legacy backend program records: {self.program_units['counts']['program_units']}",
+            f"Current dispatch SelectorUnits: {self.selector_demand['counts']['selector_units']}",
+            f"Largest legacy backend record bundle: {self.residency['working_set_questions']['B_addressable_program_unit_set']['largest_room_bundle']}",
+            f"Largest callable room SelectorUnit bundle: {self.selector_demand['room_capacity_summary']['largest_room_selector_unit_count']}",
+            f"Largest known static room+global SelectorUnit set: {self.selector_demand['room_capacity_summary']['largest_static_room_plus_global_set']}",
+            f"Current selector capacity: {self.selector_residency['selector_capacity']['capacity']}",
+            f"Selector-unit residency recommendation: {self.selector_residency['recommendation']['choice']}",
+            "Semantic executable count, resource records, emitted legacy IDs, callable SelectorUnits, and simultaneous pins are distinct; see selector_demand.json and selector_residency.json.", "",
             "Opaque analysis remains incomplete; absence of a decoded edge is not proof "
             "that an opaque tail contains no dependency or capability.", "",
         ))
@@ -1160,6 +1170,30 @@ def analyze_game(
     reachability, paths = compute_reachability(profile, scripts, graph)
     program_units = build_program_unit_model(scripts, compilations, graph, reachability)
     residency_manifest = build_residency_manifest(program_units)
+    selector_demand = build_selector_demand_model(
+        scripts, compilations, graph, reachability, program_units)
+    selector_directory = build_selector_directory(selector_demand)
+    selector_plan_model = {
+        "program_units": selector_demand["selector_units"],
+        "semantic_to_program_unit_index": selector_demand["semantic_to_selector_index"],
+        "semantic_to_program_unit": [
+            {"semantic_executable": item["semantic_executable"],
+             "program_unit": item["selector_unit"]}
+            for item in selector_demand["semantic_executable_to_selector"]
+            if item["selector_unit"] is not None],
+        "dependencies": [{
+            "source_program_unit": edge["source_selector_unit"],
+            "source_semantic_identity": edge["source_semantic_executable"],
+            "target_program_unit": edge["target_selector_unit"],
+            "target_semantic_identity": edge["target_semantic_executable"],
+            "target_resource_identity": edge["target_resource"],
+            "kind": edge["kind"], "domain": edge.get("domain", "execution"),
+            "resolution": edge["resolution"], "source_pc": edge["source_pc"],
+            "expression": edge["expression"],
+            "candidate_program_units": edge["candidate_selector_units"],
+            "detail": edge["detail"],
+        } for edge in selector_demand["dependencies"]],
+    }
     selector_capacity_value = (backend_selector_capacity or {}).get("value")
     residency = build_residency_plan(
         scripts, graph, reachability,
@@ -1168,6 +1202,97 @@ def analyze_game(
         runtime_script_slot_capacity=25,
         program_unit_model=program_units,
     )
+    selector_residency = build_residency_plan(
+        scripts, graph, reachability,
+        backend_selector_capacity=(None if selector_capacity_value is None
+                                   else int(selector_capacity_value)),
+        runtime_script_slot_capacity=25,
+        program_unit_model=selector_plan_model,
+    )
+    # The historical ProgramUnit planner included passive OBCD records. Keep
+    # its JSON for comparison, and publish actual selector-addressability from
+    # the filtered callable-carrier projection separately.
+    residency_by_room = {item["room"]: item
+                         for item in selector_residency["room_bundles"]}
+    selector_units_by_room: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for unit in selector_demand["selector_units"]:
+        room = unit.get("owner", {}).get("room")
+        if room is not None:
+            selector_units_by_room[int(room)].append(unit)
+    resource_records_by_room: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for record in selector_demand["resource_records"]:
+        resource_records_by_room[int(record["room"])].append(record)
+    room_selector_reports = []
+    for room in sorted(compilations):
+        bundle = residency_by_room.get(room, {})
+        room_units = sorted(selector_units_by_room.get(room, []),
+                            key=lambda item: item["identity"])
+        semantic_count = sum(script.source.room == room and script.kind != "SCRP"
+                             for script in scripts.values())
+        static_globals = sorted(set(bundle.get("static_global_program_units", [])))
+        conditional_globals = sorted(set(bundle.get("conditional_global_program_units", [])))
+        dynamic_globals = sorted(set(bundle.get("dynamic_global_candidate_units", [])))
+        static_addressability = sorted({item["identity"] for item in room_units}
+                                       | set(static_globals) | set(conditional_globals))
+        room_selector_reports.append({
+            "room": room,
+            "semantic_executable_identities": semantic_count,
+            "resource_records": len(resource_records_by_room.get(room, [])),
+            "objects_with_verb_entries": sum(
+                bool(record["verb_entries"])
+                for record in resource_records_by_room.get(room, [])),
+            "objects_without_verb_entries": sum(
+                not record["verb_entries"]
+                for record in resource_records_by_room.get(room, [])),
+            "executable_carriers": len(room_units),
+            "selector_units": len(room_units),
+            "selector_units_by_kind": dict(sorted(Counter(
+                item["kind"] for item in room_units).items())),
+            "room_selector_unit_identities": [item["identity"] for item in room_units],
+            "direct_static_global_selector_units": static_globals,
+            "conditional_static_global_selector_units": conditional_globals,
+            "static_addressability_set": static_addressability,
+            "static_addressability_count": len(static_addressability),
+            "static_addressability_epistemic": bundle.get(
+                "total_static_addressable_program_units", {}).get("epistemic", "UNKNOWN"),
+            "dynamic_global_candidate_selector_units": dynamic_globals,
+            "dynamic_candidate_universe_count": len(set(static_addressability)
+                                                      | set(dynamic_globals)),
+        })
+    selector_demand["room_selector_reports"] = room_selector_reports
+    selector_demand["global_selector_summary"] = {
+        "global_script_slots": game.global_script_count,
+        "available_global_selector_units": selector_residency[
+            "global_program_units"]["available"],
+        "source_slots_without_a_script_body": max(
+            0, game.global_script_count - selector_residency["global_program_units"]["available"]),
+        "definitely_reachable": selector_residency["global_program_units"]["definitely_reachable"],
+        "conditionally_reachable": selector_residency["global_program_units"]["conditionally_reachable"],
+        "possible_or_unresolved": selector_residency["global_program_units"]["possible_or_unresolved"],
+        "reachability_counts": selector_residency["global_program_units"]["reachability_counts"],
+        "static_targets": selector_residency["global_program_units"]["static_targets"],
+        "conditional_static_targets": selector_residency["global_program_units"]["conditional_static_targets"],
+        "dynamic_candidate_universe": selector_residency[
+            "global_program_units"]["dynamic_candidate_universe"],
+        "yield_capable": selector_residency["global_program_units"]["yield_capable"],
+        "room_transition_capable_with_yield": selector_residency[
+            "global_program_units"]["room_transition_capable_with_yield"],
+        "candidate_universe_is_not_simultaneous_residency": True,
+    }
+    selector_demand["room_capacity_summary"] = {
+        "largest_room_selector_unit_count": max(
+            (item["selector_units"] for item in room_selector_reports), default=0),
+        "largest_static_room_plus_global_set": max(
+            (item["static_addressability_count"] for item in room_selector_reports), default=0),
+        "largest_dynamic_candidate_universe": max(
+            (item["dynamic_candidate_universe_count"] for item in room_selector_reports), default=0),
+        "selector_capacity": selector_capacity_value,
+        "static_room_sets_over_capacity": [
+            {"room": item["room"], "count": item["static_addressability_count"]}
+            for item in room_selector_reports
+            if selector_capacity_value is not None
+            and item["static_addressability_count"] > int(selector_capacity_value)],
+    }
     capabilities, frontier = analyze_capabilities(scripts, reachability, paths)
     opcode_coverage = build_opcode_coverage(scripts, reachability, capabilities)
     resource_counts = Counter(str(item["category"]) for item in game.resources)
@@ -1184,6 +1309,14 @@ def analyze_game(
     unsupported_rooms = [item for item in game.rooms
                          if item.get("analysis_status") == "UNSUPPORTED"]
     parsed_room_epistemic = ("STATIC_LOWER_BOUND" if unsupported_rooms else "EXACT")
+    selector_demand["source_coverage"] = {
+        "rooms_inventoried": len(game.rooms),
+        "rooms_parsed": len(compilations),
+        "unsupported_room_identities": [item["room"] for item in unsupported_rooms],
+        "source_corpus_epistemic": parsed_room_epistemic,
+        "object_resource_count_scope": "parsed rooms only",
+    }
+    selector_demand["counts"]["epistemic"] = parsed_room_epistemic
     object_count = sum(len(item.room_ir.objects) for item in compilations.values())
     verb_count = sum(len(obj.verbs) for item in compilations.values()
                      for obj in item.room_ir.objects)
@@ -1313,10 +1446,25 @@ def analyze_game(
         }),
         "runtime_slot_pressure": {"value": None, "epistemic": "UNKNOWN",
                                    "reason": "dynamic scheduling and runtime coexistence are not bounded by static graph depth"},
+        "true_selector_units": {
+            "value": selector_demand["counts"]["selector_units"],
+            "epistemic": parsed_room_epistemic,
+            "definition": "dispatch-reachable executable carriers after excluding data-only OBCD resources",
+        },
+        "object_resource_records": {
+            "value": selector_demand["counts"]["resource_records"],
+            "epistemic": parsed_room_epistemic,
+        },
+        "legacy_projected_ids_without_runtime_reference_if_included": {
+            "value": selector_demand["counts"]["legacy_projected_ids_with_no_runtime_reference_if_included"],
+            "epistemic": parsed_room_epistemic,
+        },
     }
     return GameAnalysis(game, census, executable_report, graph, reachability,
                         capabilities, frontier, opaque, capacity, opcode_coverage,
-                        program_units, residency_manifest, residency, compilations)
+                        program_units, residency_manifest, residency,
+                        selector_demand, selector_directory, selector_residency,
+                        compilations)
 
 
 def game_analysis_hash(files: dict[str, bytes]) -> str:

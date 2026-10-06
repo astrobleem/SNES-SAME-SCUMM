@@ -1,5 +1,14 @@
 # Milestone 5: ProgramUnit Reconciliation and Residency Contract
 
+> **Superseded selector-demand interpretation:** Milestone 6 traced generated
+> IDs through native dispatch and found that this report counted all OBCD
+> object records, including 593 data-only records that `Verb_Query` cannot
+> dispatch. The 2,788 count and room-98/room-7 capacity values below are the
+> historical backend-record projection, not true selector demand. Use
+> [`MILESTONE_6_TRUE_SELECTOR_DEMAND.md`](MILESTONE_6_TRUE_SELECTOR_DEMAND.md)
+> and the generated `selector_demand.json` / `selector_residency.json` for the
+> corrected callable-selector model.
+
 Status: **IMPLEMENTED, COMPILER ANALYSIS AND PURE CONTRACT MODEL ONLY**.
 No native selector allocator, SNES runtime behavior, or save format changed.
 
@@ -10,7 +19,7 @@ The compiler now keeps these layers distinct:
 | Layer | Meaning | Example |
 |---|---|---|
 | Semantic executable | Permanent source identity for a script body/verb. | `ObjectVerb(room=7,object=118,verb=10)` |
-| ProgramUnit | The backend body/table record that consumes one selector in the current SNES generator. | `ObjectProgram(room=7,object=118)` |
+| Historical ProgramUnit | The backend body/table record the prior analysis counted; some object records receive an unused generated ID but are not runtime-callable. | `ObjectProgram(room=7,object=118)` |
 | ResidentBinding | A future temporary mapping from canonical ProgramUnit identity to a currently usable selector. | `ObjectProgram(...) -> ResidentBinding` |
 | Selector | Current VM byte handle for generated size/fetch dispatch. | Not part of either source identity |
 | Bundle | Resource ownership/loading group. | `RoomBundle(7)` |

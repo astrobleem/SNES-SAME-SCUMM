@@ -107,9 +107,14 @@ def main() -> int:
     print("Semantic executable identities / backend ProgramUnits: "
           f"{result.program_units['counts']['semantic_executable_identities']} / "
           f"{result.program_units['counts']['program_units']}")
-    print("Largest parsed room ProgramUnit bundle / selector capacity: "
-          f"{result.residency['working_set_questions']['B_addressable_program_unit_set']['largest_room_bundle']} / "
-          f"{result.residency['selector_capacity']['capacity']}")
+    print("Object resource records / executable carriers / true SelectorUnits: "
+          f"{result.selector_demand['counts']['resource_records']} / "
+          f"{result.selector_demand['counts']['executable_carriers']} / "
+          f"{result.selector_demand['counts']['selector_units']}")
+    print("Largest room SelectorUnit set / static room+global set / selector capacity: "
+          f"{result.selector_demand['room_capacity_summary']['largest_room_selector_unit_count']} / "
+          f"{result.selector_demand['room_capacity_summary']['largest_static_room_plus_global_set']} / "
+          f"{result.selector_demand['room_capacity_summary']['selector_capacity']}")
     return 0
 
 

@@ -76,9 +76,18 @@ def room1() -> bytes:
     )
 
 
-def room2() -> bytes:
+def _data_only_object(object_id: int, index: int) -> bytes:
+    header = struct.pack("<HBBBBBBhhB", object_id, 1, 1, 1, 1, 0, 0,
+                         40 + index, 20 + index, 0)
+    return _chunk(b"OBCD", _chunk(b"CDHD", header))
+
+
+def room2(*, data_only_objects: int = 0) -> bytes:
     entry = bytes((0x07, 100, 0, 4, 0x00))
-    return _room_shell(0, _chunk(b"ENCD", entry), _chunk(b"EXCD", b"\0"))
+    objects = tuple(_data_only_object(180 + index, index)
+                    for index in range(data_only_objects))
+    return _room_shell(data_only_objects, *objects,
+                       _chunk(b"ENCD", entry), _chunk(b"EXCD", b"\0"))
 
 
 def source_rooms() -> dict[int, bytes]:

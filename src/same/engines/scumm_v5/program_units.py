@@ -1,9 +1,11 @@
-"""Selector-free projection from semantic SCUMM executables to backend units.
+"""Historical backend-record projection from semantic SCUMM executables.
 
 The front end keeps each object verb body as its own semantic executable.
-The existing SNES backend instead emits one selector-bearing OBCD record per
-object, with a verb-entry table into that full record.  This module makes that
-projection explicit without assigning native selectors.
+The existing SNES generator assigns an ID to each included OBCD record, but
+empty-verb object records are not runtime-callable: ObjectProgram_Resolve is
+gated by Verb_Query. `selector_demand.py` is the authoritative callable
+carrier/SelectorUnit projection; this module retains all backend records for
+compatibility and comparative reporting.
 """
 
 from __future__ import annotations
@@ -44,11 +46,12 @@ def build_program_unit_model(
     dependency_graph: dict[str, Any],
     reachability: dict[str, Any],
 ) -> dict[str, Any]:
-    """Project every semantic executable to exactly one selector-bearing unit.
+    """Project semantic executables to legacy backend program records.
 
-    OBCD units are also created for parsed object records with zero verb
-    programs: the current cooker still emits one OBCD record/selector for each
-    such object.  These units naturally have an empty semantic member list.
+    OBCD rows are also created for parsed object records with zero verb
+    programs because the current generator assigns an ID if the record is
+    included. The runtime cannot reference that ID after Verb_Query fails.
+    This is an allocation-candidate projection, not true selector demand.
     """
     rows: dict[str, dict[str, Any]] = {}
     semantic_to_unit: dict[str, str] = {}
@@ -101,7 +104,9 @@ def build_program_unit_model(
                 }],
                 "compiled_representation": {
                     "format": "existing SC5C room object-program/OBCD record",
-                    "selector_bearing": True,
+                    "selector_bearing": bool(obj.verbs),
+                    "legacy_generator_assigns_id_if_included": True,
+                    "runtime_selector_referenced": bool(obj.verbs),
                     "body_scope": "complete OBCD object resource, not one selector per verb",
                     "object_verb_entry_table": [
                         {"verb": verb.verb_id, "entry_offset": verb.entry_offset}
@@ -128,6 +133,8 @@ def build_program_unit_model(
                 "compiled_representation": {
                     "format": "existing SC5C script record",
                     "selector_bearing": True,
+                    "legacy_generator_assigns_id_if_included": True,
+                    "runtime_selector_referenced": True,
                     "body_scope": "one complete source script body",
                 },
                 "analysis_status": "COMPLETE",
@@ -207,7 +214,7 @@ def build_program_unit_model(
                     for semantic_id, unit_id in sorted(semantic_to_unit.items())]
     return {
         "schema": "same_scumm_v5_program_units_v1",
-        "identity_invariant": "semantic executable identity is permanent source identity; ProgramUnit is selector-bearing backend identity; neither contains an assigned selector",
+        "identity_invariant": "semantic executable identity is permanent source identity; this historical ProgramUnit projection includes backend record allocation candidates; selector_demand.py determines callable SelectorUnits; no selector value is assigned here",
         "selector_allocation_performed": False,
         "program_units": [rows[key] for key in sorted(rows)],
         "semantic_to_program_unit": mapping_rows,
@@ -216,6 +223,12 @@ def build_program_unit_model(
         "counts": {
             "semantic_executable_identities": len(scripts),
             "program_units": len(rows),
+            "selector_bearing_records": sum(
+                bool(row["compiled_representation"].get("selector_bearing"))
+                for row in rows.values()),
+            "legacy_records_with_id_if_included": sum(
+                bool(row["compiled_representation"].get("legacy_generator_assigns_id_if_included"))
+                for row in rows.values()),
             "by_kind": {name: counts.get(name, 0) for name in
                         ("GLOBAL", "ROOM_ENTRY", "ROOM_EXIT", "ROOM_LOCAL", "OBJECT", "OTHER")},
             "mapped_semantic_executables": len(mapping_rows),

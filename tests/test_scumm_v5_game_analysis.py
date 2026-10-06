@@ -36,8 +36,8 @@ FATE_ARCHIVE = os.environ.get("SAME_SCUMM_SOURCE_ARCHIVE")
 FATE_PROFILE = ROOT / "examples/profiles/templates/fate_of_atlantis_dos_cd.json"
 
 
-def fixture_analysis(*, selector_capacity=None):
-    index, data = raw_pair()
+def fixture_analysis(*, selector_capacity=None, data_only_objects=0):
+    index, data = raw_pair(data_only_objects=data_only_objects)
     profile_bytes = FIXTURE_PROFILE.read_bytes()
     profile = load_profile(FIXTURE_PROFILE, verify_resources=False)
     provider = LucasartsScummV5ResourceProvider(
@@ -46,7 +46,8 @@ def fixture_analysis(*, selector_capacity=None):
     )
     return analyze_game(
         provider, profile=profile, profile_bytes=profile_bytes,
-        archive_sha256=hashlib.sha256(source_zip()).hexdigest(),
+        archive_sha256=hashlib.sha256(
+            source_zip(data_only_objects=data_only_objects)).hexdigest(),
         source_members={"game.index": "ANALYSIS.000", "game.data": "ANALYSIS.001"},
         backend_selector_capacity=(None if selector_capacity is None else {
             "value": selector_capacity, "epistemic": "EXACT", "selectors_allocated": False,
@@ -70,6 +71,53 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
         nodes = {item["identity"]: item for item in result.dependency_graph["nodes"]}
         self.assertEqual(nodes["GlobalScript(1)"]["node_type"], "executable")
         self.assertEqual(nodes["ScriptResource(1)"]["node_type"], "resource")
+
+    def test_selector_demand_excludes_data_only_objects_and_shares_verb_carrier(self) -> None:
+        result = fixture_analysis(data_only_objects=12, selector_capacity=178)
+        demand = result.selector_demand
+        counts = demand["counts"]
+        self.assertEqual(counts["semantic_executable_identities"],
+                         result.executables["counts"]["total"])
+        self.assertEqual(counts["resource_records"], 13)  # one scripted + twelve data-only
+        self.assertEqual(counts["objects"]["without_verb_entries"], 12)
+        self.assertEqual(counts["objects"]["with_verb_entries"], 1)
+        self.assertEqual(counts["objects"]["verb_entries_without_semantic_ir"], 0)
+        self.assertEqual(counts["legacy_projected_ids_with_no_runtime_reference_if_included"], 12)
+
+        object_rows = [row for row in demand["resource_records"]
+                       if row["room"] == 1 and row["object"] == 100]
+        self.assertEqual(len(object_rows), 1)
+        self.assertEqual(len(object_rows[0]["verb_entries"]), 3)
+        self.assertEqual(object_rows[0]["selector_disposition"], "SELECTOR_UNIT")
+        verbs = [row for row in demand["semantic_executable_to_selector"]
+                 if row["semantic_executable"].startswith("ObjectVerb(room=1,object=100,")]
+        self.assertEqual(len(verbs), 3)
+        self.assertEqual({row["selector_unit"] for row in verbs},
+                         {"ObjectProgram(room=1,object=100)"})
+        self.assertTrue(all(row["disposition"] == "SHARED_SELECTOR_UNIT" for row in verbs))
+
+        data_only = [row for row in demand["resource_records"]
+                     if row["room"] == 2]
+        self.assertEqual(len(data_only), 12)
+        self.assertTrue(all(row["selector_unit"] is None
+                            and row["selector_disposition"] == "NO_SELECTOR_REQUIRED"
+                            for row in data_only))
+        self.assertEqual(counts["selector_units"],
+                         counts["executable_carriers"])
+        self.assertEqual(counts["selector_units"],
+                         counts["legacy_backend_program_records_that_receive_ids_if_included"] - 12)
+        directory = result.selector_directory
+        self.assertFalse(directory["selector_values_emitted"])
+        self.assertEqual(len(directory["data_only_resource_records"]), 12)
+        directory_units = [unit for bundle in directory["bundles"]
+                           for unit in bundle["selector_units"]]
+        self.assertTrue(all("selector_value" not in unit and "selector" not in unit
+                            for unit in directory_units))
+        room2 = next(row for row in demand["room_selector_reports"] if row["room"] == 2)
+        self.assertEqual(room2["resource_records"], 12)
+        self.assertEqual(room2["selector_units_by_kind"], {
+            "ROOM_ENTRY": 1, "ROOM_EXIT": 1,
+        })
 
     def test_graph_distinguishes_static_conditional_dynamic_and_opaque(self) -> None:
         result = fixture_analysis()
@@ -387,8 +435,57 @@ class ScummV5FateWholeGameIntegrationTests(unittest.TestCase):
                             for item in analysis.program_units["semantic_to_program_unit"]
                             if item["semantic_executable"].startswith("ObjectVerb(room=7,")))
         self.assertEqual(analysis.program_units["counts"]["program_units"], 2788)
+        self.assertEqual(analysis.program_units["counts"]["selector_bearing_records"], 2195)
         self.assertEqual(analysis.program_units["counts"]["object_program_units"], 1362)
         self.assertEqual(analysis.program_units["counts"]["object_verb_semantic_identities"], 2674)
+        demand = analysis.selector_demand
+        self.assertEqual(demand["counts"]["semantic_executable_identities"], 4100)
+        self.assertEqual(demand["counts"]["resource_records"], 1362)
+        self.assertEqual(demand["counts"]["executable_carriers"], 2195)
+        self.assertEqual(demand["counts"]["selector_units"], 2195)
+        self.assertEqual(demand["counts"]["legacy_projected_ids_with_no_runtime_reference_if_included"], 593)
+        self.assertEqual(demand["counts"]["objects"]["with_verb_entries"], 769)
+        self.assertEqual(demand["counts"]["objects"]["without_verb_entries"], 593)
+        self.assertEqual(demand["counts"]["objects"]["verb_entries_without_semantic_ir"], 0)
+        self.assertEqual(demand["counts"]["objects"]["objects_with_structural_unknown_verbs"], 0)
+        self.assertEqual(demand["counts"]["objects"]["malformed_or_truncated_verb_entries"], 0)
+
+        room7_selector = next(item for item in demand["room_selector_reports"]
+                              if item["room"] == 7)
+        self.assertEqual(room7_selector["semantic_executable_identities"], 79)
+        self.assertEqual(room7_selector["resource_records"], 24)
+        self.assertEqual(room7_selector["objects_with_verb_entries"], 18)
+        self.assertEqual(room7_selector["objects_without_verb_entries"], 6)
+        self.assertEqual(room7_selector["executable_carriers"], 38)
+        self.assertEqual(room7_selector["selector_units"], 38)
+        room7_semantic_verbs = [item for item in demand["semantic_executable_to_selector"]
+                                if item["semantic_executable"].startswith("ObjectVerb(room=7,")]
+        self.assertEqual(len(room7_semantic_verbs), 59)
+        self.assertEqual(len({item["selector_unit"] for item in room7_semantic_verbs}), 18)
+        self.assertTrue(all(item["disposition"] == "SHARED_SELECTOR_UNIT"
+                            for item in room7_semantic_verbs))
+
+        room98_selector = next(item for item in demand["room_selector_reports"]
+                               if item["room"] == 98)
+        self.assertEqual(room98_selector["semantic_executable_identities"], 2)
+        self.assertEqual(room98_selector["resource_records"], 126)
+        self.assertEqual(room98_selector["objects_without_verb_entries"], 126)
+        self.assertEqual(room98_selector["selector_units"], 2)
+        self.assertEqual(room98_selector["selector_units_by_kind"], {
+            "ROOM_ENTRY": 1, "ROOM_EXIT": 1,
+        })
+        self.assertEqual(room98_selector["static_addressability_count"], 2)
+        room98_objects = [item for item in demand["resource_records"]
+                          if item["room"] == 98]
+        self.assertEqual(len(room98_objects), 126)
+        self.assertTrue(all(item["has_object_resource_record"]
+                            and not item["has_decoded_verb_bodies"]
+                            and not item["has_executable_object_carrier"]
+                            and item["legacy_selector_assigned_if_included"]
+                            and not item["runtime_selector_referenced"]
+                            and item["selector_required_semantically"] == "NO"
+                            for item in room98_objects))
+
         room43 = next(item for item in analysis.residency["room_bundles"] if item["room"] == 43)
         self.assertEqual(room43["semantic_executable_count"], 174)
         self.assertEqual(room43["program_unit_count"], 40)
@@ -402,8 +499,23 @@ class ScummV5FateWholeGameIntegrationTests(unittest.TestCase):
         self.assertGreater(room46["total_conservative_candidate_program_units"]["value"], 178)
         room98 = analysis.residency["room_bundles"][0]
         self.assertEqual((room98["room"], room98["program_unit_count"]), (98, 128))
+        self.assertFalse(analysis.residency["selector_capacity"]["static_addressability_exceeds"])
+        self.assertEqual(demand["room_capacity_summary"]["largest_room_selector_unit_count"], 60)
+        self.assertEqual(demand["room_capacity_summary"]["largest_static_room_plus_global_set"], 71)
+        self.assertEqual(demand["room_capacity_summary"]["largest_dynamic_candidate_universe"], 216)
+        self.assertEqual(demand["room_capacity_summary"]["static_room_sets_over_capacity"], [])
+        selector_room46 = next(item for item in demand["room_selector_reports"]
+                               if item["room"] == 46)
+        self.assertEqual(selector_room46["selector_units"], 53)
+        self.assertEqual(selector_room46["static_addressability_count"], 68)
+        self.assertEqual(selector_room46["dynamic_candidate_universe_count"], 216)
+        self.assertEqual(len(demand["global_selector_summary"]["dynamic_candidate_universe"]), 163)
+        self.assertEqual(len(demand["global_selector_summary"]["yield_capable"]), 82)
+        self.assertEqual(len(demand["global_selector_summary"]["room_transition_capable_with_yield"]), 15)
+        self.assertEqual(analysis.selector_residency["selector_capacity"][
+            "static_addressability_exceeds"], [])
         self.assertEqual(analysis.residency["simultaneous_residency"][
-            "distinct_active_binding_upper_bound"]["upper_bound"], 25)
+                         "distinct_active_binding_upper_bound"]["upper_bound"], 25)
         self.assertFalse(analysis.residency_manifest["selector_values_emitted"])
         self.assertEqual(len(analysis.program_units["semantic_to_program_unit"]), 4100)
         object118 = next(edge for edge in analysis.program_units["dependencies"]
