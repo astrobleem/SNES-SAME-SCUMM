@@ -57,6 +57,7 @@ test: generate
 
 validate: generate
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) tools/lint_poppy.py runtime/snes/main.pasm
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) tools/audit_scumm_residency_wram.py
 	@set -e; for f in examples/targets/*.json; do PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m same.cli target validate "$$f" >/dev/null; done
 	@set -e; for f in \
 		examples/profiles/agi_v2_conformance.json \

@@ -590,14 +590,9 @@ ScummV5_Engine_Boot__m23c_clear:
     jsl ScummV5_Talk_Reset_Far
     jsl ScummV5_GetActorWalkbox_Reset_Far
     jsl ScummV5_ObjectOwner_LoadInitial_Far
-    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
-    ; This prototype owns the otherwise presentation-only object-name length
-    ; cache region for binding metadata. Initialize it after name-cache reset.
-    jsl ScummV5_Resident_Reset_Far
-    .else
-    ; Object names are runtime $54 state. Clear only the compact length table
-    ; at boot; the encoded byte backing may remain untouched because a zero
-    ; length makes an entry unavailable to target-neutral clients.
+    ; Object names are runtime $54 state in both static and dynamic-residency
+    ; builds. Clear the compact length table before room loading; resolver
+    ; ownership is separately audited at $7E8C00-$7E8FBF.
     sep #$20
     .a8
     rep #$10
@@ -614,6 +609,8 @@ ScummV5_Engine_Boot__clear_object_name_lengths:
     bcc ScummV5_Engine_Boot__clear_object_name_lengths
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    jsl ScummV5_Resident_Reset_Far
     .endif
     .endif
     sep #$20
@@ -8161,6 +8158,11 @@ ScummV5_Matrix_FarCall_FetchByteParam:
 ScummV5_PutActor_FarCall_FetchWordParam:
     jsr ScummV5_C10_FetchWordParam
     rtl
+.if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+ScummV5_ObjectNameCache_FarCall_FetchWordParam:
+    jsr ScummV5_C23_FetchWordParam
+    rtl
+.endif
 ScummV5_LoadRoomWithEgo_FarCall_RequestRoom:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_RequestRoom_FarEntry
@@ -8483,7 +8485,7 @@ ScummV5_M24RB_FarCall_C25Flush:
     jsr ScummV5_C25_Flush
     rtl
 ScummV5_M24RB_FarCall_ClearSfx:
-.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+.if SAME_BUILD_SCUMM_M23C == 0
     clc
 .else
     jsr ScummV5_M23C_ClearSfxActive
@@ -9812,6 +9814,13 @@ ScummV5_Op_Print__text_error:
 ; encoded name in a bounded runtime table so target-neutral clients can read
 ; the same object identity without inventing a room-specific label table.
 ScummV5_Op_SetObjectName:
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; The full generic parser/cache handler is in bank 9 for this build so
+    ; resolver metadata does not force the main engine bank past its vectors.
+    jsl ScummV5_ObjectNameCache_SetName_Far
+    bcs ScummV5_Op_SetObjectName__error
+    jmp ScummV5_Engine_Frame__next
+    .else
     sep #$20
     .a8
     lda #$80
@@ -9853,11 +9862,6 @@ ScummV5_Op_SetObjectName__string:
     jsr ScummV5_StoreObjectNameByte
     bra ScummV5_Op_SetObjectName__string
 ScummV5_Op_SetObjectName__done:
-    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
-    ; The prototype build omits the target-neutral controller name cache; the
-    ; authored encoded string was still fully decoded and consumed above.
-    jmp ScummV5_Engine_Frame__next
-    .else
     rep #$20
     .a16
     lda.l SAME_SCUMM_OBJECT_NAME_OBJECT
@@ -9879,18 +9883,8 @@ ScummV5_Op_SetObjectName__error:
 
 ; Store one encoded byte in object_id * 32. The terminator is retained so
 ; clients can preserve canonical control bytes and use the same decoding path.
+.if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY == 0
 ScummV5_StoreObjectNameByte:
-    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_OBJECT_NAME_INDEX
-    cmp #$1F
-    bcs ScummV5_StoreObjectNameByte__prototype_full
-    inc
-    sta.l SAME_SCUMM_OBJECT_NAME_INDEX
-ScummV5_StoreObjectNameByte__prototype_full:
-    rts
-    .else
     sep #$20
     .a8
     sta.l SAME_SCUMM_FETCH_BYTE
@@ -9934,7 +9928,7 @@ ScummV5_StoreObjectNameByte__discard:
     sep #$20
     .a8
     bra ScummV5_StoreObjectNameByte__advance
-    .endif
+.endif
 
 ; Canonical v5 $29/$69/$A9/$E9 setOwnerOf.  Owners are mutable runtime
 ; object state, so queries use the WRAM table initialized from the cooked DOBJ
@@ -14053,7 +14047,7 @@ ScummV5_C25_FarCall_EmitAudio:
     rtl
 .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 ScummV5_C25_FarCall_SetSfxActive:
-.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+.if SAME_BUILD_SCUMM_M23C == 0
     clc
     rtl
 .else

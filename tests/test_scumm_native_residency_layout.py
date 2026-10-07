@@ -11,6 +11,7 @@ import tempfile
 import unittest
 
 from tools.validate_scumm_native_residency_nexen import git_identity
+from tools.audit_scumm_residency_wram import audit as audit_wram
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,61 @@ def symbols() -> dict[str, int]:
 
 
 class NativeResidencyLayoutTests(unittest.TestCase):
+    def test_resolver_coexists_with_controller_names_save_validator_and_vm_state(self) -> None:
+        report = audit_wram()
+        self.assertEqual(report["result"], "pass")
+        self.assertEqual(report["overlaps"], [])
+        self.assertEqual(report["features_coexist"], [
+            "resolver", "controller/input", "name cache", "save validator",
+            "C4", "C19", "room lifecycle",
+        ])
+        resolver = next(row for row in report["regions"]
+                        if row["owner"] == "resident_resolver")
+        self.assertEqual((resolver["start"], resolver["end_exclusive"], resolver["bytes"]),
+                         ("$7E8C00", "$7E8FC0", 960))
+
+    def test_engine_selection_allows_dynamic_residency_with_production_services(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="same-residency-selection-") as raw:
+            output = Path(raw) / "active_engine.inc.pasm"
+            subprocess.run([
+                sys.executable, str(ROOT / "tools/generate_snes_engine_selection.py"),
+                "--engine", "scumm_v5", "--scumm-m23a",
+                "--m24rb", "--scumm-dynamic-program-residency", "--scumm-controller",
+                "--scumm-save-persistence-validator", "--output", str(output),
+            ], check=True, capture_output=True, text=True)
+            config = output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn("SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY = $01", config)
+            self.assertIn("SAME_BUILD_M24RB = $01", config)
+            self.assertIn("SAME_BUILD_SCUMM_CONTROLLER = $01", config)
+            self.assertIn("SAME_BUILD_SCUMM_SAVE_PERSISTENCE_VALIDATOR = $01", config)
+            self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = $01", config)
+
+    def test_dynamic_boot_clears_name_cache_before_resolver_initialization(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        room_service = source.index(".if SAME_BUILD_SCUMM_ROOM_SERVICE\n")
+        name_clear = source.index("ScummV5_Engine_Boot__clear_object_name_lengths:", room_service)
+        resolver_reset = source.index("jsl ScummV5_Resident_Reset_Far", name_clear)
+        self.assertLess(name_clear, resolver_reset)
+        self.assertIn("sta.l SAME_SCUMM_OBJECT_NAME_LENGTH,x", source[name_clear:resolver_reset])
+
+    def test_dynamic_residency_keeps_the_generic_set_object_name_cache(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        start = source.index("ScummV5_Op_SetObjectName:")
+        end = source.index("; Canonical v5 $29/$69/$A9/$E9 setOwnerOf", start)
+        implementation = source[start:end]
+        self.assertIn(".if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY", implementation)
+        self.assertIn("jsl ScummV5_ObjectNameCache_SetName_Far", implementation)
+        far_source = (ROOT / "runtime/snes/engines/scumm_v5_object_name_cache_far.pasm").read_text()
+        self.assertIn("ScummV5_ObjectNameCache_SetName_Far:", far_source)
+        self.assertIn("jsl ScummV5_Matrix_FarCall_FetchByte", far_source)
+        self.assertIn("jsl ScummV5_ObjectNameCache_FarCall_FetchWordParam", far_source)
+        self.assertIn("sta.l SAME_SCUMM_OBJECT_NAMES,x", far_source)
+        self.assertIn("sta.l SAME_SCUMM_OBJECT_NAME_LENGTH,x", far_source)
+        self.assertIn("ScummV5_ObjectNameCache_StoreByte_Far__advance:", far_source)
+        self.assertIn("ScummV5_ObjectNameCache_FarCall_FetchWordParam:\n    jsr ScummV5_C23_FetchWordParam\n    rtl", source)
+        main = (ROOT / "runtime/snes/main.pasm").read_text()
+        self.assertIn('.include "engines/scumm_v5_object_name_cache_far.pasm"', main)
+
     def test_resident_tables_do_not_alias_live_object_name_cache(self) -> None:
         address = symbols()
         name_start = address["SAME_SCUMM_OBJECT_NAME_LENGTH"]

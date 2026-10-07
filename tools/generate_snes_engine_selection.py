@@ -114,17 +114,10 @@ def main() -> int:
         if not 0 <= args.scumm_synthetic_bootstrap_room <= 0xFF:
             parser.error("--scumm-synthetic-bootstrap-room must be in 0..255")
     if args.scumm_dynamic_program_residency and (
-        args.engine != "scumm_v5" or not args.scumm_m23a
-    ):
-        parser.error("--scumm-dynamic-program-residency requires SCUMM v5 room services")
-    if args.scumm_dynamic_program_residency and (
-        args.scumm_controller
-        or args.scumm_controller_fixture
-        or args.scumm_controller_conformance
-        or args.scumm_save_persistence_validator
+        args.engine != "scumm_v5" or not args.scumm_m23a or not args.m24rb
     ):
         parser.error(
-            "dynamic residency prototype disables controller/name-cache and save-validator personalities"
+            "--scumm-dynamic-program-residency requires SCUMM v5 M23A and M24RB room services"
         )
     if args.scumm_residency_diagnostic and not args.scumm_dynamic_program_residency:
         parser.error("--scumm-residency-diagnostic requires --scumm-dynamic-program-residency")

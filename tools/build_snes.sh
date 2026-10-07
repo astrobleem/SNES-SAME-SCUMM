@@ -36,17 +36,13 @@ export SAME_FATE_ARCHIVE SAME_FATE_DEMO_ARCHIVE SAME_FATE_PROFILE SAME_SNES_PROF
 
 if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
     if [[ "${SAME_SNES_ENGINE:-demo}" != "scumm_v5" ||
-          "${SAME_BUILD_SCUMM_M23A:-0}" != "1" ]]; then
-        echo "Dynamic SCUMM residency requires the SCUMM v5 M23A room-service build" >&2
+          "${SAME_BUILD_SCUMM_M23A:-0}" != "1" ||
+          "${SAME_BUILD_M24RB:-0}" != "1" ]]; then
+        echo "Dynamic SCUMM residency requires the SCUMM v5 M23A + M24RB room-service build" >&2
         exit 1
     fi
-    if [[ "${SAME_BUILD_SCUMM_CONTROLLER:-0}" == "1" ||
-          "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" == "1" ||
-          "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ||
-          "${SAME_BUILD_SCUMM_SAVE_PERSISTENCE_VALIDATOR:-0}" == "1" ]]; then
-        echo "Dynamic residency prototype overlaps controller-name/save-validation WRAM; those personalities are disabled" >&2
-        exit 1
-    fi
+    "$PYTHON" "$ROOT/tools/audit_scumm_residency_wram.py" \
+        --output "${SAME_SNES_OUTPUT:-build/scumm-dynamic-residency.sfc}.wram.json"
     if [[ -n "${SAME_SCUMM_DYNAMIC_BOOT_SCRIPT:-}" &&
           ! "${SAME_SCUMM_DYNAMIC_BOOT_SCRIPT}" =~ ^[0-9]+$ ]]; then
         echo "SAME_SCUMM_DYNAMIC_BOOT_SCRIPT must be an unsigned script number" >&2
@@ -55,6 +51,22 @@ if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
     if [[ -n "${SAME_SCUMM_DYNAMIC_BOOT_SCRIPT:-}" &&
           "${SAME_SCUMM_DYNAMIC_BOOT_SCRIPT}" -gt 255 ]]; then
         echo "SAME_SCUMM_DYNAMIC_BOOT_SCRIPT must fit the SCUMM v5 script byte" >&2
+        exit 1
+    fi
+fi
+if [[ "${SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT:-0}" == "1" ]]; then
+    if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_AUTHENTIC_STARTUP:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_CONTROLLER:-0}" != "1" ]]; then
+        echo "Dynamic FATE experiment requires dynamic residency, authentic startup, and the normal controller" >&2
+        exit 1
+    fi
+    if [[ "${SAME_FATE_PROFILE:-}" != "examples/profiles/templates/fate_of_atlantis_dos_cd.json" ]]; then
+        echo "Dynamic FATE experiment requires the canonical DOS-CD profile" >&2
+        exit 1
+    fi
+    if [[ -z "${SAME_FATE_ARCHIVE:-}" ]]; then
+        echo "Dynamic FATE experiment requires SAME_FATE_ARCHIVE" >&2
         exit 1
     fi
 fi
@@ -280,7 +292,8 @@ fi
             SAME_SCUMM_REUSE_COOKED_ROOM_VISUALS=1
         fi
 else
-    if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
+    if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" &&
+          "${SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT:-0}" != "1" ]]; then
         DYNAMIC_RESIDENCY_MANIFEST="${SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST:?Set SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST to a generated synthetic cooked-room manifest}"
         M23A_BUILD="$ROOT/build/scumm-native-residency"
         ROOM_MANIFESTS=(--manifest "$DYNAMIC_RESIDENCY_MANIFEST")
@@ -288,7 +301,11 @@ else
         mkdir -p "$M23A_BUILD" "$ROOM_BINARY_DIR"
     else
     M23A_SOURCE="${SAME_FATE_ARCHIVE:?Set SAME_FATE_ARCHIVE to a user-supplied archive}"
-    M23A_BUILD="$ROOT/build/m23a-rooms"
+    if [[ "${SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT:-0}" == "1" ]]; then
+        M23A_BUILD="$ROOT/build/fate-dynamic-residency"
+    else
+        M23A_BUILD="$ROOT/build/m23a-rooms"
+    fi
     mkdir -p "$M23A_BUILD/authentic" "$M23A_BUILD/lifecycle" "$M23A_BUILD/segments"
     if [[ "$M25A_CONTENT_PROFILE" == "1" ]]; then
         if [[ "${SAME_BUILD_SCUMM_AUTHENTIC_STARTUP:-0}" == "1" ]]; then

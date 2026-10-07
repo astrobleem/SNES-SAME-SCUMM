@@ -344,6 +344,25 @@ ScummV5_M24RB_Far_CommitNullRoom__next:
     inx
     cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
     bcc ScummV5_M24RB_Far_CommitNullRoom__retire
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; Room-owned activations are retired before their bundle pins are removed.
+    ; Persistent global C4 owners keep their own selector bindings alive.
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    cmp #$FF
+    beq ScummV5_M24RB_Far_CommitNullRoom__bundle_released
+    jsl ScummV5_Resident_ReleaseRoomBundle_Far
+    bcs ScummV5_M24RB_Far_CommitNullRoom__bundle_released
+    lda #SCUMM_ERR_RESIDENCY_ID
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitNullRoom__bundle_released:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
+    sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    .endif
     sep #$20
     .a8
     lda #$00
@@ -829,6 +848,35 @@ ScummV5_M24RB_Far_CommitRoom__retire_next:
     bcc ScummV5_M24RB_Far_CommitRoom__retire
     lda #$04
     jsr ScummV5_M24RB_Far_Trace
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; Preserve the outgoing room bundle through EXCD, then retire its owner
+    ; pins before releasing the bundle. Global activations keep their binding.
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    cmp #$FF
+    beq ScummV5_M24RB_Far_CommitRoom__old_bundle_released
+    jsl ScummV5_Resident_ReleaseRoomBundle_Far
+    bcs ScummV5_M24RB_Far_CommitRoom__old_bundle_released
+    lda #SCUMM_ERR_RESIDENCY_ID
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitRoom__old_bundle_released:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
+    sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    lda.l SAME_SCUMM_M23A_PENDING_RECORD
+    jsl ScummV5_Resident_LoadRoomBundle_Far
+    bcs ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded
+    lda.l SAME_SCUMM_ERROR
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded:
+    sep #$20
+    .a8
+    .endif
     lda.l SAME_SCUMM_M23A_PENDING_RECORD
     sta.l SAME_SCUMM_M23A_ACTIVE_RECORD
     jsl ScummV5_Matrix_LoadActiveRoom_Far
@@ -1101,10 +1149,65 @@ ScummV5_M24RB_Far_CommitRoom__load_ego_done:
     sta.l SAME_SCUMM_M23A_REGISTER_COUNT
     lda.l ScummV5_M23A_RoomLocalCounts,x
     sta.l SAME_SCUMM_M23A_LOCAL_COUNT
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; The generated room lifecycle table stores canonical ProgramUnit IDs.
+    ; Resolve them only after the incoming bundle is pinned, then publish the
+    ; ephemeral selector expected by the unchanged M23A/C4 runtime ABI.
+    txa
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    tax
+    lda.l ScummV5_M23A_RoomEntryProgramUnitIds,x
+    cmp #$FFFF
+    beq ScummV5_M24RB_Far_CommitRoom__no_dynamic_entry
+    jsl ScummV5_Resident_ResolveProgramUnit_Far
+    bcs ScummV5_M24RB_Far_CommitRoom__dynamic_entry_ready
+    lda.l SAME_SCUMM_ERROR
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitRoom__no_dynamic_entry:
+    sep #$20
+    .a8
+    lda #$00
+ScummV5_M24RB_Far_CommitRoom__dynamic_entry_ready:
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    tax
+    lda.l ScummV5_M23A_RoomExitProgramUnitIds,x
+    cmp #$FFFF
+    beq ScummV5_M24RB_Far_CommitRoom__no_dynamic_exit
+    jsl ScummV5_Resident_ResolveProgramUnit_Far
+    bcs ScummV5_M24RB_Far_CommitRoom__dynamic_exit_ready
+    lda.l SAME_SCUMM_ERROR
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitRoom__no_dynamic_exit:
+    sep #$20
+    .a8
+    lda #$00
+ScummV5_M24RB_Far_CommitRoom__dynamic_exit_ready:
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    tax
+    lda.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    .else
     lda.l ScummV5_M23A_RoomEntryPrograms,x
     sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
     lda.l ScummV5_M23A_RoomExitPrograms,x
     sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    .endif
     sta.l SAME_SCUMM_FETCH_BYTE
     txa
     rep #$20
@@ -1260,7 +1363,7 @@ ScummV5_M23A_Trace_FarEntry:
     jsr ScummV5_M24RB_Far_Trace
     rtl
 ScummV5_M23C_Driver_FarEntry:
-.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE && !SAME_BUILD_SCUMM_M23C
+.if SAME_BUILD_SCUMM_M23C == 0
     clc
     rtl
 .else

@@ -355,6 +355,7 @@ def room4_synchronous_input_edge(
 def skip_room4_authored_override(
     session: Any,
     *,
+    expected_override_program: int = 0xF9,
     release_poll_address: int | None = None,
     defer_release_sample: bool = False,
 ) -> dict[str, Any]:
@@ -363,7 +364,8 @@ def skip_room4_authored_override(
     The accepted cold profile reaches room 4 while its authored beginOverride
     is still active. The controller correctly rejects movement until that
     cutscene is ended. This step is allowed only when the current C19 record
-    identifies room 4 LSCR206 / program $F9 and its saved continuation $0019;
+    identifies room 4 LSCR206 / the caller-verified program handle and its
+    saved continuation $0019;
     it then sends one normal X edge, never writes game state, and waits for
     the ordinary SCUMM endCutscene path to empty the stack.
     """
@@ -378,7 +380,7 @@ def skip_room4_authored_override(
         "c19_override_pc": 0x0019,
         "c19_override_slot": 3,
         "c19_override_script": 206,
-        "c19_override_program": 0xF9,
+        "c19_override_program": expected_override_program,
         "c19_override_room": 4,
         "c19_override_slot_depth": 1,
     }

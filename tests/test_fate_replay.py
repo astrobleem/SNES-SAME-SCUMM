@@ -28,6 +28,9 @@ from fate_replay import (  # noqa: E402
 )
 from validate_fate_authentic_startup_nexen import _button_names  # noqa: E402
 from replay_fate_room4_cold_nexen import (  # noqa: E402
+    _observed_pinned_selectors,
+    _known_resident_bindings,
+    _record_residency_events,
     _parse_global_script_selector,
     _parse_room_local_program_table,
     _parse_rom_variable_layout,
@@ -437,6 +440,79 @@ class FakeRoom7CatSession(FakeRoom4Session):
 
 
 class FateReplayTests(unittest.TestCase):
+    def test_residency_observer_excludes_uninitialized_unmapped_rows(self) -> None:
+        rows = [
+            {"selector": 0xD0, "program_unit_id": 0xBEEF,
+             "identity": None, "generation": 0x1234, "flags": 1},
+            {"selector": 0xD1, "program_unit_id": 7,
+             "identity": "GlobalProgram(7)", "generation": 1, "flags": 1},
+        ]
+        self.assertEqual(_known_resident_bindings(rows), [rows[1]])
+
+    def test_observed_pins_include_bundle_flags_and_live_slots_once(self) -> None:
+        bindings = [
+            {"selector": 0xD0, "flags": 3},
+            {"selector": 0xD1, "flags": 1},
+            {"selector": 0xD2, "flags": 5},
+        ]
+        slots = [
+            {"status": 2, "program": 0xD1},
+            {"status": 3, "program": 0xD2},
+            {"status": 4, "program": 0xD0},
+            {"status": 2, "program": 0xA0},
+        ]
+        self.assertEqual(
+            _observed_pinned_selectors(bindings, slots), {0xD0, 0xD1, 0xD2}
+        )
+
+    def test_residency_telemetry_recognizes_release_then_rebind_as_reuse(self) -> None:
+        previous: dict[int, dict[str, object]] = {}
+        history: dict[int, dict[str, object]] = {}
+        events: list[dict[str, object]] = []
+        first = {
+            "selector": 0xD0, "program_unit_id": 17,
+            "identity": "RoomLocal(room=4,local=206)",
+            "generation": 1, "flags": 3,
+        }
+
+        _record_residency_events(10, {0xD0: first}, previous, history, events)
+        previous.clear()
+        previous[0xD0] = first
+        _record_residency_events(20, {}, previous, history, events)
+        previous.clear()
+        second = {
+            "selector": 0xD0, "program_unit_id": 29,
+            "identity": "RoomEntry(room=5)",
+            "generation": 2, "flags": 3,
+        }
+        _record_residency_events(30, {0xD0: second}, previous, history, events)
+
+        reuse = [event for event in events if event["event"] == "reuse"]
+        self.assertEqual(len(reuse), 1)
+        self.assertEqual(reuse[0]["reuse_kind"], "released_rebind")
+        self.assertEqual(reuse[0]["old_program_unit_id"], 17)
+        self.assertEqual(reuse[0]["old_generation"], 1)
+        self.assertEqual(reuse[0]["new_program_unit_id"], 29)
+        self.assertEqual(reuse[0]["new_generation"], 2)
+
+    def test_residency_telemetry_labels_unsampled_owner_change_cautiously(self) -> None:
+        old = {
+            "selector": 0xD0, "program_unit_id": 17,
+            "identity": "ObjectProgram(room=4,object=61)",
+            "generation": 1, "flags": 3,
+        }
+        new = {
+            "selector": 0xD0, "program_unit_id": 29,
+            "identity": "ObjectProgram(room=5,object=77)",
+            "generation": 2, "flags": 3,
+        }
+        events: list[dict[str, object]] = []
+        _record_residency_events(20, {0xD0: new}, {0xD0: old}, {}, events)
+        self.assertEqual(events[0]["event"], "reuse")
+        self.assertEqual(events[0]["reuse_kind"], "sampled_owner_change")
+        self.assertIn("intermediate release/valid transitions were not sampled",
+                      events[0]["observation"])
+
     def test_room7_runtime_snapshot_reads_authored_vars_bits_and_objects(self) -> None:
         class Ram:
             def read_u8(self, address: int) -> int:
@@ -469,7 +545,8 @@ class FateReplayTests(unittest.TestCase):
 
         self_outer = self
         result = _room7_runtime_context(
-            Ram(), variable_base=0x7E0800, variable_count=0x0320
+            Ram(), variable_base=0x7E0800, variable_count=0x0320,
+            object_count=1395,
         )
         self.assertEqual(result["selected_variables"]["214"], 1)
         self.assertEqual(result["selected_variables"]["215"], 2)
@@ -488,10 +565,11 @@ class FateReplayTests(unittest.TestCase):
         listing = """; SAME_SCUMM_VARIABLE_COUNT = $0320      (Constant)
 ; SOME_OTHER_CONSTANT = $1234 (Constant)
 ; SAME_SCUMM_VARIABLES = $7e0800    (Constant)
+; SCUMM_M23A_GLOBAL_OBJECT_COUNT = $0573 (Constant)
 """
         self.assertEqual(
             _parse_rom_variable_layout(listing),
-            {"base": 0x7E0800, "count": 0x0320},
+            {"base": 0x7E0800, "count": 0x0320, "object_count": 0x0573},
         )
         with self.assertRaisesRegex(RuntimeError, "lacks SCUMM variable layout"):
             _parse_rom_variable_layout("; SAME_SCUMM_VARIABLES = $7e0800 (Constant)\n")
@@ -913,6 +991,16 @@ ScummV5_M23A_FetchProgramByte_Far:
         self.assertEqual(completion["idle_frames"], 4)
         self.assertEqual(completion["final"]["c19_stack_pointer"], 0)
         self.assertEqual(session.held_buttons, 0)
+
+    def test_room4_override_accepts_caller_verified_resident_selector(self) -> None:
+        session = FakeRoom4Session(cursor=(0, 0))
+        session.activate_room4_override()
+        session.values[0x7E23B5] = 0xE0
+        result = skip_room4_authored_override(
+            session, expected_override_program=0xE0,
+        )
+        self.assertEqual(result["before"]["c19_override_program"], 0xE0)
+        self.assertEqual(result["after"]["c19_override_pc"], 0)
 
     def test_room4_override_replay_rejects_unexpected_owner_without_input(self) -> None:
         session = FakeRoom4Session(cursor=(0, 0))

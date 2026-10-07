@@ -2317,16 +2317,19 @@ def main() -> int:
         for item in record["object_programs"]:
             if not item["executable"]:
                 continue
+            unit_label = program_label_id(
+                item["id"], dynamic=args.dynamic_program_residency,
+            )
             data_lines.extend((
-                f"ScummV5_ObjectProgram_Resolve_Far__object_{program_label_id(item['id'], dynamic=args.dynamic_program_residency)}:",
+                f"ScummV5_ObjectProgram_Resolve_Far__object_{unit_label}:",
             ))
             if args.dynamic_program_residency:
                 data_lines.extend((
                     "    rep #$20", "    .a16", f"    lda #${item['id']:04X}",
                     "    jsl ScummV5_Resident_ResolveProgramUnit_Far",
-                    "    bcs ScummV5_ObjectProgram_Resolve_Far__resident_ok",
+                    f"    bcs ScummV5_ObjectProgram_Resolve_Far__resident_ok_{unit_label}",
                     "    brl ScummV5_ObjectProgram_Resolve_Far__fail",
-                    "ScummV5_ObjectProgram_Resolve_Far__resident_ok:",
+                    f"ScummV5_ObjectProgram_Resolve_Far__resident_ok_{unit_label}:",
                     "    sep #$20", "    .a8",
                     "    sta.l $7E5460", "    sec", "    rtl",
                 ))

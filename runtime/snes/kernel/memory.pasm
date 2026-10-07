@@ -97,6 +97,8 @@ SAME_SCUMM_VARIABLES_BOOTSTRAP_RESERVED = $7E2320 ; historical window
 ; micro-fixture. Keep authored variables out of the interpreter scratch window
 ; so high-numbered synthetic sentinels remain real SCUMM variables.
 SAME_SCUMM_VARIABLES          = $7FF500 ; 512-word authored table
+SAME_SCUMM_RESIDENCY_VARIABLES_BASE = $7FF500
+SAME_SCUMM_RESIDENCY_VARIABLES_END = $7FF900 ; exclusive table end
 SAME_SCUMM_VARIABLES_BOOTSTRAP_RESERVED = $7E2320 ; historical window
 .else
 SAME_SCUMM_VARIABLES          = $7E2320 ; historical bootstrap allocation
@@ -702,6 +704,7 @@ SAME_SCUMM_M23A_SLOT_ROOMS               = $7FF2E7 ; 25 room-owner bytes
 SAME_SCUMM_M23A_STATE_END                = $7FF300
 SAME_SCUMM_M23A_STATE_SIZE               = $0042
 SAME_SAVE_STAGING                        = $7FF300 ; complete versioned save record
+SAME_SAVE_STAGING_MAX_END                 = $7FF454 ; max M21+M22 record end
 .if SAME_BUILD_SCUMM_M21
 .if SAME_BUILD_SCUMM_M22
 SAME_SAVE_RECORD_SIZE                    = $0154
@@ -742,6 +745,7 @@ SAME_SCUMM_M23A_RETURN_VALID             = $7FF467 ; u8 one-shot continuation va
 SAME_SCUMM_M23A_RETURN_SLOT              = $7FF468 ; u8 surviving C4 activation owner
 SAME_SCUMM_M23A_RETURN_MODE              = $7FF469 ; u8 saved scheduler return mode
 SAME_SCUMM_M23A_REQUEST_API_ACTIVE       = $7FF46A ; u8 API request origin during dispatch
+SAME_SCUMM_M23A_REQUEST_API_ACTIVE_END   = $7FF46B ; exclusive continuation-state end
 .if SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_PHASE6LA1D
 SAME_SCUMM_M23B_VARIABLES                = SAME_SCUMM_VARIABLES ; compatibility name only
 SAME_SCUMM_M23B_VARIABLES_END            = SAME_SCUMM_VARIABLE_END
@@ -951,9 +955,12 @@ SAME_SCUMM_OBJECT_OWNERS                  = $7E8000 ; 2048 u8 mutable owner tabl
 ; controller presentation layer is absent.
 SAME_SCUMM_OBJECT_NAME_LENGTH             = $7E8800 ; 1024 u8 bounded lengths
 .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
-; The 178-entry resolver occupies the unused $7E8C00-$7E8FFF gap. It must not
-; alias OBJECT_NAME_LENGTH: authentic room loading writes that cache by object
-; ID, including during dynamic-residency builds.
+; Explicit ownership boundary: the always-live name-length cache ends at
+; $7E8C00; resolver state owns $7E8C00-$7E8FBF; $7E8FC0-$7E8FFF is reserved
+; padding; encoded names begin at $7E9000. Controller/input, C4, C19, room
+; lifecycle, and save-validation ranges are independently declared and checked
+; by tools/audit_scumm_residency_wram.py.
+SAME_SCUMM_RESIDENT_WRAM_BASE              = $7E8C00
 SAME_SCUMM_RESIDENT_UNIT_IDS              = $7E8C00 ; 178 x u16 canonical IDs
 SAME_SCUMM_RESIDENT_GENERATIONS           = $7E8D64 ; 178 x u16 binding generations
 SAME_SCUMM_RESIDENT_FLAGS                 = $7E8EC8 ; 178 x u8 VALID/BUNDLE/MANUAL pins
@@ -998,6 +1005,7 @@ SAME_SCUMM_RESIDENT_DIAG_POOL_INDEX            = $7E8FBA ; u16 loop scratch
 SAME_SCUMM_RESIDENT_DIAG_SCRATCH               = $7E8FBC ; u16 scratch
 SAME_SCUMM_RESIDENT_DIAG_RETURNED              = $7E8FBE ; u8 caller-return sentinel
 SAME_SCUMM_RESIDENT_DIAG_STAGE                 = $7E8FBF ; u8 bounded-control progress
+SAME_SCUMM_RESIDENT_WRAM_END                   = $7E8FC0 ; exclusive resolver end
 .endif
 ; The target-neutral name cache is bounded to the contiguous gap before C10.
 ; $7E9000 + 1024*$20 = $7F1000, leaving C10/C17 and all later state intact.

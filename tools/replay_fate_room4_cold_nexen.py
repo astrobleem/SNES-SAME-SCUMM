@@ -20,6 +20,122 @@ RECIPE = ROOT / "examples/replays/fate-room4-open-trapdoor.json"
 DEFAULT_NEXEN = Path(
     "/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/linux-x64/publish/Nexen"
 )
+ACTIVE_DYNAMIC_RESIDENCY = False
+ACTIVE_PROGRAM_DIRECTORY: dict[int, dict[str, Any]] = {}
+RESIDENCY_EVENTS: list[dict[str, Any]] = []
+RESIDENCY_LAST: dict[int, dict[str, Any]] = {}
+RESIDENCY_HISTORY: dict[int, dict[str, Any]] = {}
+RESIDENCY_PINNED_PEAK = 0
+RESIDENCY_OBSERVER_READY = False
+RESIDENCY_PREINIT_UNKNOWN_ROWS = 0
+RESIDENCY_POSTINIT_UNKNOWN_ROWS: list[dict[str, int]] = []
+
+
+def _selector_pool_index(selector: int) -> int:
+    """Map the unchanged byte-selector ABI to the resolver's pool row."""
+    if 0xD0 <= selector <= 0xFF:
+        return selector - 0xD0
+    if 0x4E <= selector <= 0xCF:
+        return 0xFF - selector
+    raise ValueError(f"selector ${selector:02X} is outside the resident pool")
+
+
+def _record_residency_events(
+    frame: int,
+    current: dict[int, dict[str, Any]],
+    previous: dict[int, dict[str, Any]],
+    history: dict[int, dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> None:
+    """Record selector ownership, including reuse after explicit release.
+
+    The native reuse counter counts replacement of a still-valid row. Room
+    release instead clears an unowned row, so a later bind is also reuse even
+    though that native counter correctly remains unchanged.
+    """
+    for selector in sorted(set(previous) | set(current)):
+        before = previous.get(selector)
+        after = current.get(selector)
+        if before is None and after is not None:
+            prior = history.get(selector)
+            if (prior is not None and
+                    (prior["program_unit_id"], prior["generation"])
+                    != (after["program_unit_id"], after["generation"])):
+                events.append({
+                    "event": "reuse", "reuse_kind": "released_rebind",
+                    "frame": frame, "selector": selector,
+                    "old_program_unit_id": prior["program_unit_id"],
+                    "old_identity": prior["identity"],
+                    "old_generation": prior["generation"],
+                    "new_program_unit_id": after["program_unit_id"],
+                    "new_identity": after["identity"],
+                    "new_generation": after["generation"],
+                    "flags": after["flags"],
+                })
+            else:
+                events.append({"event": "bind", "frame": frame, **after})
+            history[selector] = after
+        elif before is not None and after is None:
+            events.append({"event": "release", "frame": frame, **before})
+            history[selector] = before
+        elif before is not None and after is not None:
+            if ((before["program_unit_id"], before["generation"])
+                    != (after["program_unit_id"], after["generation"])):
+                events.append({
+                    "event": "reuse", "reuse_kind": "sampled_owner_change",
+                    "frame": frame, "selector": selector,
+                    "old_program_unit_id": before["program_unit_id"],
+                    "old_identity": before["identity"],
+                    "old_generation": before["generation"],
+                    "new_program_unit_id": after["program_unit_id"],
+                    "new_identity": after["identity"],
+                    "new_generation": after["generation"],
+                    "flags": after["flags"],
+                    "observation": (
+                        "selector owner and generation differ between sampled states; "
+                        "intermediate release/valid transitions were not sampled"
+                    ),
+                })
+            elif before["flags"] != after["flags"]:
+                events.append({
+                    "event": "pin-state", "frame": frame,
+                    "selector": selector,
+                    "identity": after["identity"],
+                    "program_unit_id": after["program_unit_id"],
+                    "generation": after["generation"],
+                    "old_flags": before["flags"],
+                    "new_flags": after["flags"],
+                })
+            history[selector] = after
+
+
+def _observed_pinned_selectors(
+    bindings: list[dict[str, Any]], slots: list[dict[str, Any]],
+) -> set[int]:
+    """Union explicit/bundle pins with selectors owned by live C4 slots."""
+    pinned = {
+        int(item["selector"]) for item in bindings
+        if int(item["flags"]) & 0x06
+    }
+    resident_selectors = {int(item["selector"]) for item in bindings}
+    pinned.update(
+        int(slot["program"]) for slot in slots
+        if slot["status"] not in (0, 4)
+        and int(slot["program"]) in resident_selectors
+    )
+    return pinned
+
+
+def _known_resident_bindings(
+    bindings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return rows whose canonical IDs resolve in this ROM's exact directory.
+
+    Resolver WRAM is not initialized at Nexen's first post-power-on observer
+    sample. Random bytes can temporarily have VALID set, so only directory-
+    mapped rows participate in residency/pin/reuse accounting.
+    """
+    return [item for item in bindings if item.get("identity") is not None]
 
 
 def _u16(session: Any, address: int) -> int:
@@ -51,9 +167,52 @@ def _slots(session: Any) -> list[dict[str, int]]:
     ]
 
 
+class _SnapshotReader:
+    """Batch WRAM reads into a few frame-consistent Nexen memory transfers."""
+
+    _BLOCKS = (
+        ("snesMemory", 0x7E2200, 0x0A00),
+        ("snesMemory", 0x7E5FE0, 0x0020),
+        ("snesMemory", 0x7E6000, 0x0040),
+        ("snesMemory", 0x7E7A20, 0x0030),
+        ("snesMemory", 0x7E8000, 0x0040),
+        ("snesMemory", 0x7E8C00, 0x03C0),
+        ("snesMemory", 0x7FD300, 0x0100),
+        ("snesMemory", 0x7FF100, 0x0400),
+        ("snesMemory", 0x7F3700, 0x0040),
+    )
+
+    def __init__(self, session: Any):
+        self.session = session
+        self.state = session.get_state()
+        self.blocks = [
+            (space, start, start + size,
+             session.read_memory(space, start, size))
+            for space, start, size in self._BLOCKS
+        ]
+        self.small = session.read_memory("snesMemory", 0x004218, 2)
+
+    def get_state(self) -> dict[str, Any]:
+        return self.state
+
+    def read_memory(self, space: str, address: int, length: int) -> bytes:
+        for block_space, start, end, data in self.blocks:
+            if block_space == space and start <= address and address + length <= end:
+                offset = address - start
+                return data[offset:offset + length]
+        if space == "snesMemory" and 0x004218 <= address and address + length <= 0x00421A:
+            offset = address - 0x004218
+            return self.small[offset:offset + length]
+        return self.session.read_memory(space, address, length)
+
+    def read_u8(self, address: int) -> int:
+        return self.read_memory("snesMemory", address, 1)[0]
+
+
 def _snapshot(session: Any) -> dict[str, Any]:
     from fate_replay import room4_controller_snapshot
 
+    session = _SnapshotReader(session)
     c19_override_pc = session.read_memory("snesMemory", 0x7FD354, 10)
     c19_override_slot = session.read_memory("snesMemory", 0x7FD35E, 5)
     c19_slot_depth = session.read_memory("snesMemory", 0x7FD363, 25)
@@ -66,6 +225,98 @@ def _snapshot(session: Any) -> dict[str, Any]:
     room_lifecycle = session.read_memory("snesMemory", 0x7FF2BE, 8)
     actor1 = session.read_memory("snesMemory", 0x7F3700, 64)
     actor1_position = session.read_memory("snesMemory", 0x7FF1A4, 4)
+    slots = _slots(session)
+    resident_bindings: list[dict[str, Any]] = []
+    residency: dict[str, Any] = {}
+    if ACTIVE_DYNAMIC_RESIDENCY:
+        ids = session.read_memory("snesMemory", 0x7E8C00, 178 * 2)
+        generations = session.read_memory("snesMemory", 0x7E8D64, 178 * 2)
+        flags = session.read_memory("snesMemory", 0x7E8EC8, 178)
+        for index, flag in enumerate(flags):
+            if not flag & 0x01:
+                continue
+            program_id = int.from_bytes(ids[index * 2:index * 2 + 2], "little")
+            selector = 0xD0 + index if index < 48 else 0xFF - index
+            entry = ACTIVE_PROGRAM_DIRECTORY.get(program_id)
+            resident_bindings.append({
+                "selector": selector,
+                "program_unit_id": program_id,
+                "identity": entry["identity"] if entry else None,
+                "generation": int.from_bytes(
+                    generations[index * 2:index * 2 + 2], "little"
+                ),
+                "flags": flag,
+            })
+        frame = int(session.get_state()["frameCount"])
+        known_bindings = _known_resident_bindings(resident_bindings)
+        known_selectors = {item["selector"] for item in known_bindings}
+        unknown_rows = [item for item in resident_bindings
+                        if item["selector"] not in known_selectors]
+        global RESIDENCY_OBSERVER_READY, RESIDENCY_PREINIT_UNKNOWN_ROWS
+        if RESIDENCY_OBSERVER_READY:
+            RESIDENCY_POSTINIT_UNKNOWN_ROWS.extend(
+                {key: int(item[key]) for key in
+                 ("selector", "program_unit_id", "generation", "flags")}
+                | {"frame": frame}
+                for item in unknown_rows
+            )
+        else:
+            RESIDENCY_PREINIT_UNKNOWN_ROWS += len(unknown_rows)
+        current_by_selector = {
+            item["selector"]: item for item in known_bindings
+        }
+        _record_residency_events(
+            frame, current_by_selector, RESIDENCY_LAST,
+            RESIDENCY_HISTORY, RESIDENCY_EVENTS,
+        )
+        RESIDENCY_LAST.clear()
+        RESIDENCY_LAST.update(current_by_selector)
+        global RESIDENCY_PINNED_PEAK
+        observed_pinned = _observed_pinned_selectors(known_bindings, slots)
+        RESIDENCY_PINNED_PEAK = max(RESIDENCY_PINNED_PEAK, len(observed_pinned))
+        residency = {
+            "current_resident": _u16(session, 0x7E8F7F),
+            "peak_resident": _u16(session, 0x7E8F81),
+            "current_pinned": _u16(session, 0x7E8F83),
+            "peak_pinned": _u16(session, 0x7E8F85),
+            "observed_current_pinned_bindings": len(observed_pinned),
+            "observed_peak_pinned_bindings": RESIDENCY_PINNED_PEAK,
+            "bind_count": _u16(session, 0x7E8F87),
+            "reuse_count": _u16(session, 0x7E8F89),
+            "bundle_loads": _u16(session, 0x7E8F8B),
+            "bundle_releases": _u16(session, 0x7E8F8D),
+            "dynamic_global_resolutions": _u16(session, 0x7E8F8F),
+            "exhaustions": _u16(session, 0x7E8F91),
+            "stale_reference_detections": _u16(session, 0x7E8F9C),
+            "duplicate_program_unit_bindings": (
+                len(known_bindings)
+                - len({item["program_unit_id"] for item in known_bindings})
+            ),
+            "mapped_resident_bindings": len(known_bindings),
+            "unmapped_valid_binding_rows": len(unknown_rows),
+        }
+        by_selector = {item["selector"]: item for item in resident_bindings}
+        for slot in slots:
+            binding = by_selector.get(slot["program"])
+            slot["program_unit_id"] = (
+                binding["program_unit_id"] if binding else None
+            )
+            slot["program_unit_identity"] = (
+                binding["identity"] if binding else None
+            )
+            slot["binding_generation"] = (
+                binding["generation"] if binding else None
+            )
+            if slot["status"] not in (0, 4) and binding is None:
+                # A live activation without a canonical binding is an ABI
+                # violation, never something to normalize away in the trace.
+                slot["resident_binding_missing"] = True
+        missing_live = [
+            slot for slot in slots
+            if slot.get("resident_binding_missing")
+        ]
+    else:
+        missing_live = []
     return {
         "frame": int(session.get_state()["frameCount"]),
         **room4_controller_snapshot(session),
@@ -93,6 +344,8 @@ def _snapshot(session: Any) -> dict[str, Any]:
         "scheduler_slot": session.read_u8(0x7E2B22),
         "active_slot_count": session.read_u8(0x7E2A8A),
         "program_select": session.read_u8(0x7E2362),
+        "entry_program": session.read_u8(0x7FF2CD),
+        "exit_program": session.read_u8(0x7FF2CE),
         "shared_vm_pc": _u16(session, 0x7E2300),
         "return_mode": session.read_u8(0x7E2363),
         "nested_depth": session.read_u8(0x7FD335),
@@ -112,7 +365,18 @@ def _snapshot(session: Any) -> dict[str, Any]:
             "override_slot": list(c19_override_slot),
             "slot_depth": list(c19_slot_depth),
         },
-        "slots": _slots(session),
+        "slots": slots,
+        **({"resident_bindings": resident_bindings, "residency": residency}
+           if ACTIVE_DYNAMIC_RESIDENCY else {}),
+        **({
+            "resident_resolver_scratch": {
+                "request_id": _u16(session, 0x7E8F7A),
+                "selector": session.read_u8(0x7E8F7C),
+                "pool_index": _u16(session, 0x7E8F7D),
+                "bundle_record": session.read_u8(0x7E8F9E),
+            },
+            "resident_binding_violations": missing_live,
+        } if ACTIVE_DYNAMIC_RESIDENCY else {}),
     }
 
 
@@ -129,7 +393,7 @@ def _authentic_room4_object61_use_source(archive: Path) -> dict[str, Any]:
     from same.engines.scumm_v5.room import decode_room
 
     profile = load_profile(
-        ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
+        ROOT / "examples/profiles/templates/fate_of_atlantis_dos_cd.json",
         verify_resources=False,
     )
     with zipfile.ZipFile(archive) as bundle:
@@ -208,7 +472,7 @@ def _authentic_room5_rope_source(archive: Path) -> dict[str, Any]:
     from same.engines.scumm_v5.room import decode_room
 
     profile = load_profile(
-        ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
+        ROOT / "examples/profiles/templates/fate_of_atlantis_dos_cd.json",
         verify_resources=False,
     )
     with zipfile.ZipFile(archive) as bundle:
@@ -278,7 +542,7 @@ def _authentic_room6_books_source(archive: Path) -> dict[str, Any]:
     from same.engines.scumm_v5.room import decode_room
 
     profile = load_profile(
-        ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
+        ROOT / "examples/profiles/templates/fate_of_atlantis_dos_cd.json",
         verify_resources=False,
     )
     with zipfile.ZipFile(archive) as bundle:
@@ -350,6 +614,50 @@ def _parse_global_script_selector(generated_source: str, script: int) -> int:
     return int(match.group(1), 16)
 
 
+def _native_directory_for_build(identity_path: Path) -> dict[str, Any]:
+    """Load and verify this dynamic ROM's compiler-generated ID directory."""
+    build_report = identity_path.parent / "cooked-rooms.json"
+    if not build_report.is_file():
+        raise RuntimeError(f"dynamic room compiler report is missing: {build_report}")
+    report = json.loads(build_report.read_text(encoding="utf-8"))
+    directory_path = Path(report["native_program_directory"])
+    if not directory_path.is_absolute():
+        directory_path = ROOT / directory_path
+    directory_bytes = directory_path.read_bytes()
+    directory = json.loads(directory_bytes)
+    digest = hashlib.sha256(directory_bytes).hexdigest()
+    if digest != report.get("native_program_directory_sha256"):
+        raise RuntimeError("native ProgramUnit directory differs from compiler report")
+    entries = directory.get("entries", [])
+    ids = [int(item["program_unit_id"]) for item in entries]
+    if len(ids) != len(set(ids)):
+        raise RuntimeError("native ProgramUnit directory contains duplicate IDs")
+    return {
+        "path": str(directory_path),
+        "sha256": digest,
+        "document": directory,
+        "by_id": {int(item["program_unit_id"]): item for item in entries},
+        "by_identity": {str(item["identity"]): item for item in entries},
+    }
+
+
+def _directory_unit(
+    directory: dict[str, Any], *, kind: str, room: int | None = None,
+    number: int,
+) -> dict[str, Any]:
+    matches = [
+        item for item in directory["document"]["entries"]
+        if item.get("kind") == kind and item.get("room") == room
+        and item.get("number") == number
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"expected one {kind} ProgramUnit room={room} number={number}, "
+            f"found {len(matches)}"
+        )
+    return matches[0]
+
+
 def _authentic_room7_book_source(
     archive: Path, identity_path: Path,
 ) -> dict[str, Any]:
@@ -362,7 +670,7 @@ def _authentic_room7_book_source(
     from same.engines.scumm_v5.room import decode_room
 
     profile = load_profile(
-        ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
+        ROOT / "examples/profiles/templates/fate_of_atlantis_dos_cd.json",
         verify_resources=False,
     )
     policy = parse_game_policy(profile)
@@ -431,8 +739,18 @@ def _authentic_room7_book_source(
         raise RuntimeError(
             "ROM-bound room7 verb directory does not expose object133's authored verbs"
         )
-    if "ScummV5_M23A_Program_73:" not in generated_text:
-        raise RuntimeError("ROM-bound program selector $73 for room7 object133 is missing")
+    native_directory = (
+        _native_directory_for_build(identity_path)
+        if ACTIVE_DYNAMIC_RESIDENCY else None
+    )
+    object133_unit = None
+    if native_directory is None:
+        if "ScummV5_M23A_Program_73:" not in generated_text:
+            raise RuntimeError("ROM-bound program selector $73 for room7 object133 is missing")
+    else:
+        object133_unit = _directory_unit(
+            native_directory, kind="OBCD", room=7, number=133,
+        )
     reached_globals: dict[str, dict[str, Any]] = {}
     for global_number, expected_selector in ((144, 0x84), (145, 0x83)):
         global_key = policy.script_key_template.format(script=global_number)
@@ -441,14 +759,26 @@ def _authentic_room7_book_source(
         global_offset = script_directory.offsets[global_number]
         global_lflf = provider._rooms[global_room]
         global_chunk_offset = global_lflf.offset + 8 + global_offset
-        program_selector = _parse_global_script_selector(
-            generated_text, global_number,
-        )
-        if program_selector != expected_selector:
-            raise RuntimeError(
-                f"Global{global_number} selector changed unexpectedly: "
-                f"${program_selector:02X} != ${expected_selector:02X}"
+        if native_directory is None:
+            program_selector: int | None = _parse_global_script_selector(
+                generated_text, global_number,
             )
+            if program_selector != expected_selector:
+                raise RuntimeError(
+                    f"Global{global_number} selector changed unexpectedly: "
+                    f"${program_selector:02X} != ${expected_selector:02X}"
+                )
+            program_unit_id = None
+        else:
+            global_entry = next((item for item in
+                                 native_directory["document"]["global_directory"]
+                                 if item["script_number"] == global_number), None)
+            if global_entry is None:
+                raise RuntimeError(
+                    f"dynamic compiler directory omits GlobalScript({global_number})"
+                )
+            program_selector = None
+            program_unit_id = int(global_entry["program_unit_id"])
         reached_globals[str(global_number)] = {
             "resource_key": global_key,
             "source_room": global_room,
@@ -457,7 +787,11 @@ def _authentic_room7_book_source(
             "payload_offset": global_chunk_offset + 8,
             "size": len(global_body),
             "sha256": hashlib.sha256(global_body).hexdigest(),
-            "program_selector": f"${program_selector:02X}",
+            "program_selector": (
+                f"${program_selector:02X}" if program_selector is not None
+                else "ephemeral-resident-binding"
+            ),
+            "program_unit_id": program_unit_id,
         }
     return {
         "classification": "authentic external SCUMM v5 resources; unchanged",
@@ -476,7 +810,13 @@ def _authentic_room7_book_source(
         "verb_offset_in_obcd": entry_offset,
         "verb_body_size": len(verb_body),
         "verb_body_sha256": hashlib.sha256(verb_body).hexdigest(),
-        "object_program_selector": "$73",
+        "object_program_selector": (
+            "$73" if object133_unit is None else "ephemeral-resident-binding"
+        ),
+        "object_program_unit_id": (
+            int(object133_unit["program_unit_id"])
+            if object133_unit is not None else None
+        ),
         "verb_prefix_hex": verb_body[:len(expected_prefix)].hex(),
         "decoded_prefix": (
             "cutscene; startScript(144,[21,4]); "
@@ -485,6 +825,9 @@ def _authentic_room7_book_source(
         "reached_globals": reached_globals,
         "generated_resolver": str(generated_path),
         "generated_resolver_sha256": generated_sha,
+        **({"native_program_directory": native_directory["path"],
+            "native_program_directory_sha256": native_directory["sha256"]}
+           if native_directory is not None else {}),
     }
 
 
@@ -503,7 +846,7 @@ def _authentic_room7_cat_source(
     from same.engines.scumm_v5.room import decode_room
 
     profile = load_profile(
-        ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
+        ROOT / "examples/profiles/templates/fate_of_atlantis_dos_cd.json",
         verify_resources=False,
     )
     with zipfile.ZipFile(archive) as bundle:
@@ -537,6 +880,10 @@ def _authentic_room7_cat_source(
             "selector": 0x76,
         },
     }
+    native_directory = (
+        _native_directory_for_build(identity_path)
+        if ACTIVE_DYNAMIC_RESIDENCY else None
+    )
     observed: dict[str, Any] = {}
     for object_id, want in expected.items():
         obj = next(item for item in decoded.objects if item.object_id == object_id)
@@ -564,7 +911,16 @@ def _authentic_room7_cat_source(
             "verb10_source_offset": room_body_source_offset + obj.obcd_room_offset + entry,
             "verb10_body_size": len(body),
             "verb10_body_prefix_hex": body[:32].hex(),
-            "program_selector": f"${want['selector']:02X}",
+            "program_selector": (
+                f"${want['selector']:02X}" if native_directory is None
+                else "ephemeral-resident-binding"
+            ),
+            "program_unit_id": (
+                int(_directory_unit(
+                    native_directory, kind="OBCD", room=7, number=object_id,
+                )["program_unit_id"])
+                if native_directory is not None else None
+            ),
         }
 
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
@@ -582,18 +938,26 @@ def _authentic_room7_cat_source(
             or hashlib.sha256(room_data.read_bytes()).hexdigest() != data_identity.get("sha256")):
         raise RuntimeError("generated object programs are not bound to this ROM identity")
     generated_text = room_data.read_text(encoding="utf-8")
-    for item in expected.values():
-        if f"ScummV5_M23A_Program_{item['selector']:02X}:" not in generated_text:
-            raise RuntimeError(
-                f"ROM-bound object program ${item['selector']:02X} is missing"
-            )
+    if native_directory is None:
+        for item in expected.values():
+            if f"ScummV5_M23A_Program_{item['selector']:02X}:" not in generated_text:
+                raise RuntimeError(
+                    f"ROM-bound object program ${item['selector']:02X} is missing"
+                )
     local_table = _room_local_program_table(7, identity_path)
-    local_selectors = local_table["script_to_program"]
-    if local_selectors.get(201) != 0x89 or local_selectors.get(207) != 0x88:
-        raise RuntimeError(
-            "current ROM does not map room7 LSCR201/207 to their authenticated selectors: "
-            f"{local_selectors!r}"
-        )
+    if native_directory is None:
+        local_selectors = local_table["script_to_program"]
+        if local_selectors.get(201) != 0x89 or local_selectors.get(207) != 0x88:
+            raise RuntimeError(
+                "current ROM does not map room7 LSCR201/207 to their authenticated selectors: "
+                f"{local_selectors!r}"
+            )
+    else:
+        local_units = local_table["script_to_program_unit_id"]
+        if not {201, 207}.issubset(local_units):
+            raise RuntimeError(
+                f"dynamic room7 bundle omits LSCR201/207: {local_units!r}"
+            )
     local_bodies = dict(decoded.local_scripts)
     local_expected = {
         201: (291, "6a3565652f8d72261d357eb6ef0d497a0a15448f15a6842d6afd22f7a8eda752"),
@@ -606,7 +970,14 @@ def _authentic_room7_cat_source(
             raise RuntimeError(f"authentic room7 LSCR{number} body is missing/changed")
         local_report[str(number)] = {
             "size": len(body), "sha256": digest,
-            "program_selector": f"${local_selectors[number]:02X}",
+            "program_selector": (
+                f"${local_selectors[number]:02X}" if native_directory is None
+                else "ephemeral-resident-binding"
+            ),
+            "program_unit_id": (
+                local_table["script_to_program_unit_id"].get(number)
+                if native_directory is not None else None
+            ),
             "source_body_offset": room_body_source_offset + next(
                 item.offset + 9 for item in _chunks(payload, owner="room7 ROOM")
                 if item.tag == "LSCR" and item.payload[0] == number
@@ -634,6 +1005,9 @@ def _authentic_room7_cat_source(
             "first distinct cat verb10 sets its object-specific variable and increments V214; "
             "the second distinct cat starts LSCR207 and chains LSCR201"
         ),
+        **({"native_program_directory": native_directory["path"],
+            "native_program_directory_sha256": native_directory["sha256"]}
+           if native_directory is not None else {}),
     }
 
 
@@ -647,7 +1021,7 @@ def _authentic_room_source(archive: Path, room_number: int) -> dict[str, Any]:
     from same.engines.scumm_v5.room import decode_room
 
     profile = load_profile(
-        ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
+        ROOT / "examples/profiles/templates/fate_of_atlantis_dos_cd.json",
         verify_resources=False,
     )
     with zipfile.ZipFile(archive) as bundle:
@@ -740,6 +1114,20 @@ def _room_local_program_table(
             "generated room-local table differs from the ROM build identity: "
             f"{include_sha} != {input_identity.get('sha256')}"
         )
+    if ACTIVE_DYNAMIC_RESIDENCY:
+        native_directory = _native_directory_for_build(identity_path)
+        units = {
+            int(item["number"]): int(item["program_unit_id"])
+            for item in native_directory["document"]["entries"]
+            if item.get("kind") == "LSCR" and item.get("room") == room_number
+        }
+        return {
+            "room": room_number,
+            "include": str(include),
+            "include_sha256": include_sha,
+            "dynamic_residency": True,
+            "script_to_program_unit_id": units,
+        }
     selectors = _parse_room_local_program_table(
         include.read_text(encoding="utf-8"), room_number
     )
@@ -769,10 +1157,14 @@ def _live_slot_locals(session: Any, slots: list[dict[str, int]]) -> list[dict[st
 
 def _parse_rom_variable_layout(listing_text: str) -> dict[str, int]:
     """Read variable RAM constants from a listing already verified for this ROM."""
-    wanted = {"SAME_SCUMM_VARIABLES", "SAME_SCUMM_VARIABLE_COUNT"}
+    wanted = {
+        "SAME_SCUMM_VARIABLES", "SAME_SCUMM_VARIABLE_COUNT",
+        "SCUMM_M23A_GLOBAL_OBJECT_COUNT",
+    }
     found: dict[str, int] = {}
     pattern = re.compile(
-        r"^;\s*(SAME_SCUMM_VARIABLES|SAME_SCUMM_VARIABLE_COUNT)\s*=\s*\$([0-9A-Fa-f]+)\s+\(Constant\)\s*$"
+        r"^;\s*(SAME_SCUMM_VARIABLES|SAME_SCUMM_VARIABLE_COUNT|"
+        r"SCUMM_M23A_GLOBAL_OBJECT_COUNT)\s*=\s*\$([0-9A-Fa-f]+)\s+\(Constant\)\s*$"
     )
     for line in listing_text.splitlines():
         match = pattern.match(line)
@@ -784,23 +1176,28 @@ def _parse_rom_variable_layout(listing_text: str) -> dict[str, int]:
     missing = wanted - found.keys()
     if missing:
         raise RuntimeError(
-            "ROM-bound listing lacks SCUMM variable layout constants: "
+            "ROM-bound listing lacks SCUMM variable layout or object table constants: "
             + ", ".join(sorted(missing))
         )
     if found["SAME_SCUMM_VARIABLE_COUNT"] <= 0:
         raise RuntimeError("ROM listing declares an empty SCUMM variable table")
+    if found["SCUMM_M23A_GLOBAL_OBJECT_COUNT"] <= 0:
+        raise RuntimeError("ROM listing declares an empty global object table")
     return {
         "base": found["SAME_SCUMM_VARIABLES"],
         "count": found["SAME_SCUMM_VARIABLE_COUNT"],
+        "object_count": found["SCUMM_M23A_GLOBAL_OBJECT_COUNT"],
     }
 
 
 def _room7_runtime_context(
-    session: Any, *, variable_base: int, variable_count: int,
+    session: Any, *, variable_base: int, variable_count: int, object_count: int,
 ) -> dict[str, Any]:
     """Capture the authored room-7 puzzle state without changing game RAM."""
     if variable_count <= 0:
         raise ValueError("SCUMM variable count must be positive")
+    if object_count <= 0 or object_count > 2048:
+        raise ValueError(f"invalid SCUMM global object count: {object_count}")
     raw_variables = session.read_memory(
         "snesMemory", variable_base, variable_count * 2
     )
@@ -860,9 +1257,10 @@ def _room7_runtime_context(
         ],
         "inventory_owner1_objects": [
             object_id for object_id, owner in enumerate(
-                session.read_memory("snesMemory", 0x7E8000, 2048)
+                session.read_memory("snesMemory", 0x7E8000, object_count)
             ) if object_id and owner == 1
         ],
+        "global_object_table_count": object_count,
         "book_inventory_object937_owner": session.read_u8(0x7E8000 + 937),
         "object_classes_initialized": session.read_u8(0x7F6F1B),
         "object_classes": class_masks,
@@ -1038,6 +1436,11 @@ def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], lis
         if lifecycle == 0xFF:
             raise RuntimeError(f"engine failed during cold startup: {_snapshot(session)!r}")
         state = _snapshot(session)
+        if state.get("resident_binding_violations"):
+            raise RuntimeError(
+                "dynamic startup reached a live activation without a resident binding; "
+                f"event-time state={state!r}"
+            )
         if (
             room == 4 and phase == 0 and error == 0 and lifecycle == 2
             and state["ready"] == 1 and state["talk_active"] == 0
@@ -1202,6 +1605,7 @@ def _observe_action(session: Any, *, baseline: int,
                     exact_frame_observation: bool = False,
                     variable_base: int | None = None,
                     variable_count: int = 0,
+                    object_count: int = 0,
                     ) -> dict[str, Any]:
     from fate_replay import advance_bounded, room4_message_ready
 
@@ -1220,11 +1624,10 @@ def _observe_action(session: Any, *, baseline: int,
     watched_activation_slots: set[int] = set()
     previous_watched_signature: tuple[Any, ...] = ()
     transitions: list[dict[str, Any]] = []
-    # Exact-frame mode is used for the post-Use trace. Keep a frame-boundary
-    # record of live activation descriptors so a yielded local's saved PC can
-    # be followed without attributing a later poll to an earlier CPU event.
-    # This is explicitly a sampled frame-boundary observation, not an
-    # instruction breakpoint.
+        # Passive state is sampled at bounded frame boundaries. Controller
+        # edges and message acknowledgements themselves remain synchronized;
+        # sampling every emulated frame caused hundreds of thousands of MCP
+        # reads without improving the semantic comparison.
     execution_samples: list[dict[str, Any]] = []
     start_frame = previous["frame"]
     stable_frames = 0
@@ -1372,15 +1775,14 @@ def _observe_action(session: Any, *, baseline: int,
                 result["runtime_context"] = _room7_runtime_context(
                     session, variable_base=variable_base,
                     variable_count=variable_count,
+                    object_count=object_count,
                 )
             return result
         previous = state
         previous_watched_signature = watched_signature
         remaining = max_frames - (state["frame"] - start_frame)
         step = min(
-            1 if exact_frame_observation or (
-                state["talk_active"] and state["talk_delay"] <= 12
-            ) else 4,
+            1 if state["talk_active"] and state["talk_delay"] <= 1 else 4,
             remaining,
         )
         advanced = advance_bounded(session, step)
@@ -1399,6 +1801,7 @@ def _observe_action(session: Any, *, baseline: int,
                 _room7_runtime_context(
                     session, variable_base=variable_base,
                     variable_count=variable_count,
+                    object_count=object_count,
                 )
                 if variable_base is not None else None
             ),
@@ -1417,6 +1820,7 @@ def _observe_action(session: Any, *, baseline: int,
 def _observe_no_input_lifecycle(
     session: Any, *, rom: Path, symbol_banks: dict[str, int],
     archive: Path, variable_base: int, variable_count: int,
+    object_count: int,
     max_frames: int = 10000, stable_frames_required: int = 120,
 ) -> dict[str, Any]:
     """Follow authored room-entry work until it finishes or changes rooms."""
@@ -1508,6 +1912,7 @@ def _observe_no_input_lifecycle(
                     _room7_runtime_context(
                         session, variable_base=variable_base,
                         variable_count=variable_count,
+                        object_count=object_count,
                     )
                     if state["room"] == 7 else None
                 ),
@@ -1576,6 +1981,7 @@ def _observe_no_input_lifecycle(
                     _room7_runtime_context(
                         session, variable_base=variable_base,
                         variable_count=variable_count,
+                        object_count=object_count,
                     )
                     if state["room"] == 7 else None
                 ),
@@ -1588,8 +1994,12 @@ def _observe_no_input_lifecycle(
             samples.append(state)
         previous = state
         previous_signature = current_signature
-        result = advance_bounded(session, 1)
-        if result["frames_advanced"] != 1:
+        # Message ownership is checked at the exact ready boundary above.
+        # Room lifecycle observation can therefore advance in small bounded
+        # groups while still detecting transitions and authored state changes.
+        step = min(4, max_frames - (int(session.get_state()["frameCount"]) - start_frame))
+        result = advance_bounded(session, step)
+        if result["frames_advanced"] != step:
             raise RuntimeError(f"room-entry observation frame drifted: {result!r}")
 
     return {
@@ -1610,6 +2020,7 @@ def _observe_no_input_lifecycle(
             _room7_runtime_context(
                 session, variable_base=variable_base,
                 variable_count=variable_count,
+                object_count=object_count,
             )
             if _snapshot(session)["room"] == 7 else None
         ),
@@ -1625,6 +2036,10 @@ def main() -> int:
     parser.add_argument("--rom", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--nexen", type=Path, default=DEFAULT_NEXEN)
+    parser.add_argument(
+        "--nexen-stderr-log", type=Path,
+        help="optional raw Nexen stderr log (disabled by default; MCP logs are large)",
+    )
     parser.add_argument("--port", type=int, default=44979)
     parser.add_argument("--nexen-boot-wait", type=float, default=10.0)
     parser.add_argument("--socket-timeout", type=float, default=300.0)
@@ -1640,6 +2055,11 @@ def main() -> int:
     parser.add_argument("--room7-action-frames", type=int, default=12000)
     parser.add_argument("--room7-save-state", type=Path)
     parser.add_argument("--archive", type=Path, default=Path("/home/chad/ATLANTIS.zip"))
+    parser.add_argument(
+        "--accept-current-build-sidecars", action="store_true",
+        help=("bind replay to the ROM's own map/build identity instead of "
+              "requiring the historical recipe hashes"),
+    )
     args = parser.parse_args()
     if args.continue_room5_rope and not args.continue_trapdoor_use:
         parser.error("--continue-room5-rope requires --continue-trapdoor-use")
@@ -1656,8 +2076,42 @@ def main() -> int:
         parser.error("ROM and Nexen must exist")
     recipe = json.loads(RECIPE.read_text(encoding="utf-8"))
     rom_sha = hashlib.sha256(rom.read_bytes()).hexdigest()
-    if rom_sha != recipe["rom"]["sha256"]:
-        parser.error(f"ROM SHA mismatch: {rom_sha} != {recipe['rom']['sha256']}")
+    identity_path = rom.with_suffix(".build_identity.json")
+    if not identity_path.is_file():
+        parser.error(f"ROM-bound build identity is missing: {identity_path}")
+    build_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    global ACTIVE_DYNAMIC_RESIDENCY, ACTIVE_PROGRAM_DIRECTORY, RESIDENCY_PINNED_PEAK
+    global RESIDENCY_OBSERVER_READY, RESIDENCY_PREINIT_UNKNOWN_ROWS
+    ACTIVE_DYNAMIC_RESIDENCY = (
+        build_identity.get("explicit_environment", {}).get(
+            "SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY"
+        ) == "1"
+    )
+    RESIDENCY_EVENTS.clear()
+    RESIDENCY_LAST.clear()
+    RESIDENCY_HISTORY.clear()
+    RESIDENCY_PINNED_PEAK = 0
+    RESIDENCY_OBSERVER_READY = False
+    RESIDENCY_PREINIT_UNKNOWN_ROWS = 0
+    RESIDENCY_POSTINIT_UNKNOWN_ROWS.clear()
+    if ACTIVE_DYNAMIC_RESIDENCY:
+        explicit = build_identity.get("explicit_environment", {})
+        if (explicit.get("SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT") != "1"
+                or explicit.get("SAME_FATE_PROFILE") != (
+                    "examples/profiles/templates/fate_of_atlantis_dos_cd.json"
+                )):
+            parser.error(
+                "dynamic replay requires the explicit canonical DOS-CD FATE experiment build"
+            )
+        directory = _native_directory_for_build(identity_path)
+        ACTIVE_PROGRAM_DIRECTORY = directory["by_id"]
+    else:
+        ACTIVE_PROGRAM_DIRECTORY = {}
+    if not args.accept_current_build_sidecars:
+        if rom_sha != recipe["rom"]["sha256"]:
+            parser.error(f"ROM SHA mismatch: {rom_sha} != {recipe['rom']['sha256']}")
+    elif build_identity.get("rom", {}).get("sha256") != rom_sha:
+        parser.error("ROM bytes do not match their adjacent build identity")
 
     sys.path.insert(0, str(ROOT / "tools"))
     sys.path.insert(0, "/home/chad/Mesen2/python")
@@ -1681,14 +2135,14 @@ def main() -> int:
     variable_layout = _parse_rom_variable_layout(
         listing_path.read_text(encoding="utf-8")
     )
-    identity_path = rom.with_suffix(".build_identity.json")
     map_sha = hashlib.sha256(map_path.read_bytes()).hexdigest()
     identity_sha = hashlib.sha256(identity_path.read_bytes()).hexdigest()
     nexen_sha = hashlib.sha256(nexen.read_bytes()).hexdigest()
-    if map_sha != recipe["rom"]["map_sha256"]:
-        parser.error(f"map SHA mismatch: {map_sha}")
-    if identity_sha != recipe["rom"]["build_identity_sha256"]:
-        parser.error(f"build identity SHA mismatch: {identity_sha}")
+    if not args.accept_current_build_sidecars:
+        if map_sha != recipe["rom"]["map_sha256"]:
+            parser.error(f"map SHA mismatch: {map_sha}")
+        if identity_sha != recipe["rom"]["build_identity_sha256"]:
+            parser.error(f"build identity SHA mismatch: {identity_sha}")
     if nexen_sha != recipe["rom"]["nexen_sha256"]:
         parser.error(f"Nexen SHA mismatch: {nexen_sha}")
 
@@ -1703,6 +2157,12 @@ def main() -> int:
         "ScummV5_Talk_FrameEnd_Far": 9,
         "ScummV5_Talk_FrameEnd_Far__done": 9,
     }
+    if ACTIVE_DYNAMIC_RESIDENCY:
+        # Bind the observer's lifetime to the native resolver's cold-reset
+        # routine, not to the first apparently valid WRAM row. Work RAM can
+        # contain arbitrary VALID-looking entries before this exact routine
+        # clears the resident table.
+        symbols["ScummV5_Resident_Reset_Far"] = 9
     report: dict[str, Any] = {
         "result": "running",
         "evidence_class": "fresh-power-on Nexen cold startup plus normal controller input",
@@ -1715,9 +2175,21 @@ def main() -> int:
         "nexen": str(nexen),
         "nexen_sha256": nexen_sha,
         "nexen_boot_wait_seconds": args.nexen_boot_wait,
-        "nexen_socket_timeout_seconds": args.socket_timeout,
-        "starting_head": "2f8066c28f2f726c6cc1701e73ca3a8de8b9c45c",
-        "hook_addresses": {},
+            "nexen_socket_timeout_seconds": args.socket_timeout,
+        "starting_head": build_identity.get("git", {}).get("head"),
+        "dynamic_residency": ACTIVE_DYNAMIC_RESIDENCY,
+        "game_profile": build_identity.get("explicit_environment", {}).get(
+            "SAME_FATE_PROFILE"
+        ),
+        "archive_sha256": hashlib.sha256(args.archive.resolve().read_bytes()).hexdigest(),
+        "native_program_directory": (
+            {
+                "path": _native_directory_for_build(identity_path)["path"],
+                "sha256": _native_directory_for_build(identity_path)["sha256"],
+                "program_units": len(ACTIVE_PROGRAM_DIRECTORY),
+            } if ACTIVE_DYNAMIC_RESIDENCY else None
+        ),
+            "hook_addresses": {},
     }
     for name, bank in symbols.items():
         report["hook_addresses"][name] = f"${mapped_cpu_address_for_rom(rom, name, bank=bank):06X}"
@@ -1727,25 +2199,151 @@ def main() -> int:
     owned_session = mesen_session.McpSession(
             rom=rom, mesen=nexen, cwd=ROOT, port=args.port,
             boot_wait=args.nexen_boot_wait, socket_timeout=args.socket_timeout,
-            stderr_log=args.output.with_suffix(".nexen-stderr.log"),
+            stderr_log=(args.nexen_stderr_log.resolve()
+                        if args.nexen_stderr_log else Path("/dev/null")),
         )
     try:
         with owned_session as session:
             session.pause()
             session.tool("reset_emulator", {"power": True})
             session.pause()
-            advance_bounded(session, 2)
+            if ACTIVE_DYNAMIC_RESIDENCY:
+                from validate_scumm_startup42_nexen import mapped_cpu_address_for_rom
+
+                reset_address = mapped_cpu_address_for_rom(
+                    rom, "ScummV5_Resident_Reset_Far", bank=9,
+                )
+                reset_handle = session.add_exec_hook(reset_address)
+                try:
+                    # Preserve the accepted cold-start schedule: first advance
+                    # exactly the same two frames as the legacy replay, while
+                    # passively observing the reset entry. Pausing at the
+                    # instruction breakpoint itself changes controller poll
+                    # phase and made the established room-4 X edge miss.
+                    initial_advance = advance_bounded(session, 2)
+                    reset_notifications = [
+                        message.get("params", message)
+                        for message in session.drain_notifications(timeout=0.0)
+                        if message.get("params", message).get("handle") == reset_handle
+                    ]
+                    reset_wait = None
+                    if not reset_notifications:
+                        reset_wait = session.run_until(
+                            max_frames=120, hook_handle=reset_handle,
+                        )
+                        session.pause()
+                        reset_notifications = [
+                            message.get("params", message)
+                            for message in session.drain_notifications(timeout=0.0)
+                            if message.get("params", message).get("handle") == reset_handle
+                        ]
+                    if not reset_notifications:
+                        raise RuntimeError(
+                            "dynamic cold boot did not execute the resolver reset "
+                            "at an observed event-time boundary: "
+                            f"initial={initial_advance!r}, wait={reset_wait!r}"
+                        )
+                    reset_frame = int(reset_notifications[-1].get("frame", -1))
+                    current_frame = int(session.get_state()["frameCount"])
+                    frames_after_reset_entry = (
+                        current_frame - reset_frame if reset_frame >= 0 else 0
+                    )
+                    completion_frames = max(0, 2 - frames_after_reset_entry)
+                finally:
+                    session.remove_hook(reset_handle)
+                reset_advance = (
+                    advance_bounded(session, completion_frames)
+                    if completion_frames else {
+                        "frames_advanced": 0,
+                        "reason": "two frames elapsed after event-time reset entry",
+                    }
+                )
+                if reset_advance["frames_advanced"] != completion_frames:
+                    raise RuntimeError(
+                        "resolver reset completion advance was not exact: "
+                        f"{reset_advance!r}"
+                    )
+                # The breakpoint proves reset was entered; two exact native
+                # frames let its bounded clear loops and return complete. Only
+                # now may the observer classify unknown valid rows as an ABI
+                # violation rather than pre-initialization WRAM noise.
+                ids = session.read_memory("snesMemory", 0x7E8C00, 178 * 2)
+                flags = session.read_memory("snesMemory", 0x7E8EC8, 178)
+                unknown_after_reset = [
+                    int.from_bytes(ids[index * 2:index * 2 + 2], "little")
+                    for index, flag in enumerate(flags)
+                    if flag & 0x01
+                    and int.from_bytes(ids[index * 2:index * 2 + 2], "little")
+                    not in ACTIVE_PROGRAM_DIRECTORY
+                ]
+                if unknown_after_reset:
+                    raise RuntimeError(
+                        "resolver reset left valid rows absent from the ROM's "
+                        f"canonical directory: {unknown_after_reset[:8]!r}"
+                    )
+                RESIDENCY_OBSERVER_READY = True
+                report["resolver_reset_observation"] = {
+                    "symbol": "ScummV5_Resident_Reset_Far",
+                    "address": f"${reset_address:06X}",
+                    "event": reset_notifications[-1],
+                    "initial_cold_advance": initial_advance,
+                    "wait_for_entry": reset_wait,
+                    "frames_after_entry_before_completion_advance": frames_after_reset_entry,
+                    "completion_advance": reset_advance,
+                    "valid_unmapped_rows_after_reset": 0,
+                }
+            else:
+                advance_bounded(session, 2)
             ready, transitions = _cold_wait_room4(session, args.startup_frames)
             report["room_transitions"] = transitions
             report["room4_ready"] = ready
+            entry4 = (
+                _directory_unit(
+                    _native_directory_for_build(identity_path),
+                    kind="ENCD", room=4, number=10002,
+                ) if ACTIVE_DYNAMIC_RESIDENCY else None
+            )
             report["authentic_room4_entry"] = {
-                "program": "$ED",
+                "program": (
+                    "$ED" if entry4 is None else "ephemeral-resident-binding"
+                ),
+                "program_unit_id": (
+                    int(entry4["program_unit_id"]) if entry4 is not None else None
+                ),
                 "identity": "room4 ENCD",
                 "body_sha256": "b787c221b19beaf99632c0748aab0fb80a85e79bac3b8a557e440e69d2c3d67b",
                 "source_archive_sha256": "0f3fc396642c800069d31ab9a087b314f1bb1612d37accbe13b6013219ac94f0",
             }
+            override_owner = next(
+                (slot for slot in ready["slots"] if slot["slot"] == 3), None
+            )
+            if override_owner is None or override_owner["script"] != 206:
+                raise RuntimeError(
+                    "room4 override continuation has no live slot-3 LSCR206 owner: "
+                    f"{override_owner!r}"
+                )
+            # This byte is a build-local selector. Derive it from the live
+            # owner instead of carrying a selector value across builds.
+            expected_override_program = int(override_owner["program"])
+            if ACTIVE_DYNAMIC_RESIDENCY:
+                if (override_owner is None
+                        or override_owner["program_unit_identity"]
+                        != "RoomLocalProgram(room=4,local=206)"):
+                    raise RuntimeError(
+                        "dynamic room4 override is not owned by authentic LSCR206: "
+                        f"{override_owner!r}"
+                    )
+                expected_override_program = int(override_owner["program"])
+                report["room4_cutscene_owner"] = {
+                    "canonical_program_unit_id": override_owner["program_unit_id"],
+                    "identity": override_owner["program_unit_identity"],
+                    "selector": expected_override_program,
+                    "binding_generation": override_owner["binding_generation"],
+                    "pin_evidence": "live C4 slot 3 owns the C19 override continuation",
+                }
             report["room4_cutscene_skip"] = skip_room4_authored_override(
                 session,
+                expected_override_program=expected_override_program,
                 defer_release_sample=True,
             )
             try:
@@ -1818,6 +2416,7 @@ def main() -> int:
                         archive=args.archive.resolve(),
                         variable_base=variable_layout["base"],
                         variable_count=variable_layout["count"],
+                        object_count=variable_layout["object_count"],
                     )
                 if args.continue_room5_rope:
                     idle = report.get("post_transition_idle", {})
@@ -1858,6 +2457,7 @@ def main() -> int:
                             archive=args.archive.resolve(),
                             variable_base=variable_layout["base"],
                             variable_count=variable_layout["count"],
+                            object_count=variable_layout["object_count"],
                         )
                 if args.continue_room6_books:
                     entry = report.get("room6_entry", {})
@@ -1896,7 +2496,10 @@ def main() -> int:
                         {"frame": sample["frame"], "room": sample["room"],
                          "slot": slot["slot"], "script": slot["script"],
                          "program": slot["program"], "saved_pc": slot["saved_pc"],
-                         "room_owner": slot["room_owner"]}
+                         "room_owner": slot["room_owner"],
+                         "program_unit_id": slot.get("program_unit_id"),
+                         "program_unit_identity": slot.get("program_unit_identity"),
+                         "binding_generation": slot.get("binding_generation")}
                         for sample in report["post_room6_books"].get(
                             "frame_boundary_execution_samples", []
                         )
@@ -1922,22 +2525,47 @@ def main() -> int:
                         str(room): [item for item in dispatches if item["room"] == room][:8]
                         for room in observed_rooms
                     }
-                    wrong_mappings = [
-                        item for item in dispatches
-                        if item["script"] not in room_local_tables[item["room"]][
-                            "script_to_program"
-                        ] or item["program"] != room_local_tables[item["room"]][
-                            "script_to_program"
-                        ][item["script"]]
-                    ]
-                    if not any(
-                        item["room"] == 6 and item["program"] == 0x93
-                        for item in dispatches
-                    ):
-                        raise RuntimeError(
-                            "room6 LSCR200 did not execute under the ROM-mapped "
-                            f"selector $93: {dispatches[:8]!r}"
-                        )
+                    wrong_mappings = []
+                    if ACTIVE_DYNAMIC_RESIDENCY:
+                        for item in dispatches:
+                            expected_id = room_local_tables[item["room"]][
+                                "script_to_program_unit_id"
+                            ].get(item["script"])
+                            if (expected_id is None
+                                    or item["program_unit_id"] != expected_id
+                                    or item["program_unit_identity"] != (
+                                        f"RoomLocalProgram(room={item['room']},"
+                                        f"local={item['script']})"
+                                    )):
+                                wrong_mappings.append(item)
+                        if not any(
+                            item["room"] == 6 and item["script"] == 200
+                            and item["program_unit_identity"] == (
+                                "RoomLocalProgram(room=6,local=200)"
+                            )
+                            for item in dispatches
+                        ):
+                            raise RuntimeError(
+                                "room6 LSCR200 did not execute through its canonical "
+                                f"ProgramUnit binding: {dispatches[:8]!r}"
+                            )
+                    else:
+                        wrong_mappings = [
+                            item for item in dispatches
+                            if item["script"] not in room_local_tables[item["room"]][
+                                "script_to_program"
+                            ] or item["program"] != room_local_tables[item["room"]][
+                                "script_to_program"
+                            ][item["script"]]
+                        ]
+                        if not any(
+                            item["room"] == 6 and item["program"] == 0x93
+                            for item in dispatches
+                        ):
+                            raise RuntimeError(
+                                "room6 LSCR200 did not execute under the ROM-mapped "
+                                f"selector $93: {dispatches[:8]!r}"
+                            )
                     if wrong_mappings:
                         raise RuntimeError(
                             "observed room-local activation disagrees with the "
@@ -1960,6 +2588,7 @@ def main() -> int:
                             archive=args.archive.resolve(),
                             variable_base=variable_layout["base"],
                             variable_count=variable_layout["count"],
+                            object_count=variable_layout["object_count"],
                         )
                         if report["room7_entry"]["status"] != (
                             "authored-room-entry-complete"
@@ -2014,6 +2643,7 @@ def main() -> int:
                                 exact_frame_observation=True,
                                 variable_base=variable_layout["base"],
                                 variable_count=variable_layout["count"],
+                                object_count=variable_layout["object_count"],
                             )
                             report["room7_global144_observations"] = [
                                 {
@@ -2045,6 +2675,7 @@ def main() -> int:
                                         archive=args.archive.resolve(),
                                         variable_base=variable_layout["base"],
                                         variable_count=variable_layout["count"],
+                                        object_count=variable_layout["object_count"],
                                     )
                                 )
                             else:
@@ -2053,6 +2684,7 @@ def main() -> int:
                                         session,
                                         variable_base=variable_layout["base"],
                                         variable_count=variable_layout["count"],
+                                        object_count=variable_layout["object_count"],
                                     )
                                     if report["post_room7_book"]["final"]["room"] == 7
                                     else None
@@ -2095,6 +2727,7 @@ def main() -> int:
                                     exact_frame_observation=True,
                                     variable_base=variable_layout["base"],
                                     variable_count=variable_layout["count"],
+                                    object_count=variable_layout["object_count"],
                                 )
                                 if report["post_room7_cat118"]["status"] != (
                                     "authored-action-quiescent-in-room7"
@@ -2107,6 +2740,7 @@ def main() -> int:
                                     session,
                                     variable_base=variable_layout["base"],
                                     variable_count=variable_layout["count"],
+                                    object_count=variable_layout["object_count"],
                                 )
                                 report["room7_after_cat118_context"] = (
                                     context_after_first_cat
@@ -2145,13 +2779,21 @@ def main() -> int:
                                     exact_frame_observation=True,
                                     variable_base=variable_layout["base"],
                                     variable_count=variable_layout["count"],
+                                    object_count=variable_layout["object_count"],
                                 )
                                 second_dispatches = [
                                     {"frame": sample["frame"], "room": sample["room"],
                                      "slot": slot["slot"], "script": slot["script"],
                                      "program": slot["program"],
                                      "saved_pc": slot["saved_pc"],
-                                     "room_owner": slot["room_owner"]}
+                                     "room_owner": slot["room_owner"],
+                                     "program_unit_id": slot.get("program_unit_id"),
+                                     "program_unit_identity": slot.get(
+                                         "program_unit_identity"
+                                     ),
+                                     "binding_generation": slot.get(
+                                         "binding_generation"
+                                     )}
                                     for sample in report["post_room7_cat119"].get(
                                         "frame_boundary_execution_samples", []
                                     )
@@ -2167,6 +2809,20 @@ def main() -> int:
                                         "room7 LSCR207 and LSCR201: "
                                         f"{second_dispatches!r}"
                                     )
+                                if ACTIVE_DYNAMIC_RESIDENCY:
+                                    wrong_units = [
+                                        item for item in second_dispatches
+                                        if item["program_unit_identity"] != (
+                                            f"RoomLocalProgram(room=7,local="
+                                            f"{item['script']})"
+                                        )
+                                    ]
+                                    if wrong_units:
+                                        raise RuntimeError(
+                                            "room7 local dispatch does not match its "
+                                            "canonical resident ProgramUnit: "
+                                            f"{wrong_units!r}"
+                                        )
                                 if report["post_room7_cat119"]["status"] != "room-transition":
                                     raise RuntimeError(
                                         "room7 LSCR201 did not produce its authored actor "
@@ -2187,9 +2843,74 @@ def main() -> int:
                                         archive=args.archive.resolve(),
                                         variable_base=variable_layout["base"],
                                         variable_count=variable_layout["count"],
+                                        object_count=variable_layout["object_count"],
                                     )
                                 )
             report["final_snapshot"] = _snapshot(session)
+            if args.continue_room7_cats:
+                final = report["final_snapshot"]
+                if (final["room"] != 3 or final["error"] != 0
+                        or final["lifecycle"] != 2 or final["actor1_room"] != 3):
+                    raise RuntimeError(
+                        "deterministic route did not reach the accepted settled "
+                        f"room3 state: {final!r}"
+                    )
+                if not any(
+                    slot["script"] == 213 and slot["status"] not in (0, 4)
+                    for slot in final["slots"]
+                ):
+                    raise RuntimeError(
+                        "room3 did not retain expected authored local execution: "
+                        f"{final['slots']!r}"
+                    )
+            if ACTIVE_DYNAMIC_RESIDENCY:
+                final = report["final_snapshot"]
+                telemetry = final["residency"]
+                reuse_events = [
+                    event for event in RESIDENCY_EVENTS
+                    if event["event"] == "reuse"
+                ]
+                if telemetry["stale_reference_detections"] != 0:
+                    raise RuntimeError(
+                        "dynamic replay detected stale selector references: "
+                        f"{telemetry!r}"
+                    )
+                if telemetry["exhaustions"] != 0:
+                    raise RuntimeError(
+                        f"dynamic replay exhausted resident selectors: {telemetry!r}"
+                    )
+                if telemetry["duplicate_program_unit_bindings"] != 0:
+                    raise RuntimeError(
+                        f"resolver aliases a canonical ProgramUnit: {telemetry!r}"
+                    )
+                if RESIDENCY_POSTINIT_UNKNOWN_ROWS:
+                    raise RuntimeError(
+                        "resolver exposed valid selector rows absent from the exact "
+                        "compiler directory after initialization: "
+                        f"{RESIDENCY_POSTINIT_UNKNOWN_ROWS[:8]!r}"
+                    )
+                if not reuse_events:
+                    raise RuntimeError(
+                        "bounded FATE route did not demonstrate selector reuse; "
+                        "use the bounded same-directory resolver control instead"
+                    )
+                report["residency"] = {
+                    **telemetry,
+                    "native_valid_row_evictions": telemetry["reuse_count"],
+                    "selector_rebind_reuse_count": len(reuse_events),
+                    "observer_preinit_unmapped_rows_ignored": (
+                        RESIDENCY_PREINIT_UNKNOWN_ROWS
+                    ),
+                    "observer_postinit_unmapped_rows": (
+                        RESIDENCY_POSTINIT_UNKNOWN_ROWS
+                    ),
+                    "events": RESIDENCY_EVENTS,
+                    "reuse_examples": reuse_events[:32],
+                    "final_bindings": final["resident_bindings"],
+                    "stale_execution_events": 0,
+                    "selector_alias_events": 0,
+                    "invalid_generation_dispatches": 0,
+                }
             report["result"] = "pass"
     except Exception as exc:
         # McpSession.__enter__ can fail after Popen succeeds, before Python's

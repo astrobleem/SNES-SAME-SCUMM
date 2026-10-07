@@ -1,10 +1,12 @@
 # Native SCUMM Resident-Program ABI
 
-Status: **PROTOTYPE**. The resolver is implemented behind
-`SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY`; synthetic native acceptance is
-the required gate. The canonical DOS-CD FATE profile remains on the legacy
-static selector path. Portable save formats and the production 178-selector
-ABI are unchanged.
+Status: **EXPERIMENTAL, bounded FATE route accepted**. The resolver remains
+behind `SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY`; the canonical DOS-CD FATE
+profile still defaults to the legacy static selector path. A separate
+experimental build has now run the accepted deterministic route through room
+3 and matched its static-selector control at the semantic checkpoints. This
+does not certify the complete FATE corpus or every SCUMM capability. Portable
+save formats and the production 178-selector byte ABI are unchanged.
 
 ## Identity layers
 
@@ -67,10 +69,18 @@ The resolver tables occupy 890 bytes for 178 bindings:
 
 Resolver scratch, counters, and bounded diagnostic-control state continue
 through `$7E8FBF`; the complete reserved block is 960 bytes from `$7E8C00`.
-This prototype uses the object-name-cache WRAM region, so current build
-selection explicitly excludes incompatible controller/name-cache and save
-validator personalities. That is a known integration constraint, not a
-general WRAM allocation strategy.
+The resolver has an explicit 960-byte ownership block in the gap after the
+name-length cache and before the encoded-name payload. Controller/input,
+name-cache, C4, C19, room-lifecycle, and save-validator state are separately
+owned. `tools/audit_scumm_residency_wram.py` checks the half-open intervals for
+overlap and runs in validation and resolver-enabled builds. Engine-selection
+tests verify resolver, controller, and save-validator configurations can be
+selected together; the actual bounded FATE route exercised the controller
+and name cache. A resolver + controller + save-validator synthetic ROM also
+assembled and passed ROM audit; the full selected FATE route plus the optional
+M20 save-validator code exceeded the existing bank-0 layout, so that combined
+large-title configuration is not claimed as a tested FATE build. The save
+validator's existing behavior remains covered by its separate tests.
 
 Counters are 16-bit: resident/peak resident, current/peak room-or-explicit
 pins, bind/reuse, bundle load/release, dynamic global lookup, exhaustion, and
@@ -138,10 +148,33 @@ it is not a relocatable save across different resolver directories or builds.
 **Implemented/prototype:** legacy static mode remains available; canonical
 directory generation, native binding/reuse, room bundle pins, lazy global and
 room-local resolution, generations, stale-reference rejection, explicit
-exhaustion, diagnostic census, and synthetic Nexen controls.
+exhaustion, diagnostic census, synthetic Nexen controls, and the bounded
+DOS-CD FATE route. The route proves room transitions, selected object/verb
+dispatch, and final room-3 semantics through the resolver, with zero stale
+dispatches, aliases, or exhaustion.
 
-**Not enabled for FATE:** dynamic resolver profile selection, full-game
-selector reuse, canonical portable save migration, compatibility with the
-currently excluded WRAM personalities, or a general-purpose paging policy for
-all SCUMM resource types. No gameplay result is implied by the synthetic
-acceptance.
+The recorded route used the canonical DOS-CD English full-voice profile and
+an experimental 151-ProgramUnit selected integration directory (not the full
+2,195-SelectorUnit corpus). Its ROM SHA-256 is
+`3370cfb36852b5f4bc2b2295c2c887073d174988d06f231a04cf7d3a7d45539a`; the
+selector-free directory SHA-256 is
+`9b7193d7cfd0f500414b46157e57bd3d791ceae9c06428e419cee22f9669cf23`. Static
+and dynamic fresh-power-on replays matched the authored room/action sequence
+and normalized semantic checkpoints through room 3. The route observer saw a
+peak of 36 residents, 102 binds, six bundle loads/five releases, and 60 lazy
+global resolutions. It derived 66 selector rebindings from event/sample
+ownership changes; the native resolver's separate eviction counter remains
+zero because outgoing room bundles are explicitly released before reuse. The
+first directly observed released rebind changed selector `$D5` from
+`RoomEntryProgram(68)` generation 1 to `ObjectProgram(room=4,object=61)`
+generation 2. The route-level Python simulation consumed the same generated
+directory and matched native peak residency, bind/load/release totals, and all
+26 final `(ProgramUnit ID, selector, generation)` rows. Its abstract event
+schedule is not a cycle-accurate execution trace.
+
+**Still experimental / not certified:** dynamic residency is not the default
+FATE profile and only the already-selected bounded integration set was
+compiled. This result does not prove whole-game FATE playability, all 2,195
+selector units, or complete capability coverage. Portable save migration and
+a general-purpose paging policy for every SCUMM resource class remain
+planned. Emulator savestates remain tied to the exact ROM/build identity.

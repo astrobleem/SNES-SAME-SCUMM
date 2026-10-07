@@ -544,6 +544,9 @@ Same_Tad_BlankSong:
 .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 .include "engines/scumm_v5_m24rb_far.pasm"
 .endif
+.if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+.include "engines/scumm_v5_object_name_cache_far.pasm"
+.endif
 .if SAME_BUILD_SCUMM_CONTROLLER
 .include "engines/scumm_v5_controller_far.pasm"
 .endif
