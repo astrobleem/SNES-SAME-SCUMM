@@ -91,7 +91,7 @@ class ScummV5ResidencyContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ResolverDirectory.from_selector_directory(invalid)
 
-    def test_bind_reuse_lru_eviction_and_stale_generation(self) -> None:
+    def test_bind_reuse_native_pool_order_eviction_and_stale_generation(self) -> None:
         sim = ResidentBindingSimulator(1)
         old = sim.reference("GlobalProgram(1)")
         self.assertEqual(sim.resolve("GlobalProgram(1)"), old.selector)
@@ -102,13 +102,28 @@ class ScummV5ResidencyContractTests(unittest.TestCase):
         self.assertEqual(current.selector, old.selector)
         self.assertGreater(current.generation, old.generation)
 
-        lru = ResidentBindingSimulator(2)
-        lru.resolve("A")
-        lru.resolve("B")
-        lru.resolve("A")  # B is now the deterministic least-recently-used unit.
-        lru.resolve("C")
-        self.assertIsNone(lru.binding("B"))
-        self.assertIsNotNone(lru.binding("A"))
+        pool_order = ResidentBindingSimulator(2)
+        pool_order.resolve("A")
+        pool_order.resolve("B")
+        pool_order.resolve("A")  # Access time does not alter the native scan order.
+        pool_order.resolve("C")
+        self.assertIsNone(pool_order.binding("A"))
+        self.assertIsNotNone(pool_order.binding("B"))
+
+    def test_unpinned_first_native_selector_is_reused_after_owner_retires(self) -> None:
+        sim = ResidentBindingSimulator(3)
+        owner = sim.resolve("GlobalProgram(1)")
+        owner_ref = sim.reference("GlobalProgram(1)")
+        pin = sim.pin("GlobalProgram(1)", PinReason.ACTIVE_SCRIPT_SLOT)
+        sim.resolve("RoomEntryProgram(1)")
+        sim.resolve("RoomExitProgram(1)")
+        sim.unpin(pin)
+        replacement = sim.resolve("GlobalProgram(192)")
+        self.assertEqual(replacement, owner)
+        current_ref = sim.reference("GlobalProgram(192)")
+        self.assertEqual(current_ref.generation, owner_ref.generation + 1)
+        with self.assertRaises(StaleSelectorReference):
+            sim.validate_reference(owner_ref)
 
     def test_multiple_pin_reasons_prevent_reassignment_until_all_release(self) -> None:
         sim = ResidentBindingSimulator(1)

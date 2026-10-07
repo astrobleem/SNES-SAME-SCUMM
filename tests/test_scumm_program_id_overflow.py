@@ -980,3 +980,46 @@ class ProgramIdOverflowTests(unittest.TestCase):
             self.assertIn(
                 f'ScummV5_M23A_Program_{appended["id"]:02X}:', data,
             )
+
+    def test_dynamic_residency_directory_exceeds_selector_pool_without_room_overflow(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'stop.bin').write_bytes(b'\x00')
+            records = []
+            for room in (1, 2, 3, 4):
+                cooked = root / f'room-{room}.sc5c'
+                cooked.write_bytes(_cooked_room(
+                    room, _raw_room(tuple(range(200, 250))),
+                ))
+                records.append({'room': room, 'output': cooked.name})
+            manifest = root / 'manifest.json'
+            manifest.write_text(json.dumps({
+                'schema': 'same_scumm_v5_cooked_rooms_v1',
+                'num_global_scripts': 200,
+                'records': records,
+                'global_scripts': [{'number': 1, 'output': 'stop.bin', 'length': 1}],
+            }))
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+            output, data, report = root / 'rooms.pasm', root / 'data.pasm', root / 'report.json'
+            result = subprocess.run([
+                sys.executable, str(generator), '--manifest', str(manifest),
+                '--output', str(output), '--data-output', str(data),
+                '--binary-dir', str(root / 'segments'), '--far-programs',
+                '--dynamic-program-residency', '--executable-local-room', '1',
+                '--executable-local-room', '2', '--executable-local-room', '3',
+                '--executable-local-room', '4', '--report', str(report),
+            ], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            generated = json.loads(report.read_text())
+            self.assertEqual(generated['program_id_namespace'], 'canonical_program_unit_id')
+            self.assertEqual(generated['programs'], 209)
+            self.assertEqual(len(generated['program_map']), 209)
+            directory_bytes = Path(generated['native_program_directory']).read_bytes()
+            directory_doc = json.loads(directory_bytes)
+            self.assertEqual(hashlib.sha256(directory_bytes).hexdigest(),
+                             generated['native_program_directory_sha256'])
+            self.assertEqual(len(directory_doc['entries']), 209)
+            self.assertFalse(directory_doc['selector_values_emitted'])
+            self.assertIn('ScummV5_M23A_ProgramPointers:', data.read_text())
+            self.assertIn('ScummV5_M23A_ProgramLengths:', data.read_text())
+            self.assertIn('ScummV5_Resident_RoomBundleUnitIds:', output.read_text())

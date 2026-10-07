@@ -48,6 +48,8 @@ SCUMM_ERR_ACTOR_FROM_POS = $1C
 SCUMM_ERR_PUT_ACTOR_ROOM = $1D
 SCUMM_ERR_PUT_ACTOR_OBJECT = $1E
 SCUMM_ERR_IF_CLASS       = $1F
+SCUMM_ERR_RESIDENCY_EXHAUSTED = $20
+SCUMM_ERR_RESIDENCY_ID        = $21
 
 ScummV5_Engine_Boot:
     php
@@ -143,7 +145,21 @@ ScummV5_Engine_Boot__clear:
     inx
     cpx #SAME_SCUMM_STATE_SIZE
     bcc ScummV5_Engine_Boot__clear
-    .if SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_PHASE6LA1D
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; This prototype uses the profile-sized high-WRAM global namespace. It is
+    ; not covered by the compact $7E2320 VM-state clear above, so initialize
+    ; all 512 words before any generated boot script can observe them.
+    lda #$0000
+    ldx #$0000
+ScummV5_Engine_Boot__clear_dynamic_variables:
+    .a16
+    .i16
+    sta.l SAME_SCUMM_VARIABLES,x
+    inx
+    inx
+    cpx #$0400
+    bcc ScummV5_Engine_Boot__clear_dynamic_variables
+    .elseif SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_PHASE6LA1D
     jsr ScummV5_ClearGlobalVariables
     .endif
     lda #$0000
@@ -574,6 +590,11 @@ ScummV5_Engine_Boot__m23c_clear:
     jsl ScummV5_Talk_Reset_Far
     jsl ScummV5_GetActorWalkbox_Reset_Far
     jsl ScummV5_ObjectOwner_LoadInitial_Far
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; This prototype owns the otherwise presentation-only object-name length
+    ; cache region for binding metadata. Initialize it after name-cache reset.
+    jsl ScummV5_Resident_Reset_Far
+    .else
     ; Object names are runtime $54 state. Clear only the compact length table
     ; at boot; the encoded byte backing may remain untouched because a zero
     ; length makes an entry unavailable to target-neutral clients.
@@ -593,6 +614,7 @@ ScummV5_Engine_Boot__clear_object_name_lengths:
     bcc ScummV5_Engine_Boot__clear_object_name_lengths
     sep #$20
     .a8
+    .endif
     .endif
     sep #$20
     .a8
@@ -948,7 +970,14 @@ ScummV5_Engine_Frame__authentic_bootstrap_check_room:
 ScummV5_Engine_Frame__authentic_bootstrap_resolve:
     .a8
     lda #SCUMM_V5_AUTHENTIC_BOOT_SCRIPT
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; In residency builds even the first boot activation must obtain its
+    ; ephemeral selector through the canonical ProgramUnit directory. A
+    ; legacy static selector here would have no resident binding/generation.
+    jsl ScummV5_Resident_ResolveGlobalScript_Far
+    .else
     jsr ScummV5_M23A_ResolveGlobalScript
+    .endif
     bcs ScummV5_Engine_Frame__authentic_bootstrap_resolved
     lda #SCUMM_ERR_SCRIPT
     jsr ScummV5_SetError
@@ -8795,6 +8824,24 @@ ScummV5_M23A_CommitNullRoom__next:
     inx
     cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
     bcc ScummV5_M23A_CommitNullRoom__retire
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; The old room's EXCD has completed and room-owned activations are now
+    ; retired. Release its bundle before clearing the canonical owner record.
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    cmp #$FF
+    beq ScummV5_M23A_CommitNullRoom__bundle_released
+    jsl ScummV5_Resident_ReleaseRoomBundle_Far
+    bcs ScummV5_M23A_CommitNullRoom__bundle_released
+    lda #SCUMM_ERR_RESIDENCY_ID
+    jsr ScummV5_SetError
+    sec
+    rts
+ScummV5_M23A_CommitNullRoom__bundle_released:
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
+    sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    .endif
     sep #$20
     .a8
     lda #$00
@@ -9093,6 +9140,36 @@ ScummV5_M23A_CommitRoom__retire_next:
     inx
     cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
     bcc ScummV5_M23A_CommitRoom__retire
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; At this point the old EXCD is finished, old room/local C4 owners have
+    ; been retired, and any surviving global C4 slot still protects its own
+    ; binding. Drop the old bundle before binding the incoming room.
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    cmp #$FF
+    beq ScummV5_M23A_CommitRoom__old_bundle_released
+    jsl ScummV5_Resident_ReleaseRoomBundle_Far
+    bcs ScummV5_M23A_CommitRoom__old_bundle_released
+    lda #SCUMM_ERR_RESIDENCY_ID
+    jsr ScummV5_SetError
+    sec
+    rts
+ScummV5_M23A_CommitRoom__old_bundle_released:
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
+    sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    ; Bundle load is transactional: on failure its partial pins are unwound.
+    ; The error is visible and no byte selector is published as a room entry.
+    lda.l SAME_SCUMM_M23A_PENDING_RECORD
+    jsl ScummV5_Resident_LoadRoomBundle_Far
+    bcs ScummV5_M23A_CommitRoom__new_bundle_loaded
+    lda.l SAME_SCUMM_ERROR
+    jsr ScummV5_SetError
+    sec
+    rts
+ScummV5_M23A_CommitRoom__new_bundle_loaded:
+    .a8
+    .endif
     lda #$04
     jsr ScummV5_M23A_Trace
     lda.l SAME_SCUMM_M23A_PENDING_RECORD
@@ -9122,12 +9199,63 @@ ScummV5_M23A_CommitRoom__retire_next:
     sta.l SAME_SCUMM_M23A_REGISTER_COUNT
     lda.l ScummV5_M23A_RoomLocalCounts,x
     sta.l SAME_SCUMM_M23A_LOCAL_COUNT
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; Room tables hold canonical 16-bit ProgramUnit IDs. The incoming bundle
+    ; is already pinned; resolve here to publish only ephemeral VM selectors.
+    txa
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    tax
+    lda.l ScummV5_M23A_RoomEntryProgramUnitIds,x
+    cmp #$FFFF
+    beq ScummV5_M23A_CommitRoom__no_dynamic_entry
+    jsl ScummV5_Resident_ResolveProgramUnit_Far
+    bcs ScummV5_M23A_CommitRoom__dynamic_entry_ready
+    lda.l SAME_SCUMM_ERROR
+    jsr ScummV5_SetError
+    sec
+    rts
+ScummV5_M23A_CommitRoom__no_dynamic_entry:
+    sep #$20
+    .a8
+    lda #$00
+ScummV5_M23A_CommitRoom__dynamic_entry_ready:
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    tax
+    lda.l ScummV5_M23A_RoomExitProgramUnitIds,x
+    cmp #$FFFF
+    beq ScummV5_M23A_CommitRoom__no_dynamic_exit
+    jsl ScummV5_Resident_ResolveProgramUnit_Far
+    bcs ScummV5_M23A_CommitRoom__dynamic_exit_ready
+    lda.l SAME_SCUMM_ERROR
+    jsr ScummV5_SetError
+    sec
+    rts
+ScummV5_M23A_CommitRoom__no_dynamic_exit:
+    sep #$20
+    .a8
+    lda #$00
+ScummV5_M23A_CommitRoom__dynamic_exit_ready:
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    .else
     lda.l ScummV5_M23A_RoomEntryPrograms,x
     sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
     lda.l ScummV5_M23A_RoomExitPrograms,x
     sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    .endif
     sta.l SAME_SCUMM_FETCH_BYTE
-    txa
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
     rep #$20
     .a16
     and #$00FF
@@ -9725,6 +9853,11 @@ ScummV5_Op_SetObjectName__string:
     jsr ScummV5_StoreObjectNameByte
     bra ScummV5_Op_SetObjectName__string
 ScummV5_Op_SetObjectName__done:
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; The prototype build omits the target-neutral controller name cache; the
+    ; authored encoded string was still fully decoded and consumed above.
+    jmp ScummV5_Engine_Frame__next
+    .else
     rep #$20
     .a16
     lda.l SAME_SCUMM_OBJECT_NAME_OBJECT
@@ -9740,12 +9873,24 @@ ScummV5_Op_SetObjectName__done:
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_SetObjectName__done_no_cache:
     jmp ScummV5_Engine_Frame__next
+    .endif
 ScummV5_Op_SetObjectName__error:
     jmp ScummV5_Op__error
 
 ; Store one encoded byte in object_id * 32. The terminator is retained so
 ; clients can preserve canonical control bytes and use the same decoding path.
 ScummV5_StoreObjectNameByte:
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_OBJECT_NAME_INDEX
+    cmp #$1F
+    bcs ScummV5_StoreObjectNameByte__prototype_full
+    inc
+    sta.l SAME_SCUMM_OBJECT_NAME_INDEX
+ScummV5_StoreObjectNameByte__prototype_full:
+    rts
+    .else
     sep #$20
     .a8
     sta.l SAME_SCUMM_FETCH_BYTE
@@ -9789,6 +9934,7 @@ ScummV5_StoreObjectNameByte__discard:
     sep #$20
     .a8
     bra ScummV5_StoreObjectNameByte__advance
+    .endif
 
 ; Canonical v5 $29/$69/$A9/$E9 setOwnerOf.  Owners are mutable runtime
 ; object state, so queries use the WRAM table initialized from the cooked DOBJ
@@ -16138,9 +16284,15 @@ ScummV5_Op_StartScript__alloc_trace_done:
     jmp ScummV5_Op_StartScript__mapping_error
 ScummV5_Op_StartScript__m23a_global:
     .a8
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    jsl ScummV5_Resident_ResolveGlobalScript_Far
+    bcs ScummV5_Op_StartScript__m23a_program
+    jmp ScummV5_Op_StartScript__mapping_error
+    .else
     jsr ScummV5_M23A_ResolveGlobalScript
     bcs ScummV5_Op_StartScript__m23a_program
     jmp ScummV5_Op_StartScript__mapping_error
+    .endif
     .endif
 ScummV5_Op_StartScript__m23a_program:
     .a8

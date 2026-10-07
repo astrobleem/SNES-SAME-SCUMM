@@ -24,6 +24,14 @@ def main() -> int:
     parser.add_argument("--scumm-m21", action="store_true")
     parser.add_argument("--scumm-m22", action="store_true")
     parser.add_argument("--scumm-m23a", action="store_true")
+    parser.add_argument(
+        "--scumm-dynamic-program-residency", action="store_true",
+        help="enable the experimental canonical ProgramUnit resident resolver",
+    )
+    parser.add_argument(
+        "--scumm-residency-diagnostic", action="store_true",
+        help="run the bounded native pin/exhaustion/stale-generation control and halt",
+    )
     parser.add_argument("--scumm-m23b", action="store_true")
     parser.add_argument("--scumm-m23b-negative", action="store_true")
     parser.add_argument("--scumm-m25a-validator", action="store_true")
@@ -105,6 +113,21 @@ def main() -> int:
             parser.error("--scumm-synthetic-bootstrap-room requires SCUMM v5 room services")
         if not 0 <= args.scumm_synthetic_bootstrap_room <= 0xFF:
             parser.error("--scumm-synthetic-bootstrap-room must be in 0..255")
+    if args.scumm_dynamic_program_residency and (
+        args.engine != "scumm_v5" or not args.scumm_m23a
+    ):
+        parser.error("--scumm-dynamic-program-residency requires SCUMM v5 room services")
+    if args.scumm_dynamic_program_residency and (
+        args.scumm_controller
+        or args.scumm_controller_fixture
+        or args.scumm_controller_conformance
+        or args.scumm_save_persistence_validator
+    ):
+        parser.error(
+            "dynamic residency prototype disables controller/name-cache and save-validator personalities"
+        )
+    if args.scumm_residency_diagnostic and not args.scumm_dynamic_program_residency:
+        parser.error("--scumm-residency-diagnostic requires --scumm-dynamic-program-residency")
     if args.scumm_authentic_boot_script is not None:
         if args.engine != "scumm_v5" or not args.scumm_m23a:
             parser.error("--scumm-authentic-boot-script requires SCUMM v5 room services")
@@ -136,8 +159,11 @@ def main() -> int:
         f"SAME_BUILD_SCUMM_M21 = ${1 if args.engine == 'scumm_v5' and args.scumm_m21 else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M22 = ${1 if args.engine == 'scumm_v5' and args.scumm_m22 else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23A = ${1 if args.engine == 'scumm_v5' and args.scumm_m23a else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY = ${1 if args.engine == 'scumm_v5' and args.scumm_dynamic_program_residency else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC = ${1 if args.engine == 'scumm_v5' and args.scumm_residency_diagnostic else 0:02X}\n"
         f"SAME_BUILD_SCUMM_ROOM_SERVICE = ${1 if args.engine == 'scumm_v5' and (args.scumm_m23a or args.scumm_controller_conformance) else 0:02X}\n"
         f"SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = ${1 if args.engine == 'scumm_v5' and (args.m24rb or args.scumm_controller_conformance) else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_FAR_ROOM_VALIDATOR = ${1 if args.engine == 'scumm_v5' and args.scumm_dynamic_program_residency else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23B = ${1 if args.engine == 'scumm_v5' and args.scumm_m23b else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23B_NEGATIVE = ${1 if args.engine == 'scumm_v5' and args.scumm_m23b_negative else 0:02X}\n"
         f"SAME_BUILD_SCUMM_PHASE6HB = ${1 if args.engine == 'scumm_v5' and args.scumm_phase6hb else 0:02X}\n"

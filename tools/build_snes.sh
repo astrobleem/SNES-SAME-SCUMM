@@ -29,10 +29,40 @@ if [[ "${SAME_BUILD_SCUMM_AUTHENTIC_STARTUP:-0}" == "1" ]]; then
     M25A_PROFILE_CASE=startup42
     SAME_FATE_PROFILE="${SAME_FATE_PROFILE:-examples/profiles/templates/fate_of_atlantis_dos_cd.json}"
 else
-    SAME_FATE_PROFILE="${SAME_FATE_PROFILE:-examples/profiles/templates/fate_of_atlantis_demo.json}"
+SAME_FATE_PROFILE="${SAME_FATE_PROFILE:-examples/profiles/templates/fate_of_atlantis_demo.json}"
 fi
 SAME_SNES_PROFILE="${SAME_SNES_PROFILE:-$SAME_FATE_PROFILE}"
 export SAME_FATE_ARCHIVE SAME_FATE_DEMO_ARCHIVE SAME_FATE_PROFILE SAME_SNES_PROFILE
+
+if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
+    if [[ "${SAME_SNES_ENGINE:-demo}" != "scumm_v5" ||
+          "${SAME_BUILD_SCUMM_M23A:-0}" != "1" ]]; then
+        echo "Dynamic SCUMM residency requires the SCUMM v5 M23A room-service build" >&2
+        exit 1
+    fi
+    if [[ "${SAME_BUILD_SCUMM_CONTROLLER:-0}" == "1" ||
+          "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" == "1" ||
+          "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ||
+          "${SAME_BUILD_SCUMM_SAVE_PERSISTENCE_VALIDATOR:-0}" == "1" ]]; then
+        echo "Dynamic residency prototype overlaps controller-name/save-validation WRAM; those personalities are disabled" >&2
+        exit 1
+    fi
+    if [[ -n "${SAME_SCUMM_DYNAMIC_BOOT_SCRIPT:-}" &&
+          ! "${SAME_SCUMM_DYNAMIC_BOOT_SCRIPT}" =~ ^[0-9]+$ ]]; then
+        echo "SAME_SCUMM_DYNAMIC_BOOT_SCRIPT must be an unsigned script number" >&2
+        exit 1
+    fi
+    if [[ -n "${SAME_SCUMM_DYNAMIC_BOOT_SCRIPT:-}" &&
+          "${SAME_SCUMM_DYNAMIC_BOOT_SCRIPT}" -gt 255 ]]; then
+        echo "SAME_SCUMM_DYNAMIC_BOOT_SCRIPT must fit the SCUMM v5 script byte" >&2
+        exit 1
+    fi
+fi
+if [[ "${SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC:-0}" == "1" &&
+      "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" != "1" ]]; then
+    echo "SCUMM residency diagnostic requires SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY=1" >&2
+    exit 1
+fi
 
 cd "$ROOT"
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
@@ -118,6 +148,21 @@ fi
 if [[ "${SAME_BUILD_SCUMM_AUTHENTIC_STARTUP:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-authentic-boot-script 1 --scumm-authentic-boot-argument=-7873)
 fi
+if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" &&
+      -n "${SAME_SCUMM_DYNAMIC_BOOT_SCRIPT:-}" ]]; then
+    ENGINE_SELECTION_ARGS+=(--scumm-authentic-boot-script "${SAME_SCUMM_DYNAMIC_BOOT_SCRIPT}"
+        --scumm-authentic-boot-argument "${SAME_SCUMM_DYNAMIC_BOOT_ARGUMENT:-0}")
+fi
+if [[ -n "${SAME_SCUMM_TITLE_START_ROOM:-}" ||
+      -n "${SAME_SCUMM_TITLE_TARGET_ROOM:-}" ]]; then
+    if [[ -z "${SAME_SCUMM_TITLE_START_ROOM:-}" ||
+          -z "${SAME_SCUMM_TITLE_TARGET_ROOM:-}" ]]; then
+        echo "SCUMM title START routing requires both SAME_SCUMM_TITLE_START_ROOM and SAME_SCUMM_TITLE_TARGET_ROOM" >&2
+        exit 1
+    fi
+    ENGINE_SELECTION_ARGS+=(--scumm-title-start-room "${SAME_SCUMM_TITLE_START_ROOM}"
+        --scumm-title-target-room "${SAME_SCUMM_TITLE_TARGET_ROOM}")
+fi
 if [[ "${SAME_BUILD_SCUMM_M25_MOVEMENT:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-m25-movement)
 fi
@@ -179,6 +224,12 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
     if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" ]]; then
         ENGINE_SELECTION_ARGS+=(--scumm-m23a)
     fi
+if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
+    ENGINE_SELECTION_ARGS+=(--scumm-dynamic-program-residency)
+fi
+if [[ "${SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC:-0}" == "1" ]]; then
+    ENGINE_SELECTION_ARGS+=(--scumm-residency-diagnostic)
+fi
     if [[ "${SAME_BUILD_SCUMM_PHASE6L_A1D:-0}" == "1" ]]; then
         ENGINE_SELECTION_ARGS+=(--scumm-phase6la1d)
     fi
@@ -228,6 +279,13 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
             CONFORMANCE_ROOM_GENERATED=1
             SAME_SCUMM_REUSE_COOKED_ROOM_VISUALS=1
         fi
+else
+    if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
+        DYNAMIC_RESIDENCY_MANIFEST="${SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST:?Set SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST to a generated synthetic cooked-room manifest}"
+        M23A_BUILD="$ROOT/build/scumm-native-residency"
+        ROOM_MANIFESTS=(--manifest "$DYNAMIC_RESIDENCY_MANIFEST")
+        ROOM_BINARY_DIR="${SAME_SCUMM_DYNAMIC_FIXTURE_BINARY_DIR:-$(dirname "$DYNAMIC_RESIDENCY_MANIFEST")/segments}"
+        mkdir -p "$M23A_BUILD" "$ROOM_BINARY_DIR"
     else
     M23A_SOURCE="${SAME_FATE_ARCHIVE:?Set SAME_FATE_ARCHIVE to a user-supplied archive}"
     M23A_BUILD="$ROOT/build/m23a-rooms"
@@ -423,6 +481,7 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
     if [[ "$M25A_CONTENT_PROFILE" != "1" ]]; then
         "$PYTHON" tools/build_m23a_lifecycle_rooms.py \
             --output-dir "$M23A_BUILD/lifecycle"
+    fi
     fi
     ROOM_GENERATOR_ARGS=()
     if [[ -n "${SAME_SCUMM_APPEND_GLOBAL_SCRIPTS:-}" ]]; then
@@ -691,7 +750,9 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
             fi
         fi
     fi
-    if [[ "$M25A_CONTENT_PROFILE" != "1" && "${SAME_BUILD_SCUMM_M23C:-0}" != "1" ]]; then
+    if [[ "$M25A_CONTENT_PROFILE" != "1" &&
+          "${SAME_BUILD_SCUMM_M23C:-0}" != "1" &&
+          "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" != "1" ]]; then
         ROOM_MANIFESTS+=(--manifest "$M23A_BUILD/lifecycle/manifest.json")
     fi
     fi
@@ -753,6 +814,11 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
     fi
     if [[ -n "${SAME_SCUMM_ROOM_DATA_FIRST_BANK:-}" ]]; then
         ROOM_GENERATOR_ARGS+=(--first-bank "$SAME_SCUMM_ROOM_DATA_FIRST_BANK")
+    fi
+    if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
+        ROOM_GENERATOR_ARGS+=(--far-programs --dynamic-program-residency
+            --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm
+            --reserved-bank 9 --reserved-bank 83)
     fi
     "$PYTHON" tools/generate_snes_cooked_rooms.py \
         "${ROOM_MANIFESTS[@]}" \

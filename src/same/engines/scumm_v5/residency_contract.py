@@ -376,12 +376,15 @@ class ResidentBindingSimulator:
                      generation=binding.generation)
 
     def _evictable(self) -> list[_Binding]:
+        # Keep the compiler oracle byte-for-byte compatible with the native
+        # prototype: after empty selectors, scan the selector pool in its
+        # established order and reclaim the first unpinned binding.  LRU is
+        # useful for a production cache, but it would make native/compiler
+        # allocation traces disagree and is not needed for this bounded pool.
         return sorted(
             (binding for name, binding in self._unit_to_binding.items()
              if not self._pins.get(name)),
-            key=lambda binding: (binding.last_used,
-                                 self.selector_pool.index(binding.selector.value),
-                                 binding.identity.value),
+            key=lambda binding: self.selector_pool.index(binding.selector.value),
         )
 
     def _ensure_capacity(self, required_new_bindings: int) -> None:

@@ -152,6 +152,19 @@ reset_diag_valid:
 
     jsr Same_Kernel_Init
     jsr Same_Engine_Boot
+.if SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC
+    ; Dedicated control ROM: run allocator safety assertions before the first
+    ; semantic frame, then stop so no gameplay fixture can obscure the result.
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_RESIDENT_DIAG_RETURNED
+    jsl ScummV5_Resident_RunAcceptanceControl_Far
+    lda #$A5
+    sta.l SAME_SCUMM_RESIDENT_DIAG_RETURNED
+Same_Scumm_Residency_Diagnostic_Halt:
+    bra Same_Scumm_Residency_Diagnostic_Halt
+.endif
 .if SAME_BUILD_SCUMM_M25A_PENDING_ONLY
     ; Copyright-free near-route transaction control. Boot the synthetic source
     ; room through the production near RequestRoom and Storage event path; the
@@ -525,7 +538,7 @@ Same_Tad_BlankSong:
 .include "generated/scumm_v5_conformance_far.inc.pasm"
 .endif
 .endif
-.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR || SAME_BUILD_SCUMM_PHASE6HB
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR || SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_FAR_ROOM_VALIDATOR
 .include "generated/scumm_v5_room_validator_far.inc.pasm"
 .endif
 .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
@@ -538,6 +551,9 @@ Same_Tad_BlankSong:
 ; room data in that data bank. Either placement keeps the cold handler out of
 ; bank 0 without duplicating its source include.
 .include "engines/scumm_v5_matrix_far.pasm"
+.if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+.include "engines/scumm_v5_resident_resolver.pasm"
+.endif
 .include "engines/scumm_v5_camera_far.pasm"
 .if SAME_VIDEO_BACKEND_LEGACY
 .include "services/video_k1_far.pasm"

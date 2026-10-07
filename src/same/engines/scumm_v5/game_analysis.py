@@ -23,6 +23,7 @@ from .room_compiler import (
 from .residency import build_residency_plan
 from .program_units import build_program_unit_model, build_residency_manifest
 from .selector_demand import build_selector_demand_model, build_selector_directory
+from .native_residency import NativeProgramDirectory, directory_assembly
 from .v5_opcode_schema import opcode_schema, schema_coverage
 
 
@@ -113,6 +114,7 @@ class GameAnalysis:
     residency: dict[str, Any]
     selector_demand: dict[str, Any]
     selector_directory: dict[str, Any]
+    native_program_directory: dict[str, Any]
     selector_residency: dict[str, Any]
     room_compilations: dict[int, RoomBundleCompilation]
 
@@ -133,6 +135,10 @@ class GameAnalysis:
             "residency.json": canonical_json(self.residency),
             "selector_demand.json": canonical_json(self.selector_demand),
             "selector_directory.json": canonical_json(self.selector_directory),
+            "native_program_directory.json": canonical_json(self.native_program_directory),
+            "native_program_directory.inc.pasm": directory_assembly(
+                NativeProgramDirectory(self.native_program_directory)
+            ).encode("ascii"),
             "selector_residency.json": canonical_json(self.selector_residency),
             "summary.md": self.summary_markdown().encode(),
         }
@@ -1173,6 +1179,8 @@ def analyze_game(
     selector_demand = build_selector_demand_model(
         scripts, compilations, graph, reachability, program_units)
     selector_directory = build_selector_directory(selector_demand)
+    native_program_directory = NativeProgramDirectory.from_selector_directory(
+        selector_directory).document
     selector_plan_model = {
         "program_units": selector_demand["selector_units"],
         "semantic_to_program_unit_index": selector_demand["semantic_to_selector_index"],
@@ -1463,7 +1471,8 @@ def analyze_game(
     return GameAnalysis(game, census, executable_report, graph, reachability,
                         capabilities, frontier, opaque, capacity, opcode_coverage,
                         program_units, residency_manifest, residency,
-                        selector_demand, selector_directory, selector_residency,
+                        selector_demand, selector_directory, native_program_directory,
+                        selector_residency,
                         compilations)
 
 

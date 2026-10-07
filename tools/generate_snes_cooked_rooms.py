@@ -12,6 +12,9 @@ from pathlib import Path
 import struct
 
 from same.engines.scumm_v5.cooked_room import HEADER, decode_cooked_room
+from same.engines.scumm_v5.native_residency import (
+    NativeProgramDirectory, canonical_unit_identity, directory_assembly,
+)
 from same.engines.scumm_v5.room import decode_room
 
 
@@ -52,7 +55,8 @@ def reserved_program_ids() -> set[int]:
 class ProgramIdAllocator:
     """Keep historical IDs first; overflow uses a separately checked pool."""
 
-    def __init__(self, *, pool=None, reserved=None):
+    def __init__(self, *, pool=None, reserved=None, dynamic=False):
+        self.dynamic = dynamic
         self.pool = tuple(PRIMARY_PROGRAM_IDS + OVERFLOW_PROGRAM_IDS if pool is None else pool)
         reserved = reserved_program_ids() if reserved is None else set(reserved)
         if len(set(self.pool)) != len(self.pool):
@@ -64,6 +68,12 @@ class ProgramIdAllocator:
         self.index = 0
 
     def allocate(self) -> int:
+        if self.dynamic:
+            if self.index >= 0xFFFF:
+                raise RuntimeError("canonical ProgramUnit ID space exhausted")
+            value = self.index
+            self.index += 1
+            return value
         if self.index == len(self.pool):
             raise RuntimeError("cooked script program-id space exhausted")
         value = self.pool[self.index]
@@ -76,6 +86,17 @@ def rows(data: bytes, indent: str = "    ") -> str:
         indent + ".byte " + ",".join(f"${value:02X}" for value in data[index:index + 16])
         for index in range(0, len(data), 16)
     )
+
+
+def word_rows(values: list[int], indent: str = "    ") -> str:
+    return "\n".join(
+        indent + ".word " + ",".join(f"${value & 0xFFFF:04X}" for value in values[index:index + 8])
+        for index in range(0, len(values), 8)
+    )
+
+
+def program_label_id(value: int, *, dynamic: bool) -> str:
+    return f"{value:04X}" if dynamic else f"{value:02X}"
 
 
 def portal_table(room) -> bytes:
@@ -259,7 +280,15 @@ def main() -> int:
         action="store_true",
         help="place executable script bytes with profile data instead of bank-0 lookup code",
     )
+    parser.add_argument(
+        "--dynamic-program-residency", action="store_true",
+        help="emit canonical ProgramUnit directories for the experimental native resolver",
+    )
+    parser.add_argument("--native-directory-output", type=Path)
+    parser.add_argument("--native-directory-include", type=Path)
     args = parser.parse_args()
+    if args.dynamic_program_residency and not args.far_programs:
+        parser.error("--dynamic-program-residency requires --far-programs")
     global_append_phases = (
         args.append_global_script,
         args.append_late_global_script,
@@ -501,7 +530,7 @@ def main() -> int:
     actor_facings: tuple[int, ...] | None = None
     actor_positions: tuple[tuple[int, int], ...] | None = None
     actor_walkboxes: tuple[int, ...] | None = None
-    program_ids = ProgramIdAllocator()
+    program_ids = ProgramIdAllocator(dynamic=args.dynamic_program_residency)
     for manifest_path in args.manifest:
         manifest = json.loads(manifest_path.read_text())
         if manifest.get("schema") != "same_scumm_v5_cooked_rooms_v1":
@@ -731,11 +760,18 @@ def main() -> int:
                     "kind": 4, "kind_name": "OBCD", "number": item.object_id,
                     "length": len(item.obcd), "program": item.obcd,
                     "identity": f"room.{decoded.room}/object.{item.object_id}/OBCD",
-                    "source": source, "executable": not decoded.registration_only,
+                    "source": source, "executable": (
+                        not decoded.registration_only
+                        and (not args.dynamic_program_residency or bool(item.verb_entries))
+                    ),
                     "entrypoints": item.verb_entries,
                     "local_object_index": local_index,
                 }
-                if ((decoded.room, item.object_id) in append_executable_local_objects
+                if not program_item["executable"]:
+                    # Passive OBCD resource records stay in the room/resource
+                    # metadata but never enter the resolver directory.
+                    pass
+                elif ((decoded.room, item.object_id) in append_executable_local_objects
                         or (decoded.room, item.object_id)
                         in append_terminal_executable_local_objects
                         or (decoded.room, item.object_id)
@@ -1159,6 +1195,65 @@ def main() -> int:
     if len({item["number"] for item in global_scripts}) != len(global_scripts):
         raise RuntimeError("generated global-script tables contain duplicate numbers")
 
+    native_directory = None
+    if args.dynamic_program_residency:
+        native_rows = []
+        canonical_by_temp_id = {}
+        canonical_identities = set()
+        for item in programs:
+            item["_temp_program_id"] = int(item["id"])
+            identity = canonical_unit_identity(
+                item["kind_name"], room=item["room"], number=int(item["number"]),
+            )
+            if identity in canonical_identities:
+                raise RuntimeError(f"duplicate selector-bearing ProgramUnit {identity}")
+            canonical_identities.add(identity)
+            canonical_by_temp_id[int(item["id"])] = identity
+            native_rows.append({
+                "identity": identity,
+                "kind": ("GLOBAL" if item["kind_name"] == "GLOBAL"
+                         else item["kind_name"]),
+                "room": item["room"], "number": int(item["number"]),
+                "length": int(item["length"]),
+                "sha256": hashlib.sha256(item["program"]).hexdigest(),
+                "bundle": (f"GlobalBundle({item['number']})" if item["kind_name"] == "GLOBAL"
+                           else f"RoomBundle({item['room']})"),
+                "source_provenance": {
+                    "source_identity": item.get("identity"),
+                    "body_sha256": hashlib.sha256(item["program"]).hexdigest(),
+                },
+                "dispatch": ({"object": int(item["number"]),
+                              "verb_entrypoints": [
+                                  {"verb": int(verb), "offset": int(offset)}
+                                  for verb, offset in item.get("entrypoints", ())
+                              ]} if item["kind_name"] == "OBCD" else {}),
+            })
+        native_directory = NativeProgramDirectory.from_programs(native_rows)
+        id_by_identity = {
+            row["identity"]: int(row["program_unit_id"])
+            for row in native_directory.document["entries"]
+        }
+        for item in programs:
+            item["id"] = id_by_identity[
+                canonical_by_temp_id[int(item["_temp_program_id"])]
+            ]
+            del item["_temp_program_id"]
+        # The temporary allocator IDs are no longer needed; recover canonical
+        # identities directly from source kind/owner after stable ID sorting.
+        for item in programs:
+            item["unit_identity"] = canonical_unit_identity(
+                item["kind_name"], room=item["room"], number=int(item["number"]),
+            )
+        for record in records:
+            record["entry"] = next((
+                int(item["id"]) for item in record["scripts"]
+                if item["kind_name"] == "ENCD" and item["id"] is not None
+            ), 0xFFFF)
+            record["exit"] = next((
+                int(item["id"]) for item in record["scripts"]
+                if item["kind_name"] == "EXCD" and item["id"] is not None
+            ), 0xFFFF)
+
     if global_states is None:
         global_states = bytes(4096)
     if global_owners is None:
@@ -1286,12 +1381,36 @@ def main() -> int:
                     # below the 32 KiB LoROM boundary.
                     pass
                 data_lines.extend((
-                    f"ScummV5_M23A_Program_{item['id']:02X}:",
+                    f"ScummV5_M23A_Program_{program_label_id(item['id'], dynamic=args.dynamic_program_residency)}:",
                     rows(item["program"]),
                 ))
                 program_offset += len(item["program"])
         if program_bank is not None:
             bank = program_bank + 1
+    if args.dynamic_program_residency:
+        # Runtime selectors resolve to canonical IDs, then use these compact
+        # indexed tables.  This keeps code size constant in corpus size; a
+        # linear compare chain per ProgramUnit would become a second scaling
+        # bottleneck despite the bounded 178-slot resident pool.
+        if len(programs) > 0x1999:
+            raise RuntimeError(
+                "native program-pointer table exceeds one 32 KiB LoROM bank"
+            )
+        bank = next_free_bank(bank)
+        data_lines.extend((
+            f".bank {bank}", ".org $8000",
+            "ScummV5_M23A_ProgramLengths:",
+            word_rows([
+                int(item["length"])
+                for item in sorted(programs, key=lambda item: int(item["id"]))
+            ]) or "    .word $0000",
+            "ScummV5_M23A_ProgramPointers:",
+            "    .long " + ",".join(
+                f"ScummV5_M23A_Program_{program_label_id(item['id'], dynamic=True)}"
+                for item in sorted(programs, key=lambda item: int(item["id"]))
+            ) if programs else "    .long $000000",
+        ))
+        bank += 1
     # Keep immutable navigation/object tables out of the executable-program
     # bank.  Poppy intentionally does not roll a label whose offset exceeds
     # $FFFF into a new LoROM bank, so every generated region is explicit.
@@ -2190,7 +2309,7 @@ def main() -> int:
                 continue
             data_lines.extend((
                 f"    cmp #${item['number']:04X}",
-                f"    beq ScummV5_ObjectProgram_Resolve_Far__object_{item['id']:02X}",
+                f"    beq ScummV5_ObjectProgram_Resolve_Far__object_{program_label_id(item['id'], dynamic=args.dynamic_program_residency)}",
             ))
         # Room/object dispatch tables can make this cold failure path larger
         # than a short-branch range when a real room is joined to a fixture.
@@ -2199,11 +2318,23 @@ def main() -> int:
             if not item["executable"]:
                 continue
             data_lines.extend((
-                f"ScummV5_ObjectProgram_Resolve_Far__object_{item['id']:02X}:",
-                "    sep #$20", "    .a8", f"    lda #${item['id']:02X}",
-                "    sta.l $7E5460",
-                "    sec", "    rtl",
+                f"ScummV5_ObjectProgram_Resolve_Far__object_{program_label_id(item['id'], dynamic=args.dynamic_program_residency)}:",
             ))
+            if args.dynamic_program_residency:
+                data_lines.extend((
+                    "    rep #$20", "    .a16", f"    lda #${item['id']:04X}",
+                    "    jsl ScummV5_Resident_ResolveProgramUnit_Far",
+                    "    bcs ScummV5_ObjectProgram_Resolve_Far__resident_ok",
+                    "    brl ScummV5_ObjectProgram_Resolve_Far__fail",
+                    "ScummV5_ObjectProgram_Resolve_Far__resident_ok:",
+                    "    sep #$20", "    .a8",
+                    "    sta.l $7E5460", "    sec", "    rtl",
+                ))
+            else:
+                data_lines.extend((
+                    "    sep #$20", "    .a8", f"    lda #${item['id']:02X}",
+                    "    sta.l $7E5460", "    sec", "    rtl",
+                ))
     data_lines.extend((
         "ScummV5_ObjectProgram_Resolve_Far__fail16:", "    sep #$20", "    .a8",
         "ScummV5_ObjectProgram_Resolve_Far__fail:", "    clc", "    rtl",
@@ -2296,10 +2427,15 @@ def main() -> int:
         f"SCUMM_V5_NUM_GLOBAL_SCRIPTS = ${num_global_scripts:04X}",
         f"SCUMM_V5_HOLD_AFTER_STARTED_GLOBAL_ENABLED = ${1 if hold_after_started_global_script is not None else 0:02X}",
         f"SCUMM_V5_HOLD_AFTER_STARTED_GLOBAL_SCRIPT = ${(hold_after_started_global_script or 0):02X}",
-        f"SCUMM_V5_HOLD_AFTER_STARTED_GLOBAL_PROGRAM = ${hold_after_started_global_program:02X}",
+        (f"SCUMM_V5_HOLD_AFTER_STARTED_GLOBAL_PROGRAM = ${hold_after_started_global_program:04X}"
+         if args.dynamic_program_residency else
+         f"SCUMM_V5_HOLD_AFTER_STARTED_GLOBAL_PROGRAM = ${hold_after_started_global_program:02X}"),
         f"SCUMM_M23A_ROOM_COUNT = ${len(records):02X}",
-        f"SCUMM_M23A_PROGRAM_FIRST = ${programs[0]['id'] if programs else 0:02X}",
-        f"SCUMM_M23A_PROGRAM_COUNT = ${len(programs):02X}",
+        f"SCUMM_M23A_PROGRAM_FIRST = ${program_label_id(programs[0]['id'], dynamic=args.dynamic_program_residency) if programs else ('0000' if args.dynamic_program_residency else '00')}",
+        (f"SCUMM_M23A_PROGRAM_COUNT = ${len(programs):04X}" if args.dynamic_program_residency
+         else f"SCUMM_M23A_PROGRAM_COUNT = ${len(programs):02X}"),
+        ("; SCUMM_RESIDENT_UNIT_COUNT is emitted by the canonical directory"
+         if args.dynamic_program_residency else "SCUMM_RESIDENT_UNIT_COUNT = $0000"),
         f"SCUMM_M23A_LAST_BANK = ${bank:02X}",
         f"SCUMM_M23A_GLOBAL_OBJECT_COUNT = ${len(global_states):04X}",
         "ScummV5_M23A_RoomNumbers:",
@@ -2309,9 +2445,9 @@ def main() -> int:
         "ScummV5_M23A_RoomScriptCounts:",
         rows(bytes(len(item["scripts"]) for item in records)) or "    .byte $00",
         "ScummV5_M23A_RoomEntryPrograms:",
-        rows(bytes(item["entry"] for item in records)) or "    .byte $00",
+        rows(bytes(int(item["entry"]) & 0xFF for item in records)) or "    .byte $00",
         "ScummV5_M23A_RoomExitPrograms:",
-        rows(bytes(item["exit"] for item in records)) or "    .byte $00",
+        rows(bytes(int(item["exit"]) & 0xFF for item in records)) or "    .byte $00",
         "ScummV5_M23A_RoomLocalCounts:",
         rows(bytes(len(item["locals"]) for item in records)) or "    .byte $00",
         "ScummV5_M23A_RoomExecutableLocalCounts:",
@@ -2326,11 +2462,66 @@ def main() -> int:
         # FIRST is allocation-first, not numeric minimum. These constants are
         # diagnostic only; resolvers below use explicit identities. Keep the
         # historical <=48 output byte-for-byte unchanged.
+        if args.dynamic_program_residency:
+            lines.extend((
+                "; Canonical IDs are not runtime selectors.",
+                f"SCUMM_M23A_PROGRAM_MIN = ${min(item['id'] for item in programs):04X}",
+                f"SCUMM_M23A_PROGRAM_MAX = ${max(item['id'] for item in programs):04X}",
+            ))
+        else:
+            lines.extend((
+                "; PROGRAM_FIRST is allocation-first; PROGRAM_COUNT is cardinality, not a range.",
+                f"SCUMM_M23A_PROGRAM_MIN = ${min(item['id'] for item in programs):02X}",
+                f"SCUMM_M23A_PROGRAM_MAX = ${max(item['id'] for item in programs):02X}",
+                "; PROGRAM_IDS_IN_ALLOCATION_ORDER = " + ",".join(f"${item['id']:02X}" for item in programs),
+            ))
+    if args.dynamic_program_residency:
+        lines.extend(directory_assembly(native_directory).splitlines())
         lines.extend((
-            "; PROGRAM_FIRST is allocation-first; PROGRAM_COUNT is cardinality, not a range.",
-            f"SCUMM_M23A_PROGRAM_MIN = ${min(item['id'] for item in programs):02X}",
-            f"SCUMM_M23A_PROGRAM_MAX = ${max(item['id'] for item in programs):02X}",
-            "; PROGRAM_IDS_IN_ALLOCATION_ORDER = " + ",".join(f"${item['id']:02X}" for item in programs),
+            "ScummV5_M23A_RoomEntryProgramUnitIds:",
+            word_rows([int(record["entry"]) for record in records]) or "    .word $FFFF",
+            "ScummV5_M23A_RoomExitProgramUnitIds:",
+            word_rows([int(record["exit"]) for record in records]) or "    .word $FFFF",
+            "ScummV5_Resident_RoomBundleCount = $%04X" % len(records),
+        ))
+        bundle_offsets = []
+        bundle_ids = []
+        bundle_counts = []
+        local_offsets = []
+        local_counts = []
+        local_numbers = []
+        local_ids = []
+        for record in records:
+            bundle_offsets.append(len(bundle_ids))
+            room_units = sorted(
+                int(item["id"]) for item in programs
+                if item["room"] == record["room"]
+            )
+            bundle_ids.extend(room_units)
+            bundle_counts.append(len(room_units))
+            local_offsets.append(len(local_ids))
+            room_locals = sorted((item for item in programs
+                                  if item["room"] == record["room"]
+                                  and item["kind_name"] == "LSCR"),
+                                 key=lambda item: int(item["id"]))
+            local_counts.append(len(room_locals))
+            local_numbers.extend(int(item["number"]) for item in room_locals)
+            local_ids.extend(int(item["id"]) for item in room_locals)
+        lines.extend((
+            "ScummV5_Resident_RoomBundleOffsets:",
+            word_rows(bundle_offsets) or "    .word $0000",
+            "ScummV5_Resident_RoomBundleCounts:",
+            rows(bytes(bundle_counts)) or "    .byte $00",
+            "ScummV5_Resident_RoomBundleUnitIds:",
+            word_rows(bundle_ids) or "    .word $FFFF",
+            "ScummV5_Resident_RoomLocalOffsets:",
+            word_rows(local_offsets) or "    .word $0000",
+            "ScummV5_Resident_RoomLocalCounts:",
+            rows(bytes(local_counts)) or "    .byte $00",
+            "ScummV5_Resident_RoomLocalNumbers:",
+            rows(bytes(local_numbers)) or "    .byte $00",
+            "ScummV5_Resident_RoomLocalUnitIds:",
+            word_rows(local_ids) or "    .word $FFFF",
         ))
     for record_index, record in enumerate(records):
         locals_ = record["executable_locals"]
@@ -2343,7 +2534,10 @@ def main() -> int:
                 f"${item['number'] - num_global_scripts:04X}" for item in locals_
             ) if locals_ else "    .word $0000",
             f"ScummV5_M23A_RoomLocalPrograms_{record_index}:",
-            rows(bytes(item["id"] for item in locals_)) if locals_ else "    .byte $00",
+            rows(bytes(int(item["id"]) & 0xFF for item in locals_)) if locals_ else "    .byte $00",
+            *((f"ScummV5_M23A_RoomLocalProgramUnitIds_{record_index}:",
+               word_rows([int(item["id"]) for item in locals_]) or "    .word $FFFF")
+              if args.dynamic_program_residency else ()),
         ))
     for item in programs:
         if item["executable"] and not args.far_programs:
@@ -2361,13 +2555,30 @@ def main() -> int:
         "    txa", "    clc", "    rts",
     ))
     size_lines = ["    sep #$20", "    .a8"]
-    for item in programs:
+    if args.dynamic_program_residency:
         size_lines.extend((
-            f"    cmp #${item['id']:02X}", f"    bne ScummV5_M23A_GetProgramSize__next_{item['id']:02X}",
-            "    rep #$20", "    .a16", f"    lda #${item['length']:04X}",
-            "    sec", "    " + ("rtl" if args.far_programs else "rts"),
-            f"ScummV5_M23A_GetProgramSize__next_{item['id']:02X}:", "    .a8",
+            # ScummV5_FetchByte keeps the requested source PC in X across the
+            # size lookup. The selector resolver uses X as its resident-table
+            # scan index, so this generated service must preserve X as part of
+            # its ABI rather than letting an identity lookup rewind byte fetch.
+            "    rep #$10", "    .i16", "    phx",
+            "    sta.l SAME_SCUMM_RESIDENT_SELECTOR",
+            "    jsl ScummV5_Resident_ProgramUnitForSelector_Far",
+            "    bcs ScummV5_M23A_GetProgramSize__id_ready",
+            "    plx", "    clc", "    rtl",
+            "ScummV5_M23A_GetProgramSize__id_ready:",
+            "    rep #$20", "    .a16",
+            "    lda.l SAME_SCUMM_RESIDENT_EXPECTED_ID", "    asl", "    tax",
+            "    lda.l ScummV5_M23A_ProgramLengths,x", "    plx", "    sec", "    rtl",
         ))
+    else:
+        for item in programs:
+            size_lines.extend((
+                f"    cmp #${item['id']:02X}", f"    bne ScummV5_M23A_GetProgramSize__next_{item['id']:02X}",
+                "    rep #$20", "    .a16", f"    lda #${item['length']:04X}",
+                "    sec", "    " + ("rtl" if args.far_programs else "rts"),
+                f"ScummV5_M23A_GetProgramSize__next_{item['id']:02X}:", "    .a8",
+            ))
     size_lines.extend(("    clc", "    " + ("rtl" if args.far_programs else "rts")))
     if args.far_programs:
         lines.extend(("ScummV5_M23A_GetProgramSize:",
@@ -2377,31 +2588,67 @@ def main() -> int:
         lines.extend(("ScummV5_M23A_GetProgramSize:", *size_lines))
     # Far-callable twin used by cold production scheduler helpers.  Both
     # resolvers are generated from the identical profile-owned directory.
-    data_lines.extend((
-        "ScummV5_M23A_ResolveGlobalScript_Far:",
-        "; Input A=u8 script number; output A=program and carry set.",
-        "    sep #$20", "    .a8",
-    ))
-    for item in global_scripts:
+    if args.dynamic_program_residency:
         data_lines.extend((
-            f"    cmp #${item['number'] & 0xff:02X}",
-            f"    bne ScummV5_M23A_ResolveGlobalScript_Far__next_{item['id']:02X}",
-            f"    lda #${item['id']:02X}", "    sec", "    rtl",
-            f"ScummV5_M23A_ResolveGlobalScript_Far__next_{item['id']:02X}:", "    .a8",
+            "ScummV5_M23A_ResolveGlobalScript_Far:",
+            "    jsl ScummV5_Resident_ResolveGlobalScript_Far", "    rtl",
+            "ScummV5_M23A_ResolveLocalScript_Far:",
+            "    jsl ScummV5_Resident_ResolveLocalScript_Far", "    rtl",
         ))
-    data_lines.extend(("    clc", "    rtl"))
+    else:
+        data_lines.extend((
+            "ScummV5_M23A_ResolveGlobalScript_Far:",
+            "; Input A=u8 script number; output A=program and carry set.",
+            "    sep #$20", "    .a8",
+        ))
+        for item in global_scripts:
+            data_lines.extend((
+                f"    cmp #${item['number'] & 0xff:02X}",
+                f"    bne ScummV5_M23A_ResolveGlobalScript_Far__next_{item['id']:02X}",
+                f"    lda #${item['id']:02X}", "    sec", "    rtl",
+                f"ScummV5_M23A_ResolveGlobalScript_Far__next_{item['id']:02X}:", "    .a8",
+            ))
+        data_lines.extend(("    clc", "    rtl"))
     fetch_program_lines = [
         "ScummV5_M23A_FetchProgramByte_Far:",
+        "    php", "    rep #$10", "    .i16", "    phy", "    phx",
         "    sep #$20", "    .a8",
     ]
-    for item in programs:
-        if item["executable"]:
-            fetch_program_lines.extend((
-                f"    cmp #${item['id']:02X}", f"    bne ScummV5_M23A_FetchProgramByte__next_{item['id']:02X}",
-                f"    lda.l ScummV5_M23A_Program_{item['id']:02X},x", "    clc",
-                "    rtl" if args.far_programs else "    rts",
-                f"ScummV5_M23A_FetchProgramByte__next_{item['id']:02X}:", "    .a8",
-            ))
+    if args.dynamic_program_residency:
+        fetch_program_lines.extend((
+            "    sta.l SAME_SCUMM_RESIDENT_SELECTOR",
+            "    jsl ScummV5_Resident_ProgramUnitForSelector_Far",
+            "    bcs ScummV5_M23A_FetchProgramByte__id_ready",
+            "    bra ScummV5_M23A_FetchProgramByte__bad_binding",
+            "ScummV5_M23A_FetchProgramByte__id_ready:",
+            "    rep #$20", "    .a16",
+            "    lda.l SAME_SCUMM_RESIDENT_EXPECTED_ID",
+            "    sta.l SAME_SCUMM_RESIDENT_REQUEST_ID",
+            "    asl", "    clc", "    adc.l SAME_SCUMM_RESIDENT_REQUEST_ID", "    tax",
+            "    sep #$20", "    .a8",
+            "    lda.l ScummV5_M23A_ProgramPointers,x", "    sta $F9", "    inx",
+            "    lda.l ScummV5_M23A_ProgramPointers,x", "    sta $FA", "    inx",
+            "    lda.l ScummV5_M23A_ProgramPointers,x", "    sta $FB",
+            "    plx", "    rep #$20", "    .a16", "    txa", "    tay",
+            "    sep #$20", "    .a8", "    lda [$F9],y",
+            "    ply", "    plp", "    clc", "    rtl",
+            "ScummV5_M23A_FetchProgramByte__bad_binding:",
+            "    sep #$20", "    .a8", "    plx", "    ply", "    plp",
+            "    sec", "    rtl",
+        ))
+    else:
+        # Keep the legacy byte-selector ABI and generated code unchanged.
+        fetch_program_lines = [
+            "ScummV5_M23A_FetchProgramByte_Far:", "    sep #$20", "    .a8",
+        ]
+        for item in programs:
+            if item["executable"]:
+                fetch_program_lines.extend((
+                    f"    cmp #${item['id']:02X}", f"    bne ScummV5_M23A_FetchProgramByte__next_{item['id']:02X}",
+                    f"    lda.l ScummV5_M23A_Program_{item['id']:02X},x", "    clc",
+                    "    rtl" if args.far_programs else "    rts",
+                    f"ScummV5_M23A_FetchProgramByte__next_{item['id']:02X}:", "    .a8",
+                ))
     fetch_program_lines.extend(("    sec", "    rtl" if args.far_programs else "    rts"))
     if args.far_programs:
         # The per-program fetch dispatch grows linearly with the executable
@@ -2439,18 +2686,25 @@ def main() -> int:
             ))
         lines.extend(("    clc", "    rts"))
 
-    far_local_resolver = args.far_programs and any(
-        record["executable_locals"] for record in records
+    far_local_resolver = args.far_programs and (
+        args.dynamic_program_residency or any(record["executable_locals"] for record in records)
     )
-    local_lines = [
-        (
-            "ScummV5_M23A_ResolveLocalScript_Far:"
-            if far_local_resolver
-            else "ScummV5_M23A_ResolveLocalScript:"
-        ),
-        "; Input: A=script number, active record; output A=program and carry set.",
-        "    sep #$20", "    .a8",
-    ]
+    if args.dynamic_program_residency:
+        lines.extend((
+            "ScummV5_M23A_ResolveLocalScript:",
+            "    jsl ScummV5_M23A_ResolveLocalScript_Far_Address", "    rts",
+        ))
+        local_lines = []
+    else:
+        local_lines = [
+            (
+                "ScummV5_M23A_ResolveLocalScript_Far:"
+                if far_local_resolver
+                else "ScummV5_M23A_ResolveLocalScript:"
+            ),
+            "; Input: A=script number, active record; output A=program and carry set.",
+            "    sep #$20", "    .a8",
+        ]
     local_return = "rtl" if far_local_resolver else "rts"
     for record_index, record in enumerate(records):
         if not record["executable_locals"]:
@@ -2472,7 +2726,7 @@ def main() -> int:
                                 f"    lda #${local['id']:02X}", "    sec", f"    {local_return}",
                                 f"ScummV5_M23A_ResolveLocalScript__next_{local['id']:02X}:", "    .a8"))
         local_lines.extend(("    clc", f"    {local_return}"))
-    if far_local_resolver:
+    if far_local_resolver and not args.dynamic_program_residency:
         lines.extend((
             "ScummV5_M23A_ResolveLocalScript:",
             "    sep #$20", "    .a8", "    sta.l SAME_SCUMM_VERB_OBJECT",
@@ -2484,7 +2738,7 @@ def main() -> int:
             "    lda #$FF", "    sta.l SAME_SCUMM_MOVE_QUERY_DIR", "    clc", "    rts",
         ))
         data_lines.extend(local_lines)
-    else:
+    elif not args.dynamic_program_residency:
         lines.extend(local_lines)
 
     # Record validators compare the immutable header/directory byte-for-byte,
@@ -2586,9 +2840,12 @@ def main() -> int:
     args.data_output.write_text("\n".join(data_lines) + "\n")
     report = {
         "rooms": [item["room"] for item in records], "programs": len(programs),
+        "program_id_namespace": ("canonical_program_unit_id"
+                                  if args.dynamic_program_residency else "resident_selector"),
         "program_map": [
             {
                 "id": item["id"], "identity": item["identity"],
+                "program_unit_identity": item.get("unit_identity"),
                 "kind": item["kind_name"], "room": item["room"],
                 "number": item["number"], "length": item["length"],
                 "sha256": hashlib.sha256(item["program"]).hexdigest(),
@@ -2597,6 +2854,20 @@ def main() -> int:
         ],
         "last_bank": bank, "output": str(args.output), "data": str(args.data_output),
     }
+    if native_directory is not None:
+        report["native_program_directory_sha256"] = native_directory.sha256
+        directory_output = args.native_directory_output or args.output.with_name(
+            "scumm_v5_native_program_directory.json"
+        )
+        directory_include = args.native_directory_include or args.output.with_name(
+            "scumm_v5_native_program_directory.inc.pasm"
+        )
+        directory_output.parent.mkdir(parents=True, exist_ok=True)
+        directory_include.parent.mkdir(parents=True, exist_ok=True)
+        directory_output.write_bytes(native_directory.canonical_bytes())
+        directory_include.write_text(directory_assembly(native_directory), encoding="ascii")
+        report["native_program_directory"] = str(directory_output)
+        report["native_program_directory_include"] = str(directory_include)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(report, indent=2) + "\n")

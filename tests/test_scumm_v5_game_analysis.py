@@ -126,6 +126,29 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
             "ROOM_ENTRY": 1, "ROOM_EXIT": 1,
         })
 
+    def test_native_program_directory_is_stable_and_selector_free(self) -> None:
+        result = fixture_analysis(data_only_objects=24)
+        directory = result.native_program_directory
+        self.assertEqual(directory["schema"], "same_scumm_v5_native_program_directory_v1")
+        self.assertEqual(directory["id_width_bits"], 16)
+        self.assertEqual(directory["unbound_id"], 0xFFFF)
+        self.assertFalse(directory["selector_values_emitted"])
+        entries = directory["entries"]
+        ids = [row["program_unit_id"] for row in entries]
+        self.assertEqual(ids, list(range(len(entries))))
+        self.assertEqual(len({row["identity"] for row in entries}), len(entries))
+        self.assertTrue(all("selector" not in row for row in entries))
+        data_only = [row for row in result.selector_demand["resource_records"]
+                     if row["selector_unit"] is None]
+        self.assertEqual(len(data_only), 24)
+        self.assertEqual(len(entries), result.selector_demand["counts"]["selector_units"])
+        self.assertEqual(result.native_program_directory,
+                         fixture_analysis(data_only_objects=24).native_program_directory)
+        global_ids = {row["script_number"]: row["program_unit_id"]
+                      for row in directory["global_directory"]}
+        self.assertEqual(len(global_ids), 5)
+        self.assertEqual(len(set(global_ids.values())), 5)
+
     def test_graph_distinguishes_static_conditional_dynamic_and_opaque(self) -> None:
         result = fixture_analysis()
         graph = result.dependency_graph

@@ -92,6 +92,12 @@ SAME_SCUMM_TOTAL_OPS          = $7E230C ; u16 operations since boot
 .if SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_PHASE6LA1D
 SAME_SCUMM_VARIABLES          = $7FF500 ; 512-word authored table
 SAME_SCUMM_VARIABLES_BOOTSTRAP_RESERVED = $7E2320 ; historical window
+.elseif SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+; The resolver prototype is an engine integration build, not a 16-variable
+; micro-fixture. Keep authored variables out of the interpreter scratch window
+; so high-numbered synthetic sentinels remain real SCUMM variables.
+SAME_SCUMM_VARIABLES          = $7FF500 ; 512-word authored table
+SAME_SCUMM_VARIABLES_BOOTSTRAP_RESERVED = $7E2320 ; historical window
 .else
 SAME_SCUMM_VARIABLES          = $7E2320 ; historical bootstrap allocation
 .endif
@@ -125,6 +131,9 @@ SAME_SCUMM_C1_HOLD_AFTER      = $7E2364 ; debugger-only committed-frame hold
 SAME_SCUMM_CONTROL_END        = $7E2365
 .if SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_PHASE6LA1D
 ; Count/base/extent come from generated/scumm_v5_variables.inc.pasm.
+SAME_SCUMM_MAX_OPS_PER_FRAME  = $1000
+.elseif SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+SAME_SCUMM_VARIABLE_COUNT     = $0200 ; authored residency-fixture variable table
 SAME_SCUMM_MAX_OPS_PER_FRAME  = $1000
 .elseif SAME_BUILD_SCUMM_M23B
 SAME_SCUMM_VARIABLE_COUNT     = $0200 ; bounded Fate demo profile closure
@@ -936,7 +945,60 @@ SAME_SCUMM_OBJECT_OWNERS                  = $7E8000 ; 2048 u8 mutable owner tabl
 ; Runtime names established by canonical $54/$D4 setObjectName.  A compact
 ; fixed record is sufficient for the target-neutral controller HUD while
 ; retaining the authored encoded bytes (including controls) until display.
-SAME_SCUMM_OBJECT_NAME_LENGTH             = $7E8800 ; 2048 u8 bounded lengths
+; The controller name-length cache is 1024 entries (the payload cache itself
+; is capped at SAME_SCUMM_OBJECT_NAME_COUNT). Keep it live in all runtime
+; personalities: room object parsing writes these entries even when the
+; controller presentation layer is absent.
+SAME_SCUMM_OBJECT_NAME_LENGTH             = $7E8800 ; 1024 u8 bounded lengths
+.if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+; The 178-entry resolver occupies the unused $7E8C00-$7E8FFF gap. It must not
+; alias OBJECT_NAME_LENGTH: authentic room loading writes that cache by object
+; ID, including during dynamic-residency builds.
+SAME_SCUMM_RESIDENT_UNIT_IDS              = $7E8C00 ; 178 x u16 canonical IDs
+SAME_SCUMM_RESIDENT_GENERATIONS           = $7E8D64 ; 178 x u16 binding generations
+SAME_SCUMM_RESIDENT_FLAGS                 = $7E8EC8 ; 178 x u8 VALID/BUNDLE/MANUAL pins
+SAME_SCUMM_RESIDENT_REQUEST_ID            = $7E8F7A ; u16 resolver input
+SAME_SCUMM_RESIDENT_SELECTOR              = $7E8F7C ; u8 result/candidate
+SAME_SCUMM_RESIDENT_POOL_INDEX            = $7E8F7D ; u16 pool index
+SAME_SCUMM_RESIDENT_CURRENT_COUNT         = $7E8F7F ; u16 diagnostics
+SAME_SCUMM_RESIDENT_PEAK_COUNT            = $7E8F81 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_PINNED_COUNT          = $7E8F83 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_PEAK_PINNED           = $7E8F85 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_BIND_COUNT            = $7E8F87 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_REUSE_COUNT            = $7E8F89 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_BUNDLE_LOADS           = $7E8F8B ; u16 diagnostics
+SAME_SCUMM_RESIDENT_BUNDLE_RELEASES        = $7E8F8D ; u16 diagnostics
+SAME_SCUMM_RESIDENT_DYNAMIC_LOOKUPS        = $7E8F8F ; u16 diagnostics
+SAME_SCUMM_RESIDENT_EXHAUSTIONS             = $7E8F91 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_SCAN_SLOT               = $7E8F93 ; u8 C4 scan cursor
+SAME_SCUMM_RESIDENT_SCAN_STATUS             = $7E8F94 ; u8 scratch
+SAME_SCUMM_RESIDENT_FLAGS_SCRATCH           = $7E8F95 ; u8 scratch
+SAME_SCUMM_RESIDENT_COUNT_SCRATCH           = $7E8F96 ; u16 scratch
+SAME_SCUMM_RESIDENT_EXPECTED_ID              = $7E8F98 ; u16 stale-reference check
+SAME_SCUMM_RESIDENT_EXPECTED_GENERATION      = $7E8F9A ; u16 stale-reference check
+SAME_SCUMM_RESIDENT_STALE_COUNT               = $7E8F9C ; u16 stale-generation diagnostics
+SAME_SCUMM_RESIDENT_BUNDLE_RECORD            = $7E8F9E ; u8 active room-bundle index
+SAME_SCUMM_RESIDENT_BUNDLE_REMAINING          = $7E8F9F ; u8 load/release loop
+SAME_SCUMM_RESIDENT_BUNDLE_OFFSET             = $7E8FA0 ; u16 bundle directory index
+SAME_SCUMM_RESIDENT_LOCAL_SCRIPT              = $7E8FA2 ; u8 local lookup input
+SAME_SCUMM_RESIDENT_LOCAL_REMAINING           = $7E8FA3 ; u8 local lookup loop
+SAME_SCUMM_RESIDENT_LOCAL_OFFSET              = $7E8FA4 ; u16 local directory index
+SAME_SCUMM_RESIDENT_PINNED_SCRATCH            = $7E8FA6 ; u16 diagnostic accumulator
+SAME_SCUMM_RESIDENT_GLOBAL_SCRIPT             = $7E8FA8 ; u8 dynamic global number
+SAME_SCUMM_RESIDENT_LOOKUP_INDEX              = $7E8FA9 ; u16 table cursor
+SAME_SCUMM_RESIDENT_BUNDLE_FAILURE            = $7E8FAB ; u8 rollback marker
+SAME_SCUMM_RESIDENT_DIAG_STATUS                = $7E8FB0 ; u8 diagnostic pass/fail code
+SAME_SCUMM_RESIDENT_DIAG_EXHAUSTION_ERROR       = $7E8FB1 ; u8 expected $20
+SAME_SCUMM_RESIDENT_DIAG_STALE_REJECTED         = $7E8FB2 ; u8 boolean
+SAME_SCUMM_RESIDENT_DIAG_REBOUND_SELECTOR       = $7E8FB3 ; u8
+SAME_SCUMM_RESIDENT_DIAG_REBOUND_GENERATION     = $7E8FB4 ; u16
+SAME_SCUMM_RESIDENT_DIAG_TABLE_UNCHANGED        = $7E8FB6 ; u8 boolean
+SAME_SCUMM_RESIDENT_DIAG_INDEX                 = $7E8FB8 ; u16 loop scratch
+SAME_SCUMM_RESIDENT_DIAG_POOL_INDEX            = $7E8FBA ; u16 loop scratch
+SAME_SCUMM_RESIDENT_DIAG_SCRATCH               = $7E8FBC ; u16 scratch
+SAME_SCUMM_RESIDENT_DIAG_RETURNED              = $7E8FBE ; u8 caller-return sentinel
+SAME_SCUMM_RESIDENT_DIAG_STAGE                 = $7E8FBF ; u8 bounded-control progress
+.endif
 ; The target-neutral name cache is bounded to the contiguous gap before C10.
 ; $7E9000 + 1024*$20 = $7F1000, leaving C10/C17 and all later state intact.
 ; Authored $54 names outside this cache are still decoded/consumed, but are
