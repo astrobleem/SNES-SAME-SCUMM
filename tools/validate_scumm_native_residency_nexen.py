@@ -17,6 +17,11 @@ import subprocess
 import sys
 from typing import Any
 
+from same.engines.scumm_v5.residency_contract import (
+    ResidentBindingSimulator,
+    ResolverDirectory,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_NEXEN = Path(
@@ -219,6 +224,116 @@ def identity_binding(bindings: list[dict[str, int]], identity_to_id: dict[str, i
     return next((row for row in bindings if row["program_unit_id"] == target), None)
 
 
+def simulator_directory(native_directory: dict[str, Any]) -> ResolverDirectory:
+    """Adapt native backend metadata to the existing selector-free simulator."""
+    by_id = {int(row["program_unit_id"]): row
+             for row in native_directory.get("entries", [])}
+    bundles = {
+        str(bundle["identity"]): [
+            str(by_id[int(program_unit_id)]["identity"])
+            for program_unit_id in bundle.get("program_unit_ids", [])
+        ]
+        for bundle in native_directory.get("bundles", [])
+    }
+    kinds = {str(row["identity"]): str(row["kind"])
+             for row in native_directory.get("entries", [])}
+    globals_by_number = {
+        int(row["script_number"]): str(
+            by_id[int(row["program_unit_id"])]["identity"]
+        )
+        for row in native_directory.get("global_directory", [])
+    }
+    return ResolverDirectory.from_units(
+        bundles, kinds=kinds, global_script_numbers=globals_by_number,
+    )
+
+
+def simulate_native_route(native_directory: dict[str, Any]) -> dict[str, Any]:
+    """Replay the fixture's semantic schedule against the compiler oracle."""
+    directory = simulator_directory(native_directory)
+    simulator = ResidentBindingSimulator(directory=directory)
+    global1 = simulator.begin_global(1, yielded=True, activation_id="G1")
+    # Global1 starts and waits for these children before room 1's entry path.
+    for number in (2, 3):
+        child = simulator.begin_global(
+            number, parent_activation_id=global1.activation_id,
+        )
+        simulator.end_activation(child.activation_id)
+
+    simulator.begin_room("RoomBundle(1)")
+    # The room's ENCD dispatches both verbs through one ObjectProgram carrier.
+    for index in range(2):
+        activation = simulator.begin_activation(
+            "ObjectProgram(room=1,object=70)",
+            room_ownership="RoomBundle(1)", activation_id=f"OBJ{index}",
+        )
+        simulator.end_activation(activation.activation_id)
+
+    transitions = []
+    for outgoing, incoming in ((1, 2), (2, 3), (3, 4)):
+        simulator.transition_room(
+            f"RoomBundle({outgoing})", f"RoomBundle({incoming})",
+        )
+        if incoming == 4:
+            # Room 4 ENCD starts the pressure caller and yields between children.
+            simulator.begin_global(4, yielded=True, activation_id="G4")
+        transitions.append({
+            "room": incoming,
+            "bindings": simulator_bindings(simulator, native_directory),
+        })
+
+    simulator.end_activation(global1.activation_id)
+    previous_child = None
+    for number in (*range(5, 191), 191, 192):
+        child = simulator.begin_global(
+            number, parent_activation_id="G4",
+        )
+        # Native scheduler overlap: the parent can reach the next dynamic
+        # resolver call while the prior child's C4 slot still owns its
+        # selector. Keep one prior activation live through the next bind.
+        if previous_child is not None:
+            simulator.end_activation(previous_child.activation_id)
+        previous_child = child
+    if previous_child is not None:
+        simulator.end_activation(previous_child.activation_id)
+    simulator.end_activation("G4")
+
+    trace = simulator.trace
+    return {
+        "room_transition_bindings": transitions,
+        "final_bindings": simulator_bindings(simulator, native_directory),
+        "peak_resident": simulator.peak_bindings,
+        "resident_count": len(simulator.resident_snapshot()["bindings"]),
+        "binds": sum(item["event"] == "bind" for item in trace),
+        "reuses": sum(item["event"] == "evict" for item in trace),
+        "bundle_loads": sum(item["event"] == "bundle_load" for item in trace),
+        "bundle_releases": sum(item["event"] == "bundle_release" for item in trace),
+        "trace": trace,
+    }
+
+
+def simulator_bindings(simulator: ResidentBindingSimulator,
+                       native_directory: dict[str, Any]) -> list[dict[str, int]]:
+    id_by_identity = {str(row["identity"]): int(row["program_unit_id"])
+                      for row in native_directory.get("entries", [])}
+    bindings = []
+    for row in simulator.resident_snapshot()["bindings"]:
+        bindings.append({
+            "program_unit_id": id_by_identity[str(row["program_unit"])],
+            "selector": int(str(row["selector"])[1:], 16),
+            "generation": int(row["generation"]),
+        })
+    return sorted(bindings, key=lambda item: item["program_unit_id"])
+
+
+def native_bindings_for_compare(bindings: list[dict[str, int]]) -> list[dict[str, int]]:
+    return sorted(({
+        "program_unit_id": int(row["program_unit_id"]),
+        "selector": int(row["selector"]),
+        "generation": int(row["generation"]),
+    } for row in bindings), key=lambda item: item["program_unit_id"])
+
+
 def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[str, Any]:
     require(inputs["manifest"].get("num_global_scripts") == 254,
             "synthetic route manifest has unexpected v5 global table size")
@@ -240,6 +355,8 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
     early_slot_samples: list[dict[str, Any]] = []
     room_requests: list[dict[str, int]] = []
     observed_pin_samples: list[dict[str, Any]] = []
+    native_binding_events: list[dict[str, Any]] = []
+    previous_binding_map: dict[int, dict[str, int]] = {}
     title_input: dict[str, Any] | None = None
     title_debug: dict[str, Any] = {}
     with _session(args) as session:
@@ -273,16 +390,9 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
         while elapsed < args.frames:
             before = int(session.get_state()["frameCount"])
             # Keep room transitions frame-observable through room 4. Once the
-            # terminal fixture room is active, no more room changes are
-            # possible; batch its deterministic global-resolution churn to
-            # avoid one MCP round trip per inert synthetic global.
-            if previous_room != 4 or first_reuse is None:
-                # The first safe rebind is a generation boundary, so observe
-                # it one exact emulator frame at a time. Once recorded, the
-                # terminal fixture's remaining deterministic churn is batched.
-                step = 1
-            else:
-                step = min(128, args.frames - elapsed)
+            # Keep the entire resolver pressure route frame-observable so the
+            # native allocation sequence can be compared with the simulator.
+            step = 1
             result = session.run_frames(step)
             advanced = int(result.get("framesAdvanced", 0))
             after = int(session.get_state()["frameCount"])
@@ -310,6 +420,22 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
             if elapsed <= 28 or room != previous_room or capture_after_room4 is not None:
                 slots = active_slots(session)
                 observed_bindings = valid_bindings(session)
+                binding_map = {row["program_unit_id"]: row for row in observed_bindings}
+                if binding_map != previous_binding_map:
+                    old_by_selector = {row["selector"]: row for row in previous_binding_map.values()}
+                    new_by_selector = {row["selector"]: row for row in binding_map.values()}
+                    changed = [
+                        {"selector": selector,
+                         "old": old_by_selector.get(selector),
+                         "new": new_by_selector.get(selector)}
+                        for selector in sorted(old_by_selector.keys() | new_by_selector.keys())
+                        if old_by_selector.get(selector) != new_by_selector.get(selector)
+                    ]
+                    native_binding_events.append({
+                        "frame": frame, "room": room, "changed": changed,
+                        "active_slots": slots,
+                    })
+                    previous_binding_map = binding_map
                 live_selectors = {int(item["selector"]) for item in slots}
                 pinned_rows = [
                     row for row in observed_bindings
@@ -346,7 +472,8 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                         snapshots.append({"frame": frame, "room": room,
                                           "global1": g1_binding,
                                           "global1_activation": g1_slot,
-                                          "stats": stats(session)})
+                                          "stats": stats(session),
+                                          "resident_bindings": bindings})
                     if room == 4:
                         capture_after_room4 = elapsed + 28
                 if room == 4:
@@ -371,7 +498,9 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                         g192_rebind = {"frame": frame, **binding}
             previous_room = room
             if (room == 4 and g192_rebind is not None and elapsed >= capture_after_room4
-                    and error == 0):
+                    and error == 0
+                    and variables(session, (20,))["20"] == 4
+                    and not active_slots(session)):
                 break
 
         bindings = valid_bindings(session)
@@ -414,7 +543,9 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
             "dynamic globals did not execute their expected sentinels")
     require(variables_final["20"] == 4 and variables_final["21"] == 5
             and variables_final["22"] == 6,
-            "post-transition caller/child completion markers are missing")
+            "post-transition caller/child completion markers are missing: "
+            f"markers={variables_final}, room={final_room}, error={final_error}, "
+            f"stats={final_stats}, slots={final_slots}, SP=${sp:04X}")
     require(final_stats["peak_resident"] <= SELECTOR_CAPACITY
             and final_stats["peak_resident"] == SELECTOR_CAPACITY,
             "native peak binding count did not exercise the complete selector pool")
@@ -428,6 +559,78 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
             "native binding flags/C4 owners did not expose any live pins")
     require(c4_count == 0 and not final_slots, "fixture activations did not retire")
     require(sp == 0x1FFF, f"native frame stack did not return to baseline: ${sp:04X}")
+
+    simulator = simulate_native_route(inputs["directory"])
+    native_transition_bindings = {
+        int(row["room"]): native_bindings_for_compare(row["resident_bindings"])
+        for row in snapshots
+    }
+    simulated_transition_bindings = {
+        int(row["room"]): row["bindings"]
+        for row in simulator["room_transition_bindings"]
+    }
+    native_bindings = native_bindings_for_compare(bindings)
+    def binding_diff(left: list[dict[str, int]], right: list[dict[str, int]]) -> dict[str, Any]:
+        left_by_id = {row["program_unit_id"]: row for row in left}
+        right_by_id = {row["program_unit_id"]: row for row in right}
+        return {
+            "native_only": [left_by_id[key] for key in sorted(left_by_id.keys() - right_by_id.keys())[:12]],
+            "simulator_only": [right_by_id[key] for key in sorted(right_by_id.keys() - left_by_id.keys())[:12]],
+            "selector_or_generation": [
+                {"native": left_by_id[key], "simulator": right_by_id[key]}
+                for key in sorted(left_by_id.keys() & right_by_id.keys())
+                if left_by_id[key] != right_by_id[key]
+            ][:12],
+        }
+    transition_differences = {
+        str(room): binding_diff(native_transition_bindings[room], simulated_transition_bindings[room])
+        for room in sorted(native_transition_bindings)
+        if native_transition_bindings[room] != simulated_transition_bindings[room]
+    }
+    final_difference = binding_diff(native_bindings, simulator["final_bindings"])
+    table_matches = (
+        native_transition_bindings == simulated_transition_bindings
+        and native_bindings == simulator["final_bindings"]
+    )
+    stat_matches = all((
+        final_stats["peak_resident"] == simulator["peak_resident"],
+        final_stats["current_resident"] == simulator["resident_count"],
+        final_stats["binds"] == simulator["binds"],
+        final_stats["reuses"] == simulator["reuses"],
+        final_stats["bundle_loads"] == simulator["bundle_loads"],
+        final_stats["bundle_releases"] == simulator["bundle_releases"],
+    ))
+    simulator_differential = {
+        "comparison_basis": "same generated directory and fixture event order; "
+                            "one prior child remains live through the next global resolve",
+        "native_transition_tables_match": (
+            native_transition_bindings == simulated_transition_bindings
+        ),
+        "native_final_table_matches": native_bindings == simulator["final_bindings"],
+        "native_counters_match": stat_matches,
+        "matches": table_matches and stat_matches,
+        "native_transition_binding_counts": {
+            str(room): len(rows) for room, rows in sorted(native_transition_bindings.items())
+        },
+        "simulator_transition_binding_counts": {
+            str(room): len(rows)
+            for room, rows in sorted(simulated_transition_bindings.items())
+        },
+        "native_final_binding_count": len(native_bindings),
+        "simulator_final_binding_count": len(simulator["final_bindings"]),
+        "transition_binding_differences": transition_differences,
+        "final_binding_difference_sample": final_difference,
+        "native_stats": final_stats,
+        "simulator_stats": {key: simulator[key] for key in (
+            "peak_resident", "resident_count", "binds", "reuses",
+            "bundle_loads", "bundle_releases",
+        )},
+        "simulator_trace": simulator["trace"],
+    }
+    require(simulator_differential["matches"],
+            "native resolver diverged from the compiler simulator: "
+            f"{json.dumps({key: value for key, value in simulator_differential.items() if key != 'simulator_trace'}, sort_keys=True)}; "
+            f"native binding events near pressure: {json.dumps(native_binding_events[-24:], sort_keys=True)}")
 
     return {
         "format": "same-scumm-native-resident-route-v1",
@@ -471,6 +674,9 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
         "final_room": final_room,
         "final_active_slot_count": c4_count,
         "final_stats": final_stats,
+        "final_resident_bindings": bindings,
+        "simulator_differential": simulator_differential,
+        "native_binding_events": native_binding_events,
         "object_name_length_70": name_cache_byte,
         "final_stack_pointer": sp,
         "result": "PASS",

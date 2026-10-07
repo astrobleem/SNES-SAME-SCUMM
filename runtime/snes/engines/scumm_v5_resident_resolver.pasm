@@ -871,7 +871,12 @@ ScummV5_Resident_ReleaseRoomBundle_Far__loop:
     lda.l ScummV5_Resident_RoomBundleUnitIds,x
     jsl ScummV5_Resident_FindSelectorForProgramUnit_Far
     bcc ScummV5_Resident_ReleaseRoomBundle_Far__next
+    sta.l SAME_SCUMM_RESIDENT_SELECTOR
     jsl ScummV5_Resident_UnpinRoomBundle_Far
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_RESIDENT_SELECTOR
+    jsl ScummV5_Resident_ReleaseIfUnowned_Far
 ScummV5_Resident_ReleaseRoomBundle_Far__next:
     rep #$20
     .a16
@@ -899,6 +904,63 @@ ScummV5_Resident_ReleaseRoomBundle_Far__bad:
     sta.l SAME_SCUMM_ERROR
     plp
     clc
+    rtl
+
+; A=selector. Once a room pin is removed, immediately make the binding empty
+; only if no independent pin and no live C4 activation still owns the byte.
+; This mirrors the compiler simulator's room-release contract and lets the
+; incoming room consume reclaimed selector slots before scanning cold entries.
+ScummV5_Resident_ReleaseIfUnowned_Far:
+    php
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_RESIDENT_SELECTOR
+    jsr ScummV5_Resident_SelectorToIndex
+    bcc ScummV5_Resident_ReleaseIfUnowned_Far__done
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_RESIDENT_POOL_INDEX
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_RESIDENT_FLAGS,x
+    and #SCUMM_RESIDENT_FLAG_VALID
+    beq ScummV5_Resident_ReleaseIfUnowned_Far__done
+    lda.l SAME_SCUMM_RESIDENT_FLAGS,x
+    and #(SCUMM_RESIDENT_FLAG_ROOM_BUNDLE | SCUMM_RESIDENT_FLAG_EXPLICIT)
+    bne ScummV5_Resident_ReleaseIfUnowned_Far__done
+    lda.l SAME_SCUMM_RESIDENT_SELECTOR
+    jsr ScummV5_Resident_IsSelectorLive
+    bcs ScummV5_Resident_ReleaseIfUnowned_Far__done
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_RESIDENT_POOL_INDEX
+    tax
+    txa
+    asl
+    tax
+    lda #$FFFF
+    sta.l SAME_SCUMM_RESIDENT_UNIT_IDS,x
+    sep #$20
+    .a8
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_RESIDENT_POOL_INDEX
+    tax
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_RESIDENT_FLAGS,x
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_RESIDENT_CURRENT_COUNT
+    beq ScummV5_Resident_ReleaseIfUnowned_Far__done
+    dec
+    sta.l SAME_SCUMM_RESIDENT_CURRENT_COUNT
+ScummV5_Resident_ReleaseIfUnowned_Far__done:
+    plp
     rtl
 
 .if SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC

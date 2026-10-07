@@ -41,7 +41,7 @@ currently provides:
 | `ResolveGlobalScript_Far` | Resolve a source script number through the generated global directory, then bind only that target |
 | `ResolveLocalScript_Far` | Resolve a room-local source number against the active room directory |
 | `LoadRoomBundle_Far` | Bind and room-pin every selector unit; partial load is rolled back on failure |
-| `ReleaseRoomBundle_Far` | Remove that bundle's pins after room-owned activations have retired |
+| `ReleaseRoomBundle_Far` | Remove that bundle's pins after room-owned activations have retired; immediately unbind units with no other pin or live C4 owner |
 | `PinProgram_Far` / `UnpinProgram_Far` | Explicit pin ownership API |
 | `ProgramUnitForSelector_Far` / `ValidateReference_Far` | Reverse lookup and stale `(ID, selector, generation)` validation |
 | `RefreshDiagnostics_Far` | Recompute resident and room/explicit-pin census from binding flags |
@@ -94,7 +94,11 @@ census out of this helper avoids perturbing production scheduling.
 | C19 native selected-program sample | `DIAGNOSTIC_ONLY` | Not consumed by production dispatch |
 | Room bundle pins | `PINNED_SELECTOR` | Released only after outgoing EXCD and room-owned activation retirement; surviving globals remain slot-pinned |
 
-The eviction guard checks actual live C4 slots in addition to flag pins. This
+The eviction guard checks actual live C4 slots in addition to flag pins. A
+room release clears the selector mapping and valid flag when neither an
+explicit pin nor a live C4 owner remains; if an activation still owns it, the
+binding stays resident and becomes evictable only after that slot retires.
+This matches the compiler simulator's eager room-bundle release policy. This
 is what protects yielded activations, nested parents, sentence/global
 execution, and a room-transition continuation when those references are
 represented by an owning slot. `PROGRAM_SELECT` and temporary scratch are not
@@ -106,11 +110,11 @@ identity before eviction is enabled for it.
 ## Room/global lifecycle
 
 The dynamic room path performs the existing outgoing EXCD and retires
-outgoing room/local slots before releasing the old bundle. It then loads and
-pins the incoming bundle, resolves canonical entry/exit IDs to ephemeral
-selectors, and runs ENCD. The synthetic native route verifies a yielded global
-remains at the same selector/generation through four room transitions while
-room bundle IDs are released/rebound.
+outgoing room/local slots before releasing the old bundle. It then unpins and
+clears unowned outgoing bindings, loads and pins the incoming bundle, resolves
+canonical entry/exit IDs to ephemeral selectors, and runs ENCD. The synthetic
+native route verifies a yielded global remains at the same selector/generation
+through four room transitions while unowned room bindings are reclaimed.
 
 Global candidates are compiler metadata, not resident bindings. A dynamic
 `StartScript` resolves only its requested source number and enters the normal

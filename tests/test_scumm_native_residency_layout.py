@@ -77,6 +77,25 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         self.assertNotIn("jsr ", routine)
         self.assertNotIn("sta.l SAME_SCUMM_RESIDENT_FLAGS,x", routine)
 
+    def test_room_release_unbinds_only_after_bundle_pin_and_c4_owner_are_gone(self) -> None:
+        source = RESOLVER.read_text(encoding="utf-8")
+        release_start = source.index("ScummV5_Resident_ReleaseRoomBundle_Far:")
+        helper_start = source.index("\nScummV5_Resident_ReleaseIfUnowned_Far:\n", release_start)
+        release = source[release_start:helper_start]
+        helper_end = source.index(".if SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC", helper_start)
+        helper = source[helper_start:helper_end]
+
+        self.assertLess(release.index("jsl ScummV5_Resident_UnpinRoomBundle_Far"),
+                        release.index("jsl ScummV5_Resident_ReleaseIfUnowned_Far"))
+        self.assertIn(
+            "and #(SCUMM_RESIDENT_FLAG_ROOM_BUNDLE | SCUMM_RESIDENT_FLAG_EXPLICIT)",
+            helper,
+        )
+        self.assertIn("jsr ScummV5_Resident_IsSelectorLive", helper)
+        self.assertIn("sta.l SAME_SCUMM_RESIDENT_UNIT_IDS,x", helper)
+        self.assertIn("sta.l SAME_SCUMM_RESIDENT_FLAGS,x", helper)
+        self.assertIn("sta.l SAME_SCUMM_RESIDENT_CURRENT_COUNT", helper)
+
     def test_generated_fixture_has_large_selector_free_global_universe(self) -> None:
         with tempfile.TemporaryDirectory(prefix="same-residency-fixture-") as raw:
             output = Path(raw)
