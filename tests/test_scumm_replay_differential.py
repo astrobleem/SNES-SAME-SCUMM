@@ -34,6 +34,7 @@ class ScummReplayDifferentialTests(unittest.TestCase):
     def test_ephemeral_selectors_do_not_cause_false_live_script_mismatch(self) -> None:
         result = compare_replay_reports(_report(dynamic=False), _report(dynamic=True))
         self.assertTrue(result["all_semantic_acceptance_checks_pass"])
+        self.assertTrue(result["all_live_script_checks_pass"])
         self.assertTrue(all(row["active_program_units_match"]
                             for row in result["checkpoints"]))
 
@@ -41,6 +42,7 @@ class ScummReplayDifferentialTests(unittest.TestCase):
         result = compare_replay_reports(
             _report(dynamic=False, pc=12), _report(dynamic=True, pc=29))
         self.assertTrue(result["all_semantic_acceptance_checks_pass"])
+        self.assertTrue(result["all_live_script_checks_pass"])
         self.assertTrue(all(row["active_program_units_match"]
                             for row in result["checkpoints"]))
         self.assertEqual(len(result["continuation_pc_differences"]), len(CHECKPOINTS))
@@ -49,6 +51,7 @@ class ScummReplayDifferentialTests(unittest.TestCase):
         result = compare_replay_reports(
             _report(dynamic=False, delay=7), _report(dynamic=True, delay=8))
         self.assertTrue(result["all_semantic_acceptance_checks_pass"])
+        self.assertTrue(result["all_live_script_checks_pass"])
         self.assertTrue(all(row["active_program_units_match"]
                             for row in result["checkpoints"]))
         self.assertEqual(len(result["scheduler_delay_differences"]), len(CHECKPOINTS))
@@ -57,6 +60,7 @@ class ScummReplayDifferentialTests(unittest.TestCase):
         result = compare_replay_reports(
             _report(dynamic=False, delay=0), _report(dynamic=True, delay=1))
         self.assertFalse(result["all_semantic_acceptance_checks_pass"])
+        self.assertFalse(result["all_live_script_checks_pass"])
         self.assertFalse(result["checkpoints"][0]["active_program_units_match"])
 
     def test_semantic_state_or_activation_status_mismatch_fails(self) -> None:
@@ -66,6 +70,7 @@ class ScummReplayDifferentialTests(unittest.TestCase):
         result = compare_replay_reports(static, dynamic)
         first = result["checkpoints"][0]
         self.assertFalse(result["all_semantic_acceptance_checks_pass"])
+        self.assertFalse(result["all_live_script_checks_pass"])
         self.assertFalse(first["semantic_state_match"])
         self.assertFalse(first["active_program_units_match"])
 

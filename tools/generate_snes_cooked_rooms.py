@@ -2447,10 +2447,19 @@ def main() -> int:
         rows(bytes(item["flags"] for item in records)) or "    .byte $00",
         "ScummV5_M23A_RoomScriptCounts:",
         rows(bytes(len(item["scripts"]) for item in records)) or "    .byte $00",
-        "ScummV5_M23A_RoomEntryPrograms:",
-        rows(bytes(int(item["entry"]) & 0xFF for item in records)) or "    .byte $00",
-        "ScummV5_M23A_RoomExitPrograms:",
-        rows(bytes(int(item["exit"]) & 0xFF for item in records)) or "    .byte $00",
+    ]
+    if not args.dynamic_program_residency:
+        # Legacy byte-selector directories are unnecessary in a dynamic
+        # build, where lifecycle programs resolve from canonical 16-bit IDs.
+        # Omitting them also prevents stale permanent-selector metadata from
+        # consuming the tightly bounded bank-0 window.
+        lines.extend((
+            "ScummV5_M23A_RoomEntryPrograms:",
+            rows(bytes(int(item["entry"]) & 0xFF for item in records)) or "    .byte $00",
+            "ScummV5_M23A_RoomExitPrograms:",
+            rows(bytes(int(item["exit"]) & 0xFF for item in records)) or "    .byte $00",
+        ))
+    lines.extend((
         "ScummV5_M23A_RoomLocalCounts:",
         rows(bytes(len(item["locals"]) for item in records)) or "    .byte $00",
         "ScummV5_M23A_RoomExecutableLocalCounts:",
@@ -2460,7 +2469,7 @@ def main() -> int:
             f"${sum(x['id'] + x['kind'] + (x['number'] & 0xFF) + x['length'] for x in item['scripts']) & 0xffff:04X}"
             for item in records
         ) if records else "    .word $0000",
-    ]
+    ))
     if len(programs) > len(PRIMARY_PROGRAM_IDS):
         # FIRST is allocation-first, not numeric minimum. These constants are
         # diagnostic only; resolvers below use explicit identities. Keep the
@@ -2528,6 +2537,11 @@ def main() -> int:
         ))
     for record_index, record in enumerate(records):
         locals_ = record["executable_locals"]
+        if args.dynamic_program_residency:
+            # The dynamic resolver consumes the canonical flattened
+            # room-local directory above.  These parallel byte-selector and
+            # static-index arrays are retained only by legacy builds.
+            continue
         lines.extend((
             f"; Complete executable-local directory for room {record['room']}.",
             f"ScummV5_M23A_RoomLocalNumbers_{record_index}:",
@@ -2538,9 +2552,6 @@ def main() -> int:
             ) if locals_ else "    .word $0000",
             f"ScummV5_M23A_RoomLocalPrograms_{record_index}:",
             rows(bytes(int(item["id"]) & 0xFF for item in locals_)) if locals_ else "    .byte $00",
-            *((f"ScummV5_M23A_RoomLocalProgramUnitIds_{record_index}:",
-               word_rows([int(item["id"]) for item in locals_]) or "    .word $FFFF")
-              if args.dynamic_program_residency else ()),
         ))
     for item in programs:
         if item["executable"] and not args.far_programs:
@@ -2564,8 +2575,19 @@ def main() -> int:
             # size lookup. The selector resolver uses X as its resident-table
             # scan index, so this generated service must preserve X as part of
             # its ABI rather than letting an identity lookup rewind byte fetch.
+            # Selector zero is the legacy "no program" sentinel used after a
+            # room lifecycle retires slot zero. It is a handled zero-length
+            # program, not a miss: carry must prevent the legacy fixture
+            # fallback from treating selector zero as its default program.
+            "    cmp #$00", "    bne ScummV5_M23A_GetProgramSize__resident",
+            "    rep #$20", "    .a16", "    lda #$0000", "    sec", "    rtl",
+            "ScummV5_M23A_GetProgramSize__resident:", "    sep #$20", "    .a8",
             "    rep #$10", "    .i16", "    phx",
             "    sta.l SAME_SCUMM_RESIDENT_SELECTOR",
+            ".if SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP",
+            "    lda #$01", "    sta.l SAME_SCUMM_RESIDENT_SELECTOR_CALLER",
+            "    lda.l SAME_SCUMM_RESIDENT_SELECTOR",
+            ".endif",
             "    jsl ScummV5_Resident_ProgramUnitForSelector_Far",
             "    bcs ScummV5_M23A_GetProgramSize__id_ready",
             "    plx", "    clc", "    rtl",
@@ -2620,6 +2642,10 @@ def main() -> int:
     if args.dynamic_program_residency:
         fetch_program_lines.extend((
             "    sta.l SAME_SCUMM_RESIDENT_SELECTOR",
+            ".if SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP",
+            "    lda #$02", "    sta.l SAME_SCUMM_RESIDENT_SELECTOR_CALLER",
+            "    lda.l SAME_SCUMM_RESIDENT_SELECTOR",
+            ".endif",
             "    jsl ScummV5_Resident_ProgramUnitForSelector_Far",
             "    bcs ScummV5_M23A_FetchProgramByte__id_ready",
             "    bra ScummV5_M23A_FetchProgramByte__bad_binding",

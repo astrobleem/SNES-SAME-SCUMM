@@ -104,6 +104,7 @@ def compare_replay_reports(
     """Build a deterministic semantic comparison of two bounded route reports."""
     checkpoint_rows = []
     all_semantic_match = True
+    all_live_script_match = True
     continuation_pc_differences = []
     scheduler_delay_differences = []
     for checkpoint in CHECKPOINTS:
@@ -129,6 +130,7 @@ def compare_replay_reports(
             row["freeze_count"], row["slot"],
         ) for row in rows)
         slot_match = slot_projection(left_slots) == slot_projection(right_slots)
+        all_live_script_match &= slot_match
         left_pc = Counter((row["identity"], row["saved_pc"]) for row in left_slots)
         right_pc = Counter((row["identity"], row["saved_pc"]) for row in right_slots)
         pc_match = left_pc == right_pc
@@ -177,6 +179,10 @@ def compare_replay_reports(
             all_semantic_match and static.get("result") == "pass"
             and dynamic.get("result") == "pass"
         ),
+        # Keep the aggregate activation claim separate from the full state and
+        # route-result gate. This lets evidence consumers tell a live-script
+        # mismatch from an unrelated semantic field or final-result failure.
+        "all_live_script_checks_pass": bool(all_live_script_match),
         "identity_rule": (
             "Compare active canonical ProgramUnit identity, status, owner and "
             "lifetime fields per checkpoint; never compare ephemeral selectors "

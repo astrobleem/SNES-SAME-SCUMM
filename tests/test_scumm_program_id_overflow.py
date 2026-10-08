@@ -1022,4 +1022,15 @@ class ProgramIdOverflowTests(unittest.TestCase):
             self.assertFalse(directory_doc['selector_values_emitted'])
             self.assertIn('ScummV5_M23A_ProgramPointers:', data.read_text())
             self.assertIn('ScummV5_M23A_ProgramLengths:', data.read_text())
-            self.assertIn('ScummV5_Resident_RoomBundleUnitIds:', output.read_text())
+            generated_output = output.read_text()
+            self.assertIn('ScummV5_Resident_RoomBundleUnitIds:', generated_output)
+            self.assertIn('ScummV5_M23A_RoomEntryProgramUnitIds:', generated_output)
+            self.assertNotIn('ScummV5_M23A_RoomEntryPrograms:', generated_output)
+            self.assertNotIn('ScummV5_M23A_RoomExitPrograms:', generated_output)
+            self.assertNotIn('ScummV5_M23A_RoomLocalPrograms_0:', generated_output)
+            generated_data = data.read_text()
+            self.assertIn(
+                'cmp #$00\n    bne ScummV5_M23A_GetProgramSize__resident\n'
+                '    rep #$20\n    .a16\n    lda #$0000\n    sec\n    rtl',
+                generated_data,
+            )

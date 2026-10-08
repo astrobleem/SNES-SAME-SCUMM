@@ -131,6 +131,13 @@ ScummV5_Engine_Boot__clear_m23a:
     sta.l SAME_SCUMM_M23A_RETURN_MODE
     sta.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
     .endif
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    ; Actor and movement service records live outside the compact VM-state
+    ; range cleared below. Initialize them at the engine lifecycle boundary;
+    ; neither an actor-presence byte nor a route flag may inherit cold WRAM.
+    jsr ScummV5_C14_ResetState
+    jsr ScummV5_C31_ResetState
+    .endif
     rep #$30
     .a16
     .i16
@@ -1333,6 +1340,24 @@ ScummV5_Engine_Frame__scenario_before_scheduler:
     .endif
     jmp ScummV5_C4_Scheduler_Frame
 ScummV5_Engine_Frame__m23a_fixture_driver:
+    .a8
+    .endif
+    .if SAME_BUILD_SCUMM_M25_MOVEMENT
+    ; Movement is frame-owned engine work, not script-owned work.  When the
+    ; room scheduler has no runnable C4 activation, continue active walks
+    ; here; the normal C4 completion path already performs exactly one
+    ; movement update for frames that did run scripts.
+    jsl ScummV5_Movement_HasActive_Far
+    ; Canonicalize the accumulator width while preserving the returned carry.
+    sep #$20
+    .a8
+    bcc ScummV5_Engine_Frame__idle_movement_done
+    jsl ScummV5_Movement_UpdateAll_Far
+    sep #$20
+    .a8
+    bcc ScummV5_Engine_Frame__idle_movement_done
+    jmp ScummV5_Engine_Frame__m23a_error
+ScummV5_Engine_Frame__idle_movement_done:
     .a8
     .endif
     lda.l SAME_SCUMM_C1_HOLD_AFTER
@@ -3461,6 +3486,22 @@ ScummV5_C4_Scheduler_Frame__visual_install_frame:
     sta.l SAME_SCUMM_STATUS
     jmp ScummV5_Engine_Frame__complete_success
 ScummV5_C4_Scheduler_Frame__stopped:
+    .a8
+    .if SAME_BUILD_SCUMM_M25_MOVEMENT
+    ; A yielded actor walk is engine work even after the last script slot has
+    ; retired. Keep the scheduler servicing movement until the active walk
+    ; records complete; only then report the VM lifecycle as stopped.
+    jsl ScummV5_Movement_HasActive_Far
+    ; HasActive reports through carry; its ABI does not expose an A-width.
+    sep #$20
+    .a8
+    bcc ScummV5_C4_Scheduler_Frame__stopped_no_movement
+    lda #SCUMM_VM_YIELDED
+    sta.l SAME_SCUMM_STATUS
+    jmp ScummV5_Engine_Frame__complete_success
+ScummV5_C4_Scheduler_Frame__stopped_no_movement:
+    .a8
+    .endif
     .a8
     lda #SCUMM_VM_STOPPED
     sta.l SAME_SCUMM_STATUS
@@ -8849,6 +8890,8 @@ ScummV5_M23A_CommitNullRoom__next:
     beq ScummV5_M23A_CommitNullRoom__bundle_released
     jsl ScummV5_Resident_ReleaseRoomBundle_Far
     bcs ScummV5_M23A_CommitNullRoom__bundle_released
+    lda #$05
+    sta.l SAME_SCUMM_RESIDENT_BUNDLE_FAILURE
     lda #SCUMM_ERR_RESIDENCY_ID
     jsr ScummV5_SetError
     sec
@@ -9166,6 +9209,8 @@ ScummV5_M23A_CommitRoom__retire_next:
     beq ScummV5_M23A_CommitRoom__old_bundle_released
     jsl ScummV5_Resident_ReleaseRoomBundle_Far
     bcs ScummV5_M23A_CommitRoom__old_bundle_released
+    lda #$06
+    sta.l SAME_SCUMM_RESIDENT_BUNDLE_FAILURE
     lda #SCUMM_ERR_RESIDENCY_ID
     jsr ScummV5_SetError
     sec

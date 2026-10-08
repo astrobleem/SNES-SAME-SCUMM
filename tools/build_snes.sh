@@ -936,7 +936,9 @@ VIDEO_OVERLAY_MANIFEST="${SAME_SNES_OUTPUT%.sfc}.video-overlay.json"
 CARRIER_ARGS=(--carrier "$SAME_SNES_CARRIER" --manifest "$CARRIER_MANIFEST")
 if [[ -n "${SAME_SNES_ROM_SIZE_CODE:-}" ]]; then
     CARRIER_ARGS+=(--rom-size-code "$SAME_SNES_ROM_SIZE_CODE")
-elif [[ "$SAME_SNES_CARRIER" == "sa1_bwram" || "${SAME_BUILD_SCUMM_M23A:-0}" == "1" ]]; then
+elif [[ "$SAME_SNES_CARRIER" == "sa1_bwram" ]]; then
+    CARRIER_ARGS+=(--rom-size-code 0x0C)
+elif [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" ]]; then
     CARRIER_ARGS+=(--rom-size-code 0x09)
 else
     CARRIER_ARGS+=(--rom-size-code 0x07)
@@ -948,9 +950,14 @@ fi
 "$PYTHON" tools/generate_snes_video_backend.py \
     --backend "$SAME_SNES_VIDEO_BACKEND" --carrier "$SAME_SNES_CARRIER" \
     --manifest "$VIDEO_BACKEND_MANIFEST"
+VIDEO_SURFACE_ARGS=()
+if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" == "1" ]]; then
+    VIDEO_SURFACE_ARGS+=(--surface-available)
+fi
 "$PYTHON" tools/generate_snes_video_overlay.py \
     --overlay "$SAME_SNES_VIDEO_OVERLAY" --carrier "$SAME_SNES_CARRIER" \
-    --backend "$SAME_SNES_VIDEO_BACKEND" --manifest "$VIDEO_OVERLAY_MANIFEST"
+    --backend "$SAME_SNES_VIDEO_BACKEND" --manifest "$VIDEO_OVERLAY_MANIFEST" \
+    "${VIDEO_SURFACE_ARGS[@]}"
 if [[ "$SAME_SNES_VIDEO_OVERLAY" == "bg2_index4" ]]; then
     if [[ "${SAME_SNES_ENGINE:-demo}" != "scumm_v5" ]]; then
         echo "bg2_index4 production subtitle overlay currently requires scumm_v5" >&2

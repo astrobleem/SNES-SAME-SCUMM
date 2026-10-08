@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -540,6 +541,24 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
             self.assertNotIn("sta.l SAME_OVERLAY_ERROR_COUNT", service)
             self.assertNotIn("SAME_OVERLAY_STATE", service.split(
                 "Same_Video_Handle__overlay_not_handled:", 1)[1])
+
+    def test_indexed_surface_service_is_independent_of_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "generated"
+            manifest = Path(tmp) / "manifest.json"
+            subprocess.run(
+                [
+                    "python3", str(ROOT / "tools/generate_snes_video_overlay.py"),
+                    "--overlay", "none", "--carrier", "sa1_bwram",
+                    "--backend", "mode3_surface", "--surface-available",
+                    "--output-dir", str(output), "--manifest", str(manifest),
+                ], check=True, cwd=ROOT, capture_output=True, text=True,
+            )
+            include = (output / "video_overlay_constants.inc.pasm").read_text()
+            metadata = json.loads(manifest.read_text())
+            self.assertIn("SAME_VIDEO_SURFACE_AVAILABLE = $01", include)
+            self.assertIn("SAME_VIDEO_OVERLAY_BG2 = $00", include)
+            self.assertTrue(metadata["surface_available"])
 
     def test_dirty_present_publishes_full_surface_origin(self) -> None:
         source = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()

@@ -71,15 +71,19 @@ It tracks these dimensions independently:
 | Dimension | Current evidence/status rule |
 |---|---|
 | Front-end decode | `SUPPORTED` only for operations decoded by the shared v5 decoder; unknown-width tail is `UNSUPPORTED`. |
-| IR representation | `SUPPORTED` for explicit `InstructionIR`; an opaque tail is only `PARTIAL`. |
-| SNES backend | `PARTIAL`: SC5C preserves source bytecode, but this is not semantic lowering certification. |
-| Host runtime | `PARTIAL` when dispatch exists; `UNSUPPORTED` when a decoded opcode has no handler. Dispatch presence alone is not conformance proof. |
-| SNES runtime | `UNKNOWN` in static whole-source analysis; an assembly label alone would not certify semantics. |
-| Save/restore | `UNKNOWN` unless a separate stateful regression establishes it. |
-| Native conformance | `UNKNOWN` unless a source/build-bound native control establishes it. |
+| IR representation | `SUPPORTED` only for a normalized semantic operation and decoded operand/control-flow records; an opaque tail is only `PARTIAL`. |
+| SNES backend | Independently scoped. Preserving source bytecode in SC5C is not by itself lowering certification. |
+| Host runtime | `SUPPORTED`/`PARTIAL` only to the scope of host semantic tests; dispatch presence alone is not proof. |
+| SNES runtime | `SUPPORTED`/`PARTIAL` only to the operation-specific native behavior exercised; an assembly label alone is not proof. |
+| Save/restore | Independently scoped to serialized state and continuation coverage; it is not folded into execution support. |
+| Native conformance | `SUPPORTED` only for source/build-bound Nexen evidence, never inferred from static analysis. |
 
 The aggregate report is deliberately conservative: an operation being decoded
 does not imply backend, host semantic, SNES, save-state, or native acceptance.
+Execution gaps and persistence-only gaps are reported separately. A family
+whose execution dimensions are supported but whose `save_restore` is unknown
+does not appear as an execution blocker; it remains a persistence release-gate
+item and can still keep whole-game readiness at `NOT_READY`.
 Likewise Milestone 1's `unsupported_operations == 0` means only that the
 bounded decoder did not classify a decoded operation as unsupported; it is not
 runtime capability certification.
@@ -112,9 +116,14 @@ different measurements; see `MILESTONE_4_RESIDENCY.md`. Selector capacity is
 a backend addressability limit, not evidence that every source executable
 must be resident at once.
 
-The canonical DOS-CD FATE run reports 96 rooms inventoried and parsed, 4,108
-complete executable identities, 116,730 structurally decoded instructions,
-and zero structural unknown/truncated/malformed occurrences. The BOXD parser
+The canonical DOS-CD FATE run (analysis identity
+`2e7d2ed5b165d382a33f9031a89b63dd4c299e724162b27132fd047b45626673`)
+reports 96 rooms inventoried and parsed, 4,108 complete executable
+identities, 116,730 structurally decoded instruction records, and zero
+structural unknown/truncated/malformed occurrences. Compared with the earlier
+93-room run, the 2,331-record increase is from parsing the three previously
+unsupported room resources, not from claiming that more instructions execute.
+The BOXD parser
 now interprets the format's implicit base z-buffer separately from additional
 RMIH-declared planes; the previously rejected rooms parse through the same
 generic room path. Root closure remains incomplete because dynamic and
@@ -123,23 +132,39 @@ an opaque executable tail. Actor metadata is inferred from decoded references
 rather than claimed as a complete actor table. Text literals remain encoded
 IR operands rather than a complete normalized string table.
 
-For this corpus, semantic-IR availability is complete: 0 unsupported and 0
-unknown semantic occurrences across 89 observed operation families. This
-does **not** mean the runtime supports all 89. The release gate remains
-`NOT_READY`. The current registry identifies three known implementation gaps:
-SNES `drawBox`, host `systemOps`, and host `findInventory`; native
-`loadRoomWithEgo` is partial rather than certified. Many other families have
-working code but only partial or unknown whole-corpus conformance/save
-evidence. `getActorWidth` and `walkActorToActor` now have bounded native
-controls; this does not certify unrelated actor operations. See
-`CAPABILITY_FRONTIER_BURN_DOWN.md` for the measured snapshot and ranked work.
+For this corpus, all 116,730 records have a normalized semantic-IR operation:
+zero semantic-unsupported and zero semantic-unknown occurrences across 89
+observed operation families. Structural scanning after terminators is not
+execution evidence. The CFG report separately records 17,416 reachable,
+92,197 conditionally reachable, 7,102 decoded-unreachable, and 15
+control-flow-uncertain records; nine executable CFGs are incomplete. This does
+**not** mean the runtime supports all 89 families.
 
-The current opcode census marks 67 of 116,730 occurrences as supported by
-both the backend and SNES runtime, from bounded `getActorWidth` and
-`walkActorToActor` conformance. That does not certify the whole corpus or
-operations without matching native evidence. Existing bytecode preservation,
-handler presence and unrelated conformance evidence are deliberately not
-promoted to whole-corpus per-operation certification.
+The current operation-level frontier has 14 definitely reachable execution
+families still unverified, 57 conditionally reachable execution families
+still unverified, and one known conditional blocker (`systemOps`). Fifteen
+additional families have persistence-only gaps (five definite, ten
+conditional); these are not mislabeled as execution failures, but save-state
+uncertainty still blocks whole-game readiness. The 386 dynamic and 408
+unresolved dependency edges also keep closure incomplete.
+
+Bounded host/native conformance now covers `loadRoomWithEgo` (the tested
+multiroom transition scope), ordered `findInventory` (within the configured
+2,048-entry object-owner table), and `drawBox` (the indexed room-surface
+backend only). Existing `getActorWidth` and `walkActorToActor` controls remain
+narrowly scoped. These evidence records do not certify unrelated families or
+every dialect/platform profile. `systemOps` remains explicitly unsupported
+until a generic platform lifecycle service exists. See
+`CAPABILITY_FRONTIER_BURN_DOWN.md` for the full measured snapshot.
+
+The current opcode census marks 20,485 of 116,730 occurrences as backend
+supported and 20,513 as SNES-runtime supported, based on operation-scoped
+registry evidence. The counters are independent: backend representation and
+runtime execution are separate dimensions, so their totals need not be
+monotonic. These totals do not certify the whole corpus or operations without
+matching evidence. Existing bytecode preservation, handler presence, and
+unrelated conformance are not promoted to whole-corpus per-operation
+certification.
 
 Capacity values distinguish exact indexed/cooked counts, static lower bounds,
 and unknown runtime scheduling pressure. Static graph depth is not a runtime

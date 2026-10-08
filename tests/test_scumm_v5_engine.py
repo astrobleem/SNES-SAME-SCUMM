@@ -528,6 +528,48 @@ class ScummV5EngineTests(unittest.TestCase):
                 host.engine.load_state(host.context, payload)
                 self.assertEqual(host.engine._object_owners[88], expected_owner)
 
+    def test_find_inventory_orders_global_object_ids_and_tracks_owner_changes(self) -> None:
+        script = bytearray()
+
+        def set_var(number: int, value: int) -> None:
+            script.extend((0x1A, number & 0xFF, number >> 8,
+                           value & 0xFF, value >> 8))
+
+        def set_owner(object_id: int, owner: int) -> None:
+            script.extend((0x29, object_id & 0xFF, object_id >> 8, owner))
+
+        def find_direct(result: int, owner: int, ordinal: int) -> None:
+            script.extend((0x3D, result & 0xFF, result >> 8, owner, ordinal))
+
+        set_var(10, 2)
+        set_var(11, 1)
+        set_var(12, 0)
+        for object_id in (70, 72, 75):
+            set_owner(object_id, 2)
+        find_direct(50, 2, 0)
+        find_direct(51, 2, 1)
+        find_direct(52, 2, 3)  # out of range returns zero
+        find_direct(53, 3, 0)  # empty owner's inventory returns zero
+        script.extend((
+            0x7D, 54, 0, 2, 11, 0,  # direct owner, variable ordinal
+            0xBD, 55, 0, 10, 0, 2,  # variable owner, direct ordinal
+        ))
+        set_owner(72, 3)
+        set_var(10, 3)
+        find_direct(56, 2, 1)
+        find_direct(57, 3, 0)
+        script.extend((0xFD, 58, 0, 10, 0, 12, 0, 0xA0))
+
+        host = self._host(bytes(script))
+        host.tick()
+        variables = host.engine.state.variables
+        self.assertEqual(
+            [variables[index] for index in range(50, 59)],
+            [70, 72, 0, 0, 72, 75, 75, 72, 72],
+        )
+        self.assertEqual(host.engine._object_owners[72], 3)
+        self.assertFalse(host.engine.state.scripts[0].active)
+
     def test_pickup_ownership_survives_save_restore_on_fresh_host(self) -> None:
         script = bytes((
             0x1A, 1, 0, 2, 0,       # ego = 2
@@ -1032,6 +1074,8 @@ class ScummV5EngineTests(unittest.TestCase):
         actor = host.engine.state.actors[1] = ActorState(
             room=0, visible=True, position=(91, 73), facing=180
         )
+        host.engine.state.camera_y = 19
+        host.engine.state.camera_destination_y = 23
         host.engine.state.variables[1] = 1
         host.engine.state.variables[38] = 77
         host.engine.queue_sentence(4, 100)
@@ -1041,7 +1085,7 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(host.engine.state.current_room, 1)
         self.assertEqual(host.engine.state.variables[15], 100)
         self.assertEqual(host.engine.state.variables[16], 0)
-        self.assertEqual(host.engine.state.variables[38], 100)
+        self.assertEqual(host.engine.state.variables[38], 0)
         self.assertEqual(actor.room, 1)
         self.assertEqual(actor.position, (4, 1))
         self.assertEqual(actor.facing, 90)
@@ -1049,14 +1093,78 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertTrue(actor.visible)
         self.assertEqual(host.engine.state.camera_follow_actor, 1)
         self.assertEqual(host.engine.state.camera_mode, 1)
+        # This tiny room clamps horizontal camera position to its legal min.
+        self.assertEqual(host.engine.state.camera_x, 160)
+        self.assertEqual(host.engine.state.camera_destination_x, 160)
+        self.assertEqual(host.engine.state.camera_y, 19)
+        self.assertEqual(host.engine.state.camera_destination_y, 23)
         self.assertEqual(host.engine.state.sentences, [])
         self.assertTrue(any(slot.script_kind == "ENCD" and slot.yielded
                             for slot in host.engine.state.scripts))
 
         host.tick()
 
-        self.assertEqual(host.engine.state.variables[16], 100)
-        self.assertEqual(host.engine.state.variables[38], 100)
+        self.assertEqual(host.engine.state.variables[16], 0)
+        self.assertEqual(host.engine.state.variables[38], 0)
+
+    def test_load_room_with_ego_preserves_global_across_exit_and_second_entry(self) -> None:
+        room1_entry = bytes((
+            0x9A, 15, 0, 38, 0,  # Entry object is visible before ENCD yields.
+            0x80,
+            0x9A, 16, 0, 38, 0,  # Entry postamble clears it before resume.
+            0x00,
+        ))
+        room2_entry = bytes((
+            0x9A, 17, 0, 38, 0,
+            0x80,
+            0x9A, 18, 0, 38, 0,
+            0x00,
+        ))
+        room1_exit = bytes((0x1A, 19, 0, 1, 0, 0x00))
+        program = bytes((
+            0x24, 100, 0, 1, 0xFF, 0xFF, 0, 0,  # direct room/object, no walk
+            0x1A, 20, 0, 101, 0,
+            0x1A, 21, 0, 2, 0,
+            0xE4, 20, 0, 21, 0, 0xFF, 0xFF, 0, 0,  # variable room/object
+            0x00,
+        ))
+        resources = {
+            **_cooked_room_resources(
+                1, room_with_load_ego_entry(
+                    room1_entry, object_id=100, exit_script=room1_exit,
+                ),
+            ),
+            **_cooked_room_resources(
+                2, room_with_load_ego_entry(room2_entry, object_id=101),
+            ),
+        }
+        host = self._host(program, resources=resources)
+        actor = host.engine.state.actors[1] = ActorState(room=0, visible=True)
+        host.engine.state.variables[1] = 1
+        host.engine.state.variables[38] = 77
+
+        for _ in range(12):
+            host.tick()
+            if (host.engine.state.current_room == 2
+                    and host.engine.state.variables[18] == 0
+                    and not host.engine.state.scripts):
+                break
+            if host.lifecycle.value != "running":
+                break
+
+        state = host.engine.inspect_state()
+        self.assertEqual(host.engine.state.current_room, 2)
+        self._assert_variables(state, {
+            "1": 1, "15": 100, "17": 101, "19": 1, "20": 101, "21": 2,
+        })
+        self.assertEqual(host.engine.state.variables[16], 0)
+        self.assertEqual(host.engine.state.variables[18], 0)
+        self.assertEqual(host.engine.state.variables[38], 0)
+        self.assertEqual(actor.room, 2)
+        self.assertEqual(actor.position, (4, 1))
+        self.assertTrue(actor.visible)
+        self.assertEqual(host.engine.state.camera_follow_actor, 1)
+        self.assertEqual(host.engine.state.camera_mode, 1)
 
     def test_load_room_with_ego_flagged_operands_and_optional_walk(self) -> None:
         program = bytes((
@@ -1073,14 +1181,41 @@ class ScummV5EngineTests(unittest.TestCase):
         host.engine.state.variables[1] = 1
         host.engine.state.variables[2] = 100
         host.engine.state.variables[3] = 1
+        host.engine.state.actors[1] = ActorState(ignore_boxes=True)
 
         host.tick()
 
         actor = host.engine.state.actors[1]
         self.assertEqual(host.engine.state.current_room, 1)
-        self.assertEqual(host.engine.state.variables[38], 100)
+        self.assertEqual(host.engine.state.variables[38], 0)
         self.assertEqual(actor.walk_destination, (6, 1))
         self.assertNotEqual(actor.moving, 0)
+
+    def test_load_room_with_ego_signed_walk_coordinates_and_minus_one_sentinel(self) -> None:
+        def run(x: int, y: int) -> ActorState:
+            encoded = bytes((
+                0x24, 100, 0, 1,
+                x & 0xFF, (x >> 8) & 0xFF,
+                y & 0xFF, (y >> 8) & 0xFF,
+                0x00,
+            ))
+            host = self._host(
+                encoded,
+                resources=_cooked_room_resources(
+                    1, room_with_load_ego_entry(b"\x00")
+                ),
+            )
+            host.engine.state.variables[1] = 1
+            host.engine.state.actors[1] = ActorState(ignore_boxes=True)
+            host.tick()
+            return host.engine.state.actors[1]
+
+        negative_target = run(-2, -7)
+        self.assertEqual(negative_target.walk_destination, (-2, -7))
+        self.assertNotEqual(negative_target.moving, 0)
+
+        sentinel = run(-1, 7)
+        self.assertEqual(sentinel.moving, 0)
 
     def test_load_room_with_ego_rejects_missing_entry_without_partial_transition(self) -> None:
         program = bytes((

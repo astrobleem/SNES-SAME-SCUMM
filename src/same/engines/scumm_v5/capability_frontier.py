@@ -25,6 +25,20 @@ def _worst_status(values: list[str]) -> str:
     return max(values, key=lambda value: _SUPPORT_RANK.get(value, 2), default="UNKNOWN")
 
 
+def _instruction_reachability(executable: str, instruction: Any,
+                              executable_statuses: dict[str, str]) -> str:
+    """Combine resource-graph reachability with instruction CFG reachability."""
+    code = getattr(instruction, "cfg_reachability", "UNCLASSIFIED")
+    if code == "DECODED_UNREACHABLE":
+        return "UNREACHED"
+    if code == "CONTROL_FLOW_UNCERTAIN":
+        return "UNRESOLVED"
+    status = executable_statuses.get(executable, "UNRESOLVED")
+    if code == "REACHABLE_CONDITIONAL" and status in {"ROOT", "DEFINITE"}:
+        return "CONDITIONAL"
+    return status
+
+
 def build_capability_frontier(
     scripts: dict[str, Any], reachability: dict[str, Any],
     paths: dict[str, list[str]], capabilities: dict[str, Any],
@@ -65,7 +79,7 @@ def build_capability_frontier(
             for field in _SUPPORT_FIELDS
         }
         for identity, script, instruction in semantic_gaps:
-            reachable = statuses.get(identity, "UNRESOLVED")
+            reachable = _instruction_reachability(identity, instruction, statuses)
             reach_counts[reachable] += 1
             reach_bodies[reachable].add(identity)
             kind = {
@@ -86,7 +100,7 @@ def build_capability_frontier(
         # examples, then retain the root-nearest three distinct executables.
         witnesses: dict[str, dict[str, Any]] = {}
         for identity, script, instruction in semantic_gaps:
-            reachable = statuses.get(identity, "UNRESOLVED")
+            reachable = _instruction_reachability(identity, instruction, statuses)
             if reachable == "UNREACHED":
                 continue
             candidate = {
@@ -214,12 +228,18 @@ def build_capability_frontier(
                 if value not in {"SUPPORTED", "NOT_APPLICABLE"}}
         if not gaps:
             continue
+        execution_dimensions = ("semantic_ir", "host_runtime", "snes_backend",
+                               "snes_runtime", "native_conformance")
+        execution_gaps = {name: value for name, value in gaps.items()
+                          if name in execution_dimensions}
+        persistence_gaps = ({"save_restore": gaps["save_restore"]}
+                            if "save_restore" in gaps else {})
         reach_counts: Counter[str] = Counter()
         reach_bodies: dict[str, set[str]] = defaultdict(set)
         body_locations: dict[str, tuple[Any, Any, Any, str]] = {}
         affected_rooms: set[int] = set()
         for identity, script, instruction in occurrences:
-            reachable = statuses.get(identity, "UNRESOLVED")
+            reachable = _instruction_reachability(identity, instruction, statuses)
             reach_counts[reachable] += 1
             reach_bodies[reachable].add(identity)
             if script.source.room is not None:
@@ -232,19 +252,29 @@ def build_capability_frontier(
             reach_counts, key=lambda name: _REACH_RANK.get(name, 5),
             default="UNREACHED",
         )
-        execution_dimensions = ("semantic_ir", "host_runtime", "snes_backend",
-                                "snes_runtime", "native_conformance")
         known_unsupported = any(
-            support.get(name) == "UNSUPPORTED" for name in execution_dimensions
+            support.get(name) == "UNSUPPORTED" for name in execution_gaps
         )
-        outcome = "BLOCKER" if known_unsupported else "UNVERIFIED"
-        classification = {
-            "ROOT": f"DEFINITE_{outcome}", "DEFINITE": f"DEFINITE_{outcome}",
-            "CONDITIONAL": f"CONDITIONAL_{outcome}",
-            "POSSIBLE": "POSSIBLE_DYNAMIC_REQUIREMENT",
-            "UNRESOLVED": "UNRESOLVED_REQUIREMENT",
-            "UNREACHED": "CORPUS_ONLY_REQUIREMENT",
-        }[best_reach]
+        if execution_gaps:
+            outcome = "BLOCKER" if known_unsupported else "UNVERIFIED"
+            classification = {
+                "ROOT": f"DEFINITE_{outcome}", "DEFINITE": f"DEFINITE_{outcome}",
+                "CONDITIONAL": f"CONDITIONAL_{outcome}",
+                "POSSIBLE": "POSSIBLE_DYNAMIC_REQUIREMENT",
+                "UNRESOLVED": "UNRESOLVED_REQUIREMENT",
+                "UNREACHED": "CORPUS_ONLY_REQUIREMENT",
+            }[best_reach]
+        else:
+            # Portable persistence is a separate release-gate dimension. It
+            # must not be reported as an inability to execute the operation.
+            classification = {
+                "ROOT": "DEFINITE_STATE_PERSISTENCE_UNVERIFIED",
+                "DEFINITE": "DEFINITE_STATE_PERSISTENCE_UNVERIFIED",
+                "CONDITIONAL": "CONDITIONAL_STATE_PERSISTENCE_UNVERIFIED",
+                "POSSIBLE": "POSSIBLE_STATE_PERSISTENCE_UNVERIFIED",
+                "UNRESOLVED": "UNRESOLVED_STATE_PERSISTENCE",
+                "UNREACHED": "CORPUS_ONLY_STATE_PERSISTENCE",
+            }[best_reach]
         examples = []
         for identity, (script, instruction, path, reachable) in sorted(
                 body_locations.items(), key=lambda item: (
@@ -259,19 +289,18 @@ def build_capability_frontier(
                 "reachability": reachable, "dependency_path": path,
             })
         known_gaps = sum(value in {"PARTIAL", "UNSUPPORTED"}
-                         for name, value in gaps.items()
-                         if name in execution_dimensions)
-        unknown_gaps = sum(value == "UNKNOWN" for value in gaps.values())
-        priority_tier = (
-            (0 if best_reach in {"ROOT", "DEFINITE"} else
-             1 if best_reach == "CONDITIONAL" else
-             2 if best_reach == "POSSIBLE" else
-             3 if best_reach == "UNRESOLVED" else 7)
-            if known_unsupported else
-            (4 if best_reach in {"ROOT", "DEFINITE"} else
-             5 if best_reach == "CONDITIONAL" else
-             6 if best_reach in {"POSSIBLE", "UNRESOLVED"} else 8)
+                         for value in execution_gaps.values())
+        unknown_gaps = sum(value == "UNKNOWN" for value in execution_gaps.values())
+        reach_tier = (
+            0 if best_reach in {"ROOT", "DEFINITE"} else
+            1 if best_reach == "CONDITIONAL" else
+            2 if best_reach == "POSSIBLE" else
+            3 if best_reach == "UNRESOLVED" else 7
         )
+        # Execution work always precedes save-only certification work. Within
+        # either stream preserve reachability and known-unsupported priority.
+        priority_tier = ((0 if known_unsupported else 4) + reach_tier
+                         if execution_gaps else 8 + reach_tier)
         rank = (
             priority_tier,
             -known_gaps, unknown_gaps,
@@ -294,6 +323,8 @@ def build_capability_frontier(
             "priority_key": list(rank[:-1]),
             "support": support,
             "gap_dimensions": gaps,
+            "execution_gap_dimensions": execution_gaps,
+            "persistence_gap_dimensions": persistence_gaps,
             "dependency_path_status": "source-bound paths are evidence, not proof of runtime execution",
             "representative_sources": examples,
         })
@@ -303,7 +334,8 @@ def build_capability_frontier(
              for name, value in row["gap_dimensions"].items()
              if name in {"semantic_ir", "host_runtime", "snes_backend",
                          "snes_runtime", "native_conformance"}),
-        sum(value == "UNKNOWN" for value in row["gap_dimensions"].values()),
+        sum(value == "UNKNOWN"
+            for value in row["execution_gap_dimensions"].values()),
         -row["affected_executables"], -row["occurrences"], row["family"],
     ))
     for index, row in enumerate(support_families, 1):
@@ -326,6 +358,12 @@ def build_capability_frontier(
         "families": families,
         "support_frontier_count": len(support_families),
         "support_frontier": support_families,
+        "persistence_frontier_count": sum(
+            bool(row["persistence_gap_dimensions"]) and
+            not row["execution_gap_dimensions"] for row in support_families),
+        "persistence_frontier": [row for row in support_families
+                                  if row["persistence_gap_dimensions"] and
+                                  not row["execution_gap_dimensions"]],
         "invariant": "structural decode, semantic IR, host semantics, SNES backend/runtime support, and save coverage are independent dimensions",
     }
 
@@ -333,7 +371,8 @@ def build_capability_frontier(
 def build_whole_game_readiness(
     census: dict[str, Any], executables: dict[str, Any],
     opcode_coverage: dict[str, Any], capabilities: dict[str, Any],
-    frontier: dict[str, Any],
+    frontier: dict[str, Any], dependency_graph: dict[str, Any],
+    reachability: dict[str, Any],
 ) -> dict[str, Any]:
     """A conservative release-gate view; UNKNOWN is never promoted to support."""
     room_counts = census.get("room_analysis_status_counts", {})
@@ -342,11 +381,23 @@ def build_whole_game_readiness(
     semantic_unknown = frontier["semantic_unknown_occurrences"]
     groups = capabilities.get("groups", {})
     dimensions = {}
-    for dimension in ("semantic_ir", "host_runtime", "snes_backend", "snes_runtime"):
+    for dimension in ("semantic_ir", "host_runtime", "snes_backend", "snes_runtime",
+                      "native_conformance", "save_restore"):
         statuses = [row["support_dimensions"].get(dimension, "UNKNOWN")
                     for row in groups.values()]
         dimensions[dimension] = _worst_status(statuses)
     reasons = []
+    cfg_incomplete = opcode_coverage.get("cfg_incomplete_executables", [])
+    graph_counts = dependency_graph.get("counts", {})
+    dynamic_edges = graph_counts.get("DYNAMIC", 0)
+    unresolved_edges = graph_counts.get("UNRESOLVED", 0)
+    support_frontier = frontier.get("support_frontier", [])
+    frontier_classes = Counter(row.get("priority_class", "UNKNOWN")
+                               for row in support_frontier)
+    if cfg_incomplete:
+        reasons.append("one or more executable CFGs have unresolved or invalid control-flow targets")
+    if dynamic_edges or unresolved_edges or not reachability.get("closure_complete", False):
+        reasons.append("whole-game execution closure is incomplete because dependencies are dynamic or unresolved")
     if census.get("rooms_unsupported"):
         reasons.append("one or more inventoried rooms are not semantically parsed")
     if executable_counts.get("UNSUPPORTED_DECODE", 0):
@@ -363,6 +414,18 @@ def build_whole_game_readiness(
         reasons.append("whole-game SNES runtime semantics are not certified for every observed family")
     if dimensions["host_runtime"] != "SUPPORTED":
         reasons.append("host/reference runtime semantics are incomplete for one or more observed families")
+    if dimensions.get("native_conformance") != "SUPPORTED":
+        reasons.append("native execution evidence is incomplete for one or more observed families")
+    resource_statuses = census.get("resource_status_counts", {})
+    if resource_statuses.get("UNAVAILABLE", 0):
+        reasons.append("one or more inventoried resources are unavailable to the current front end")
+    if census.get("actor_metadata", {}).get("status") not in (None, "COMPLETE", "SUPPORTED"):
+        reasons.append("actor metadata coverage is partial or unknown")
+    if census.get("string_resources", {}).get("status") not in (None, "COMPLETE", "SUPPORTED"):
+        reasons.append("string/resource rendering coverage is partial or unknown")
+    if any(row.get("support", {}).get("save_restore") in {"PARTIAL", "UNKNOWN", "UNSUPPORTED"}
+           for row in support_frontier):
+        reasons.append("stateful capability save/restore coverage is partial or unknown")
     status = "READY" if not reasons else "NOT_READY"
     return {
         "schema": "same_scumm_v5_whole_game_readiness_v1",
@@ -387,6 +450,34 @@ def build_whole_game_readiness(
             "unknown_occurrences": semantic_unknown,
             "support_dimensions": dimensions,
         },
+        "execution_frontier_counts": {
+            "definite_blockers": sum(count for priority, count in frontier_classes.items()
+                                      if priority.startswith("DEFINITE_BLOCKER")),
+            "definite_unverified": sum(count for priority, count in frontier_classes.items()
+                                       if priority.startswith("DEFINITE_UNVERIFIED")),
+            "conditional_blockers": sum(count for priority, count in frontier_classes.items()
+                                         if priority.startswith("CONDITIONAL_BLOCKER")),
+            "conditional_unverified": sum(count for priority, count in frontier_classes.items()
+                                          if priority.startswith("CONDITIONAL_UNVERIFIED")),
+            "possible_dynamic_requirements": frontier_classes["POSSIBLE_DYNAMIC_REQUIREMENT"],
+            "unresolved_requirements": frontier_classes["UNRESOLVED_REQUIREMENT"],
+            "corpus_only_requirements": frontier_classes["CORPUS_ONLY_REQUIREMENT"],
+            "definite_state_persistence_unverified": sum(
+                count for priority, count in frontier_classes.items()
+                if priority.startswith("DEFINITE_STATE_PERSISTENCE")),
+            "conditional_state_persistence_unverified": sum(
+                count for priority, count in frontier_classes.items()
+                if priority.startswith("CONDITIONAL_STATE_PERSISTENCE")),
+            "other_state_persistence_requirements": sum(
+                count for priority, count in frontier_classes.items()
+                if "STATE_PERSISTENCE" in priority and not priority.startswith((
+                    "DEFINITE_STATE_PERSISTENCE",
+                    "CONDITIONAL_STATE_PERSISTENCE"))),
+            "cfg_incomplete_executables": len(cfg_incomplete),
+            "dynamic_execution_edges": dynamic_edges,
+            "unresolved_execution_edges": unresolved_edges,
+            "reachable_closure_complete": bool(reachability.get("closure_complete", False)),
+        },
         "reachable_frontier": {
             "priority_families": [
                 {"rank": row["priority_rank"], "family": row["family"],
@@ -401,17 +492,26 @@ def build_whole_game_readiness(
                 {"rank": row["priority_rank"], "family": row["family"],
                  "priority_class": row["priority_class"],
                  "gap_dimensions": row["gap_dimensions"],
+                 "execution_gap_dimensions": row["execution_gap_dimensions"],
+                 "persistence_gap_dimensions": row["persistence_gap_dimensions"],
                  "representative": row["representative_sources"][0]
                  if row["representative_sources"] else None}
                 for row in frontier["support_frontier"][:20]
             ],
-            "definite_families": [row["family"] for row in frontier["families"]
-                                  if row["priority_class"] == "DEFINITE_SEMANTIC_GAP"],
-            "conditional_families": [row["family"] for row in frontier["families"]
-                                     if row["priority_class"] == "CONDITIONAL_SEMANTIC_GAP"],
-            "possible_families": [row["family"] for row in frontier["families"]
-                                  if row["priority_class"] == "POSSIBLE_DYNAMIC_SEMANTIC_GAP"],
+            "definite_families": [row["family"] for row in support_frontier
+                                  if row["priority_class"].startswith("DEFINITE_") and
+                                  "STATE_PERSISTENCE" not in row["priority_class"]],
+            "conditional_families": [row["family"] for row in support_frontier
+                                      if row["priority_class"].startswith("CONDITIONAL_") and
+                                      "STATE_PERSISTENCE" not in row["priority_class"]],
+            "state_persistence_families": [
+                row["family"] for row in support_frontier
+                if "STATE_PERSISTENCE" in row["priority_class"]],
+            "possible_families": [row["family"] for row in support_frontier
+                                  if row["priority_class"] == "POSSIBLE_DYNAMIC_REQUIREMENT"],
+            "unresolved_families": [row["family"] for row in support_frontier
+                                    if row["priority_class"] == "UNRESOLVED_REQUIREMENT"],
         },
         "reasons": reasons,
-        "support_invariant": "decoder support is not backend/runtime certification; UNKNOWN remains a release blocker",
+        "support_invariant": "structural decode != semantic IR != backend lowering != host execution != SNES execution != native conformance != portable save coverage; UNKNOWN is not support",
     }

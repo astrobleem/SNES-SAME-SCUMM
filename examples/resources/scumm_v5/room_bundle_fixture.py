@@ -35,10 +35,10 @@ def _room_shell(object_count: int, *children: bytes) -> bytes:
     ))
 
 
-def _object_100() -> bytes:
-    header = struct.pack("<HBBBBBBhhB", 100, 1, 1, 1, 1, 0, 0, 4, 1, 0)
+def _object_100(object_id: int = 100) -> bytes:
+    header = struct.pack("<HBBBBBBhhB", object_id, 1, 1, 1, 1, 0, 0, 4, 1, 0)
     programs = (
-        (10, bytes((0x07, 100, 0, 5, 0))),
+        (10, bytes((0x07, object_id & 0xFF, object_id >> 8, 5, 0))),
         (11, bytes((0x0A, 200, 0xFF, 0))),
         (0xFF, bytes((0x00,))),
     )
@@ -90,13 +90,14 @@ def room2(*, data_only_objects: int = 0) -> bytes:
                        _chunk(b"ENCD", entry), _chunk(b"EXCD", b"\0"))
 
 
-def room_with_load_ego_entry(entry_script: bytes) -> bytes:
-    """Build a minimal target room for generic loadRoomWithEgo conformance."""
+def room_with_load_ego_entry(entry_script: bytes, *, object_id: int = 100,
+                             exit_script: bytes = b"\0") -> bytes:
+    """Build a minimal room for generic loadRoomWithEgo conformance."""
     return _room_shell(
         1,
-        _object_100(),
+        _object_100(object_id),
         _chunk(b"ENCD", entry_script),
-        _chunk(b"EXCD", b"\0"),
+        _chunk(b"EXCD", exit_script),
     )
 
 

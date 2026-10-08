@@ -103,6 +103,11 @@ ScummV5_M23A_NormalizeEntryLifecycle_Far:
     bcc ScummV5_M23A_NormalizeEntryLifecycle_Far__done16
     sep #$20
     .a8
+    ; A stop/return may end ENCD without passing through breakHere/wait.
+    ; Complete loadRoomWithEgo through its same one-shot lifecycle postamble.
+    jsl ScummV5_LoadRoomWithEgo_Postamble_Far
+    sep #$20
+    .a8
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_EndRoomScript_FarEntry
     .else
@@ -704,9 +709,6 @@ ScummV5_ColdOpcode_FarEntry__not_draw_box_early:
     bne ScummV5_ColdOpcode_FarEntry__not_walk_actor_to_actor
     jmp ScummV5_WalkActorToActor_FarEntry
 ScummV5_ColdOpcode_FarEntry__not_walk_actor_to_actor:
-    ; Phase 6L-A deliberately parks the preliminary loadRoomWithEgo decoder.
-    ; The authentic acceptance boundary remains the decoded PC $02DE; no $24
-    ; transition may execute until the deferred sound-82 prerequisite passes.
     .a8
     lda.l SAME_SCUMM_LAST_OPCODE
     and #$1F
@@ -838,10 +840,19 @@ ScummV5_ColdOpcode_FarEntry__unknown:
     sta.l SAME_SCUMM_STATUS
     jml ScummV5_Op__error
 
-; Canonical v5 drawBox variants ($3F/$7F/$BF/$FF).  The visual backend does
-; not expose a script-visible box surface here, but decoding must consume the
-; exact operands so the enclosing object program remains synchronized.
+; Canonical v5 drawBox variants ($3F/$7F/$BF/$FF). Operands are decoded
+; transactionally, then the generic target-neutral video service clips and
+; fills the current projected INDEX8 surface.
 ScummV5_DrawBox_FarEntry:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LAST_OPCODE
+    sta.l SAME_SCUMM_C10_SUBOP
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    dec
+    sta.l SAME_SCUMM_C10_PARAM5
     sep #$20
     .a8
     lda #$80
@@ -849,50 +860,128 @@ ScummV5_DrawBox_FarEntry:
     bcc ScummV5_DrawBox_FarEntry__x1_ok
     brl ScummV5_DrawBox_FarEntry__error
 ScummV5_DrawBox_FarEntry__x1_ok:
+    rep #$20
+    .a16
+    sta.l SAME_SCUMM_C10_PARAM0
     sep #$20
     .a8
     lda #$40
     jsr ScummV5_DrawBox_FetchVow
-    bcs ScummV5_DrawBox_FarEntry__error
-    jsr ScummV5_FetchByte
-    bcs ScummV5_DrawBox_FarEntry__error
-    ; The auxiliary opcode supplies the masks for x2/y2/color.
+    bcc ScummV5_DrawBox_FarEntry__y1_ok
+    brl ScummV5_DrawBox_FarEntry__error
+ScummV5_DrawBox_FarEntry__y1_ok:
+    rep #$20
+    .a16
+    sta.l SAME_SCUMM_C10_PARAM1
+    sep #$20
+    .a8
+    jsl ScummV5_Matrix_FarCall_FetchByte
+    bcc ScummV5_DrawBox_FarEntry__aux_ok
+    brl ScummV5_DrawBox_FarEntry__error
+ScummV5_DrawBox_FarEntry__aux_ok:
+    .a8
+    ; The auxiliary selector supplies the masks for x2/y2/color.
+    sta.l SAME_SCUMM_C10_PARAM4
     sta.l SAME_SCUMM_LAST_OPCODE
     lda #$80
     jsr ScummV5_DrawBox_FetchVow
-    bcs ScummV5_DrawBox_FarEntry__error
+    bcc ScummV5_DrawBox_FarEntry__x2_ok
+    brl ScummV5_DrawBox_FarEntry__error
+ScummV5_DrawBox_FarEntry__x2_ok:
+    rep #$20
+    .a16
+    sta.l SAME_SCUMM_C10_PARAM2
+    sep #$20
+    .a8
     lda #$40
     jsr ScummV5_DrawBox_FetchVow
-    bcs ScummV5_DrawBox_FarEntry__error
-    lda #$80
+    bcc ScummV5_DrawBox_FarEntry__y2_ok
+    brl ScummV5_DrawBox_FarEntry__error
+ScummV5_DrawBox_FarEntry__y2_ok:
+    rep #$20
+    .a16
+    sta.l SAME_SCUMM_C10_PARAM3
+    sep #$20
+    .a8
+    ; Color is a byte VOB selected by auxiliary bit $20 (not the $80
+    ; coordinate flag). Keeping this distinct matters when x2 is direct but
+    ; the color itself is variable.
+    lda #$20
     jsr ScummV5_DrawBox_FetchVob
-    bcs ScummV5_DrawBox_FarEntry__error
+    bcc ScummV5_DrawBox_FarEntry__color_ok
+    brl ScummV5_DrawBox_FarEntry__error
+ScummV5_DrawBox_FarEntry__color_ok:
+    sta.l SAME_VIDEO_DRAW_RECT_COLOR
+    lda.l SAME_SCUMM_C10_SUBOP
+    sta.l SAME_SCUMM_LAST_OPCODE
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C10_PARAM0
+    sta.l SAME_VIDEO_DRAW_RECT_X0
+    lda.l SAME_SCUMM_C10_PARAM1
+    sta.l SAME_VIDEO_DRAW_RECT_Y0
+    lda.l SAME_SCUMM_C10_PARAM2
+    sta.l SAME_VIDEO_DRAW_RECT_X1
+    lda.l SAME_SCUMM_C10_PARAM3
+    sta.l SAME_VIDEO_DRAW_RECT_Y1
+    .if SAME_VIDEO_SURFACE_AVAILABLE
+    jsl Same_VideoSurface_FillIndexedRect_Far
+    bcc ScummV5_DrawBox_FarEntry__done
+    ; A valid surface can be temporarily owned by the video backend while a
+    ; room/camera presentation completes. Retry the entire immutable SCUMM
+    ; instruction at the next scheduler boundary; never fail or partially
+    ; consume its operands while the backend owns the pixels.
+    lda.l SAME_VIDEO_SURFACE_STATUS
+    beq ScummV5_DrawBox_FarEntry__yield
+    cmp #SAME_VIDEO_SURFACE_STATUS_LOCKED
+    beq ScummV5_DrawBox_FarEntry__yield
+    brl ScummV5_DrawBox_FarEntry__service_error
+ScummV5_DrawBox_FarEntry__yield:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C10_PARAM5
+    sta.l SAME_SCUMM_PC
+    sep #$20
+    .a8
+    lda #SCUMM_VM_YIELDED
+    sta.l SAME_SCUMM_STATUS
+    jml ScummV5_Engine_Frame__complete_success
+ScummV5_DrawBox_FarEntry__service_error:
+    sep #$20
+    .a8
+    lda #SCUMM_ERR_SERVICE
+    jsl ScummV5_Camera_FarCall_SetError
+    jml ScummV5_Op__error
+    .else
+    sep #$20
+    .a8
+    lda #SCUMM_ERR_SERVICE
+    jsl ScummV5_Camera_FarCall_SetError
+    jml ScummV5_Op__error
+    .endif
+ScummV5_DrawBox_FarEntry__done:
+    ; The indexed-surface service preserves the caller's 16-bit mode. The
+    ; shared interpreter continuation is entered with the ordinary 8-bit
+    ; opcode-dispatch ABI.
+    sep #$20
+    .a8
     jml ScummV5_Engine_Frame__next
 ; Consume a drawBox vow: direct values are p16; variable values carry a p16
 ; reference and, for indirect references, one additional p16 selector.
 ScummV5_DrawBox_FetchVow:
     sta.l SAME_SCUMM_CONDITION
-    ; get_vow() selects variable/direct from the opcode flag mask.  A direct
-    ; signed word may itself contain bit $2000 (for example #-$100); that
-    ; value is not an indirect-variable marker.
+    ; SCUMM v5 variable operands are references, not encoded values. Resolve
+    ; them through the common variable reader, which also handles indexed
+    ; references and validates global/local/bit namespaces.
     lda.l SAME_SCUMM_LAST_OPCODE
     and.l SAME_SCUMM_CONDITION
     beq ScummV5_DrawBox_FetchVow__direct
-    jsr ScummV5_FetchWord
+    jsl ScummV5_Camera_FarCall_FetchWord
     bcs ScummV5_DrawBox_FetchVow__done
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_OPERAND
-    and #$2000
-    sep #$20
-    .a8
-    beq ScummV5_DrawBox_FetchVow__ok
-    jsr ScummV5_FetchWord
-    bra ScummV5_DrawBox_FetchVow__ok
+    jsl ScummV5_Camera_FarCall_ReadVariable
+    rts
 ScummV5_DrawBox_FetchVow__direct:
-    jsr ScummV5_FetchWord
-ScummV5_DrawBox_FetchVow__ok:
-    clc
+    jsl ScummV5_Camera_FarCall_FetchWord
 ScummV5_DrawBox_FetchVow__done:
     rts
 ScummV5_DrawBox_FetchVob:
@@ -903,30 +992,29 @@ ScummV5_DrawBox_FetchVob:
     lda.l SAME_SCUMM_LAST_OPCODE
     and.l SAME_SCUMM_CONDITION
     beq ScummV5_DrawBox_FetchVob__direct
-    jsr ScummV5_FetchWord
+    jsl ScummV5_Camera_FarCall_FetchWord
     bcs ScummV5_DrawBox_FetchVob__done
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_OPERAND
-    and #$2000
+    jsl ScummV5_Camera_FarCall_ReadVariable
+    bcs ScummV5_DrawBox_FetchVob__done
     sep #$20
     .a8
-    beq ScummV5_DrawBox_FetchVob__ok
-    jsr ScummV5_FetchWord
-    bra ScummV5_DrawBox_FetchVob__ok
-ScummV5_DrawBox_FetchVob__direct:
-    jsr ScummV5_FetchByte
-ScummV5_DrawBox_FetchVob__ok:
     clc
+    rts
+ScummV5_DrawBox_FetchVob__direct:
+    jsl ScummV5_Matrix_FarCall_FetchByte
 ScummV5_DrawBox_FetchVob__done:
     rts
 ScummV5_DrawBox_FarEntry__error:
     sep #$20
     .a8
+    lda.l SAME_SCUMM_C10_SUBOP
+    sta.l SAME_SCUMM_LAST_OPCODE
+    lda.l SAME_SCUMM_ERROR
+    bne ScummV5_DrawBox_FarEntry__error_already_set
     lda #SCUMM_ERR_OPCODE
-    jsr ScummV5_SetError
-    sec
-    rts
+    jsl ScummV5_Camera_FarCall_SetError
+ScummV5_DrawBox_FarEntry__error_already_set:
+    jml ScummV5_Op__error
 
 ; Canonical v5 $24/$64/$A4/$E4.  Decode all operands transactionally before
 ; publishing the asynchronous room request.  The lifecycle owns completion;
@@ -984,6 +1072,15 @@ ScummV5_LoadRoomWithEgo_FarEntry__ego_ok:
     sep #$20
     .a8
     sta.l SAME_SCUMM_LOAD_EGO_EGO
+    ; SCUMM publishes VAR_WALKTO_OBJ before startScene installs the target
+    ; room so its ENCD prefix can inspect the entry object. The postamble at
+    ; the first ENCD yield clears it, matching the host/reference lifecycle.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_LOAD_EGO_OBJECT
+    sta.l SAME_SCUMM_VARIABLES+(38 * 2)
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_C4_CURRENT_SLOT
     sta.l SAME_SCUMM_LOAD_EGO_CALLER_SLOT
     lda.l SAME_SCUMM_PROGRAM_SELECT
@@ -1028,10 +1125,22 @@ ScummV5_LoadRoomWithEgo_Postamble_Far:
     sep #$20
     .a8
     lda.l SAME_SCUMM_LOAD_EGO_ACTIVE
-    beq ScummV5_LoadRoomWithEgo_Postamble_Far__done
+    bne ScummV5_LoadRoomWithEgo_Postamble_Far__active
+    rtl
+ScummV5_LoadRoomWithEgo_Postamble_Far__active:
+    ; The transition flag is shared, but its postamble belongs only to the
+    ; scheduler-owned ENCD activation. A nested child may yield while ENCD is
+    ; still active and must not consume the transition.
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    beq ScummV5_LoadRoomWithEgo_Postamble_Far__entry_slot
+    rtl
+ScummV5_LoadRoomWithEgo_Postamble_Far__entry_slot:
+    .a8
     lda.l SAME_SCUMM_M23A_PHASE
     cmp #$02
-    bne ScummV5_LoadRoomWithEgo_Postamble_Far__done
+    beq ScummV5_LoadRoomWithEgo_Postamble_Far__transition_phase
+    rtl
+ScummV5_LoadRoomWithEgo_Postamble_Far__transition_phase:
     rep #$20
     .a16
     lda #$0000
@@ -1052,8 +1161,64 @@ ScummV5_LoadRoomWithEgo_Postamble_Far:
     sta.l SAME_SCUMM_C15_CAMERA_MODE
     lda #$00
     sta.l SAME_SCUMM_C15_MOVING_TO_ACTOR
+    ; Only X == -1 suppresses the optional walk. Other negative coordinates
+    ; are valid signed source values.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_LOAD_EGO_X
+    cmp #$FFFF
+    beq ScummV5_LoadRoomWithEgo_Postamble_Far__finish
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
+    lda.l SAME_SCUMM_LOAD_EGO_Y
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LOAD_EGO_EGO
+    sta.l SAME_SCUMM_MOVE_ACTOR
+    sta.l SAME_SCUMM_PUT_ACTOR_ACTOR
+    rep #$30
+    .a16
+    .i16
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_IGNORE_BOXES,x
+    beq ScummV5_LoadRoomWithEgo_Postamble_Far__adjust_walk
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_X
+    lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_Y
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_BOX
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    tax
+    lda #$FF
+    sta.l SAME_SCUMM_PUT_ACTOR_WALKBOX,x
+    bra ScummV5_LoadRoomWithEgo_Postamble_Far__start_walk
+ScummV5_LoadRoomWithEgo_Postamble_Far__adjust_walk:
+    jsl ScummV5_PutActor_Adjust_Far
+ScummV5_LoadRoomWithEgo_Postamble_Far__start_walk:
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_MOVE_QUERY_DIR
+    jsr ScummV5_Movement_StartNormalized_Far
+ScummV5_LoadRoomWithEgo_Postamble_Far__finish:
+    sep #$20
+    .a8
+    lda #$00
     sta.l SAME_SCUMM_LOAD_EGO_ACTIVE
-ScummV5_LoadRoomWithEgo_Postamble_Far__done:
     sep #$20
     .a8
     rtl
@@ -2631,6 +2796,47 @@ ScummV5_Movement_UpdateAll_Far__next:
     clc
     rtl
 ScummV5_Movement_UpdateAll_Far__error:
+    sec
+    rtl
+
+; Return carry set while at least one actor has a live movement destination.
+; The scheduler uses this after retiring script slots so a yielded walk can
+; finish without requiring a script to remain artificially active.
+ScummV5_Movement_HasActive_Far:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_MOVE_ACTOR
+ScummV5_Movement_HasActive_Far__loop:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    tax
+    lda.l SAME_SCUMM_C31_MOVING,x
+    beq ScummV5_Movement_HasActive_Far__next
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    and #$00FF
+    asl
+    tax
+    lda.l SAME_SCUMM_PUT_ACTOR_DEST_X,x
+    cmp #$FFFF
+    bne ScummV5_Movement_HasActive_Far__yes
+ScummV5_Movement_HasActive_Far__next:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    inc
+    sta.l SAME_SCUMM_MOVE_ACTOR
+    cmp #$20
+    bcc ScummV5_Movement_HasActive_Far__loop
+    clc
+    rtl
+ScummV5_Movement_HasActive_Far__yes:
+    sep #$20
+    .a8
     sec
     rtl
 

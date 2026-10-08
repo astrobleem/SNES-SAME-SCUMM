@@ -270,6 +270,7 @@ SAME_SCUMM_C10_PARAM1             = $7F34F2 ; u16 operand scratch
 SAME_SCUMM_C10_PARAM2             = $7F34F4 ; u16 operand scratch
 SAME_SCUMM_C10_PARAM3             = $7F34F6 ; u16 operand scratch
 SAME_SCUMM_C10_PARAM4             = $7F34F8 ; u16 operand scratch
+SAME_SCUMM_C10_PARAM5             = $7F34FA ; u16 far-handler continuation scratch
 SAME_SCUMM_C10_STATE_END          = $7F3500
 SAME_SCUMM_C10_STATE_SIZE         = $0500
 
@@ -993,7 +994,8 @@ SAME_SCUMM_RESIDENT_LOCAL_OFFSET              = $7E8FA4 ; u16 local directory in
 SAME_SCUMM_RESIDENT_PINNED_SCRATCH            = $7E8FA6 ; u16 diagnostic accumulator
 SAME_SCUMM_RESIDENT_GLOBAL_SCRIPT             = $7E8FA8 ; u8 dynamic global number
 SAME_SCUMM_RESIDENT_LOOKUP_INDEX              = $7E8FA9 ; u16 table cursor
-SAME_SCUMM_RESIDENT_BUNDLE_FAILURE            = $7E8FAB ; u8 rollback marker
+SAME_SCUMM_RESIDENT_BUNDLE_FAILURE            = $7E8FAB ; u8 last binding/bundle error site
+SAME_SCUMM_RESIDENT_SELECTOR_CALLER            = $7E8FAC ; u8 diagnostic: selector lookup caller
 SAME_SCUMM_RESIDENT_DIAG_STATUS                = $7E8FB0 ; u8 diagnostic pass/fail code
 SAME_SCUMM_RESIDENT_DIAG_EXHAUSTION_ERROR       = $7E8FB1 ; u8 expected $20
 SAME_SCUMM_RESIDENT_DIAG_STALE_REJECTED         = $7E8FB2 ; u8 boolean
@@ -1283,6 +1285,15 @@ SAME_SCUMM_START_OBJECT_CALLER_RETURN_SP      = $7E7FE0 ; u16 after JSL/RTL
 SAME_SCUMM_START_OBJECT_SLOT_INDEX             = $7E7FE2 ; u16 X at descriptor access
 SAME_SCUMM_START_OBJECT_FRAME_OPS              = $7E7FE4 ; u16 live count at handoff
 SAME_SCUMM_START_OBJECT_NATIVE_DIAG_END        = $7E7FE6
+; Synchronous target-neutral indexed rectangle request shared by the SCUMM
+; producer and video-surface service. This uses the measured gap before the
+; global object-owner table; the service consumes it before returning.
+SAME_VIDEO_DRAW_RECT_X0                       = $7E7FE6 ; u16 viewport x
+SAME_VIDEO_DRAW_RECT_Y0                       = $7E7FE8 ; u16 viewport y
+SAME_VIDEO_DRAW_RECT_X1                       = $7E7FEA ; u16 inclusive viewport x
+SAME_VIDEO_DRAW_RECT_Y1                       = $7E7FEC ; u16 inclusive viewport y
+SAME_VIDEO_DRAW_RECT_COLOR                    = $7E7FEE ; u8 INDEX8 color
+SAME_VIDEO_DRAW_RECT_END                      = $7E7FEF
 SAME_SCUMM_LOAD_EGO_STATE_SIZE              = $000E
 
 ; Movement-observer scratch is outside the M23B nested-program vector

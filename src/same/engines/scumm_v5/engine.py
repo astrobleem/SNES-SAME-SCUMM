@@ -713,6 +713,8 @@ class ScummV5Engine(Engine):
             self._handlers[opcode] = self._op_get_verb_entrypoint
         for opcode in (0x10, 0x90):
             self._handlers[opcode] = self._op_get_object_owner
+        for opcode in (0x3D, 0x7D, 0xBD, 0xFD):
+            self._handlers[opcode] = self._op_find_inventory
         for opcode in (0x34, 0x74, 0xB4, 0xF4):
             self._handlers[opcode] = self._op_get_dist
         for opcode in (0x37, 0x77, 0xB7, 0xF7):
@@ -1620,9 +1622,8 @@ class ScummV5Engine(Engine):
 
         def install_entry_state() -> None:
             # startScene installs the destination room before ENCD executes.
-            # Its script may yield and inspect VAR_WALKTO_OBJ after resuming,
-            # so that engine variable remains source-owned rather than being
-            # cleared when this opcode returns.
+            # VAR_WALKTO_OBJ remains visible while that entry prefix runs and
+            # is cleared when the startScene lifecycle call returns below.
             target = self._room_resource_object(object_id)
             if target is None:
                 raise ResourceError(
@@ -1650,20 +1651,25 @@ class ScummV5Engine(Engine):
                 actor.animation_progress = 0
             actor.visible = room != 0
             self._actor_scale_for_box(actor, box, *position)
-            self.state.camera_x = self.state.camera_destination_x = position[0]
-            self.state.camera_y = self.state.camera_destination_y = position[1]
-            self.state.camera_follow_actor = ego_id
-            self.state.camera_mode = 1
-            self.state.camera_moving_to_actor = False
-            self.state.camera_update_pending = True
             self.state.sentences.clear()
             self._actors_dirty = True
-            if x >= 0 and y >= 0:
-                self._start_actor_walk(actor, (x, y))
 
         self._load_room(
             context, room, required=True, before_entry=install_entry_state
         )
+        # SCUMM v5's startScene boundary has now run the incoming ENCD prefix
+        # through its first yield/termination. Clear the entry-object variable,
+        # snap the horizontal camera to the placed Ego, enable follow, then
+        # issue the optional walk. Only X == -1 means "no walk"; Y is a signed
+        # coordinate and may legitimately be negative.
+        self.state.variables[38] = 0
+        self.state.camera_x = self.state.camera_destination_x = actor.position[0]
+        self.state.camera_follow_actor = ego_id
+        self.state.camera_mode = 1
+        self.state.camera_moving_to_actor = False
+        self.state.camera_update_pending = True
+        if x != -1:
+            self._start_actor_walk(actor, (x, y))
         return False
 
     def _op_print(self, slot: ScriptSlot, context: EngineContext) -> bool:
@@ -3436,6 +3442,30 @@ class ScummV5Engine(Engine):
                 f"SCUMM object {object_id} is outside owner table 0..{len(self._object_owners) - 1}"
             )
         self._write_var(slot, result, self._object_owners[object_id])
+        return False
+
+    def _op_find_inventory(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Return the object at an owner's zero-based inventory ordinal.
+
+        SCUMM v5 enumerates the global object table in source object-ID order.
+        The result is zero when the owner has no object at the requested
+        ordinal; inventory order is therefore stable across room visibility
+        changes and follows ownership mutations immediately.
+        """
+        del context
+        result = self._result_var(slot)
+        owner = self._var_or_direct_byte(slot, 0x80) & 0xFF
+        ordinal = self._var_or_direct_byte(slot, 0x40) & 0xFF
+        seen = 0
+        found = 0
+        for object_id in range(self._num_global_objects):
+            if self._object_owners[object_id] != owner:
+                continue
+            if seen == ordinal:
+                found = object_id
+                break
+            seen += 1
+        self._write_var(slot, result, found)
         return False
 
     def _object_or_actor_position(

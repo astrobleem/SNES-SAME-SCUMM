@@ -88,6 +88,7 @@ class InstructionIR:
     fallthrough: bool | None = True
     branch_targets: tuple[int, ...] = ()
     opcode_variant_flags: int = 0
+    cfg_reachability: str = "UNCLASSIFIED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +103,8 @@ class ScriptIR:
     instructions: tuple[InstructionIR, ...]
     decode_complete: bool
     opaque_from_pc: int | None
+    cfg_complete: bool = True
+    cfg_uncertainty_pcs: tuple[int, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +118,8 @@ class ScriptIR:
             "program_sha256": sha256(self.program),
             "decode_complete": self.decode_complete,
             "opaque_from_pc": self.opaque_from_pc,
+            "cfg_complete": self.cfg_complete,
+            "cfg_uncertainty_pcs": list(self.cfg_uncertainty_pcs),
             "instructions": [
                 {**asdict(item), "operands": dict(item.operands)}
                 for item in self.instructions
@@ -1683,6 +1688,9 @@ def decode_script(
             # global-script body, so structural census must continue scanning
             # the source body after recording its TERMINATOR control flow.
             break
+    annotated, cfg_complete, cfg_uncertainty = _annotate_script_cfg(
+        tuple(instructions), len(program),
+    )
     return ScriptIR(
         identity, kind, number, object_id, verb_id,
         SourceIdentity(
@@ -1690,8 +1698,108 @@ def decode_script(
             resource_offset, source_offset, len(program),
             source_body_sha256 or sha256(program), number, object_id, verb_id,
         ),
-        bytes(program), tuple(instructions), opaque_from is None, opaque_from,
+        bytes(program), annotated, opaque_from is None, opaque_from,
+        cfg_complete, cfg_uncertainty,
     )
+
+
+def _annotate_script_cfg(
+    instructions: tuple[InstructionIR, ...], program_length: int,
+) -> tuple[tuple[InstructionIR, ...], bool, tuple[int, ...]]:
+    """Mark code reached by the decoded control-flow graph.
+
+    Linear structural scanning deliberately retains bytes after path
+    terminators so a valid branch can target a later block.  Such records are
+    not thereby executable: this pass marks them decoded-but-unreachable
+    unless a branch/fallthrough edge actually reaches their instruction
+    boundary.  Unknown control flow and non-boundary branch destinations are
+    kept as explicit uncertainty rather than guessed through.
+    """
+    if not instructions:
+        return instructions, True, ()
+    by_pc = {item.pc: item for item in instructions}
+    states: dict[int, bool] = {}  # False = unconditional path, True = conditional path
+    pending: list[tuple[int, bool]] = [(instructions[0].pc, False)]
+    uncertainty: set[int] = set()
+
+    def enqueue_target(target: int | None, conditional: bool, source_pc: int) -> None:
+        if target is None:
+            uncertainty.add(source_pc)
+        elif target == instructions[0].pc + program_length:
+            return
+        elif target not in by_pc:
+            # Record the control-flow source, not an arbitrary byte offset as
+            # though it were an instruction. Consumers can then identify the
+            # exact edge whose destination is not a decoded boundary.
+            uncertainty.add(source_pc)
+        else:
+            pending.append((target, conditional))
+
+    while pending:
+        pc, conditional = pending.pop()
+        if pc not in by_pc:
+            # All normal edges are validated before enqueueing. This is a
+            # defensive guard for malformed internal IR.
+            continue
+        previous = states.get(pc)
+        if previous is False or previous == conditional:
+            continue
+        # An unconditional path dominates a conditional arrival.
+        if previous is True and not conditional:
+            pass
+        states[pc] = conditional if previous is not False else False
+        instruction = by_pc[pc]
+        next_pc = pc + instruction.instruction_width
+        flow = instruction.control_flow
+        if flow == "UNKNOWN" or instruction.operation == "opaque_bytecode_tail":
+            uncertainty.add(pc)
+            continue
+        if flow == "TERMINATOR":
+            continue
+        if flow == "UNCONDITIONAL_BRANCH":
+            enqueue_target(instruction.branch_target, conditional, pc)
+            continue
+        if flow == "CONDITIONAL_BRANCH":
+            enqueue_target(instruction.branch_target, True, pc)
+            if next_pc < instructions[0].pc + program_length:
+                pending.append((next_pc, True))
+            elif next_pc != instructions[0].pc + program_length:
+                uncertainty.add(pc)
+            continue
+        if flow == "CONDITIONAL_TERMINATOR":
+            if next_pc < instructions[0].pc + program_length:
+                pending.append((next_pc, True))
+            elif next_pc != instructions[0].pc + program_length:
+                uncertainty.add(pc)
+            continue
+        if flow != "FALLTHROUGH":
+            uncertainty.add(pc)
+            continue
+        if next_pc < instructions[0].pc + program_length:
+            pending.append((next_pc, conditional))
+        elif next_pc != instructions[0].pc + program_length:
+            uncertainty.add(pc)
+
+    # Once a reachable edge has unknown continuation, any decoded record not
+    # already proven reachable or unreachable may still be a target of that
+    # edge. Do not turn the remaining suffix into an unreachable claim.
+    uncertain_pcs = set(uncertainty)
+    if uncertain_pcs:
+        uncertain_pcs.update(pc for pc in by_pc if pc not in states)
+
+    annotated = tuple(replace(
+        item,
+        cfg_reachability=(
+            "CONTROL_FLOW_UNCERTAIN" if item.pc in uncertain_pcs
+            else "REACHABLE_CONDITIONAL" if states.get(item.pc) is True
+            else "REACHABLE" if item.pc in states
+            else "DECODED_UNREACHABLE"
+        ),
+    ) for item in instructions)
+    # Targets outside known instruction boundaries invalidate the CFG claim;
+    # a target exactly at the bytecode end is a valid script exit.
+    complete = not uncertainty
+    return annotated, complete, tuple(sorted(uncertainty))
 
 
 def _static_value(operand: Any) -> int | None:

@@ -31,6 +31,7 @@ from replay_fate_room4_cold_nexen import (  # noqa: E402
     _observed_pinned_selectors,
     _known_resident_bindings,
     _record_residency_events,
+    _generated_input_identity,
     _parse_global_script_selector,
     _parse_room_local_program_table,
     _parse_rom_variable_layout,
@@ -76,7 +77,8 @@ class FakeSession:
 
 class FakeRoom4Session:
     def __init__(self, *, ready: int = 1,
-                 cursor: tuple[int, int] = (117, 138)) -> None:
+                 cursor: tuple[int, int] = (117, 138),
+                 input_poll_delay_frames: int = 0) -> None:
         self.frame = 100
         self.values = {
             0x7FF2BF: 4, 0x7FF2C2: 0, 0x7E2303: 0, 0x7E2221: 2,
@@ -93,9 +95,12 @@ class FakeRoom4Session:
         self.dangerous_set_input_calls: list[tuple[int, int, int]] = []
         self.held_buttons = 0
         self.pending_edge = 0
+        self.pending_edge_sampled = False
         self.fail_next_advance = False
         self.cutscene_finish_after = 0
         self.pending_edge_delay = 0
+        self.input_poll_delay_frames = input_poll_delay_frames
+        self.input_poll_delay_remaining = 0
 
     def get_state(self) -> dict[str, int]:
         return {"frameCount": self.frame}
@@ -121,6 +126,8 @@ class FakeRoom4Session:
         self.controller_events.append((self.frame, buttons, hold, frames))
         if buttons and buttons != self.held_buttons:
             self.pending_edge = buttons
+            self.pending_edge_sampled = False
+            self.input_poll_delay_remaining = self.input_poll_delay_frames
         self.held_buttons = buttons
         return {}
 
@@ -145,16 +152,20 @@ class FakeRoom4Session:
         previous = self.values[0x7E2200]
         for _ in range(count):
             current = self._internal_buttons(held)
+            if held and self.input_poll_delay_remaining:
+                current = previous
+                self.input_poll_delay_remaining -= 1
             self.values[0x7E2202] = previous
             self.values[0x7E2200] = current
             self.values[0x7E2204] = current & ~previous
             self.values[0x7E2206] = previous & ~current
             if self.values[0x7E2204]:
                 self.values[0x7E2208] = (self.values[0x7E2208] + 1) & 0xFFFF
+                self.pending_edge_sampled = bool(self.pending_edge)
                 if self.values[0x7E7A20]:
                     self.values[0x7E220A] = self.values[0x7E2208]
                     self.values[0x7E220C] = 1
-            if self.pending_edge:
+            if self.pending_edge and self.pending_edge_sampled:
                 talk_owns_edge = (
                     self.values[0x7E220C]
                     and self.values[0x7E220A] == self.values[0x7E2208]
@@ -166,6 +177,7 @@ class FakeRoom4Session:
                     if not talk_owns_edge:
                         self._apply_edge(self.pending_edge)
                     self.pending_edge = 0
+                    self.pending_edge_sampled = False
             if self.cutscene_finish_after and held == 0:
                 self.cutscene_finish_after -= 1
                 if self.cutscene_finish_after <= 0:
@@ -440,6 +452,25 @@ class FakeRoom7CatSession(FakeRoom4Session):
 
 
 class FateReplayTests(unittest.TestCase):
+    def test_generated_input_provenance_uses_sealed_manifest_not_mutable_workspace(self) -> None:
+        import hashlib
+        import json
+
+        manifest = [{"path": "runtime/generated.inc", "sha256": "a" * 64}]
+        identity = {
+            "generated_inputs": manifest,
+            "generated_inputs_sha256": hashlib.sha256(
+                json.dumps(manifest, sort_keys=True).encode("utf-8")
+            ).hexdigest(),
+        }
+        self.assertEqual(
+            _generated_input_identity(identity, "runtime/generated.inc"),
+            manifest[0],
+        )
+        identity["generated_inputs_sha256"] = "0" * 64
+        with self.assertRaisesRegex(RuntimeError, "manifest is inconsistent"):
+            _generated_input_identity(identity, "runtime/generated.inc")
+
     def test_residency_observer_excludes_uninitialized_unmapped_rows(self) -> None:
         rows = [
             {"selector": 0xD0, "program_unit_id": 0xBEEF,
@@ -972,25 +1003,42 @@ ScummV5_M23A_FetchProgramByte_Far:
         result = skip_room4_authored_override(session)
         self.assertEqual(result["button"], "X")
         self.assertEqual(result["step"]["mask"], 0x100)
-        self.assertEqual(result["step"]["press_frames_advanced"], 4)
-        self.assertEqual(result["step"]["release_frames_advanced"], 1)
+        self.assertEqual(result["step"]["press_frames_to_sample"], 1)
+        self.assertTrue(result["step"]["release_sampled"])
         self.assertEqual(result["cleared_override_record"], {
             "stack_index": 1, "override_pc": 0,
             "override_slot": 0, "owner_slot_depth": 0,
         })
         self.assertEqual(session.controller_events, [
             (100, 0x100, True, 0),
-            (104, 0, True, 0),
+            (101, 0, True, 0),
         ])
         self.assertEqual(session.advances, [
-            (100, 104, 4, 0x100),
-            (104, 105, 1, 0),
+            (100, 101, 1, 0x100),
+            (101, 102, 1, 0),
         ])
         self.assertEqual(result["after"]["c19_stack_pointer"], 1)
         completion = finish_room4_authored_cutscene(session)
         self.assertEqual(completion["idle_frames"], 4)
         self.assertEqual(completion["final"]["c19_stack_pointer"], 0)
         self.assertEqual(session.held_buttons, 0)
+
+    def test_room4_override_waits_for_delayed_native_input_sample_once(self) -> None:
+        session = FakeRoom4Session(
+            cursor=(0, 0), input_poll_delay_frames=3,
+        )
+        session.activate_room4_override()
+        result = skip_room4_authored_override(session)
+        self.assertEqual(result["step"]["press_frames_to_sample"], 4)
+        self.assertEqual(result["step"]["after"]["edge_sequence"], 1)
+        self.assertEqual(result["step"]["action_state_at_sample_frame_end"][
+            "c19_override_pc"
+        ], 0)
+        self.assertEqual(
+            [buttons for _frame, buttons, hold, _frames in session.controller_events
+             if hold and buttons],
+            [0x100],
+        )
 
     def test_room4_override_accepts_caller_verified_resident_selector(self) -> None:
         session = FakeRoom4Session(cursor=(0, 0))

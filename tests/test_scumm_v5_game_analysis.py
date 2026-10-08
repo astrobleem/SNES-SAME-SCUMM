@@ -226,7 +226,11 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
         self.assertTrue(unsupported)
         load_ego = next(item for item in unsupported
                         if item["operation"] == "load_room_with_ego")
-        self.assertEqual(load_ego["classification"], "DEFINITE_UNVERIFIED")
+        self.assertEqual(load_ego["classification"],
+                         "DEFINITE_STATE_PERSISTENCE_UNVERIFIED")
+        self.assertEqual(load_ego["execution_gap_dimensions"], {})
+        self.assertEqual(load_ego["persistence_gap_dimensions"],
+                         {"save_restore": "UNKNOWN"})
         self.assertIn("GlobalScript(1)", load_ego["dependency_path"])
         opaque = next(item for item in unsupported
                       if item["operation"] == "opaque_bytecode_tail")
@@ -248,9 +252,12 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
         self.assertEqual(operation["semantic_ir"]["status"], "SUPPORTED")
         self.assertEqual(operation["host_runtime"]["status"], "SUPPORTED")
         self.assertIn("ENCD yield", operation["host_runtime"]["evidence"])
-        self.assertEqual(operation["snes_backend"]["status"], "PARTIAL")
-        self.assertEqual(operation["snes_runtime"]["status"], "PARTIAL")
-        self.assertEqual(operation["native_conformance"]["status"], "UNKNOWN")
+        self.assertEqual(operation["snes_backend"]["status"], "SUPPORTED")
+        self.assertEqual(operation["snes_runtime"]["status"], "SUPPORTED")
+        self.assertEqual(operation["native_conformance"]["status"], "SUPPORTED")
+        self.assertEqual(operation["save_restore"]["status"], "UNKNOWN")
+        self.assertIn("settled optional movement",
+                      operation["native_conformance"]["evidence"])
 
     def test_capability_frontier_aggregates_families_and_keeps_reachability(self) -> None:
         result = fixture_analysis()
@@ -259,22 +266,62 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
                    if item["family"] == "debug")
         self.assertEqual(row["occurrences"], 3)
         self.assertEqual(row["affected_executables"], 3)
-        self.assertEqual(row["reachability"]["ROOT"]["occurrences"], 1)
+        # CFG paths matter: GlobalScript(1)'s debug operation is behind a
+        # branch, while GlobalScript(2)'s is unconditional after its call.
         self.assertEqual(row["reachability"]["DEFINITE"]["occurrences"], 1)
-        self.assertEqual(row["reachability"]["CONDITIONAL"]["occurrences"], 1)
+        self.assertEqual(row["reachability"]["CONDITIONAL"]["occurrences"], 2)
         self.assertEqual(row["support"]["semantic_ir"], "SUPPORTED")
         self.assertNotEqual(row["support"]["snes_runtime"], "SUPPORTED")
         self.assertEqual(row["priority_class"], "DEFINITE_UNVERIFIED")
         blocker = result.capability_frontier["support_frontier"][0]
-        self.assertEqual(blocker["family"], "loadRoomWithEgo")
+        self.assertEqual(blocker["family"], "startScript")
+        start_script_support = result.capabilities["registry_by_operation"]["start_script"]
+        self.assertEqual(start_script_support["snes_runtime"]["status"], "PARTIAL")
+        self.assertIn("variable-selected global resolution",
+                      start_script_support["snes_runtime"]["evidence"])
+        self.assertEqual(start_script_support["native_conformance"]["status"], "PARTIAL")
+        readiness = result.whole_game_readiness
+        load_ego_support = next(item for item in result.capability_frontier[
+            "support_frontier"] if item["family"] == "loadRoomWithEgo")["support"]
+        self.assertEqual(load_ego_support["snes_runtime"], "SUPPORTED")
+        self.assertEqual(load_ego_support["native_conformance"], "SUPPORTED")
+        self.assertEqual(load_ego_support["save_restore"], "UNKNOWN")
+        load_ego_row = next(item for item in frontier["support_frontier"]
+                            if item["family"] == "loadRoomWithEgo")
+        self.assertEqual(load_ego_row["priority_class"],
+                         "DEFINITE_STATE_PERSISTENCE_UNVERIFIED")
+        self.assertEqual(load_ego_row["execution_gap_dimensions"], {})
+        self.assertEqual(load_ego_row["persistence_gap_dimensions"],
+                         {"save_restore": "UNKNOWN"})
+        self.assertNotIn("loadRoomWithEgo",
+                         readiness["reachable_frontier"]["definite_families"])
+        self.assertIn("loadRoomWithEgo",
+                      readiness["reachable_frontier"]["state_persistence_families"])
         self.assertEqual(blocker["priority_class"], "DEFINITE_UNVERIFIED")
         self.assertEqual(row["representative_sources"][0]["source_identity"],
-                         "GlobalScript(1)")
+                         "GlobalScript(2)")
         self.assertEqual(frontier["semantic_unsupported_occurrences"],
                          result.opcode_coverage["counts"][
                              "semantic_unsupported_occurrences"])
         self.assertEqual(result.whole_game_readiness["status"], "NOT_READY")
         self.assertTrue(result.whole_game_readiness["reasons"])
+        self.assertNotIn("loadRoomWithEgo", readiness["reachable_frontier"]["definite_families"])
+        priority_classes = [item["priority_class"] for item in frontier["support_frontier"]]
+        self.assertEqual(
+            readiness["execution_frontier_counts"]["definite_unverified"],
+            sum(value.startswith("DEFINITE_UNVERIFIED") for value in priority_classes),
+        )
+        self.assertEqual(
+            readiness["execution_frontier_counts"]["conditional_unverified"],
+            sum(value.startswith("CONDITIONAL_UNVERIFIED") for value in priority_classes),
+        )
+        self.assertEqual(
+            readiness["execution_frontier_counts"]["definite_state_persistence_unverified"],
+            sum(value.startswith("DEFINITE_STATE_PERSISTENCE")
+                for value in priority_classes),
+        )
+        self.assertIn("native_conformance", readiness["semantics"]["support_dimensions"])
+        self.assertIn("portable save coverage", readiness["support_invariant"])
 
     def test_frontier_serialization_is_deterministic(self) -> None:
         first = fixture_analysis()
@@ -308,9 +355,11 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
             self.assertEqual(registry[operation]["semantic_ir"]["status"], "SUPPORTED")
         self.assertEqual(registry["find_object"]["host_runtime"]["status"], "PARTIAL")
         self.assertEqual(registry["find_inventory"]["host_runtime"]["status"],
-                         "UNSUPPORTED")
+                         "SUPPORTED")
         self.assertEqual(registry["find_inventory"]["snes_runtime"]["status"],
-                         "UNKNOWN")
+                         "SUPPORTED")
+        self.assertEqual(registry["find_inventory"]["native_conformance"]["status"],
+                         "SUPPORTED")
         self.assertEqual(registry["get_actor_width"]["semantic_ir"]["status"],
                          "SUPPORTED")
         self.assertEqual(registry["get_actor_width"]["host_runtime"]["status"],
@@ -329,6 +378,60 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
                          "SUPPORTED")
         self.assertEqual(registry["walk_actor_to_actor"]["save_restore"]["status"],
                          "PARTIAL")
+
+    def test_draw_box_native_support_is_scoped_to_indexed_room_surface_evidence(self) -> None:
+        script = decode_script(
+            bytes((0x3F, 10, 0, 20, 0, 0x00, 12, 0, 21, 0, 7, 0x00)),
+            identity="GlobalScript(1)", kind="SCRP", number=1, room=0,
+            resource_key="script.1", game_name="copyright-free-fixture",
+            source_member="fixture", resource_offset=0, source_offset=0,
+        )
+        capabilities, _ = analyze_capabilities(
+            {"GlobalScript(1)": script},
+            {"status_by_executable": {"GlobalScript(1)": "ROOT"}},
+            {"GlobalScript(1)": ["GlobalScript(1)"]},
+        )
+        operation = capabilities["registry_by_operation"]["draw_box"]
+        self.assertEqual(operation["semantic_ir"]["status"], "SUPPORTED")
+        self.assertEqual(operation["host_runtime"]["status"], "SUPPORTED")
+        self.assertEqual(operation["snes_backend"]["status"], "PARTIAL")
+        self.assertIn("writable SCUMM room surface",
+                      operation["snes_backend"]["evidence"])
+        self.assertEqual(operation["snes_runtime"]["status"], "SUPPORTED")
+        self.assertIn("indexed room-surface backend",
+                      operation["snes_runtime"]["evidence"])
+        self.assertEqual(operation["native_conformance"]["status"], "SUPPORTED")
+        self.assertEqual(operation["save_restore"]["status"], "UNKNOWN")
+
+    def test_c2_extended_families_have_independent_host_native_evidence(self) -> None:
+        script = decode_script(
+            (ROOT / "examples/resources/scumm_v5/c2_extended.scrp").read_bytes(),
+            identity="GlobalScript(1)", kind="SCRP", number=1, room=0,
+            resource_key="script.1", game_name="copyright-free-fixture",
+            source_member="fixture", resource_offset=0, source_offset=0,
+        )
+        capabilities, _ = analyze_capabilities(
+            {"GlobalScript(1)": script},
+            {"status_by_executable": {"GlobalScript(1)": "ROOT"}},
+            {"GlobalScript(1)": ["GlobalScript(1)"]},
+        )
+        operations = {
+            instruction.operation for instruction in script.instructions
+        }
+        registry = capabilities["registry_by_operation"]
+        self.assertEqual(len(operations), 15)
+        for operation in operations:
+            with self.subTest(operation=operation):
+                self.assertEqual(registry[operation]["host_runtime"]["status"],
+                                 "SUPPORTED")
+                self.assertEqual(registry[operation]["snes_backend"]["status"],
+                                 "SUPPORTED")
+                self.assertEqual(registry[operation]["snes_runtime"]["status"],
+                                 "SUPPORTED")
+                self.assertEqual(registry[operation]["native_conformance"]["status"],
+                                 "SUPPORTED")
+                self.assertEqual(registry[operation]["save_restore"]["status"],
+                                 "PARTIAL")
 
     def test_room_projection_is_the_room_compiler_representation(self) -> None:
         index, data = raw_pair()

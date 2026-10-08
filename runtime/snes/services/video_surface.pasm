@@ -132,6 +132,206 @@ Same_VideoSurface_WriteIndexedPixel_Far:
     plp
     rtl
 
+; Fill an inclusive viewport-relative rectangle in the active INDEX8 surface.
+; The SCUMM producer supplies X0/Y0/X1/Y1 and color through the synchronous
+; request fields in memory.pasm. This service normalizes reversed bounds,
+; clips against the current room projection, writes the indexed backing, and
+; publishes only the affected rectangle through the ordinary video event
+; path. Carry is set if the surface is busy or the required events cannot be
+; queued; an empty clipped rectangle is a successful no-op.
+Same_VideoSurface_FillIndexedRect_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_SURFACE_STATUS
+    cmp #SAME_VIDEO_SURFACE_STATUS_OK
+    beq Same_VideoSurface_FillIndexedRect__check_writable
+    cmp #SAME_VIDEO_SURFACE_STATUS_LOCKED
+    beq Same_VideoSurface_FillIndexedRect__check_writable
+    ; No installed/valid projection is not a writable target. Leave its
+    ; status intact so the SCUMM producer can distinguish unavailable data
+    ; from a transient video-backend lock.
+    plp
+    sec
+    rtl
+Same_VideoSurface_FillIndexedRect__check_writable:
+    rep #$30
+    .a16
+    .i16
+    jsl Same_VideoSurface_CanWrite_Far
+    bcc Same_VideoSurface_FillIndexedRect__writable
+    sep #$20
+    .a8
+    lda #SAME_VIDEO_SURFACE_STATUS_LOCKED
+    sta.l SAME_VIDEO_SURFACE_STATUS
+    brl Same_VideoSurface_FillIndexedRect__fail
+Same_VideoSurface_FillIndexedRect__writable:
+    .a16
+    .i16
+    ; Two events (DIRTY and PRESENT) must be available before mutating pixels.
+    lda.l SAME_EVENT_COUNT
+    cmp #(SAME_EVENT_CAPACITY-2)
+    bcc Same_VideoSurface_FillIndexedRect__events_available
+    sep #$20
+    .a8
+    lda #SAME_VIDEO_SURFACE_STATUS_LOCKED
+    sta.l SAME_VIDEO_SURFACE_STATUS
+    brl Same_VideoSurface_FillIndexedRect__fail
+Same_VideoSurface_FillIndexedRect__events_available:
+    .a16
+    .i16
+    ; SCUMM v5 accepts reversed corners; normalize each axis independently.
+    lda.l SAME_VIDEO_DRAW_RECT_X0
+    cmp.l SAME_VIDEO_DRAW_RECT_X1
+    bcc Same_VideoSurface_FillIndexedRect__x_ordered
+    beq Same_VideoSurface_FillIndexedRect__x_ordered
+    lda.l SAME_VIDEO_DRAW_RECT_X1
+    pha
+    lda.l SAME_VIDEO_DRAW_RECT_X0
+    sta.l SAME_VIDEO_DRAW_RECT_X1
+    pla
+    sta.l SAME_VIDEO_DRAW_RECT_X0
+Same_VideoSurface_FillIndexedRect__x_ordered:
+    lda.l SAME_VIDEO_DRAW_RECT_Y0
+    cmp.l SAME_VIDEO_DRAW_RECT_Y1
+    bcc Same_VideoSurface_FillIndexedRect__y_ordered
+    beq Same_VideoSurface_FillIndexedRect__y_ordered
+    lda.l SAME_VIDEO_DRAW_RECT_Y1
+    pha
+    lda.l SAME_VIDEO_DRAW_RECT_Y0
+    sta.l SAME_VIDEO_DRAW_RECT_Y1
+    pla
+    sta.l SAME_VIDEO_DRAW_RECT_Y0
+Same_VideoSurface_FillIndexedRect__y_ordered:
+    lda.l SAME_VIDEO_SURFACE_COPY_WIDTH
+    bne Same_VideoSurface_FillIndexedRect__width_available
+    brl Same_VideoSurface_FillIndexedRect__empty
+Same_VideoSurface_FillIndexedRect__width_available:
+    lda.l SAME_VIDEO_DRAW_RECT_X0
+    cmp.l SAME_VIDEO_SURFACE_COPY_WIDTH
+    bcc Same_VideoSurface_FillIndexedRect__x_origin_visible
+    brl Same_VideoSurface_FillIndexedRect__empty
+Same_VideoSurface_FillIndexedRect__x_origin_visible:
+    lda.l SAME_VIDEO_SURFACE_COPY_WIDTH
+    dec
+    cmp.l SAME_VIDEO_DRAW_RECT_X1
+    bcs Same_VideoSurface_FillIndexedRect__x_clipped
+    sta.l SAME_VIDEO_DRAW_RECT_X1
+Same_VideoSurface_FillIndexedRect__x_clipped:
+    lda.l SAME_VIDEO_SURFACE_COPY_HEIGHT
+    bne Same_VideoSurface_FillIndexedRect__height_available
+    brl Same_VideoSurface_FillIndexedRect__empty
+Same_VideoSurface_FillIndexedRect__height_available:
+    lda.l SAME_VIDEO_DRAW_RECT_Y0
+    cmp.l SAME_VIDEO_SURFACE_COPY_HEIGHT
+    bcc Same_VideoSurface_FillIndexedRect__y_origin_visible
+    brl Same_VideoSurface_FillIndexedRect__empty
+Same_VideoSurface_FillIndexedRect__y_origin_visible:
+    lda.l SAME_VIDEO_SURFACE_COPY_HEIGHT
+    dec
+    cmp.l SAME_VIDEO_DRAW_RECT_Y1
+    bcs Same_VideoSurface_FillIndexedRect__y_clipped
+    sta.l SAME_VIDEO_DRAW_RECT_Y1
+Same_VideoSurface_FillIndexedRect__y_clipped:
+    ; Convert inclusive viewport corners to the service's half-open damage
+    ; rectangle, adding the currently projected destination origin.
+    lda.l SAME_VIDEO_SURFACE_DEST_X
+    clc
+    adc.l SAME_VIDEO_DRAW_RECT_X0
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
+    lda.l SAME_VIDEO_SURFACE_DEST_Y
+    clc
+    adc.l SAME_VIDEO_DRAW_RECT_Y0
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    lda.l SAME_VIDEO_DRAW_RECT_X1
+    sec
+    sbc.l SAME_VIDEO_DRAW_RECT_X0
+    inc
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    lda.l SAME_VIDEO_DRAW_RECT_Y1
+    sec
+    sbc.l SAME_VIDEO_DRAW_RECT_Y0
+    inc
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    ; Keep a duplicated INDEX8 byte for the fast paired-pixel loop. The odd
+    ; final pixel is written bytewise.
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_DRAW_RECT_COLOR
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X1
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X1+$01
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_VIDEO_SURFACE_ROW
+Same_VideoSurface_FillIndexedRect__row:
+    .a16
+    .i16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_ROW
+    xba
+    and #$FF00
+    clc
+    adc.l SAME_VIDEO_SURFACE_DAMAGE_X
+    tax
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    lsr
+    sta.l SAME_VIDEO_SURFACE_DP_PIXEL_COUNT
+    beq Same_VideoSurface_FillIndexedRect__odd
+Same_VideoSurface_FillIndexedRect__pair:
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X1
+    sta.l SAME_BWRAM_SURFACE_BASE,x
+    inx
+    inx
+    lda.l SAME_VIDEO_SURFACE_DP_PIXEL_COUNT
+    dec
+    sta.l SAME_VIDEO_SURFACE_DP_PIXEL_COUNT
+    bne Same_VideoSurface_FillIndexedRect__pair
+Same_VideoSurface_FillIndexedRect__odd:
+    .a16
+    .i16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    and #$0001
+    beq Same_VideoSurface_FillIndexedRect__row_done
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_DRAW_RECT_COLOR
+    sta.l SAME_BWRAM_SURFACE_BASE,x
+    rep #$20
+    .a16
+Same_VideoSurface_FillIndexedRect__row_done:
+    .a16
+    .i16
+    lda.l SAME_VIDEO_SURFACE_ROW
+    inc
+    sta.l SAME_VIDEO_SURFACE_ROW
+    cmp.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    bcc Same_VideoSurface_FillIndexedRect__row
+    jsl Same_VideoSurface_PushDamagePresent_Far
+    bcc Same_VideoSurface_FillIndexedRect__published
+    sep #$20
+    .a8
+    lda #SAME_VIDEO_SURFACE_STATUS_LOCKED
+    sta.l SAME_VIDEO_SURFACE_STATUS
+    brl Same_VideoSurface_FillIndexedRect__fail
+Same_VideoSurface_FillIndexedRect__published:
+    sep #$20
+    .a8
+    lda #SAME_VIDEO_SURFACE_STATUS_OK
+    sta.l SAME_VIDEO_SURFACE_STATUS
+Same_VideoSurface_FillIndexedRect__empty:
+    plp
+    clc
+    rtl
+Same_VideoSurface_FillIndexedRect__fail:
+    plp
+    sec
+    rtl
+
 ; Generic talk/HUD facade. The selected presentation service supplies the
 ; implementation without changing the established far-call ABI.
 .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
@@ -281,7 +481,12 @@ Same_VideoSurface_ValidateRows__loop:
     bcc Same_VideoSurface_ValidateRows__bad
     clc
     adc.l SAME_VIDEO_SURFACE_WIDTH
-    bcs Same_VideoSurface_ValidateRows__bad
+    ; A row ending exactly at $10000 is bank-safe: the final byte is $FFFF
+    ; and the half-open end is the next bank's $8000 boundary in the packed
+    ; resource layout. Reject only arithmetic that wraps past that boundary.
+    bcc Same_VideoSurface_ValidateRows__row_end_ok
+    bne Same_VideoSurface_ValidateRows__bad
+Same_VideoSurface_ValidateRows__row_end_ok:
     inx
     txa
     cmp.l SAME_VIDEO_SURFACE_HEIGHT

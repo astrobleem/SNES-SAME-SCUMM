@@ -50,6 +50,8 @@ ScummV5_Resident_Reset_Far__flags:
     inx
     cpx #SCUMM_RESIDENT_SELECTOR_COUNT
     bcc ScummV5_Resident_Reset_Far__flags
+    lda #$00
+    sta.l SAME_SCUMM_RESIDENT_BUNDLE_FAILURE
     rep #$20
     .a16
     lda #$0000
@@ -165,6 +167,8 @@ ScummV5_Resident_ResolveProgramUnit_Far__evict_next:
 ScummV5_Resident_ResolveProgramUnit_Far__invalid:
     sep #$20
     .a8
+    lda #$01
+    sta.l SAME_SCUMM_RESIDENT_BUNDLE_FAILURE
     lda #SCUMM_ERR_RESIDENCY_ID
     sta.l SAME_SCUMM_ERROR
     plp
@@ -530,6 +534,24 @@ ScummV5_Resident_ProgramUnitForSelector_Far__bad16:
     .a8
 ScummV5_Resident_ProgramUnitForSelector_Far__bad:
     .a8
+    lda #$02
+    sta.l SAME_SCUMM_RESIDENT_BUNDLE_FAILURE
+    .if SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP
+    ; Native conformance breadcrumb: identify which generic VM caller supplied
+    ; the invalid ephemeral handle. This is observational and profile-neutral.
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    sta.l SAME_SCUMM_SCENARIO_ERROR_PROGRAM
+    lda.l SAME_SCUMM_LAST_OPCODE
+    sta.l SAME_SCUMM_SCENARIO_ERROR_OPCODE
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_SCENARIO_ERROR_SLOT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_SCENARIO_ERROR_PC
+    sep #$20
+    .a8
+    .endif
     lda #SCUMM_ERR_RESIDENCY_ID
     sta.l SAME_SCUMM_ERROR
     plp
@@ -831,6 +853,8 @@ ScummV5_Resident_LoadRoomBundle_Far__rollback:
     rtl
 ScummV5_Resident_LoadRoomBundle_Far__bad:
     .a8
+    lda #$03
+    sta.l SAME_SCUMM_RESIDENT_BUNDLE_FAILURE
     lda #SCUMM_ERR_RESIDENCY_ID
     sta.l SAME_SCUMM_ERROR
     plp
@@ -900,6 +924,8 @@ ScummV5_Resident_ReleaseRoomBundle_Far__done:
     rtl
 ScummV5_Resident_ReleaseRoomBundle_Far__bad:
     .a8
+    lda #$04
+    sta.l SAME_SCUMM_RESIDENT_BUNDLE_FAILURE
     lda #SCUMM_ERR_RESIDENCY_ID
     sta.l SAME_SCUMM_ERROR
     plp

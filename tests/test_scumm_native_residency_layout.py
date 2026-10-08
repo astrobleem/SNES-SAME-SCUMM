@@ -164,6 +164,10 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             self.assertEqual(len(numbers), 193)
             self.assertGreater(len(numbers), 178)
             self.assertEqual(numbers, set(range(1, 194)))
+            object_domain = manifest["global_objects"]
+            self.assertEqual(object_domain["count"], 256)
+            self.assertEqual(len((output / object_domain["owners_output"]).read_bytes()), 256)
+            self.assertEqual(len((output / object_domain["states_output"]).read_bytes()), 256)
 
             probe = (output / "global-193.bin").read_bytes()
             self.assertEqual(probe.count(bytes((0x8A, 7, 0, 0xFF))), 2)

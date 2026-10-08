@@ -16,6 +16,12 @@ ROOM4_OPEN_TRAPDOOR_PRECONDITION = {
     "cursor_world": (117, 138),
 }
 
+_CONTROLLER_TO_SCUMM_INPUT = {
+    0x001: 0x0080, 0x010: 0x0800, 0x020: 0x0400, 0x040: 0x0200,
+    0x080: 0x0100, 0x100: 0x0040, 0x200: 0x0020, 0x400: 0x0010,
+    0x800: 0x4000,
+}
+
 
 def _read_u16(session: Any, address: int) -> int:
     return int.from_bytes(session.read_memory("snesMemory", address, 2), "little")
@@ -68,6 +74,34 @@ def room4_controller_snapshot(session: Any) -> dict[str, int]:
         "c31_initialized": session.read_u8(0x7FF242),
         "c31_actor1_x": _read_u16(session, 0x7FF1A4),
         "c31_actor1_y": _read_u16(session, 0x7FF1A6),
+        "same_frame_counter": _read_u16(session, 0x7E2210),
+        "same_engine_frame_ops": _read_u16(session, 0x7E2224),
+        "same_engine_frame_busy": session.read_u8(0x7E2231),
+        "hvbjoy": session.read_u8(0x004212),
+    }
+
+
+def _execution_frontier_snapshot(session: Any) -> dict[str, Any]:
+    """Capture SCUMM activation ownership when a frame/input boundary stalls."""
+    slots = []
+    for slot in range(25):
+        status = session.read_u8(0x7E2380 + slot)
+        if status == 0:
+            continue
+        slots.append({
+            "slot": slot + 1,
+            "status": status,
+            "script": session.read_u8(0x7E2399 + slot),
+            "program": session.read_u8(0x7E23B2 + slot),
+            "pc": _read_u16(session, 0x7E23E4 + slot * 2),
+            "delay": _read_u16(session, 0x7E2416 + slot * 2),
+            "room_owner": session.read_u8(0x7FF2E7 + slot),
+        })
+    return {
+        "vm_pc": _read_u16(session, 0x7E2300),
+        "program_select": session.read_u8(0x7E2362),
+        "current_slot": session.read_u8(0x7E2A88),
+        "slots": slots,
     }
 
 
@@ -93,10 +127,10 @@ def _room4_pulse_until(
     """
     before = room4_controller_snapshot(session)
     start_frame = int(session.get_state()["frameCount"])
-    controller.hold(mask)
     release_write_handle = None
     release_write_events: list[dict[str, Any]] = []
     release_poll_events: list[dict[str, Any]] = []
+    controller.hold(mask)
     try:
         press = advance_bounded(session, press_frames)
         press_state = room4_controller_snapshot(session)
@@ -240,8 +274,12 @@ def controller_synchronous_input_edge(
     predicate: Any,
     *,
     max_frames_per_boundary: int = 8,
+    poll_interval_frames: int = 1,
     post_sample_dispatch_frames: int = 45,
     max_release_sample_frames: int = 45,
+    wait_for_release_sample: bool = True,
+    poll_boundary_address: int | None = None,
+    poll_boundary_timeout_frames: int = 120,
 ) -> dict[str, Any]:
     """Send one edge, observing each exact frame until SCUMM samples it.
 
@@ -257,73 +295,137 @@ def controller_synchronous_input_edge(
             f"is still live: {before!r}"
         )
     sequence_before = before["edge_sequence"]
-    with ControllerInputLease(session) as controller:
-        start_frame = int(session.get_state()["frameCount"])
-        controller.hold(mask)
-        press_frames: list[dict[str, Any]] = []
-        sampled: dict[str, Any] | None = None
-        for _ in range(max_frames_per_boundary):
-            advance = advance_bounded(session, 1)
-            if advance["frames_advanced"] != 1:
+    poll_hook = (
+        session.add_exec_hook(poll_boundary_address)
+        if poll_boundary_address is not None and hasattr(session, "add_exec_hook")
+        else None
+    )
+
+    def sample_boundary(frame_bound: int) -> dict[str, Any]:
+        if poll_hook is None:
+            advance = advance_bounded(session, poll_interval_frames)
+            if advance["frames_advanced"] != poll_interval_frames:
                 raise RuntimeError(f"exact input sampling frame drifted: {advance!r}")
-            current = room4_controller_snapshot(session)
-            press_frames.append({"advance": advance, "state_at_frame_end": current})
-            sequence_delta = (current["edge_sequence"] - sequence_before) & 0xFFFF
-            if sequence_delta == 1:
-                sampled = current
-                break
-            if sequence_delta != 0:
-                raise RuntimeError(
-                    "one held controller input level produced an unexpected edge count: "
-                    f"before={before!r}, frames={press_frames!r}"
+            return advance
+        start = int(session.get_state()["frameCount"])
+        result = session.run_until(max_frames=frame_bound, hook_handle=poll_hook)
+        session.pause()
+        end = int(session.get_state()["frameCount"])
+        if result.get("reason") != "hookFired":
+            raise RuntimeError(
+                "SAME input-poll boundary was not reached within its frame bound: "
+                f"result={result!r}, start={start}, end={end}"
+            )
+        return {
+            "start_frame": start,
+            "end_frame": end,
+            "frames_advanced": end - start,
+            "hook_fired": True,
+            "tool_result": result,
+        }
+
+    try:
+        with ControllerInputLease(session) as controller:
+            start_frame = int(session.get_state()["frameCount"])
+            controller.hold(mask)
+            press_frames: list[dict[str, Any]] = []
+            sampled: dict[str, Any] | None = None
+            for _ in range(max_frames_per_boundary):
+                # A dynamic-residency production frame can spend multiple
+                # video frames executing a bounded SCUMM opcode budget. Keep
+                # the same single physical edge held until the engine-owned
+                # input poll; do not synthesize another edge or infer a lucky
+                # frame from wall-clock delay.
+                boundary_frames = (
+                    poll_boundary_timeout_frames
+                    if poll_hook is not None else poll_interval_frames
                 )
-        if sampled is None:
-            raise RuntimeError(
-                "controller input was not sampled within its exact-frame bound: "
-                f"before={before!r}, frames={press_frames!r}"
+                advance = sample_boundary(boundary_frames)
+                current = room4_controller_snapshot(session)
+                press_frames.append({"advance": advance, "state_at_frame_end": current})
+                sequence_delta = (current["edge_sequence"] - sequence_before) & 0xFFFF
+                if sequence_delta == 1:
+                    sampled = current
+                    break
+                if sequence_delta != 0:
+                    raise RuntimeError(
+                        "one held controller input level produced an unexpected edge count: "
+                        f"before={before!r}, frames={press_frames!r}"
+                    )
+                # If the current PC was already at the hook when monitoring
+                # began, that zero-time boundary is old. Advance one frame,
+                # then wait at the next actual input poll while preserving the
+                # same single held physical edge.
+                if advance["frames_advanced"] == 0:
+                    advance_bounded(session, 1)
+            if sampled is None:
+                cpu = session.get_cpu_state() if hasattr(session, "get_cpu_state") else None
+                execution = _execution_frontier_snapshot(session)
+                raise RuntimeError(
+                    "controller input was not sampled within its exact-frame bound: "
+                    f"before={before!r}, frames={press_frames!r}, "
+                    f"execution-frontier={execution!r}, cpu={cpu!r}"
+                )
+            expected_bits = 0
+            for controller_bit, scumm_bit in _CONTROLLER_TO_SCUMM_INPUT.items():
+                if mask & controller_bit:
+                    expected_bits |= scumm_bit
+            press_bits = sampled["input_pressed"] or (
+                sampled["input_held"] & expected_bits
             )
-        press_bits = sampled["input_pressed"] or (sampled["input_held"] & mask)
-        if not press_bits or not sampled["input_held"]:
-            raise RuntimeError(f"input poll did not capture the held edge: {sampled!r}")
-        action_frames = list(press_frames)
-        after_action = sampled
-        for _ in range(post_sample_dispatch_frames):
-            if predicate(before, after_action):
-                break
-            advance = advance_bounded(session, 1)
-            if advance["frames_advanced"] != 1:
-                raise RuntimeError(f"one-frame input dispatch drifted: {advance!r}")
-            after_action = room4_controller_snapshot(session)
-            action_frames.append({
-                "advance": advance,
-                "state_at_frame_end": after_action,
-                "same_held_edge": True,
-            })
-        if not predicate(before, after_action):
-            raise RuntimeError(
-                "first sampled controller edge did not produce the expected semantic "
-                f"result; no retry was sent: before={before!r}, "
-                f"sampled={sampled!r}, frames={action_frames!r}"
-            )
-        controller.release()
-        release_frames: list[dict[str, Any]] = []
-        released: dict[str, Any] | None = None
-        for _ in range(max_release_sample_frames):
-            advance = advance_bounded(session, 1)
-            if advance["frames_advanced"] != 1:
-                raise RuntimeError(f"exact neutral sampling frame drifted: {advance!r}")
-            current = room4_controller_snapshot(session)
-            release_frames.append({"advance": advance, "state_at_frame_end": current})
-            if (not (current["input_held"] & press_bits)
-                    and current["input_released"] & press_bits):
-                released = current
-                break
-        if released is None:
-            raise RuntimeError(
-                "neutral controller input was not sampled within its exact-frame bound: "
-                f"press_bits=${press_bits:04X}, frames={release_frames!r}"
-            )
-    if released["edge_sequence"] != sampled["edge_sequence"]:
+            if not press_bits or not sampled["input_held"]:
+                raise RuntimeError(f"input poll did not capture the held edge: {sampled!r}")
+            if poll_hook is not None:
+                session.remove_hook(poll_hook)
+                poll_hook = None
+            action_frames = list(press_frames)
+            after_action = sampled
+            for _ in range(post_sample_dispatch_frames):
+                if predicate(before, after_action):
+                    break
+                advance = advance_bounded(session, 1)
+                if advance["frames_advanced"] != 1:
+                    raise RuntimeError(f"one-frame input dispatch drifted: {advance!r}")
+                after_action = room4_controller_snapshot(session)
+                action_frames.append({
+                    "advance": advance,
+                    "state_at_frame_end": after_action,
+                    "same_held_edge": True,
+                })
+            if not predicate(before, after_action):
+                raise RuntimeError(
+                    "first sampled controller edge did not produce the expected semantic "
+                    f"result; no retry was sent: before={before!r}, "
+                    f"sampled={sampled!r}, frames={action_frames!r}"
+                )
+            controller.release()
+            release_frames: list[dict[str, Any]] = []
+            released: dict[str, Any] | None = None
+            if wait_for_release_sample:
+                for _ in range(max_release_sample_frames):
+                    advance = advance_bounded(session, poll_interval_frames)
+                    if advance["frames_advanced"] != poll_interval_frames:
+                        raise RuntimeError(
+                            f"exact neutral sampling frame drifted: {advance!r}"
+                        )
+                    current = room4_controller_snapshot(session)
+                    release_frames.append({
+                        "advance": advance, "state_at_frame_end": current
+                    })
+                    if not (current["input_held"] & press_bits):
+                        released = current
+                        break
+                if released is None:
+                    raise RuntimeError(
+                        "neutral controller input was not sampled within its exact-frame bound: "
+                        f"press_bits=${press_bits:04X}, frames={release_frames!r}"
+                    )
+            else:
+                released = room4_controller_snapshot(session)
+    finally:
+        if poll_hook is not None:
+            session.remove_hook(poll_hook)
+    if wait_for_release_sample and released["edge_sequence"] != sampled["edge_sequence"]:
         raise RuntimeError(
             "neutral release unexpectedly created another press sequence: "
             f"sampled={sampled!r}, released={released!r}"
@@ -333,9 +435,14 @@ def controller_synchronous_input_edge(
         "attempts": 1,
         "input_level_start_frame": start_frame,
         "press_frames_to_sample": sampled["emulator_frame"] - start_frame,
+        "poll_interval_frames": poll_interval_frames,
+        "sampling_boundary": (
+            "Same_Input_Poll__edge_sequence_done"
+            if poll_boundary_address is not None else "bounded-frame-observation"
+        ),
         "press_frames": action_frames,
         "release_frames": release_frames,
-        "release_sampled": True,
+        "release_sampled": wait_for_release_sample,
         "before": before,
         "after": released,
         "action_state_at_sample_frame_end": after_action,
@@ -356,8 +463,10 @@ def skip_room4_authored_override(
     session: Any,
     *,
     expected_override_program: int = 0xF9,
-    release_poll_address: int | None = None,
     defer_release_sample: bool = False,
+    poll_interval_frames: int = 1,
+    poll_boundary_address: int | None = None,
+    poll_boundary_timeout_frames: int = 120,
 ) -> dict[str, Any]:
     """Skip the active, source-authentic room-4 LSCR206 intro override once.
 
@@ -394,18 +503,24 @@ def skip_room4_authored_override(
             f"state={before!r}"
         )
 
-    with ControllerInputLease(session) as controller:
-        step = _room4_pulse_until(
-            session, controller, 0x100,
+    try:
+        step = controller_synchronous_input_edge(
+            session,
+            0x100,
             lambda _old, current: (
-                current["error"] == 0
-                and current["c19_override_pc"] == 0
+                current["error"] == 0 and current["c19_override_pc"] == 0
             ),
-            press_frames=4,
-            release_frames=1,
-            release_poll_address=release_poll_address,
+            poll_interval_frames=poll_interval_frames,
             wait_for_release_sample=not defer_release_sample,
+            poll_boundary_address=poll_boundary_address,
+            poll_boundary_timeout_frames=poll_boundary_timeout_frames,
         )
+    except Exception as exc:
+        cpu = session.get_cpu_state() if hasattr(session, "get_cpu_state") else None
+        execution = _execution_frontier_snapshot(session)
+        raise RuntimeError(
+            f"{exc}; execution-frontier={execution!r}; cpu={cpu!r}"
+        ) from exc
     cleared_record = {
         "stack_index": 1,
         "override_pc": _read_u16(session, 0x7FD354 + 2),

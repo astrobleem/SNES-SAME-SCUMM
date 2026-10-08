@@ -2,8 +2,9 @@
 """Run bounded Nexen acceptance for the feature-gated resident resolver.
 
 The tool consumes the exact compiler-generated directory used by a ROM build.
-It has three modes: the >178-unit room route, an isolated dynamic-global
-candidate probe, and a pinned-pool exhaustion/stale-generation diagnostic ROM.
+It covers the >178-unit room route, an isolated dynamic-global candidate
+probe, pinned-pool exhaustion/stale-generation, and focused room-entry
+conformance against the same generated dynamic directories.
 """
 
 from __future__ import annotations
@@ -42,6 +43,24 @@ RESIDENT_STATS = 0x7E8F7F
 DIAG = 0x7E8FB0
 OBJECT_NAME_LENGTH = 0x7E8800
 M23A_REQUEST_DIAGNOSTICS = 0x7E5450
+LOAD_EGO_ACTIVE = 0x7E7FCC
+LOAD_EGO_X = 0x7E7FD0
+LOAD_EGO_Y = 0x7E7FD2
+C31_POSITIONS = 0x7FF1A0
+C31_MOVING = 0x7FF220
+C31_DEST_X = 0x7FFDE5
+MOVE_DEST_Y = 0x7E7BAA
+C14_ACTORS = 0x7F36C0
+C14_ACTOR_ROOM = 0x16
+C14_ACTOR_PRESENT = 0x1F
+C15_CAMERA_FOLLOWS = 0x7F5F0A
+C15_CAMERA_MODE = 0x7F5F0B
+CAMERA_CURRENT_X = 0x7E7FA8
+PUT_ACTOR_REQUEST_X = 0x7FFEC6
+PUT_ACTOR_REQUEST_Y = 0x7FFEC8
+PUT_ACTOR_RESULT_X = 0x7FFECA
+PUT_ACTOR_RESULT_Y = 0x7FFECC
+VIDEO_SURFACE_BASE = 0x402000
 
 
 def sha256(path: Path) -> str:
@@ -784,6 +803,440 @@ def run_exhaustion(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[str
     return report
 
 
+def run_load_room_with_ego(args: argparse.Namespace,
+                           inputs: dict[str, Any]) -> dict[str, Any]:
+    require(inputs["manifest"].get("conformance_case") == "load-room-with-ego",
+            "the selected compiler manifest is not the LWE conformance fixture")
+    global_id = inputs["identity_to_id"].get("GlobalProgram(1)")
+    entry_id = inputs["identity_to_id"].get("RoomEntryProgram(1)")
+    object_id = inputs["identity_to_id"].get("ObjectProgram(room=1,object=70)")
+    second_entry_id = inputs["identity_to_id"].get("RoomEntryProgram(2)")
+    second_object_id = inputs["identity_to_id"].get("ObjectProgram(room=2,object=72)")
+    require(None not in (global_id, entry_id, object_id, second_entry_id,
+                         second_object_id),
+            "generated directory lacks a required source identity")
+    room_one_program_units = {
+        int(row["program_unit_id"]) for row in inputs["directory"].get("entries", [])
+        if row.get("bundle") == "RoomBundle(1)"
+    }
+    require(bool(room_one_program_units),
+            "generated directory lacks room-1 bundle membership")
+
+    timeline: list[dict[str, Any]] = []
+    entry_captures: dict[int, dict[str, Any]] = {}
+    entry_resumes: dict[int, dict[str, Any]] = {}
+    global_live_bindings: dict[int, dict[str, Any]] = {}
+    room_sequence = [0]
+    observed_ids: set[int] = set()
+    with _session(args) as session:
+        _cold_reset(session)
+        _run_exact(session, 10)
+        final: dict[str, Any] = {}
+        for _ in range(args.frames):
+            _run_exact(session, 1)
+            room = session.read_memory("snesMemory", ROOM, 1)[0]
+            error = session.read_memory("snesMemory", ERROR, 1)[0]
+            vars_ = variables(session, (38, 40, 41, 100, 101, 102, 103, 104, 105))
+            lifecycle_pending = session.read_memory("snesMemory", LOAD_EGO_ACTIVE, 1)[0]
+            actor_position = session.read_memory("snesMemory", C31_POSITIONS + 4, 4)
+            actor_moving = session.read_memory("snesMemory", C31_MOVING + 1, 1)[0]
+            bindings = valid_bindings(session)
+            observed_ids.update(row["program_unit_id"] for row in bindings)
+            if room != room_sequence[-1]:
+                room_sequence.append(room)
+            if room in (1, 2) and room not in global_live_bindings:
+                global_binding = next((row for row in bindings
+                                       if row["program_unit_id"] == global_id), None)
+                global_slot = next((row for row in active_slots(session)
+                                    if row["script_number"] == 1), None)
+                if global_binding is not None and global_slot is not None:
+                    global_live_bindings[room] = {
+                        "selector": global_binding["selector"],
+                        "generation": global_binding["generation"],
+                        "slot": global_slot["slot"],
+                        "status": global_slot["status"],
+                        "program_unit_id": global_binding["program_unit_id"],
+                    }
+            frame = {
+                "frame": int(session.get_state()["frameCount"]),
+                "room": room,
+                "error": error,
+                "last_opcode": session.read_memory("snesMemory", 0x7E2306, 1)[0],
+                "common_pc": u16(session.read_memory("snesMemory", 0x7E2300, 2)),
+                "program_select": session.read_memory("snesMemory", 0x7E2362, 1)[0],
+                "vm_status": session.read_memory("snesMemory", 0x7E2302, 1)[0],
+                "current_slot": session.read_memory("snesMemory", 0x7E2A88, 1)[0],
+                "active_slots": active_slots(session),
+                "cpu": session.get_cpu_state("Snes"),
+                "variables": vars_,
+                "load_ego_active": lifecycle_pending,
+                "actor1_position": [u16(actor_position), u16(actor_position, 2)],
+                "actor1_moving": actor_moving,
+                "bindings": bindings,
+                "stats": stats(session),
+            }
+            if error:
+                frame["error_context"] = {
+                    "common_state": session.read_memory("snesMemory", 0x7E22F8, 24).hex(),
+                    "scenario_error": session.read_memory("snesMemory", 0x7E5450, 16).hex(),
+                    "set_error_trace": session.read_memory("snesMemory", 0x7E5500, 8).hex(),
+                    "room_lifecycle": session.read_memory("snesMemory", 0x7FF2BE, 12).hex(),
+                    "room_lifecycle_tail": session.read_memory("snesMemory", 0x7FF2CA, 14).hex(),
+                    "resolver_state": session.read_memory("snesMemory", 0x7E8F7A, 0x2A).hex(),
+                    "resolver_error_site": session.read_memory("snesMemory", 0x7E8FAB, 1)[0],
+                    "selector_lookup_caller": session.read_memory("snesMemory", 0x7E8FAC, 1)[0],
+                    "resident_ids": session.read_memory("snesMemory", 0x7E8C00, 178 * 2).hex(),
+                    "resident_flags": session.read_memory("snesMemory", 0x7E8EC8, 178).hex(),
+                    "error_breadcrumb": session.read_memory("snesMemory", 0x7E5F20, 16).hex(),
+                    "slot_statuses": list(session.read_memory("snesMemory", STATUS, 25)),
+                    "program_select": session.read_memory("snesMemory", 0x7E2362, 1)[0],
+                    "vm_status": session.read_memory("snesMemory", 0x7E2302, 1)[0],
+                    "return_mode": session.read_memory("snesMemory", 0x7E2363, 1)[0],
+                    "nested_depth": session.read_memory("snesMemory", 0x7FD335, 1)[0],
+                    "fixture_active": session.read_memory("snesMemory", 0x7E235F, 1)[0],
+                    "c3_statuses": [session.read_memory("snesMemory", addr, 1)[0]
+                                    for addr in (0x7E2354, 0x7E235A)],
+                    "c3_pcs": [u16(session.read_memory("snesMemory", addr, 2))
+                               for addr in (0x7E2350, 0x7E2356)],
+                    "c4_active_count": session.read_memory("snesMemory", 0x7E2A8A, 1)[0],
+                    "c4_scheduler_slot": session.read_memory("snesMemory", 0x7E2B22, 1)[0],
+                    "current_slot": session.read_memory("snesMemory", 0x7E2A88, 1)[0],
+                    "slot_programs": list(session.read_memory("snesMemory", 0x7E23B2, 25)),
+                    "slot_pcs": session.read_memory("snesMemory", 0x7E23E4, 50).hex(),
+                    "cpu": session.get_cpu_state("Snes"),
+                }
+            capture_var, resume_var, object_value = (
+                (100, 101, 70) if room == 1 else (103, 105, 72)
+            )
+            if room in (1, 2) and vars_[str(capture_var)] == object_value \
+                    and room not in entry_captures:
+                entry_captures[room] = {
+                    "frame": frame["frame"], "room": room,
+                    "var_walkto_obj": vars_["38"],
+                    "captured_value": vars_[str(capture_var)],
+                    "entry_script_pc": next((row["pc"] for row in frame["active_slots"]
+                                              if row["script_number"] == 0), None),
+                }
+            if (room in entry_captures and room not in entry_resumes
+                    and frame["frame"] > entry_captures[room]["frame"]
+                    and vars_[str(resume_var)] == 0):
+                entry_resumes[room] = {
+                    "frame": frame["frame"], "room": room,
+                    "var_walkto_obj": vars_["38"],
+                    "sentinel_replaced": True,
+                    "entry_script_pc": next((row["pc"] for row in frame["active_slots"]
+                                              if row["script_number"] == 0), None),
+                }
+            if not timeline or any(frame[key] != timeline[-1][key]
+                                   for key in ("room", "error", "variables",
+                                               "load_ego_active", "bindings")):
+                timeline.append(frame)
+            final = frame
+            if (room == 2 and vars_["100"] == 70 and vars_["101"] == 0
+                    and vars_["103"] == 72 and vars_["104"] == 1
+                    and vars_["105"] == 0
+                    and lifecycle_pending == 0 and actor_moving == 0):
+                break
+            require(error == 0,
+                    f"native VM failed during loadRoomWithEgo: {frame}; timeline={timeline}")
+        require(final.get("room") == 2, f"two room transitions did not commit: {final}")
+        require(room_sequence == [0, 1, 2],
+                f"unexpected loadRoomWithEgo room sequence: {room_sequence}")
+        require(set(entry_captures) == {1, 2},
+                f"ENCD did not capture both VAR_WALKTO_OBJ values: {entry_captures}")
+        require(set(entry_resumes) == {1, 2},
+                f"both yielded ENCD scripts did not resume: {entry_resumes}; "
+                f"captures={entry_captures}; timeline={timeline}")
+        require(entry_captures[1]["captured_value"] == 70
+                and entry_captures[2]["captured_value"] == 72,
+                f"entry scripts observed the wrong room object: {entry_captures}")
+        require(variables(session, (104,))["104"] == 1,
+                "room-1 EXCD did not run before the room-2 commit")
+        require(set(global_live_bindings) == {1, 2},
+                f"live global binding not observed in both room bundles: {global_live_bindings}")
+        first_global = global_live_bindings[1]
+        second_global = global_live_bindings[2]
+        require((first_global["selector"], first_global["generation"])
+                == (second_global["selector"], second_global["generation"]),
+                "the yielded global binding changed during the room transition: "
+                f"{global_live_bindings}")
+        require(final["variables"]["38"] == 0 and final["load_ego_active"] == 0,
+                f"loadRoomWithEgo postamble did not retire: {final}")
+        require(final["variables"]["104"] == 1,
+                f"room-1 exit continuation did not run: {final['variables']}")
+        final_resident_ids = {int(row["program_unit_id"]) for row in final["bindings"]}
+        require(not (room_one_program_units & final_resident_ids),
+                "room-1 ProgramUnits remained resident after room-2 commit: "
+                f"{sorted(room_one_program_units & final_resident_ids)}")
+        require(final["stats"]["bundle_loads"] == 2
+                and final["stats"]["bundle_releases"] == 1,
+                f"room bundle lifecycle counters mismatch: {final['stats']}")
+        require(final["error"] == 0, f"SCUMM error is nonzero: {final}")
+
+        actor_record = session.read_memory(
+            "snesMemory", C14_ACTORS + 64, 64,
+        )
+        actor_pos = session.read_memory("snesMemory", C31_POSITIONS + 4, 4)
+        actor_moving = session.read_memory("snesMemory", C31_MOVING + 1, 1)[0]
+        actor = {
+            "room": actor_record[C14_ACTOR_ROOM],
+            "present": actor_record[C14_ACTOR_PRESENT],
+            "walk_speed": [actor_record[1], actor_record[2]],
+            "ignore_boxes": actor_record[0x11],
+            "x": u16(actor_pos), "y": u16(actor_pos, 2),
+            "moving": actor_moving,
+        }
+        camera = {
+            "x": u16(session.read_memory("snesMemory", CAMERA_CURRENT_X, 2)),
+            "follow_actor": session.read_memory(
+                "snesMemory", C15_CAMERA_FOLLOWS, 1)[0],
+            "mode": session.read_memory("snesMemory", C15_CAMERA_MODE, 1)[0],
+        }
+        walk = {
+            # The normalized movement entry can reuse generic request/result
+            # scratch. The dedicated LWE request remains source-stable; the
+            # actor's committed movement destination is the resolved target.
+            "requested": [u16(session.read_memory("snesMemory", LOAD_EGO_X, 2)),
+                          u16(session.read_memory("snesMemory", LOAD_EGO_Y, 2))],
+            "resolved": [u16(session.read_memory("snesMemory", C31_DEST_X + 2, 2)),
+                         u16(session.read_memory("snesMemory", MOVE_DEST_Y + 2, 2))],
+        }
+        movement = {
+            "actor1_destination": [
+                u16(session.read_memory("snesMemory", 0x7FFDE5 + 2, 2)),
+                u16(session.read_memory("snesMemory", 0x7E7BAA + 2, 2)),
+            ],
+            "actor1_walkbox": session.read_memory("snesMemory", 0x7FFDA5 + 1, 1)[0],
+            "actor1_destination_box": session.read_memory(
+                "snesMemory", 0x7FFDC5 + 1, 1)[0],
+            "actor1_leg_target": [
+                u16(session.read_memory("snesMemory", 0x7E7C8A + 2, 2)),
+                u16(session.read_memory("snesMemory", 0x7E7CCA + 2, 2)),
+            ],
+            "actor1_fraction": [
+                u16(session.read_memory("snesMemory", 0x7E7D0A + 2, 2)),
+                u16(session.read_memory("snesMemory", 0x7E7D4A + 2, 2)),
+            ],
+            "actor1_current_box": session.read_memory("snesMemory", 0x7E7BEA + 1, 1)[0],
+            "move_tick": u16(session.read_memory("snesMemory", 0x7E7EB9, 2)),
+        }
+        require(actor["room"] == 2 and actor["present"] == 1,
+                f"Ego was not installed in the destination room: {actor}")
+        require(walk["requested"] == [6, 7] and walk["resolved"] == [6, 7],
+                f"optional post-entry walk operands were not applied: {walk}")
+        require(actor_moving == 0 and [actor["x"], actor["y"]] == [6, 7],
+                f"optional post-entry walk did not settle at its target: {actor}; {movement}")
+        require(camera["follow_actor"] == 1 and camera["mode"] == 1,
+                f"camera follow state does not match host semantics: {camera}")
+        require(int(global_id) in observed_ids,
+                "dynamic boot global was not bound through generated resolver data")
+        require(final["stats"]["exhaustions"] == 0,
+                "resolver exhausted during two-room conformance")
+
+    return {
+        "mode": "load-room-with-ego",
+        "result": "pass",
+        "source_program_units": {
+            "GlobalProgram(1)": global_id,
+            "RoomEntryProgram(1)": entry_id,
+            "ObjectProgram(room=1,object=70)": object_id,
+            "RoomEntryProgram(2)": second_entry_id,
+            "ObjectProgram(room=2,object=72)": second_object_id,
+        },
+        "room_sequence": room_sequence,
+        "timeline": timeline,
+        "entry_captures": entry_captures,
+        "entry_resumes": entry_resumes,
+        "global_live_bindings": global_live_bindings,
+        "room_one_bundle_program_unit_ids": sorted(room_one_program_units),
+        "room_one_bundle_program_units_released": True,
+        "final": final,
+        "actor1": actor,
+        "camera": camera,
+        "walk": walk,
+        "movement": movement,
+        "observed_program_unit_ids": sorted(observed_ids),
+        "resolver_directory_hashes": inputs["hashes"],
+        "source_identity": inputs["source"],
+    }
+
+
+def run_find_inventory(args: argparse.Namespace,
+                       inputs: dict[str, Any]) -> dict[str, Any]:
+    require(inputs["manifest"].get("conformance_case") == "find-inventory",
+            "the selected compiler manifest is not the findInventory fixture")
+    global_id = inputs["identity_to_id"].get("GlobalProgram(1)")
+    require(global_id is not None,
+            "generated directory lacks GlobalProgram(1)")
+    with _session(args) as session:
+        _cold_reset(session)
+        _run_exact(session, 10)
+        final: dict[str, Any] = {}
+        for _ in range(args.frames):
+            _run_exact(session, 1)
+            error = session.read_memory("snesMemory", ERROR, 1)[0]
+            final = {
+                "frame": int(session.get_state()["frameCount"]),
+                "room": session.read_memory("snesMemory", ROOM, 1)[0],
+                "error": error,
+                "results": variables(session, tuple(range(50, 59))),
+                "stats": stats(session),
+                "active_slots": active_slots(session),
+            }
+            if final["results"]["58"] == 72:
+                break
+            require(error == 0,
+                    f"native findInventory failed before publishing results: {final}")
+        expected = {
+            "50": 70, "51": 72, "52": 0, "53": 0, "54": 72,
+            "55": 75, "56": 75, "57": 72, "58": 72,
+        }
+        require(final.get("results") == expected,
+                f"native owner-order/index semantics differ: {final}")
+        require(final["error"] == 0,
+                f"native findInventory left a SCUMM error: {final}")
+        require(not any(row.get("identity") == "GlobalProgram(1)"
+                        for row in final["active_slots"]),
+                f"findInventory conformance global did not retire: {final}")
+        require(final["stats"]["exhaustions"] == 0,
+                f"resolver exhausted in the findInventory control: {final}")
+    return {
+        "mode": "find-inventory",
+        "result": "pass",
+        "expected_results": expected,
+        "final": final,
+        "program_unit_id": int(global_id),
+        "resolver_directory_hashes": inputs["hashes"],
+        "source_identity": inputs["source"],
+    }
+
+
+def run_draw_box(args: argparse.Namespace,
+                 inputs: dict[str, Any]) -> dict[str, Any]:
+    require(inputs["manifest"].get("conformance_case") == "draw-box",
+            "the selected compiler manifest is not the drawBox conformance fixture")
+    global_id = inputs["identity_to_id"].get("GlobalProgram(1)")
+    entry_id = inputs["identity_to_id"].get("RoomEntryProgram(1)")
+    require(global_id is not None and entry_id is not None,
+            "generated directory lacks the drawBox route identities")
+
+    carrier_path = args.rom.with_name(args.rom.stem + ".carrier.json")
+    require(carrier_path.is_file(), f"missing carrier manifest: {carrier_path}")
+    carrier = json.loads(carrier_path.read_text(encoding="utf-8"))
+    layout = carrier.get("layout")
+    require(isinstance(layout, dict) and "backend_reserved" in layout,
+            "drawBox native acceptance requires the SA-1 indexed surface carrier")
+    bank_text, offset_text = str(layout["backend_reserved"]["address"]).split(":", 1)
+    backend_base = (int(bank_text, 16) << 16) | int(offset_text, 16)
+    surface_state = backend_base + 0x80
+    timeline: list[dict[str, Any]] = []
+    observed_ids: set[int] = set()
+    with _session(args) as session:
+        _cold_reset(session)
+        _run_exact(session, 10)
+        final: dict[str, Any] = {}
+        for _ in range(args.frames):
+            _run_exact(session, 1)
+            bindings = valid_bindings(session)
+            observed_ids.update(row["program_unit_id"] for row in bindings)
+            final = {
+                "frame": int(session.get_state()["frameCount"]),
+                "room": session.read_memory("snesMemory", ROOM, 1)[0],
+                "error": session.read_memory("snesMemory", ERROR, 1)[0],
+                "draw_box_complete": variables(session, (60,))["60"],
+                "nested_depth": session.read_memory("snesMemory", 0x7FD335, 1)[0],
+                "draw_box_scratch": session.read_memory("snesMemory", 0x7F34F0, 10).hex(),
+                "surface_service_state": session.read_memory("snesMemory", 0x401084, 0x20).hex(),
+                "last_opcode": session.read_memory("snesMemory", 0x7E2306, 1)[0],
+                "common_pc": u16(session.read_memory("snesMemory", 0x7E2300, 2)),
+                "program_select": session.read_memory("snesMemory", 0x7E2362, 1)[0],
+                "vm_status": session.read_memory("snesMemory", 0x7E2302, 1)[0],
+                "current_slot": session.read_memory("snesMemory", 0x7E2A88, 1)[0],
+                "active_slots": active_slots(session),
+                "cpu": session.get_cpu_state("Snes"),
+                "bindings": bindings,
+                "stats": stats(session),
+            }
+            if not timeline or any(final[key] != timeline[-1][key]
+                                   for key in ("room", "error", "draw_box_complete",
+                                               "active_slots", "last_opcode", "common_pc")):
+                timeline.append(final)
+            require(final["error"] == 0,
+                    f"native drawBox failed: {final}; timeline={timeline[-8:]}")
+            if final["room"] == 1 and final["draw_box_complete"] == 1:
+                break
+        require(final.get("room") == 1 and final.get("draw_box_complete") == 1,
+                f"the room-entry drawBox program did not complete: "
+                f"timeline={timeline[-8:]}; final={final}")
+        # Drain the ordinary video event path before inspecting the stable
+        # indexed backing. The SCUMM drawBox writes the current projection;
+        # the video service owns destination offsets and clipping dimensions.
+        _run_exact(session, 3)
+        error = session.read_memory("snesMemory", ERROR, 1)[0]
+        require(error == 0, f"SCUMM error after drawBox presentation: {error}")
+        destination_x = u16(session.read_memory("snesMemory", surface_state + 0x10, 2))
+        destination_y = u16(session.read_memory("snesMemory", surface_state + 0x12, 2))
+        copy_width = u16(session.read_memory("snesMemory", surface_state + 0x14, 2))
+        copy_height = u16(session.read_memory("snesMemory", surface_state + 0x16, 2))
+        surface_status = session.read_memory("snesMemory", surface_state + 0x04, 1)[0]
+        require(surface_status == 1 and copy_width >= 256 and copy_height >= 53,
+                "native drawBox fixture lacks the expected active room projection: "
+                f"status={surface_status}, copy={copy_width}x{copy_height}")
+        surface = session.read_memory("snesMemory", VIDEO_SURFACE_BASE, 256 * 224)
+
+    def pixel(x: int, y: int) -> int:
+        return surface[(destination_y + y) * 256 + destination_x + x]
+
+    direct = [[pixel(x, y) for x in range(10, 13)] for y in (20, 21)]
+    variable = [[pixel(x, y) for x in range(13, 16)] for y in range(23, 26)]
+    clipped = [[pixel(x, y) for x in range(250, 256)] for y in range(50, 53)]
+    boundaries = {
+        "direct_left": pixel(9, 20), "direct_right": pixel(13, 20),
+        "variable_left": pixel(12, 23), "variable_right": pixel(16, 25),
+        "clipped_right": pixel(255, 52),
+    }
+    require(direct == [[201] * 3, [201] * 3],
+            f"direct inclusive drawBox differs from SCUMM host semantics: {direct}")
+    require(variable == [[202] * 3 for _ in range(3)],
+            f"variable/reversed drawBox differs from SCUMM host semantics: {variable}")
+    require(all(value != 201 for key, value in boundaries.items()
+                if key.startswith("direct_")) and
+            all(value != 202 for key, value in boundaries.items()
+                if key.startswith("variable_")),
+            f"drawBox wrote outside an inclusive rectangle: {boundaries}")
+    require(clipped == [[203] * 6 for _ in range(3)],
+            f"drawBox did not clip to the projected room surface: {clipped}")
+    require(int(global_id) in observed_ids and int(entry_id) in observed_ids,
+            "drawBox route did not execute through generated resident directories")
+    require(final["stats"]["exhaustions"] == 0,
+            "resolver exhausted during drawBox conformance")
+    return {
+        "mode": "draw-box",
+        "result": "pass",
+        "program_unit_ids": {
+            "GlobalProgram(1)": global_id,
+            "RoomEntryProgram(1)": entry_id,
+        },
+        "surface": {
+            "base": VIDEO_SURFACE_BASE,
+            "state": surface_state,
+            "status": surface_status,
+            "destination": [destination_x, destination_y],
+            "copy": [copy_width, copy_height],
+        },
+        "pixels": {
+            "direct_inclusive_color_201": direct,
+            "variable_reversed_color_202": variable,
+            "clipped_color_203": clipped,
+            "outside_boundaries": boundaries,
+        },
+        "final": final,
+        "observed_program_unit_ids": sorted(observed_ids),
+        "resolver_directory_hashes": inputs["hashes"],
+        "source_identity": inputs["source"],
+    }
+
+
 def _session(args: argparse.Namespace):
     if not args.nexen.is_file() or not os.access(args.nexen, os.X_OK):
         raise RuntimeError(f"Nexen is unavailable: {args.nexen}")
@@ -848,7 +1301,9 @@ def _press_exact(session: Any, mask: int) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("dynamic-route", "dynamic-candidates", "exhaustion"),
+    parser.add_argument("--mode", choices=("dynamic-route", "dynamic-candidates",
+                                            "exhaustion", "load-room-with-ego",
+                                            "find-inventory", "draw-box"),
                         required=True)
     parser.add_argument("--rom", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -864,6 +1319,12 @@ def main() -> int:
         report = run_dynamic_route(args, inputs)
     elif args.mode == "dynamic-candidates":
         report = run_candidate_probe(args, inputs)
+    elif args.mode == "load-room-with-ego":
+        report = run_load_room_with_ego(args, inputs)
+    elif args.mode == "find-inventory":
+        report = run_find_inventory(args, inputs)
+    elif args.mode == "draw-box":
+        report = run_draw_box(args, inputs)
     else:
         report = run_exhaustion(args, inputs)
     report["fixture_manifest_path"] = str(args.manifest)

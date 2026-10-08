@@ -31,25 +31,126 @@ from .capability_frontier import (
 
 
 _OPERATION_SUPPORT_EVIDENCE: dict[str, dict[str, tuple[str, str]]] = {
+    **{
+        operation: {
+            "host_runtime": (
+                "SUPPORTED",
+                "copyright-free C2 extended fixture and host trace cover signed values, "
+                "operand modes, branch outcomes, and yield/resume semantics",
+            ),
+            "snes_backend": (
+                "SUPPORTED",
+                "compiled program representation preserves the canonical SCUMM v5 "
+                "instruction bytes consumed by the generic interpreter",
+            ),
+            "snes_runtime": (
+                "SUPPORTED",
+                "bounded Nexen C2 extended fixture matches host-visible variables, "
+                "program counter, delay, and terminal status",
+            ),
+            "native_conformance": (
+                "SUPPORTED",
+                "Nexen extended fixture passes with explicit initial globals; native "
+                "state matches the host fixture through signed arithmetic, branches, "
+                "variable assignment, delay yield/resume, and termination",
+            ),
+            "save_restore": (
+                "PARTIAL",
+                "host save preserves global variables and script continuation; portable "
+                "native save-state serialization is not certified",
+            ),
+        }
+        for operation in (
+            "write_variable", "multiply", "divide", "and", "or",
+            "decrement_variable", "branch_less_than", "branch_greater_than",
+            "branch_less_equal", "branch_greater_equal", "branch_not_equal",
+            "branch_equal_zero", "branch_not_equal_zero", "delay_variable",
+            "stop_object_code",
+        )
+    },
     "draw_box": {
         "host_runtime": (
             "SUPPORTED",
             "conformance tests cover direct/variable operands, inclusive/reversed bounds, "
             "viewport projection, clipping, and color writes",
         ),
+        "snes_backend": (
+            "PARTIAL",
+            "the opcode is lowered to the generic indexed-surface fill service when the "
+            "build supplies a writable SCUMM room surface; other rendering profiles "
+            "are not certified",
+        ),
+        "snes_runtime": (
+            "SUPPORTED",
+            "Nexen indexed-room-surface conformance verifies direct and variable operands, "
+            "inclusive/reversed bounds, clipping, color writes, and untouched neighbors; "
+            "this claim is scoped to the indexed room-surface backend",
+        ),
+        "native_conformance": (
+            "SUPPORTED",
+            "copyright-free Nexen fixture compares exact pixels for direct, variable, "
+            "reversed-bound, clipped, and out-of-surface rectangles",
+        ),
+        "save_restore": (
+            "UNKNOWN",
+            "portable persistence of mutated room-surface pixels is not certified",
+        ),
+    },
+    "system_operation": {
+        "host_runtime": (
+            "UNSUPPORTED",
+            "restart, pause, and quit require generic platform lifecycle actions; the host engine has no such dispatch contract",
+        ),
+        "snes_backend": (
+            "UNSUPPORTED",
+            "the operation is represented in IR, but no backend lowering or platform-service ABI is implemented",
+        ),
         "snes_runtime": (
             "UNSUPPORTED",
-            "native path currently consumes the instruction operands without drawing pixels",
+            "no native SCUMM v5 system-operation handler is wired to a platform lifecycle service",
+        ),
+        "native_conformance": (
+            "UNKNOWN",
+            "no native restart/pause/quit conformance program exists",
+        ),
+        "save_restore": (
+            "NOT_APPLICABLE",
+            "platform lifecycle requests do not define persistent SCUMM game state",
+        ),
+    },
+    "start_script": {
+        "host_runtime": (
+            "PARTIAL",
+            "copyright-free host lifecycle controls cover argument transfer, nested child execution, "
+            "yield/resume, slot reuse, and same-script replacement; the full dynamic target domain "
+            "and all scheduler interleavings are not exhaustively certified",
+        ),
+        "snes_backend": (
+            "PARTIAL",
+            "static script tables and compiler-generated canonical ProgramUnit directories both "
+            "feed the generic StartScript dispatcher, but whole-corpus target availability is not certified",
+        ),
+        "snes_runtime": (
+            "PARTIAL",
+            "Nexen C4 and dynamic-residency controls exercise argument transfer, nested starts, "
+            "yielded caller resumption, variable-selected global resolution, live-global room "
+            "transitions, selector reuse, and stale-generation protection; this is bounded evidence",
+        ),
+        "native_conformance": (
+            "PARTIAL",
+            "bounded Nexen controls compare observable C4 locals/status and generated-resolver "
+            "markers against the host residency simulator; not every SCUMM v5 scheduling interaction "
+            "or source target is covered",
+        ),
+        "save_restore": (
+            "UNKNOWN",
+            "portable native saves do not yet serialize/reconstruct all active script and resolver state",
         ),
     },
     "get_actor_width": {
         "host_runtime": (
             "SUPPORTED",
             "conformance tests cover direct/variable actor operands and actorOps width mutation",
-        ),
-        "snes_backend": (
-            "SUPPORTED",
-            "the SNES backend retains the SCUMM v5 opcode and compiles to the native dispatch path",
         ),
         "snes_backend": (
             "SUPPORTED",
@@ -62,10 +163,6 @@ _OPERATION_SUPPORT_EVIDENCE: dict[str, dict[str, tuple[str, str]]] = {
         "native_conformance": (
             "SUPPORTED",
             "bounded C14 Nexen control checks actor 1 width 35 and actor 2 default width 24",
-        ),
-        "save_restore": (
-            "NOT_APPLICABLE",
-            "getActorWidth is read-only; actor and variable persistence are owned by their existing state records",
         ),
         "save_restore": (
             "NOT_APPLICABLE",
@@ -100,10 +197,53 @@ _OPERATION_SUPPORT_EVIDENCE: dict[str, dict[str, tuple[str, str]]] = {
             "generic conformance tests cover direct/variable operands, destination preflight, "
             "entry-object placement, optional walk, and VAR_WALKTO_OBJ across ENCD yield",
         ),
+        "snes_backend": (
+            "SUPPORTED",
+            "the original SCUMM v5 instruction is retained and routed through the shared room-transition service",
+        ),
         "snes_runtime": (
-            "PARTIAL",
-            "native request/room-commit/postamble implementation exists; operation-level "
-            "semantic conformance remains incomplete",
+            "SUPPORTED",
+            "scoped to the generated SCUMM v5 room-service contract: Nexen verifies "
+            "direct/variable room and entry-object operands, room commit, EXCD/ENCD "
+            "ordering, yielded ENCD continuation, live global ownership across two "
+            "transitions, VAR_WALKTO_OBJ lifetime, actor placement, camera follow, "
+            "optional walk completion, and settled state; portable save coverage is "
+            "separate",
+        ),
+        "native_conformance": (
+            "SUPPORTED",
+            "copyright-free compiler-generated four-room Nexen control compares "
+            "observable room/actor/camera/script state for direct and variable operands, "
+            "two exits and entries, yielded entry continuation, persistent global "
+            "activation, and settled optional movement",
+        ),
+        "save_restore": (
+            "UNKNOWN",
+            "native portable save/restore during an in-flight room transition is not certified",
+        ),
+    },
+    "find_inventory": {
+        "host_runtime": (
+            "SUPPORTED",
+            "conformance covers direct/variable owner and ordinal operands, ordered object IDs, "
+            "empty/out-of-range results, and ownership changes",
+        ),
+        "snes_backend": (
+            "SUPPORTED",
+            "the SCUMM v5 opcode is retained and dispatched by the generic native interpreter",
+        ),
+        "snes_runtime": (
+            "SUPPORTED",
+            "native implementation enumerates ascending object IDs in the configured global-object owner table; the current table capacity is 2048 entries and builds must reject larger domains",
+        ),
+        "native_conformance": (
+            "SUPPORTED",
+            "Nexen fixture matches host results for direct and variable forms, ordering, "
+            "empty/out-of-range lookup, and live owner mutation",
+        ),
+        "save_restore": (
+            "NOT_APPLICABLE",
+            "findInventory is a read-only query; persistence belongs to the separately tracked object-owner state",
         ),
     },
 }
@@ -1095,16 +1235,46 @@ def analyze_capabilities(
                 "host_runtime", "snes_runtime", "save_restore", "native_conformance")
                 if dimensions[name]["status"] in {"PARTIAL", "UNSUPPORTED", "UNKNOWN"}]
             if non_supported:
+                execution_dimensions = (
+                    "front_end_decode", "ir_representation", "semantic_ir",
+                    "snes_backend", "host_runtime", "snes_runtime",
+                    "native_conformance",
+                )
+                execution_gaps = {
+                    name: dimensions[name]["status"] for name in execution_dimensions
+                    if dimensions[name]["status"] not in {"SUPPORTED", "NOT_APPLICABLE"}
+                }
+                persistence_gaps = (
+                    {"save_restore": dimensions["save_restore"]["status"]}
+                    if dimensions["save_restore"]["status"] not in {
+                        "SUPPORTED", "NOT_APPLICABLE"} else {}
+                )
                 if is_opaque:
                     classification = "UNKNOWN_BEYOND_OPAQUE_BOUNDARY"
-                elif reach in {"ROOT", "DEFINITE"}:
-                    classification = "DEFINITE_BLOCKER" if host_status == "UNSUPPORTED" else "DEFINITE_UNVERIFIED"
-                elif reach == "CONDITIONAL":
-                    classification = "CONDITIONAL_BLOCKER" if host_status == "UNSUPPORTED" else "CONDITIONAL_UNVERIFIED"
-                elif reach == "POSSIBLE":
-                    classification = "POSSIBLE_DYNAMIC_REQUIREMENT"
+                elif not execution_gaps:
+                    classification = {
+                        "ROOT": "DEFINITE_STATE_PERSISTENCE_UNVERIFIED",
+                        "DEFINITE": "DEFINITE_STATE_PERSISTENCE_UNVERIFIED",
+                        "CONDITIONAL": "CONDITIONAL_STATE_PERSISTENCE_UNVERIFIED",
+                        "POSSIBLE": "POSSIBLE_STATE_PERSISTENCE_UNVERIFIED",
+                        "UNRESOLVED": "UNRESOLVED_STATE_PERSISTENCE",
+                        "UNREACHED": "CORPUS_ONLY_STATE_PERSISTENCE",
+                    }[reach]
                 else:
-                    classification = "UNKNOWN_BEYOND_UNCERTAINTY"
+                    known_execution_failure = any(
+                        dimensions[name]["status"] == "UNSUPPORTED"
+                        for name in execution_dimensions
+                    )
+                    if reach in {"ROOT", "DEFINITE"}:
+                        classification = ("DEFINITE_BLOCKER" if known_execution_failure
+                                          else "DEFINITE_UNVERIFIED")
+                    elif reach == "CONDITIONAL":
+                        classification = ("CONDITIONAL_BLOCKER" if known_execution_failure
+                                          else "CONDITIONAL_UNVERIFIED")
+                    elif reach == "POSSIBLE":
+                        classification = "POSSIBLE_DYNAMIC_REQUIREMENT"
+                    else:
+                        classification = "UNKNOWN_BEYOND_UNCERTAINTY"
                 key = (classification, identity, operation)
                 item = frontier_by_key.get(key)
                 if item is None:
@@ -1119,6 +1289,8 @@ def analyze_capabilities(
                         next((paths.get(opaque) for opaque in reachability["uncertainty_sources"]["reachable_opaque_executables"]
                               if opaque in paths), None)),
                     "support_dimensions_not_fully_supported": non_supported,
+                    "execution_gap_dimensions": execution_gaps,
+                    "persistence_gap_dimensions": persistence_gaps,
                     "opaque_or_dynamic_uncertainty": is_opaque or reach in {"POSSIBLE", "UNRESOLVED"},
                     "diagnostic": instruction.diagnostic,
                     "occurrences": 0,
@@ -1199,6 +1371,7 @@ def build_opcode_coverage(
     family_counts: Counter[str] = Counter()
     structural_counts: Counter[str] = Counter()
     semantic_counts: Counter[str] = Counter()
+    cfg_counts: Counter[str] = Counter()
     groups: dict[tuple[int, int | None], list[tuple[str, Any]]] = defaultdict(list)
     family_rows: dict[str, dict[str, Any]] = {}
     backend_supported = runtime_supported = 0
@@ -1209,6 +1382,7 @@ def build_opcode_coverage(
             raw_counts[instruction.opcode] += 1
             structural_counts[instruction.structural_status] += 1
             semantic_counts[instruction.semantic_status] += 1
+            cfg_counts[getattr(instruction, "cfg_reachability", "UNCLASSIFIED")] += 1
             if instruction.opcode_family:
                 family_counts[instruction.opcode_family] += 1
                 row = family_rows.setdefault(instruction.opcode_family, {
@@ -1284,12 +1458,34 @@ def build_opcode_coverage(
             "semantic_ir_available_occurrences": semantic_counts.get("SEMANTIC_IR_AVAILABLE", 0),
             "semantic_unsupported_occurrences": semantic_counts.get("SEMANTIC_UNSUPPORTED", 0),
             "semantic_unknown_occurrences": semantic_counts.get("SEMANTIC_UNKNOWN", 0),
+            "control_flow_reachable_occurrences": cfg_counts.get("REACHABLE", 0),
+            "control_flow_conditional_occurrences": cfg_counts.get(
+                "REACHABLE_CONDITIONAL", 0),
+            "decoded_unreachable_occurrences": cfg_counts.get(
+                "DECODED_UNREACHABLE", 0),
+            "control_flow_uncertain_occurrences": cfg_counts.get(
+                "CONTROL_FLOW_UNCERTAIN", 0),
             "backend_supported_occurrences": backend_supported,
             "snes_runtime_supported_occurrences": runtime_supported,
         },
         "opcode_schema": schema_coverage(),
         "raw_opcode_occurrences": {f"0x{opcode:02X}": count
                                    for opcode, count in sorted(raw_counts.items())},
+        "control_flow_reachability": dict(sorted(cfg_counts.items())),
+        "decoded_unreachable_examples": [
+            {"source_identity": identity, "source_pc": instruction.pc,
+             "opcode": f"0x{instruction.opcode:02X}",
+             "operation": instruction.operation,
+             "source_body_sha256": scripts[identity].source.source_sha256}
+            for identity, script in sorted(scripts.items())
+            for instruction in script.instructions
+            if getattr(instruction, "cfg_reachability", "") == "DECODED_UNREACHABLE"
+        ][:64],
+        "cfg_incomplete_executables": [
+            {"source_identity": identity, "uncertainty_pcs": list(script.cfg_uncertainty_pcs),
+             "opaque_from_pc": script.opaque_from_pc}
+            for identity, script in sorted(scripts.items()) if not script.cfg_complete
+        ],
         "families": family_report,
         "structural_unknowns": examples_by_unknown,
         "invariant": "STRUCTURAL DECODE != SEMANTIC IR != BACKEND SUPPORT != RUNTIME SUPPORT",
@@ -1545,7 +1741,7 @@ def analyze_game(
     }
     whole_game_readiness = build_whole_game_readiness(
         census, executable_report, opcode_coverage, capabilities,
-        capability_frontier,
+        capability_frontier, graph, reachability,
     )
     opaque_rows = [item for item in executable_rows if item["analysis_status"] != "COMPLETE"]
     opaque = {

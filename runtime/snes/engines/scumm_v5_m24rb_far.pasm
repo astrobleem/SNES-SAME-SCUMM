@@ -1080,7 +1080,9 @@ ScummV5_M24RB_Far_CommitRoom__source_actor_ready_done:
     ; Complete the source-neutral loadRoomWithEgo installation before ENCD.
     ; The decoded request survives retirement of its room-local caller.
     lda.l SAME_SCUMM_LOAD_EGO_ACTIVE
-    beq ScummV5_M24RB_Far_CommitRoom__load_ego_done
+    bne ScummV5_M24RB_Far_CommitRoom__load_ego_install
+    brl ScummV5_M24RB_Far_CommitRoom__load_ego_done
+ScummV5_M24RB_Far_CommitRoom__load_ego_install:
     rep #$20
     .a16
     lda.l SAME_SCUMM_LOAD_EGO_OBJECT
@@ -1099,11 +1101,45 @@ ScummV5_M24RB_Far_CommitRoom__source_actor_ready_done:
     asl
     asl
     asl
+    sta.l SAME_SCUMM_C14_BASE
+    sep #$20
+    .a8
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C14_BASE
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_PRESENT,x
+    bne ScummV5_M24RB_Far_CommitRoom__load_ego_actor_ready
+    jsl ScummV5_PutActor_FarCall_DefaultActor
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C14_BASE
+    tax
+    sep #$20
+    .a8
+ScummV5_M24RB_Far_CommitRoom__load_ego_actor_ready:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C14_BASE
     tax
     sep #$20
     .a8
     lda.l SAME_SCUMM_LOAD_EGO_ROOM
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ROOM,x
+    beq ScummV5_M24RB_Far_CommitRoom__load_ego_actor_hidden
+    lda #$01
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_VISIBLE,x
+    bra ScummV5_M24RB_Far_CommitRoom__load_ego_actor_visibility_done
+ScummV5_M24RB_Far_CommitRoom__load_ego_actor_hidden:
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_VISIBLE,x
+ScummV5_M24RB_Far_CommitRoom__load_ego_actor_visibility_done:
     jsl ScummV5_Movement_ObjectWalk_Far
     bcc ScummV5_M24RB_Far_CommitRoom__load_ego_done
     rep #$20

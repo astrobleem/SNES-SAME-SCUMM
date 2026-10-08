@@ -294,6 +294,40 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
         )
         self.assertEqual(result.instructions[1].control_flow, "TERMINATOR")
         self.assertEqual(result.instructions[0].branch_target, 7)
+        self.assertEqual(
+            {item.pc: item.cfg_reachability for item in result.instructions},
+            {
+                0: "REACHABLE",
+                5: "REACHABLE_CONDITIONAL",
+                7: "REACHABLE_CONDITIONAL",
+                12: "REACHABLE_CONDITIONAL",
+            },
+        )
+
+    def test_linear_bytes_after_terminator_are_explicitly_unreachable(self) -> None:
+        result = decode_script(
+            bytes((0x62, 0, 0x1A, 1, 0, 7, 0, 0xA0)),
+            identity="fixture/unreachable-suffix", kind="SCRP", number=1,
+            room=None, resource_key="script.1", game_name="synthetic",
+            source_member="fixture", resource_offset=0, source_offset=0,
+        )
+        self.assertEqual(
+            [item.cfg_reachability for item in result.instructions],
+            ["REACHABLE", "DECODED_UNREACHABLE", "DECODED_UNREACHABLE"],
+        )
+
+    def test_invalid_branch_boundary_makes_cfg_incomplete_at_source(self) -> None:
+        # Branch target lands in the middle of a decoded instruction.
+        result = decode_script(
+            bytes((0x28, 0, 0, 0xFC, 0xFF, 0xA0)),
+            identity="fixture/invalid-target", kind="SCRP", number=1,
+            room=None, resource_key="script.1", game_name="synthetic",
+            source_member="fixture", resource_offset=0, source_offset=0,
+        )
+        self.assertFalse(result.cfg_complete)
+        self.assertEqual(result.cfg_uncertainty_pcs, (0,))
+        self.assertEqual(result.instructions[0].cfg_reachability,
+                         "CONTROL_FLOW_UNCERTAIN")
 
     def test_object_verb_opaque_boundary_uses_source_pc_coordinates(self) -> None:
         program = b"\x2F\x0A\xC8\xFF"

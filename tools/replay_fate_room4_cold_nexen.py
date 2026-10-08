@@ -641,6 +641,45 @@ def _native_directory_for_build(identity_path: Path) -> dict[str, Any]:
     }
 
 
+def _generated_input_identity(
+    identity: dict[str, Any], relative_path: str,
+) -> dict[str, str]:
+    """Return a generated-input digest sealed by the build identity.
+
+    A later build/test may overwrite workspace-generated includes. Dynamic
+    replay evidence must bind to the immutable input list recorded for the ROM,
+    not compare the old ROM against whatever currently occupies that path.
+    Static compatibility checks still compare the live source bytes below.
+    """
+    generated = identity.get("generated_inputs")
+    if not isinstance(generated, list):
+        raise RuntimeError("ROM build identity has no generated-input manifest")
+    manifest_sha = hashlib.sha256(
+        json.dumps(generated, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    if manifest_sha != identity.get("generated_inputs_sha256"):
+        raise RuntimeError("ROM build identity generated-input manifest is inconsistent")
+    matches = [item for item in generated
+               if isinstance(item, dict) and item.get("path") == relative_path]
+    if len(matches) != 1 or not isinstance(matches[0].get("sha256"), str):
+        raise RuntimeError(
+            f"ROM build identity does not uniquely bind generated input {relative_path}"
+        )
+    return {"path": relative_path, "sha256": matches[0]["sha256"]}
+
+
+def _read_identity_bound_generated_input(path: Path, expected_sha: str) -> str:
+    """Read a live generated input only when it still matches the ROM record."""
+    payload = path.read_bytes()
+    actual_sha = hashlib.sha256(payload).hexdigest()
+    if actual_sha != expected_sha:
+        raise RuntimeError(
+            f"generated input differs from ROM build identity: {path}: "
+            f"{actual_sha} != {expected_sha}"
+        )
+    return payload.decode("utf-8")
+
+
 def _directory_unit(
     directory: dict[str, Any], *, kind: str, room: int | None = None,
     number: int,
@@ -705,16 +744,12 @@ def _authentic_room7_book_source(
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
     generated_path = ROOT / "runtime/snes/generated/scumm_v5_room_data.inc.pasm"
     generated_relpath = str(generated_path.relative_to(ROOT))
-    generated_identity = next((item for item in identity.get("generated_inputs", [])
-                               if item.get("path") == generated_relpath), None)
-    if generated_identity is None:
-        raise RuntimeError("ROM build identity does not bind the global resolver")
-    generated_sha = hashlib.sha256(generated_path.read_bytes()).hexdigest()
-    if generated_sha != generated_identity.get("sha256"):
-        raise RuntimeError(
-            "global resolver differs from ROM build identity: "
-            f"{generated_sha} != {generated_identity.get('sha256')}"
-        )
+    generated_identity = _generated_input_identity(identity, generated_relpath)
+    generated_sha = generated_identity["sha256"]
+    native_directory = (
+        _native_directory_for_build(identity_path)
+        if ACTIVE_DYNAMIC_RESIDENCY else None
+    )
     selected_objects = set(
         identity.get("explicit_environment", {}).get(
             "SAME_SCUMM_APPEND_TERMINAL_EXECUTABLE_LOCAL_OBJECTS", ""
@@ -724,27 +759,34 @@ def _authentic_room7_book_source(
         raise RuntimeError(
             "ROM build identity does not select the authentic room7 object133 OBCD"
         )
-    generated_text = generated_path.read_text(encoding="utf-8")
-    record_entries = re.search(
-        r"ScummV5_Verb_Record_6_Entries:\s*\.word\s+([^\n]+)",
-        generated_text,
-    )
-    if record_entries is None:
-        raise RuntimeError("ROM-bound generated room7 verb directory is missing")
-    words = [int(item[1:], 16) for item in re.findall(r"\$[0-9A-Fa-f]{4}", record_entries[1])]
-    entries = list(zip(words[0::3], words[1::3], words[2::3]))
-    if not {(133, 9), (133, 11), (133, 90)}.issubset(
-        {(object_id, verb) for object_id, verb, _offset in entries}
-    ):
-        raise RuntimeError(
-            "ROM-bound room7 verb directory does not expose object133's authored verbs"
+    generated_text: str | None = None
+    if native_directory is None:
+        if hashlib.sha256(generated_path.read_bytes()).hexdigest() != generated_sha:
+            raise RuntimeError(
+                "global resolver differs from ROM build identity: "
+                f"{hashlib.sha256(generated_path.read_bytes()).hexdigest()} != {generated_sha}"
+            )
+        generated_text = generated_path.read_text(encoding="utf-8")
+        record_entries = re.search(
+            r"ScummV5_Verb_Record_6_Entries:\s*\.word\s+([^\n]+)",
+            generated_text,
         )
-    native_directory = (
-        _native_directory_for_build(identity_path)
-        if ACTIVE_DYNAMIC_RESIDENCY else None
-    )
+        if record_entries is None:
+            raise RuntimeError("ROM-bound generated room7 verb directory is missing")
+        words = [int(item[1:], 16) for item in
+                 re.findall(r"\$[0-9A-Fa-f]{4}", record_entries[1])]
+        entries = list(zip(words[0::3], words[1::3], words[2::3]))
+        if not {(133, 9), (133, 11), (133, 90)}.issubset(
+            {(object_id, verb) for object_id, verb, _offset in entries}
+        ):
+            raise RuntimeError(
+                "ROM-bound room7 verb directory does not expose object133's authored verbs"
+            )
+    else:
+        _directory_unit(native_directory, kind="OBCD", room=7, number=133)
     object133_unit = None
     if native_directory is None:
+        assert generated_text is not None
         if "ScummV5_M23A_Program_73:" not in generated_text:
             raise RuntimeError("ROM-bound program selector $73 for room7 object133 is missing")
     else:
@@ -932,18 +974,21 @@ def _authentic_room7_cat_source(
         raise RuntimeError("current ROM identity does not select both room7 cat OBCDs")
     room_data = ROOT / "runtime/snes/generated/scumm_v5_room_data.inc.pasm"
     room_data_rel = str(room_data.relative_to(ROOT))
-    data_identity = next((item for item in identity.get("generated_inputs", [])
-                          if item.get("path") == room_data_rel), None)
-    if (data_identity is None
-            or hashlib.sha256(room_data.read_bytes()).hexdigest() != data_identity.get("sha256")):
-        raise RuntimeError("generated object programs are not bound to this ROM identity")
-    generated_text = room_data.read_text(encoding="utf-8")
+    data_identity = _generated_input_identity(identity, room_data_rel)
+    generated_sha = data_identity["sha256"]
+    generated_text: str | None = None
     if native_directory is None:
+        if hashlib.sha256(room_data.read_bytes()).hexdigest() != generated_sha:
+            raise RuntimeError("generated object programs are not bound to this ROM identity")
+        generated_text = room_data.read_text(encoding="utf-8")
         for item in expected.values():
             if f"ScummV5_M23A_Program_{item['selector']:02X}:" not in generated_text:
                 raise RuntimeError(
                     f"ROM-bound object program ${item['selector']:02X} is missing"
                 )
+    else:
+        for object_id in expected:
+            _directory_unit(native_directory, kind="OBCD", room=7, number=object_id)
     local_table = _room_local_program_table(7, identity_path)
     if native_directory is None:
         local_selectors = local_table["script_to_program"]
@@ -998,7 +1043,8 @@ def _authentic_room7_cat_source(
         "local_scripts": local_report,
         "generated_object_data": {
             "path": room_data_rel,
-            "sha256": data_identity["sha256"],
+            "sha256": generated_sha,
+            "identity_source": "ROM build identity generated-input manifest",
         },
         "generated_room_local_table": local_table,
         "authored_progression": (
@@ -1102,18 +1148,10 @@ def _room_local_program_table(
     """Read this ROM's generated room-local selector table, fail-closed."""
     include = ROOT / "runtime/snes/generated/scumm_v5_rooms.inc.pasm"
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
-    input_identity = next((item for item in identity.get("generated_inputs", [])
-                           if item.get("path") == str(include.relative_to(ROOT))), None)
-    if input_identity is None:
-        raise RuntimeError(
-            "ROM build identity does not bind the generated room-local table"
-        )
-    include_sha = hashlib.sha256(include.read_bytes()).hexdigest()
-    if include_sha != input_identity.get("sha256"):
-        raise RuntimeError(
-            "generated room-local table differs from the ROM build identity: "
-            f"{include_sha} != {input_identity.get('sha256')}"
-        )
+    input_identity = _generated_input_identity(
+        identity, str(include.relative_to(ROOT)),
+    )
+    include_sha = input_identity["sha256"]
     if ACTIVE_DYNAMIC_RESIDENCY:
         native_directory = _native_directory_for_build(identity_path)
         units = {
@@ -1129,7 +1167,7 @@ def _room_local_program_table(
             "script_to_program_unit_id": units,
         }
     selectors = _parse_room_local_program_table(
-        include.read_text(encoding="utf-8"), room_number
+        _read_identity_bound_generated_input(include, include_sha), room_number
     )
     return {
         "room": room_number,
@@ -2345,6 +2383,10 @@ def main() -> int:
                 session,
                 expected_override_program=expected_override_program,
                 defer_release_sample=True,
+                poll_interval_frames=2,
+                poll_boundary_address=mapped_cpu_address_for_rom(
+                    rom, "Same_Input_Poll__edge_sequence_done", bank=0
+                ),
             )
             try:
                 report["room4_cutscene_completion"] = finish_room4_authored_cutscene(session)
@@ -2363,7 +2405,8 @@ def main() -> int:
                 predicate: Any,
             ) -> dict[str, Any]:
                 return room4_synchronous_input_edge(
-                    pulse_session, mask, predicate
+                    pulse_session, mask, predicate,
+                    poll_interval_frames=2,
                 )
 
             replay = replay_room4_open_trapdoor_prefix(
@@ -2398,7 +2441,8 @@ def main() -> int:
                     predicate: Any,
                 ) -> dict[str, Any]:
                     return room4_synchronous_input_edge(
-                        pulse_session, mask, predicate
+                        pulse_session, mask, predicate,
+                        poll_interval_frames=2,
                     )
 
                 report["room4_use_action"] = replay_room4_trapdoor_use(
