@@ -1,9 +1,11 @@
 # Current SCUMM/SAME Architecture
 
-This map records the audited baseline, the source-bound room compiler, and the
-partial whole-game analysis milestone. The compiler does not replace the VM or
-decode all SCUMM v5 operations. “Current layer” is the dominant responsibility
-of a component; some modules cross boundaries.
+This map records the source-bound room compiler, whole-game analyzer, native
+resident resolver, and current semantic-capability checkpoint. It does not
+claim whole-game runtime support: each operation still has independent
+front-end, IR, host, backend, native-runtime, and save evidence. “Current
+layer” is the dominant responsibility of a component; some modules cross
+boundaries.
 
 | Component | Responsibility; inputs → outputs | Consumer | Current layer | Desired layer |
 |---|---|---|---|---|
@@ -12,7 +14,7 @@ of a component; some modules cross boundaries.
 | `src/same/engines/scumm_v5/policy.py` | Parse SCUMM-specific resource, audio, geometry/presentation and copy-protection options. | SCUMM host and adapters | `GENERIC_SCUMM` | Typed source-edition policy; split backend realization preferences from source identity. |
 | `src/same/engines/scumm_v5/resources.py` | Decrypt/validate v5 indices/containers and expose stable `room.N`, `script.N`, `sound.N`, `costume.N`, `charset.N` keys. | Host runtime and cookers | `GENERIC_SCUMM` | Front-end resource catalog with archive/member/offset provenance. |
 | `room.py`, `costume.py`, `font.py`, `text.py`, `embedded_audio.py` under the SCUMM v5 package | Decode source room/object/verb/walkbox, costume, charset, text-control and embedded-audio structures. | Host, cookers, asset generators | `GENERIC_SCUMM` | Front-end parsers producing validated target-neutral resource data. |
-| `src/same/engines/scumm_v5/room_compiler.py`, `game_analysis.py`, `program_units.py`, `selector_demand.py`, `residency.py`, `residency_contract.py` | Reuse room IR; inventory legacy generated record candidates separately from callable carriers/SelectorUnits; emit selector-free directories and residency analysis. | Room/game compiler CLIs, tests, backend planning | `GENERIC_SCUMM` | Feed true SelectorUnit directories to a backend resolver/binder. **Analysis implemented; production binding remains planned.** |
+| `src/same/engines/scumm_v5/room_compiler.py`, `game_analysis.py`, `capability_frontier.py`, `program_units.py`, `selector_demand.py`, `residency.py`, `residency_contract.py` | Reuse room IR; inventory source executables/resources; separate structural decode, semantic IR and support evidence; emit source-bound graph, readiness and selector-free residency data. | Room/game compiler CLIs, tests, backend planning | `GENERIC_SCUMM` | Keep analysis target-neutral; enrich support evidence from generic conformance controls. |
 | `src/same/engines/scumm_v5/engine.py` | Interpret v5 bytecode; own scheduler, variables/bits, slots, actors, object state, verbs, room lifecycle, messages, cutscenes and logical sound requests. | SAME `EngineHost`, semantic tests | `GENERIC_SCUMM` | Preserve as host runtime/behavioral oracle; compare compiled operation execution against it. |
 | `cooked_room.py`, `room_visual.py` | Encode/decode versioned SC5C/SC5VIS records, source/profile/archive hashes and executable directories. | Host provider, build generators, native runtime | `GENERIC_SCUMM` | Stable compiler interchange/backend artifact schemas with explicit provenance. |
 | `tools/cook_scumm_v5_rooms.py`, `tools/compile_scumm_room.py`, `tools/compile_scumm_game.py` | Room compiler emits SC5C/IR; game analyzer emits source census, GameIR projection, graph, reachability, capabilities and frontiers deterministically. | SNES generators, source-build tooling, developer/tests | `BUILD_TOOLING` + `GENERIC_SCUMM` front end | Keep legacy room cooker; Milestone 3 may consume trusted analysis to derive backend manifests. **Room compilation and game analysis implemented, partial.** |
@@ -20,7 +22,7 @@ of a component; some modules cross boundaries.
 | `tools/generate_snes_scumm_variables.py` | Derive source variable capacity or synthetic equivalent; emit WRAM symbols and identity manifest. | Assembly and memory audits | `SNES_BACKEND` | GameIR source limits plus target-specific WRAM layout report. |
 | `tools/generate_snes_room_visuals.py`, `generate_snes_scumm_charset.py`, actor/object sprite generators | Convert decoded visual/font/costume/object source to bank-safe SNES data and descriptors. | Native rendering services and ROM build | `SNES_BACKEND` | Keep source parsing upstream; retain target palette/tile/bank packing here. |
 | `src/same/engines/scumm_v5/audio.py`, `same.music`, SCUMM/FATE music import tools | Preserve logical audio intent and build score realizations; title adapters read external formats. | Host audio services and SNES audio build | `GENERIC_SCUMM` + `BUILD_TOOLING` | Generic sound IR, title importer/profile, backend realization. |
-| `runtime/snes/engines/scumm_v5*.pasm` | Native bytecode fetch/dispatch, scheduler, SCUMM state, interaction, movement, room transactions and visual handoff. | Active engine in SNES kernel | `SNES_BACKEND` implementing generic semantics | Preserve semantics; gradually consume compiler-generated operations/tables rather than source encodings. |
+| `runtime/snes/engines/scumm_v5*.pasm` | Native bytecode fetch/dispatch, scheduler, SCUMM state, interaction, movement, room transactions, resident ProgramUnit resolver and visual handoff. | Active engine in SNES kernel | `SNES_BACKEND` implementing generic semantics | Preserve byte selector as ephemeral handle; continue generic semantic conformance and eventually consume more compiler-generated operations/tables. |
 | `runtime/snes/kernel/*`, `runtime/snes/services/*` | Frame/lifecycle, input polling, storage, video/audio and cartridge services with 65816/SA-1/WRAM contracts. | All native engine personalities | `SAME_GENERIC` | Stable target service API, isolated from SCUMM source syntax. |
 | `tools/build_snes.sh`, `generate_snes_engine_selection.py`, Make targets | Select build personality/features/profile, generate includes, invoke Poppy and audit ROM/map identities. | Developers/CI | `BUILD_TOOLING` | Keep orchestration; feed it a compiler-produced build plan. |
 | `examples/profiles/templates/fate_of_atlantis_*.json` | Identify Fate edition/archive keys, title policy, resource templates, optional audio/presentation settings, and selected script groups. | Profile loader, Fate cook/build | `FATE_SPECIFIC` | Thin edition profile; derived selection/capacity tables should be compiler output. |
@@ -45,13 +47,13 @@ the runtime payload contract.
 
 `game_analysis.py` builds whole-edition inventory and graph projections from
 the same `RoomBundleCompilation` and `decode_script()` implementations. It
-allocates no native selectors. Dynamic/opaque dependencies preserve closure
-uncertainty. The configured boot global now decodes structurally to completion
-and the source-wide known-boundary count has expanded substantially; three
-FATE rooms remain inventoried but unsupported by the room BOXD representation,
-with diagnostics retained instead of omission. See
-`MILESTONE_3_STRUCTURAL_DECODER.md` for exact external-corpus counts and
-remaining boundaries.
+allocates no native selectors. Dynamic/unresolved dependencies preserve
+closure uncertainty. The current canonical DOS-CD FATE corpus has 96 indexed
+and parsed rooms and 116,730 structurally decoded instructions; current
+normalized semantic IR covers all observed instructions. Whole-game execution
+support remains explicitly NOT READY because known host gaps and backend/native
+support evidence remain. See `CAPABILITY_ANALYSIS.md` and
+`CAPABILITY_FRONTIER_BURN_DOWN.md` for the measured frontier.
 
 `selector_demand.py` refines the earlier ProgramUnit projection into distinct
 source semantic executables, OBCD object resource records, VM-enterable
@@ -66,14 +68,13 @@ retained as historical compatibility data. See
 `MILESTONE_6_TRUE_SELECTOR_DEMAND.md` for the backend/runtime trace and exact
 room-7/room-98 reconciliation.
 
-`residency_contract.py` now consumes that selector-free directory in a pure
-compiler-side simulator. It models temporary selector bindings, generations,
-multiple pin reasons, bundle load/release, global lookup, activation nesting,
-room transitions, and portable canonical-identity restore. The CLI
-`tools/simulate_scumm_residency.py` emits deterministic traces and capacity
-reports. This proves the proposed contract over synthetic and compiler-known
-FATE scenarios only; native runtime binding/pinning is not implemented and
-actual scheduler liveness remains unknown.
+`residency_contract.py` consumes that selector-free directory in the simulator;
+the accepted native resolver now uses canonical ProgramUnit IDs, generated
+global/room directories, temporary selector bindings, generations and live
+activation pins. The bounded deterministic FATE route has passed with dynamic
+residency and matches the static control at semantic checkpoints. This proves
+the route, not whole-game FATE support; actual liveness outside tested states
+remains subject to capability and runtime validation.
 
 The architectural invariant is:
 

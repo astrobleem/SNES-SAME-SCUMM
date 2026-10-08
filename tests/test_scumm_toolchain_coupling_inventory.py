@@ -63,6 +63,7 @@ class ScummToolchainCouplingInventoryTests(unittest.TestCase):
             "MILESTONE_2.md",
             "MILESTONE_4_RESIDENCY.md",
             "MILESTONE_5_PROGRAM_UNITS.md",
+            "CAPABILITY_FRONTIER_BURN_DOWN.md",
         ):
             self.assertIn(name, ledger)
             self.assertTrue((ROOT / "docs/scumm-toolchain" / name).is_file())

@@ -37,22 +37,22 @@ def _data_only_object(object_id: int, index: int) -> bytes:
 def raw_pair(*, data_only_objects: int = 0) -> tuple[bytes, bytes]:
     # Global 1 has an unconditional start, a conditional start, a direct room
     # transition, and a variable script selector. Global 2 contains a known-
-    # width semantic-only actor query before a StartScript dependency, then an
+        # width semantic-only debug command before a StartScript dependency, then an
     # unregistered byte to prove only genuine structural uncertainty stops it.
     globals_ = {
         1: bytes((0x0A, 2, 0xFF, 0x28, 0x45, 0xC0, 3, 0,
-                  0x0A, 3, 0xFF, 0x03, 0, 0, 1,
+                  0x0A, 3, 0xFF, 0x6B, 1, 0,
                   0x72, 2, 0x8A, 0, 0, 0xFF, 0)),
         2: bytes((0x24, 0, 0, 1, 0, 0, 0, 0,
-                  0x03, 0, 0, 1, 0x0A, 4, 0xFF,
+                  0x6B, 1, 0, 0x0A, 4, 0xFF,
         # ResourceRoutines LOAD_SOUND is structurally understood even though
         # its runtime semantics are not certified. The final unregistered
         # byte is genuine structural uncertainty.
                   0x0C, 2, 5, 0x2F, 0x72, 1, 0)),
         # Global 3 is conditionally started by Global 1. Its known-width,
-        # semantically unsupported actor query must not hide the following
+        # semantically unsupported debug command must not hide the following
         # static StartScript dependency.
-        3: bytes((0x03, 0, 0, 1, 0x0A, 4, 0xFF, 0)),
+        3: bytes((0x6B, 1, 0, 0x0A, 4, 0xFF, 0)),
         # Global 4 is started by known global dependencies, yields, then
         # requests room 2. Operation presence makes its source identity a
         # possible cross-room continuation candidate; it does not prove that

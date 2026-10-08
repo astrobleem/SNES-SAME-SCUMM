@@ -1,11 +1,15 @@
 # Capability and Dependency Analysis
 
-Status is **IMPLEMENTED, PARTIAL v1** for whole-source census, the SCUMM v5
-structural opcode schema, the semantic-operation subset, known dependency
-edges, conservative roots/reachability, and explicit structural frontiers.
-Complete v5 structural coverage, perfect control-flow certainty,
-resource-specific codec analysis, and per-version backend/runtime
-certification remain **PLANNED**.
+Status is **IMPLEMENTED, PARTIAL** for the whole-source census, source-bound
+SCUMM v5 structural decoding, normalized semantic IR for every instruction in
+the current canonical DOS-CD FATE corpus, known dependency edges, conservative
+reachability, and layer-separated capability frontiers. This corpus run parsed
+all 96 indexed rooms and decoded/represented 116,730 instruction occurrences;
+it found zero structural unknowns, truncated bodies, or missing semantic-IR
+occurrences. This is corpus coverage, not proof that every SCUMM v5 dialect
+form is implemented. Perfect control-flow certainty, full resource-codec
+analysis, and per-operation backend/runtime certification remain **PARTIAL or
+PLANNED**.
 
 ## Current outputs
 
@@ -94,10 +98,11 @@ The frontier is an engineering backlog, not a claim that every listed
 operation blocks the current game path. Each item identifies source identity,
 source PC, capability, support dimensions, reachability, a known dependency
 path or uncertainty witness, and whether dynamic/opaque analysis affects it.
-Classifications distinguish definite and conditional blockers, possible
-dynamic requirements, partial/unverified semantics, and unknown behavior
-beyond an opaque boundary. Corpus-only use is not confused with a definite
-boot blocker.
+Classifications distinguish known `UNSUPPORTED` implementation blockers from
+`PARTIAL`/`UNKNOWN` evidence that is merely unverified. Root/definite known
+blockers rank first, then conditional blockers, then unresolved verification
+work; a family is never called a blocker just because the SNES runtime status
+is unknown. Corpus-only use is not confused with a definite boot blocker.
 
 ## Current limits
 
@@ -107,22 +112,34 @@ different measurements; see `MILESTONE_4_RESIDENCY.md`. Selector capacity is
 a backend addressability limit, not evidence that every source executable
 must be resident at once.
 
-The opcode schema covers the registered SCUMM v5 byte forms, while this FATE
-source still contains nine structurally unknown occurrences and two
-truncated operands among parsed-room executables. The configured
-`GlobalScript(1)` now decodes completely; root closure remains incomplete due
-to dynamic references, unresolved room/resource identities, and reachable
-opaque frontiers elsewhere. Three FATE rooms still exceed the room decoder's
-BOXD z-plane representation and remain explicitly unsupported. Actor metadata
-is inferred from decoded references rather than claimed as a complete actor
-table. Text literals are retained as encoded IR operands, not normalized into
-a complete string table.
+The canonical DOS-CD FATE run reports 96 rooms inventoried and parsed, 4,108
+complete executable identities, 116,730 structurally decoded instructions,
+and zero structural unknown/truncated/malformed occurrences. The BOXD parser
+now interprets the format's implicit base z-buffer separately from additional
+RMIH-declared planes; the previously rejected rooms parse through the same
+generic room path. Root closure remains incomplete because dynamic and
+unresolved dependencies still exist, not because the current run encountered
+an opaque executable tail. Actor metadata is inferred from decoded references
+rather than claimed as a complete actor table. Text literals remain encoded
+IR operands rather than a complete normalized string table.
 
-In the opcode census, zero `SUPPORTED` backend/runtime occurrences means
-“none certified as fully supported by this whole-source registry,” not that
-the existing runtime implements no operations. Existing bytecode preservation,
-handler presence and prior conformance evidence are deliberately not promoted
-to whole-corpus per-operation certification.
+For this corpus, semantic-IR availability is complete: 0 unsupported and 0
+unknown semantic occurrences across 89 observed operation families. This
+does **not** mean the runtime supports all 89. The release gate remains
+`NOT_READY`. The current registry identifies three known implementation gaps:
+SNES `drawBox`, host `systemOps`, and host `findInventory`; native
+`loadRoomWithEgo` is partial rather than certified. Many other families have
+working code but only partial or unknown whole-corpus conformance/save
+evidence. `getActorWidth` and `walkActorToActor` now have bounded native
+controls; this does not certify unrelated actor operations. See
+`CAPABILITY_FRONTIER_BURN_DOWN.md` for the measured snapshot and ranked work.
+
+The current opcode census marks 67 of 116,730 occurrences as supported by
+both the backend and SNES runtime, from bounded `getActorWidth` and
+`walkActorToActor` conformance. That does not certify the whole corpus or
+operations without matching native evidence. Existing bytecode preservation,
+handler presence and unrelated conformance evidence are deliberately not
+promoted to whole-corpus per-operation certification.
 
 Capacity values distinguish exact indexed/cooked counts, static lower bounds,
 and unknown runtime scheduling pressure. Static graph depth is not a runtime

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 from pathlib import Path
 import json
+import struct
 import unittest
 
+from examples.resources.scumm_v5.room_bundle_fixture import room_with_load_ego_entry
 from same.engine import EngineHost
 from same.engines import default_registry
 from same.engines.scumm_v5.engine import (
@@ -14,6 +17,7 @@ from same.engines.scumm_v5.engine import (
     RoomObjectState,
     ScriptSlot,
 )
+from same.engines.scumm_v5.cooked_room import ScriptChunkInput, encode_cooked_room
 from same.engines.scumm_v5.room import ScummV5RoomObject, ScummV5Walkbox
 from same.errors import EngineExecutionError, SaveFormatError
 from same.profile import load_profile
@@ -23,6 +27,54 @@ from same.video import HostEvidenceBackend, PresentRecord, PresentRequest, Rect
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOM = (ROOT / "examples/resources/scumm_v5/room0.sc5r").read_bytes()
+
+
+def _cooked_room_resources(room: int, payload: bytes) -> dict[str, bytes]:
+    profile_path = ROOT / "examples/profiles/scumm_v5_conformance.json"
+    profile_bytes = profile_path.read_bytes()
+    profile = load_profile(profile_path)
+    profile_sha = hashlib.sha256(profile_bytes).hexdigest()
+    game_sha = hashlib.sha256(
+        f"{profile.engine_id}\0{profile.game_id}\0{profile.variant}".encode()
+    ).hexdigest()
+    source_hashes = {
+        name: hashlib.sha256(f"copyright-free loadRoomWithEgo fixture {name}".encode()).hexdigest()
+        for name in ("archive", "index", "data")
+    }
+    scripts = []
+    offset = 0
+    while offset < len(payload):
+        tag = payload[offset:offset + 4]
+        size = struct.unpack_from(">I", payload, offset + 4)[0]
+        if tag in {b"ENCD", b"EXCD"}:
+            kind = tag.decode("ascii")
+            number = 10002 if kind == "ENCD" else 10001
+            scripts.append(ScriptChunkInput(
+                kind, number, f"room.{room}/{kind}", offset, 8, size - 8,
+            ))
+        offset += size
+    record = encode_cooked_room(
+        payload,
+        room=room,
+        flags=0,
+        original_room_file_offset=0,
+        profile_sha256=profile_sha,
+        game_identity_sha256=game_sha,
+        archive_sha256=source_hashes["archive"],
+        index_sha256=source_hashes["index"],
+        data_sha256=source_hashes["data"],
+        scripts=tuple(scripts),
+    )
+    manifest = json.dumps({
+        "schema": "same_scumm_v5_cooked_rooms_v1",
+        "profile": {"sha256": profile_sha, "identity_sha256": game_sha},
+        "source": {f"{name}_sha256": value for name, value in source_hashes.items()},
+    }, sort_keys=True).encode()
+    return {
+        f"room.{room}": payload,
+        f"cooked.room.{room}": record,
+        "cooked.rooms.manifest": manifest,
+    }
 
 
 class ScummV5EngineTests(unittest.TestCase):
@@ -395,6 +447,18 @@ class ScummV5EngineTests(unittest.TestCase):
         host = self._host(bytes((0x00,)))
         self.assertEqual(host.engine.state.variables[9], 0x000B)
 
+    def test_v5_debug_opcode_emits_diagnostic_without_game_state_mutation(self) -> None:
+        host = self._host(bytes((0x6B, 0x34, 0x12, 0x00)))
+        before = host.engine.inspect_state()
+        host.tick()
+        after = host.engine.inspect_state()
+        self.assertEqual(host.services.debug.log[-1], {
+            "kind": "marker", "name": "scumm_v5.script_debug", "value": 0x1234,
+        })
+        self.assertTrue(all(after["variables"].get(key) == value
+                            for key, value in before["variables"].items()))
+        self.assertEqual(after["object_states"], before["object_states"])
+
     def test_bundled_real_opcode_loop(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/boot.scrp").read_bytes()
         host = self._host(script)
@@ -441,6 +505,28 @@ class ScummV5EngineTests(unittest.TestCase):
                 self.assertNotIn(88, host.engine.state.room_objects)
                 self.assertIn(32, host.engine.state.object_classes[88])
                 self.assertEqual(host.engine.state.object_draw_queue, [])
+
+    def test_set_owner_of_direct_variable_modes_and_save_restore(self) -> None:
+        cases = (
+            (0x29, bytes((88, 0, 2)), 5),
+            (0x69, bytes((88, 0, 3, 0)), 6),
+            (0xA9, bytes((2, 0, 2)), 5),
+            (0xE9, bytes((2, 0, 3, 0)), 6),
+        )
+        for opcode, operands, expected_pc in cases:
+            with self.subTest(opcode=f"0x{opcode:02x}"):
+                host = self._host(bytes((opcode,)) + operands + bytes((0x80,)))
+                host.engine.state.variables[2] = 88
+                host.engine.state.variables[3] = 7
+                host.tick()
+                self.assertEqual(host.engine.state.scripts[0].pc, expected_pc)
+                expected_owner = 7 if opcode & 0x40 else 2
+                self.assertEqual(host.engine._object_owners[88], expected_owner)
+                assert host.context is not None
+                payload = host.engine.save_state(host.context)
+                host.engine._object_owners = bytes(len(host.engine._object_owners))
+                host.engine.load_state(host.context, payload)
+                self.assertEqual(host.engine._object_owners[88], expected_owner)
 
     def test_pickup_ownership_survives_save_restore_on_fresh_host(self) -> None:
         script = bytes((
@@ -925,6 +1011,100 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(host.engine.state.talk.raw, bytearray(raw))
         self.assertEqual(host.engine.state.talk.events[0].kind, "start")
 
+    def test_load_room_with_ego_places_ego_before_yielded_entry_resumes(self) -> None:
+        entry = bytes((
+            0x9A, 15, 0, 38, 0,  # preserve VAR_WALKTO_OBJ for assertion
+            0x80,                  # ENCD yields once
+            0x9A, 16, 0, 38, 0,  # resumed ENCD still sees the entry object
+            0x00,
+        ))
+        program = bytes((
+            0x24, 100, 0, 1,     # direct object and room
+            0xFF, 0xFF, 0xFF, 0xFF,  # no post-entry walk
+            0x00,
+        ))
+        host = self._host(
+            program,
+            resources=_cooked_room_resources(
+                1, room_with_load_ego_entry(entry)
+            ),
+        )
+        actor = host.engine.state.actors[1] = ActorState(
+            room=0, visible=True, position=(91, 73), facing=180
+        )
+        host.engine.state.variables[1] = 1
+        host.engine.state.variables[38] = 77
+        host.engine.queue_sentence(4, 100)
+
+        host.tick()
+
+        self.assertEqual(host.engine.state.current_room, 1)
+        self.assertEqual(host.engine.state.variables[15], 100)
+        self.assertEqual(host.engine.state.variables[16], 0)
+        self.assertEqual(host.engine.state.variables[38], 100)
+        self.assertEqual(actor.room, 1)
+        self.assertEqual(actor.position, (4, 1))
+        self.assertEqual(actor.facing, 90)
+        self.assertEqual(actor.moving, 0)
+        self.assertTrue(actor.visible)
+        self.assertEqual(host.engine.state.camera_follow_actor, 1)
+        self.assertEqual(host.engine.state.camera_mode, 1)
+        self.assertEqual(host.engine.state.sentences, [])
+        self.assertTrue(any(slot.script_kind == "ENCD" and slot.yielded
+                            for slot in host.engine.state.scripts))
+
+        host.tick()
+
+        self.assertEqual(host.engine.state.variables[16], 100)
+        self.assertEqual(host.engine.state.variables[38], 100)
+
+    def test_load_room_with_ego_flagged_operands_and_optional_walk(self) -> None:
+        program = bytes((
+            0xE4, 2, 0, 3, 0,  # object and room are variable operands
+            6, 0, 1, 0,       # walk destination x=6, y=1
+            0x00,
+        ))
+        host = self._host(
+            program,
+            resources=_cooked_room_resources(
+                1, room_with_load_ego_entry(b"\x00")
+            ),
+        )
+        host.engine.state.variables[1] = 1
+        host.engine.state.variables[2] = 100
+        host.engine.state.variables[3] = 1
+
+        host.tick()
+
+        actor = host.engine.state.actors[1]
+        self.assertEqual(host.engine.state.current_room, 1)
+        self.assertEqual(host.engine.state.variables[38], 100)
+        self.assertEqual(actor.walk_destination, (6, 1))
+        self.assertNotEqual(actor.moving, 0)
+
+    def test_load_room_with_ego_rejects_missing_entry_without_partial_transition(self) -> None:
+        program = bytes((
+            0x24, 101, 0, 1,
+            0xFF, 0xFF, 0xFF, 0xFF,
+            0x00,
+        ))
+        host = self._host(
+            program,
+            resources=_cooked_room_resources(
+                1, room_with_load_ego_entry(b"\x00")
+            ),
+        )
+        actor = host.engine.state.actors[1] = ActorState(
+            room=0, visible=True, position=(91, 73), facing=180
+        )
+        host.engine.state.variables[1] = 1
+        host.engine.state.variables[38] = 77
+        with self.assertRaisesRegex(EngineExecutionError, "entry object 101 is absent"):
+            host.tick()
+        self.assertEqual(host.engine.state.current_room, 0)
+        self.assertEqual((actor.room, actor.position, actor.facing), (0, (91, 73), 180))
+        self.assertEqual(host.engine.state.variables[38], 77)
+
     def test_arithmetic_subset_uses_real_opcode_numbers(self) -> None:
         script = bytes(
             [
@@ -1133,9 +1313,15 @@ class ScummV5EngineTests(unittest.TestCase):
         host.load(0)
         self.assertEqual(host.engine.inspect_state()["strings"]["5"]["raw"], expected_raw)
 
+    def test_c8_reserved_selector_is_a_v5_noop_and_preserves_following_opcode(self) -> None:
+        # ScummVM's v5 default arm consumes the selector only.
+        host = self._host(bytes((0x27, 0x20, 0x1A, 0, 0, 42, 0, 0x80)))
+        host.tick()
+        state = host.engine.inspect_state()
+        self._assert_variables(state, {"0": 42})
+
     def test_c8_string_ops_fail_closed_on_malformed_or_missing_state(self) -> None:
         cases = (
-            ("unknown sub-op", bytes((0x27, 0x00)), r"sub-op 0 is not implemented"),
             ("identical copy", bytes((0x27, 0x02, 5, 5)), r"source and destination are identical"),
             ("missing get", bytes((0x27, 0x04, 0, 0, 5, 0)), r"string 5 does not exist"),
             ("missing set", bytes((0x27, 0x03, 5, 0, 65)), r"string 5 does not exist"),
@@ -1375,6 +1561,7 @@ class ScummV5EngineTests(unittest.TestCase):
         saved = host.save(0)
 
         host.tick()
+        host.tick()
         expected = host.engine.inspect_state()
         self.assertEqual(expected["scripts"][0]["pc"], 76)
         self.assertEqual(
@@ -1388,10 +1575,12 @@ class ScummV5EngineTests(unittest.TestCase):
                 "last_object": [42, 0x1234],
             },
         )
-        host.engine.state.resource_ops.loaded["sound"].clear()
-        host.load(0)
-        host.tick()
-        replayed = host.engine.inspect_state()
+        fresh = self._host(fixture, resources=resources)
+        fresh.services.saves.write(0, saved.pack())
+        fresh.load(0)
+        fresh.tick()
+        fresh.tick()
+        replayed = fresh.engine.inspect_state()
         for key in ("resource_ops", "resource_mapper", "scripts", "operations", "frames"):
             self.assertEqual(replayed[key], expected[key])
         self.assertEqual(saved.schema, 6)
@@ -1439,6 +1628,7 @@ class ScummV5EngineTests(unittest.TestCase):
         saved = host.save(0)
 
         host.tick()
+        host.tick()
         expected = host.engine.inspect_state()
         actor2 = expected["actors"]["2"]
         self.assertEqual(actor2["costume"], 55)
@@ -1447,8 +1637,10 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(actor2["walk_speed"], [8, 2])
         self.assertEqual(actor2["frames"], [1, 2, 3, 4, 5])
         self.assertEqual((actor2["force_clip"], actor2["ignore_boxes"]), (0, False))
+        self.assertEqual(host.engine.state.variables[4:8], [7, 55, 35, 24])
         host.engine.state.actors.clear()
         host.load(0)
+        host.tick()
         host.tick()
         replayed = host.engine.inspect_state()
         for key in ("actors", "scripts", "operations", "frames"):
@@ -1516,6 +1708,22 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
 
         self.assertEqual(host.engine.state.variables[:4], [-1, -1, -1, -1])
+        self.assertEqual(host.engine.state.scripts[0].pc, len(script))
+
+    def test_get_actor_costume_direct_variable_and_invalid_actor(self) -> None:
+        script = bytes((
+            0x71, 0, 0, 2,        # v0 = actor 2 costume, direct
+            0xF1, 1, 0, 3, 0,     # v1 = actor v3 costume, variable
+            0x71, 2, 0, 0xFF,     # invalid actor follows bounded zero policy
+            0x00,
+        ))
+        host = self._host(script)
+        host.engine.state.actors[2] = ActorState(costume=55)
+        host.engine.state.variables[3] = 2
+
+        host.tick()
+
+        self.assertEqual(host.engine.state.variables[:3], [55, 55, 0])
         self.assertEqual(host.engine.state.scripts[0].pc, len(script))
         self.assertFalse(host.engine.state.scripts[0].active)
 
@@ -1695,6 +1903,30 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(state.talk.actor, 0xFF)
         self.assertEqual(state.print_messages, [])
 
+    def test_pan_camera_to_direct_and_variable_only_updates_destination(self) -> None:
+        host = self._host(bytes((
+            0x12, 0x40, 0x01,  # panCameraTo(320)
+            0x92, 0x02, 0x00,  # panCameraTo(var[2])
+            0x00,
+        )))
+        state = host.engine.state
+        state.current_room = 1
+        state.room_ops.room_width = 640
+        state.room_ops.scroll_min_x = 160
+        state.room_ops.scroll_max_x = 480
+        state.camera_x = 160
+        state.camera_destination_x = 160
+        state.camera_last_x = 160
+        state.variables[2] = 240
+
+        host.tick()
+
+        self.assertEqual(state.camera_destination_x, 240)
+        self.assertEqual(state.camera_mode, 0)
+        self.assertTrue(state.camera_update_pending is False)
+        self.assertEqual(state.camera_x, 168)
+        self.assertEqual(state.scripts[0].pc, 7)
+
     def test_camera_lifecycle_round_trips_through_save(self) -> None:
         host = self._host(bytes((0x80,)))
         state = host.engine.state
@@ -1747,6 +1979,26 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
         self.assertEqual(host.engine.inspect_state()["object_classes"], {"300": [2, 3]})
         self.assertEqual(saved.schema, 6)
+
+    def test_set_object_name_direct_variable_control_text_and_save(self) -> None:
+        script = bytes((
+            0x1A, 0, 0, 0x34, 0x12,             # v0 = object 0x1234
+            0xD4, 0, 0,                         # setObjectName(v0, "Named")
+        )) + b"Named\xFF\x04\x34\x12\x00" + bytes((
+            0x54, 0x45, 0x23,                   # setObjectName($2345, "Direct")
+        )) + b"Direct\x00\x80\x00"
+        host = self._host(script)
+        host.tick()
+        expected = {
+            "4660": list(b"Named\xFF\x04\x34\x12\x00"),
+            "9029": list(b"Direct\x00"),
+        }
+        self.assertEqual(host.engine.inspect_state()["object_names"], expected)
+        saved = host.save(0)
+        host.engine.state.object_names.clear()
+        host.load(0)
+        self.assertEqual(host.engine.inspect_state()["object_names"], expected)
+        self.assertGreater(saved.schema, 0)
 
     def test_c16_set_class_fails_closed_on_stream_class_capacity_and_save(self) -> None:
         for script, message in (
@@ -2979,6 +3231,46 @@ class ScummV5EngineTests(unittest.TestCase):
             [1, -1, -0x8000],
         )
 
+    def test_walk_actor_to_actor_direct_variable_and_auto_distance(self) -> None:
+        # Direct actor operands with an explicit stand-off distance.
+        host = self._host(bytes((0x0D, 1, 2, 10, 0)))
+        host.engine.state.current_room = 1
+        host.engine.state.actors[1] = ActorState(room=1, position=(100, 20))
+        host.engine.state.actors[2] = ActorState(room=1, position=(80, 50))
+        host.tick()
+        self.assertEqual(host.engine.state.actors[1].walk_destination, (90, 50))
+        self.assertTrue(host.engine.state.actors[1].moving)
+
+        # Both operands may independently be variable references.  The 0xFF
+        # distance uses the SCUMM v5 scaled-width formula from ScummVM.
+        host = self._host(bytes((0xCD, 0, 0, 1, 0, 0xFF, 0)))
+        host.engine.state.current_room = 1
+        host.engine.state.variables[:2] = [1, 2]
+        host.engine.state.actors[1] = ActorState(
+            room=1, position=(100, 20), width=20, scale=(128, 255),
+        )
+        host.engine.state.actors[2] = ActorState(
+            room=1, position=(200, 50), width=30, scale=(255, 255),
+        )
+        host.tick()
+        self.assertEqual(host.engine.state.actors[1].walk_destination, (175, 50))
+
+    def test_walk_actor_to_actor_ignores_invalid_or_nonresident_actors(self) -> None:
+        host = self._host(bytes((0x0D, 1, 255, 20, 0)))
+        host.engine.state.current_room = 1
+        host.engine.state.actors[1] = ActorState(
+            room=1, position=(10, 20), walk_destination=(30, 40),
+        )
+        host.tick()
+        self.assertEqual(host.engine.state.actors[1].walk_destination, (30, 40))
+
+        host = self._host(bytes((0x0D, 1, 2, 20, 0)))
+        host.engine.state.current_room = 1
+        host.engine.state.actors[1] = ActorState(room=1, position=(10, 20))
+        host.engine.state.actors[2] = ActorState(room=0, position=(30, 40))
+        host.tick()
+        self.assertEqual(host.engine.state.actors[1].walk_destination, (0, 0))
+
     def test_production_tick_preserves_one_scheduler_pass_per_frame(self) -> None:
         program = bytes((
             0x1A, 0, 0, 1, 0, 0x80,
@@ -3145,6 +3437,9 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertFalse(state["actors"]["3"]["visible"])
         self.assertEqual(state["actors"]["3"]["moving"], 2)
         host.tick()
+        # walkActorToActor is followed by breakHere; the continuation consumes
+        # one additional scheduler tick before the terminal opcode runs.
+        host.tick()
         self.assertFalse(host.engine.inspect_state()["scripts"][0]["active"])
 
     def test_c32_put_actor_at_object_fails_closed_on_stream_and_actor(self) -> None:
@@ -3292,6 +3587,64 @@ class ScummV5EngineTests(unittest.TestCase):
         payload["sentences"][0]["preposition"] = True
         with self.assertRaisesRegex(SaveFormatError, "preposition is noncanonical"):
             host.engine.load_state(host.context, json.dumps(payload).encode("utf-8"))
+
+    def test_draw_box_direct_operands_fill_inclusive_logical_rectangle(self) -> None:
+        script = bytes((
+            0x3F, 40, 0, 10, 0,       # direct left/top p16
+            0x00, 42, 0, 11, 0, 7,   # aux direct right/bottom/color
+            0x00,
+        ))
+        host = self._host(script)
+        host.tick()
+        surface = host.engine._video.logical_surface
+        self.assertIsNotNone(surface)
+        assert surface is not None
+        for y in range(10, 12):
+            for x in range(40, 43):
+                self.assertEqual(surface.pixels[y * surface.pitch + x], 7)
+        self.assertNotEqual(surface.pixels[10 * surface.pitch + 39], 7)
+        self.assertNotEqual(surface.pixels[12 * surface.pitch + 42], 7)
+
+    def test_draw_box_variable_operands_reverse_bounds_and_clip(self) -> None:
+        # $FF selects variable p16 left/top; $E0 selects variable p16
+        # right/bottom and variable p8 color in the auxiliary opcode.
+        script = bytes((
+            0xFF, 5, 0, 6, 0,
+            0xE0, 7, 0, 8, 0, 9, 0,
+            0x00,
+        ))
+        host = self._host(script)
+        host.engine.state.variables[5:10] = [42, 12, 40, 10, 13]
+        host.tick()
+        surface = host.engine._video.logical_surface
+        self.assertIsNotNone(surface)
+        assert surface is not None
+        for y in range(10, 13):
+            for x in range(40, 43):
+                self.assertEqual(surface.pixels[y * surface.pitch + x], 13)
+
+        clipped = self._host(bytes((
+            0x3F, 254, 0, 222, 0, 0x00, 4, 1, 5, 0, 19, 0x00,
+        )))
+        clipped.tick()
+        clipped_surface = clipped.engine._video.logical_surface
+        assert clipped_surface is not None
+        self.assertEqual(clipped_surface.pixels[5 * clipped_surface.pitch + 254], 19)
+        self.assertEqual(clipped_surface.pixels[199 * clipped_surface.pitch + 255], 19)
+
+    def test_get_actor_width_reads_actor_ops_width_with_direct_and_variable_ids(self) -> None:
+        # actorOps actor 1, width=37; then query actor 1 directly and actor 2
+        # through a variable. Actor 2 retains the authored v5 default width 24.
+        script = bytes((
+            0x13, 1, 0x10, 37, 0xFF,
+            0x6C, 10, 0, 1,
+            0xEC, 11, 0, 12, 0,
+            0x00,
+        ))
+        host = self._host(script)
+        host.engine.state.variables[12] = 2
+        host.tick()
+        self._assert_variables(host.engine.inspect_state(), {"10": 37, "11": 24})
 
     def test_c21_draw_object_operands_overlap_position_and_save(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/c21_draw_object.scrp").read_bytes()

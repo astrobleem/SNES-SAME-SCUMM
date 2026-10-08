@@ -90,5 +90,15 @@ def room2(*, data_only_objects: int = 0) -> bytes:
                        _chunk(b"ENCD", entry), _chunk(b"EXCD", b"\0"))
 
 
+def room_with_load_ego_entry(entry_script: bytes) -> bytes:
+    """Build a minimal target room for generic loadRoomWithEgo conformance."""
+    return _room_shell(
+        1,
+        _object_100(),
+        _chunk(b"ENCD", entry_script),
+        _chunk(b"EXCD", b"\0"),
+    )
+
+
 def source_rooms() -> dict[int, bytes]:
     return {1: room1(), 2: room2()}

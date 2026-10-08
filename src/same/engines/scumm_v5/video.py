@@ -484,6 +484,32 @@ class ScummV5VideoAdapter:
         video.set_palette(0, self.scene.palette)
         video.blit_surface(self.composition_surface)
 
+    def draw_box(self, left: int, top: int, right: int, bottom: int, color: int) -> bool:
+        """Draw one inclusive, screen-relative v5 box into the logical scene."""
+        if self.scene is None or self.logical_surface is None:
+            return False
+        if left > right:
+            left, right = right, left
+        if top > bottom:
+            top, bottom = bottom, top
+        left = max(0, left)
+        top = max(0, top)
+        right = min(self.scene.width - 1, right)
+        bottom = min(self.scene.height - 1, bottom)
+        if left > right or top > bottom:
+            return False
+        self.logical_surface.fill(
+            color,
+            Rect(
+                self.scene.viewport_x + left,
+                self.scene.viewport_y + top,
+                right - left + 1,
+                bottom - top + 1,
+            ),
+        )
+        self.logical_sha256 = self.logical_surface.hash()
+        return True
+
     def move_cursor(self, logical_x: int, logical_y: int) -> None:
         source_x, source_y, destination_x, destination_y, width, height = self._projection
         physical_x = destination_x + logical_x - source_x

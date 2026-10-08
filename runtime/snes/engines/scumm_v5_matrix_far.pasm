@@ -697,6 +697,13 @@ ScummV5_ColdOpcode_FarEntry__not_sound_kludge:
     bne ScummV5_ColdOpcode_FarEntry__not_draw_box_early
     jmp ScummV5_DrawBox_FarEntry
 ScummV5_ColdOpcode_FarEntry__not_draw_box_early:
+    .a8
+    lda.l SAME_SCUMM_LAST_OPCODE
+    and #$3F
+    cmp #$0D
+    bne ScummV5_ColdOpcode_FarEntry__not_walk_actor_to_actor
+    jmp ScummV5_WalkActorToActor_FarEntry
+ScummV5_ColdOpcode_FarEntry__not_walk_actor_to_actor:
     ; Phase 6L-A deliberately parks the preliminary loadRoomWithEgo decoder.
     ; The authentic acceptance boundary remains the decoded PC $02DE; no $24
     ; transition may execute until the deferred sound-82 prerequisite passes.
@@ -2102,7 +2109,249 @@ ScummV5_GetDist_StoreResolved_Far__second:
     sta.l SAME_SCUMM_GET_DIST_Y2_RAW
     rts
 
-; Canonical v5 $1E/$3E/$5E/$7E/$9E/$BE/$DE/$FE walkActorTo.  The
+; Canonical v5 walkActorToActor. Actor IDs use independent variable/direct
+; flags, while distance is an unflagged byte ($FF requests scaled-width
+; spacing). Invalid/non-current-room actors are the specified no-op case.
+ScummV5_WalkActorToActor_FarEntry:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LAST_OPCODE
+    sta.l SAME_SCUMM_C10_SUBOP
+    lda #$80
+    jsl ScummV5_Matrix_FarCall_FetchByteParam
+    bcc ScummV5_WalkActorToActor_FarEntry__actor_one_fetched
+    brl ScummV5_ReadOnlyQuery_Far__operand_error
+ScummV5_WalkActorToActor_FarEntry__actor_one_fetched:
+    .a8
+    sta.l SAME_SCUMM_C32_ACTOR
+    lda #$40
+    jsl ScummV5_Matrix_FarCall_FetchByteParam
+    bcc ScummV5_WalkActorToActor_FarEntry__actor_two_fetched
+    brl ScummV5_ReadOnlyQuery_Far__operand_error
+ScummV5_WalkActorToActor_FarEntry__actor_two_fetched:
+    .a8
+    sta.l SAME_SCUMM_C32_OBJECT
+    lda #$00
+    sta.l SAME_SCUMM_C32_OBJECT+1
+    jsl ScummV5_Matrix_FarCall_FetchByte
+    bcc ScummV5_WalkActorToActor_FarEntry__distance_fetched
+    brl ScummV5_ReadOnlyQuery_Far__operand_error
+ScummV5_WalkActorToActor_FarEntry__distance_fetched:
+    .a8
+    sta.l SAME_SCUMM_C32_RECORD_OFFSET
+    lda #$00
+    sta.l SAME_SCUMM_C32_RECORD_OFFSET+1
+    lda.l SAME_SCUMM_C32_RECORD_OFFSET
+    cmp #$FF
+    bne ScummV5_WalkActorToActor_FarEntry__distance_ready
+    lda.l SAME_SCUMM_C32_ACTOR
+    jsr ScummV5_WalkActorToActor_ScaledWidth_Far
+    rep #$20
+    .a16
+    and #$00FF
+    sta.l SAME_SCUMM_GET_DIST_RESULT
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C32_OBJECT
+    jsr ScummV5_WalkActorToActor_ScaledWidth_Far
+    lsr
+    rep #$20
+    .a16
+    and #$00FF
+    clc
+    adc.l SAME_SCUMM_GET_DIST_RESULT
+    sta.l SAME_SCUMM_C32_RECORD_OFFSET
+    sep #$20
+    .a8
+ScummV5_WalkActorToActor_FarEntry__distance_ready:
+    .a8
+    lda.l SAME_SCUMM_C32_ACTOR
+    cmp #$20
+    bcc ScummV5_WalkActorToActor_FarEntry__actor_one_range_ok
+    jmp ScummV5_WalkActorToActor_FarEntry__done
+ScummV5_WalkActorToActor_FarEntry__actor_one_range_ok:
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_PRESENT,x
+    bne ScummV5_WalkActorToActor_FarEntry__actor_one_present
+    jmp ScummV5_WalkActorToActor_FarEntry__done
+ScummV5_WalkActorToActor_FarEntry__actor_one_present:
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ROOM,x
+    cmp.l SAME_SCUMM_C22_CURRENT_ROOM
+    beq ScummV5_WalkActorToActor_FarEntry__actor_one_current
+    jmp ScummV5_WalkActorToActor_FarEntry__done
+ScummV5_WalkActorToActor_FarEntry__actor_one_current:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C32_ACTOR
+    and #$00FF
+    asl
+    asl
+    tax
+    lda.l SAME_SCUMM_C31_POSITIONS,x
+    sta.l SAME_SCUMM_GET_DIST_X1
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C32_OBJECT
+    cmp #$20
+    bcc ScummV5_WalkActorToActor_FarEntry__actor_two_range_ok
+    jmp ScummV5_WalkActorToActor_FarEntry__done
+ScummV5_WalkActorToActor_FarEntry__actor_two_range_ok:
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_PRESENT,x
+    bne ScummV5_WalkActorToActor_FarEntry__actor_two_present
+    jmp ScummV5_WalkActorToActor_FarEntry__done
+ScummV5_WalkActorToActor_FarEntry__actor_two_present:
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ROOM,x
+    cmp.l SAME_SCUMM_C22_CURRENT_ROOM
+    beq ScummV5_WalkActorToActor_FarEntry__actor_two_current
+    jmp ScummV5_WalkActorToActor_FarEntry__done
+ScummV5_WalkActorToActor_FarEntry__actor_two_current:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C32_OBJECT
+    and #$00FF
+    asl
+    asl
+    tax
+    lda.l SAME_SCUMM_C31_POSITIONS,x
+    sta.l SAME_SCUMM_C32_X
+    lda.l SAME_SCUMM_C31_POSITIONS+2,x
+    sta.l SAME_SCUMM_C32_Y
+    ; XORing the sign bit maps signed s16 order to unsigned order.
+    lda.l SAME_SCUMM_C32_X
+    eor #$8000
+    sta.l SAME_SCUMM_GET_DIST_X2
+    lda.l SAME_SCUMM_GET_DIST_X1
+    eor #$8000
+    cmp.l SAME_SCUMM_GET_DIST_X2
+    bcc ScummV5_WalkActorToActor_FarEntry__target_is_right
+    sec
+    lda.l SAME_SCUMM_C32_X
+    sbc.l SAME_SCUMM_C32_RECORD_OFFSET
+    bra ScummV5_WalkActorToActor_FarEntry__x_ready
+ScummV5_WalkActorToActor_FarEntry__target_is_right:
+    clc
+    lda.l SAME_SCUMM_C32_X
+    adc.l SAME_SCUMM_C32_RECORD_OFFSET
+ScummV5_WalkActorToActor_FarEntry__x_ready:
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
+    lda.l SAME_SCUMM_C32_Y
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C32_ACTOR
+    sta.l SAME_SCUMM_MOVE_ACTOR
+    sta.l SAME_SCUMM_PUT_ACTOR_ACTOR
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_IGNORE_BOXES,x
+    beq ScummV5_WalkActorToActor_FarEntry__adjust_destination
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_X
+    lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_Y
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_BOX
+    lda.l SAME_SCUMM_C32_ACTOR
+    tax
+    lda #$FF
+    sta.l SAME_SCUMM_PUT_ACTOR_WALKBOX,x
+    bra ScummV5_WalkActorToActor_FarEntry__start_walk
+ScummV5_WalkActorToActor_FarEntry__adjust_destination:
+    jsl ScummV5_PutActor_Adjust_Far
+ScummV5_WalkActorToActor_FarEntry__start_walk:
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_MOVE_QUERY_DIR
+    jsr ScummV5_Movement_StartNormalized_Far
+ScummV5_WalkActorToActor_FarEntry__done:
+    jml ScummV5_Engine_Frame__next
+
+; A=actor id; return floor(scaleX * width / 255) in A. The shared C18
+; arithmetic is unsigned here because both actor fields are source bytes.
+ScummV5_WalkActorToActor_ScaledWidth_Far:
+    sta.l SAME_SCUMM_C30_DEPTH
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_WIDTH,x
+    sta.l SAME_SCUMM_C18_LHS_LO
+    lda #$00
+    sta.l SAME_SCUMM_C18_LHS_LO+1
+    sta.l SAME_SCUMM_C18_LHS_HI
+    sta.l SAME_SCUMM_C18_LHS_HI+1
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_SCALE_X,x
+    sta.l SAME_SCUMM_C18_RHS_LO
+    lda #$00
+    sta.l SAME_SCUMM_C18_RHS_LO+1
+    sta.l SAME_SCUMM_C18_RHS_HI
+    sta.l SAME_SCUMM_C18_RHS_HI+1
+    jsl ScummV5_Movement_FarCall_Multiply
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C18_RESULT_LO
+    sta.l SAME_SCUMM_C18_LHS_LO
+    lda.l SAME_SCUMM_C18_RESULT_HI
+    sta.l SAME_SCUMM_C18_LHS_HI
+    lda #$00FF
+    sta.l SAME_SCUMM_C18_RHS_LO
+    lda #$00
+    sta.l SAME_SCUMM_C18_RHS_HI
+    jsl ScummV5_Movement_FarCall_Divide
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C18_RESULT_LO
+    sep #$20
+    .a8
+    rts
+
+; Canonical v5 $1E/$3E/$5E/$7E/$9E/$BE/$DE/$FE walkActorTo. The
 ; actor is the byte parameter controlled by bit 7; X and Y are complete word
 ; parameters controlled by bits 6 and 5.  This decoder only produces the
 ; source-neutral startWalkActor(actor, x, y, -1) request.  Geometry,

@@ -139,3 +139,15 @@ the manifest) match byte-for-byte:
 This milestone changes only source-analysis/compiler front-end code and
 tests/docs. Runtime, SNES backend behavior, program allocation, and ROM bytes
 are unchanged; no native rerun is indicated.
+
+## Later corpus update
+
+This section records a later generic parser/front-end checkpoint; it does not
+rewrite the structural-decoder milestone's historical counts above. The
+capability-frontier burn-down now parses all 96 indexed rooms, including the
+three resources previously rejected by the BOXD z-plane validation. The
+current canonical census reports 4,108 executable identities, 116,730
+structurally decoded instructions, and zero structural-unknown,
+truncated, or malformed instruction occurrences. The current semantic and
+runtime readiness evidence is in
+[`CAPABILITY_FRONTIER_BURN_DOWN.md`](CAPABILITY_FRONTIER_BURN_DOWN.md).

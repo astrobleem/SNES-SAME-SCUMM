@@ -13,12 +13,13 @@ import zipfile
 
 from examples.resources.scumm_v5.game_analysis_fixture import source_zip, raw_pair
 from same.engines.scumm_v5.game_analysis import (
-    analyze_game, build_game_ir, canonical_json, executable_identity, execution_cycles,
+    analyze_capabilities, analyze_game, build_game_ir, canonical_json,
+    executable_identity, execution_cycles,
     game_analysis_hash,
 )
 from same.engines.scumm_v5.policy import parse_game_policy
 from same.engines.scumm_v5.resources import LucasartsScummV5ResourceProvider
-from same.engines.scumm_v5.room_compiler import compile_room_payload
+from same.engines.scumm_v5.room_compiler import compile_room_payload, decode_script
 from same.engines.scumm_v5.residency import build_residency_plan
 from same.engines.scumm_v5.program_units import (
     build_program_unit_model, build_residency_manifest,
@@ -174,12 +175,11 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
         script3 = next(item for item in result.game_ir.global_scripts if item.number == 3)
         self.assertTrue(script3.decode_complete)
         conditional_actor_query = script3.instructions[0]
-        self.assertEqual(conditional_actor_query.operation,
-                         "structural_only:getActorRoom")
+        self.assertEqual(conditional_actor_query.operation, "debug_log")
         self.assertEqual(conditional_actor_query.structural_status,
                          "STRUCTURALLY_DECODED")
         self.assertEqual(conditional_actor_query.semantic_status,
-                         "SEMANTIC_UNSUPPORTED")
+                         "SEMANTIC_IR_AVAILABLE")
         self.assertTrue(any(edge["source"] == "GlobalScript(3)"
                             and edge["target"] == "GlobalScript(4)"
                             and edge["kind"] == "start_script"
@@ -191,9 +191,9 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
                             for edge in result.dependency_graph["edges"]))
         script2 = next(item for item in result.game_ir.global_scripts if item.number == 2)
         actor_query = next(item for item in script2.instructions
-                           if item.operation == "structural_only:getActorRoom")
+                           if item.operation == "debug_log")
         self.assertEqual(actor_query.structural_status, "STRUCTURALLY_DECODED")
-        self.assertEqual(actor_query.semantic_status, "SEMANTIC_UNSUPPORTED")
+        self.assertEqual(actor_query.semantic_status, "SEMANTIC_IR_AVAILABLE")
         self.assertTrue(any(edge["source"] == "GlobalScript(2)"
                             and edge["target"] == "GlobalScript(4)"
                             and edge["kind"] == "start_script"
@@ -210,9 +210,9 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
         self.assertTrue(any(item["opcode"] == "0x2F"
                             for item in result.opcode_coverage["structural_unknowns"]))
         operation_capability = result.capabilities["registry_by_operation"][
-            "structural_only:getActorRoom"]
+            "debug_log"]
         self.assertEqual(operation_capability["front_end_decode"]["status"], "SUPPORTED")
-        self.assertEqual(operation_capability["semantic_ir"]["status"], "UNSUPPORTED")
+        self.assertEqual(operation_capability["semantic_ir"]["status"], "SUPPORTED")
 
     def test_reachability_lattice_and_frontier_path(self) -> None:
         result = fixture_analysis()
@@ -226,7 +226,7 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
         self.assertTrue(unsupported)
         load_ego = next(item for item in unsupported
                         if item["operation"] == "load_room_with_ego")
-        self.assertEqual(load_ego["classification"], "DEFINITE_BLOCKER")
+        self.assertEqual(load_ego["classification"], "DEFINITE_UNVERIFIED")
         self.assertIn("GlobalScript(1)", load_ego["dependency_path"])
         opaque = next(item for item in unsupported
                       if item["operation"] == "opaque_bytecode_tail")
@@ -240,6 +240,95 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
         self.assertEqual(registry["load_room"]["snes_backend"]["status"], "PARTIAL")
         self.assertEqual(registry["load_room"]["snes_runtime"]["status"], "UNKNOWN")
         self.assertEqual(registry["opaque_bytecode_tail"]["front_end_decode"]["status"], "UNSUPPORTED")
+
+    def test_load_room_with_ego_support_dimensions_use_operation_evidence(self) -> None:
+        result = fixture_analysis()
+        operation = result.capabilities["registry_by_operation"]["load_room_with_ego"]
+        self.assertEqual(operation["front_end_decode"]["status"], "SUPPORTED")
+        self.assertEqual(operation["semantic_ir"]["status"], "SUPPORTED")
+        self.assertEqual(operation["host_runtime"]["status"], "SUPPORTED")
+        self.assertIn("ENCD yield", operation["host_runtime"]["evidence"])
+        self.assertEqual(operation["snes_backend"]["status"], "PARTIAL")
+        self.assertEqual(operation["snes_runtime"]["status"], "PARTIAL")
+        self.assertEqual(operation["native_conformance"]["status"], "UNKNOWN")
+
+    def test_capability_frontier_aggregates_families_and_keeps_reachability(self) -> None:
+        result = fixture_analysis()
+        frontier = result.capability_frontier
+        row = next(item for item in frontier["support_frontier"]
+                   if item["family"] == "debug")
+        self.assertEqual(row["occurrences"], 3)
+        self.assertEqual(row["affected_executables"], 3)
+        self.assertEqual(row["reachability"]["ROOT"]["occurrences"], 1)
+        self.assertEqual(row["reachability"]["DEFINITE"]["occurrences"], 1)
+        self.assertEqual(row["reachability"]["CONDITIONAL"]["occurrences"], 1)
+        self.assertEqual(row["support"]["semantic_ir"], "SUPPORTED")
+        self.assertNotEqual(row["support"]["snes_runtime"], "SUPPORTED")
+        self.assertEqual(row["priority_class"], "DEFINITE_UNVERIFIED")
+        blocker = result.capability_frontier["support_frontier"][0]
+        self.assertEqual(blocker["family"], "loadRoomWithEgo")
+        self.assertEqual(blocker["priority_class"], "DEFINITE_UNVERIFIED")
+        self.assertEqual(row["representative_sources"][0]["source_identity"],
+                         "GlobalScript(1)")
+        self.assertEqual(frontier["semantic_unsupported_occurrences"],
+                         result.opcode_coverage["counts"][
+                             "semantic_unsupported_occurrences"])
+        self.assertEqual(result.whole_game_readiness["status"], "NOT_READY")
+        self.assertTrue(result.whole_game_readiness["reasons"])
+
+    def test_frontier_serialization_is_deterministic(self) -> None:
+        first = fixture_analysis()
+        second = fixture_analysis()
+        self.assertEqual(first.capability_frontier, second.capability_frontier)
+        self.assertEqual(first.whole_game_readiness, second.whole_game_readiness)
+        self.assertIn("capability_frontier.json", first.files())
+        self.assertIn("whole_game_readiness.json", first.files())
+
+    def test_semantic_ir_and_runtime_frontiers_are_independent(self) -> None:
+        script = decode_script(
+            bytes((
+                0x35, 0, 0, 10, 20,        # findObject
+                0x15, 0, 0, 10, 0, 20, 0,  # actorFromPos
+                0x3D, 0, 0, 1, 1,         # findInventory
+                0x6C, 3, 0, 1,             # getActorWidth(actor 1)
+                0x0D, 1, 2, 10, 0,        # walkActorToActor(1, 2, 10)
+                0x00,
+            )),
+            identity="GlobalScript(1)", kind="SCRP", number=1, room=0,
+            resource_key="script.1", game_name="copyright-free-fixture",
+            source_member="fixture", resource_offset=0, source_offset=0,
+        )
+        capabilities, _ = analyze_capabilities(
+            {"GlobalScript(1)": script},
+            {"status_by_executable": {"GlobalScript(1)": "ROOT"}},
+            {"GlobalScript(1)": ["GlobalScript(1)"]},
+        )
+        registry = capabilities["registry_by_operation"]
+        for operation in ("find_object", "actor_from_pos", "find_inventory"):
+            self.assertEqual(registry[operation]["semantic_ir"]["status"], "SUPPORTED")
+        self.assertEqual(registry["find_object"]["host_runtime"]["status"], "PARTIAL")
+        self.assertEqual(registry["find_inventory"]["host_runtime"]["status"],
+                         "UNSUPPORTED")
+        self.assertEqual(registry["find_inventory"]["snes_runtime"]["status"],
+                         "UNKNOWN")
+        self.assertEqual(registry["get_actor_width"]["semantic_ir"]["status"],
+                         "SUPPORTED")
+        self.assertEqual(registry["get_actor_width"]["host_runtime"]["status"],
+                         "SUPPORTED")
+        self.assertEqual(registry["get_actor_width"]["snes_runtime"]["status"],
+                         "SUPPORTED")
+        self.assertEqual(registry["get_actor_width"]["snes_backend"]["status"],
+                         "SUPPORTED")
+        self.assertEqual(registry["get_actor_width"]["native_conformance"]["status"],
+                         "SUPPORTED")
+        self.assertEqual(registry["get_actor_width"]["save_restore"]["status"],
+                         "NOT_APPLICABLE")
+        self.assertEqual(registry["walk_actor_to_actor"]["host_runtime"]["status"],
+                         "SUPPORTED")
+        self.assertEqual(registry["walk_actor_to_actor"]["snes_runtime"]["status"],
+                         "SUPPORTED")
+        self.assertEqual(registry["walk_actor_to_actor"]["save_restore"]["status"],
+                         "PARTIAL")
 
     def test_room_projection_is_the_room_compiler_representation(self) -> None:
         index, data = raw_pair()

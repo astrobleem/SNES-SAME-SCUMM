@@ -19,6 +19,7 @@ The repository-wide audit and current migration plan live in
 - [Second milestone: whole-game census and conservative closure](scumm-toolchain/MILESTONE_2.md)
 - [Executable residency and backend partition planning](scumm-toolchain/MILESTONE_4_RESIDENCY.md)
 - [ProgramUnit reconciliation and residency contract](scumm-toolchain/MILESTONE_5_PROGRAM_UNITS.md)
+- [Current SCUMM v5 capability-frontier burn-down](scumm-toolchain/CAPABILITY_FRONTIER_BURN_DOWN.md)
 
 | Current file/component | Current behavior | Classification | Why | Desired eventual layer | Migration note |
 |---|---|---|---|---|---|

@@ -375,6 +375,7 @@ def scumm_c8_string_ops_script() -> bytes:
             0x27, 0x04, 0x06, 0x00, 0x06, 0x03,        # v6 = control code 4
             0x27, 0x05, 0x07, 0x04,                    # create(7, 4)
             0x27, 0x02, 0x07, 0x08,                    # copy missing 8 -> nukes 7
+            0x27, 0x20,                                # reserved selector -> v5 no-op
             0x80,
         ]
     )
@@ -516,6 +517,11 @@ def scumm_c14_actor_ops_script() -> bytes:
             0x14,                           # ignore boxes
             0x08,                           # Actor::initActor(0)
             0xFF, 0x80,
+            0x71, 4, 0, 1,                  # v4 = getActorCostume(actor 1)
+            0xF1, 5, 0, 0, 0,              # v5 = getActorCostume(v0 / actor 2)
+            0x6C, 6, 0, 1,                  # v6 = getActorWidth(actor 1)
+            0xEC, 7, 0, 0, 0,              # v7 = getActorWidth(v0 / actor 2)
+            0x80,
         ]
     )
 
@@ -861,7 +867,7 @@ def scumm_c31_put_actor_in_room_script() -> bytes:
 
 
 def scumm_c32_put_actor_at_object_script() -> bytes:
-    """Place current/noncurrent actors at object walk points and v5 fallback."""
+    """Place actors at objects, then route one actor to another actor."""
     return bytes(
         [
             0x80,
@@ -871,6 +877,9 @@ def scumm_c32_put_actor_at_object_script() -> bytes:
             0x1A, 1, 0, 101, 0,
             0xCE, 0, 0, 1, 0,
             0x0E, 3, 0xE7, 0x03,
+            0x80,
+            0x2D, 2, 75,                     # target actor enters current room
+            0x0D, 1, 2, 10,                  # actor 1 stands ten pixels from actor 2
             0x80,
             0x00,
         ]

@@ -99,9 +99,9 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
         self.assertEqual(result.instructions[0].source_offset, 123)
         self.assertIn("instruction width", result.instructions[0].diagnostic or "")
 
-    def test_semantic_gap_diagnostic_does_not_claim_structural_gap(self) -> None:
+    def test_debug_ir_does_not_claim_a_structural_gap(self) -> None:
         result = decode_script(
-            bytes((0x03, 0, 0, 1, 0x0A, 4, 0xFF, 0)),
+            bytes((0x6B, 1, 0, 0x0A, 4, 0xFF, 0)),
             identity="synthetic/semantic-gap", kind="SCRP", number=1,
             room=None, resource_key="script.1", game_name="synthetic",
             source_member="fixture", resource_offset=0, source_offset=0,
@@ -109,8 +109,191 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
         query = result.instructions[0]
         self.assertTrue(query.boundary_known)
         self.assertEqual(query.structural_status, "STRUCTURALLY_DECODED")
-        self.assertEqual(query.semantic_status, "SEMANTIC_UNSUPPORTED")
-        self.assertTrue((query.diagnostic or "").startswith("semantic IR unavailable:"))
+        self.assertEqual(query.semantic_status, "SEMANTIC_IR_AVAILABLE")
+        self.assertEqual(query.operation, "debug_log")
+
+    def test_expression_ir_normalizes_rpn_and_preserves_nested_dispatch(self) -> None:
+        program = bytes((
+            0xAC, 0x03, 0x00,              # result = v3
+            0x01, 0x05, 0x00,              # push direct 5
+            0x81, 0x02, 0x00,              # push v2
+            0x02,                          # add
+            0x06, 0x03, 0x04, 0x00, 0x01, # nested getActorRoom -> VAR0
+            0x20,                          # reserved expression token: no-op
+            0xFF, 0x00,
+        ))
+        result = decode_script(
+            program, identity="fixture/expression", kind="SCRP", number=1,
+            room=1, resource_key="script.1", game_name="fixture",
+            source_member="fixture", resource_offset=0, source_offset=300,
+        )
+        expression, stop = result.instructions
+        self.assertEqual(expression.operation, "expression")
+        self.assertEqual(expression.semantic_status, "SEMANTIC_IR_AVAILABLE")
+        self.assertEqual(expression.structural_status, "STRUCTURALLY_DECODED")
+        self.assertEqual(expression.instruction_width, 17)
+        operands = dict(expression.operands)
+        self.assertEqual(operands["result"]["index"], 3)
+        self.assertEqual([item["operation"] for item in operands["operations"]], [
+            "push_word_operand", "push_word_operand", "add",
+            "execute_nested_opcode", "reserved_noop",
+        ])
+        self.assertEqual(operands["operations"][0]["operand"],
+                         {"mode": "direct", "value": 5})
+        self.assertEqual(operands["operations"][1]["operand"]["index"], 2)
+        nested = operands["operations"][3]["nested_opcode"]
+        self.assertEqual((nested["opcode"], nested["family"]), (0x03, "getActorRoom"))
+        self.assertEqual(nested["result_variable"], {"namespace": "global", "index": 0})
+        self.assertEqual(stop.operation, "stop_object_code")
+
+    def test_numeric_opcode_families_share_schema_operand_decoding(self) -> None:
+        cases = (
+            (0x5A, "add"), (0xDA, "add"),
+            (0x3A, "subtract"), (0xBA, "subtract"),
+            (0x1B, "multiply"), (0x9B, "multiply"),
+            (0x5B, "divide"), (0xDB, "divide"),
+            (0x17, "and"), (0x97, "and"),
+            (0x57, "or"), (0xD7, "or"),
+        )
+        for opcode, family in cases:
+            with self.subTest(opcode=f"0x{opcode:02X}"):
+                operand = (0x02, 0x00) if opcode & 0x80 else (0xFF, 0x7F)
+                result = decode_script(
+                    bytes((opcode, 0x01, 0x00, *operand, 0x00)),
+                    identity="fixture/numeric", kind="SCRP", number=1,
+                    room=1, resource_key="script.1", game_name="fixture",
+                    source_member="fixture", resource_offset=0, source_offset=400,
+                )
+                instruction = result.instructions[0]
+                self.assertEqual(instruction.operation, family)
+                self.assertEqual(instruction.opcode_family, family)
+                self.assertEqual(instruction.semantic_status, "SEMANTIC_IR_AVAILABLE")
+                values = dict(instruction.operands)
+                self.assertEqual(values["destination"]["index"], 1)
+                expected_mode = "variable" if opcode & 0x80 else "direct"
+                self.assertEqual(values["right_operand"]["mode"], expected_mode)
+                self.assertEqual(instruction.instruction_width, 5)
+
+    def test_string_ops_semantic_ir_covers_commands_flags_and_reserved_selector(self) -> None:
+        program = bytes((
+            0x27, 0x01, 5, ord("A"), 0,                 # load direct string
+            0x27, 0x42, 6, 2, 0,                       # copy from variable id
+            0x27, 0x23, 6, 1, 2, 0,                    # set char from variable
+            0x27, 0xC4, 3, 0, 2, 0, 1, 0,             # get, all variable args
+            0x27, 0x45, 7, 3, 0,                       # create with variable size
+            0x27, 0x20,                                # reserved selector no-op
+            0x80,
+        ))
+        result = decode_script(
+            program, identity="fixture/string-ops", kind="SCRP", number=1,
+            room=1, resource_key="script.1", game_name="fixture",
+            source_member="fixture", resource_offset=0, source_offset=500,
+        )
+        self.assertTrue(result.decode_complete)
+        self.assertEqual([item.operation for item in result.instructions], [
+            "string_ops", "string_ops", "string_ops", "string_ops",
+            "string_ops", "string_ops", "yield",
+        ])
+        decoded = [dict(item.operands) for item in result.instructions[:6]]
+        self.assertEqual([item["operation"] for item in decoded], [
+            "load_string", "copy_string", "set_string_char", "get_string_char",
+            "create_empty_string", "reserved_noop",
+        ])
+        self.assertEqual(decoded[0]["encoded_text_hex"], "4100")
+        self.assertEqual(decoded[1]["source"]["mode"], "variable")
+        self.assertEqual(decoded[2]["character"]["index"], 2)
+        self.assertEqual(decoded[3]["result"]["index"], 3)
+        self.assertEqual(decoded[4]["size"]["index"], 3)
+        self.assertTrue(decoded[5]["reserved"])
+        self.assertTrue(all(item.semantic_status == "SEMANTIC_IR_AVAILABLE"
+                            for item in result.instructions))
+
+    def test_verb_and_room_command_families_have_named_semantic_ir(self) -> None:
+        verb_bytes = (ROOT / "examples/resources/scumm_v5/c17_verb_ops.scrp").read_bytes()
+        verbs = decode_script(
+            verb_bytes, identity="fixture/verb-ops", kind="SCRP", number=1,
+            room=None, resource_key="script.1", game_name="fixture",
+            source_member="fixture", resource_offset=0, source_offset=600,
+        )
+        verb_instructions = [item for item in verbs.instructions if item.operation == "verb_ops"]
+        self.assertEqual(len(verb_instructions), 4)
+        self.assertTrue(all(item.semantic_status == "SEMANTIC_IR_AVAILABLE"
+                            for item in verb_instructions))
+        first_commands = dict(verb_instructions[0].operands)["commands"]
+        self.assertEqual([item["operation"] for item in first_commands], [
+            "create", "set_inline_name", "set_color", "set_highlight_color",
+            "set_position", "set_dim_color", "set_key", "center", "enable",
+            "set_background_color",
+        ])
+        self.assertEqual(first_commands[4]["position"]["x"]["mode"], "variable")
+        self.assertEqual(first_commands[1]["encoded_name_hex"], "4c6f6f6b00")
+
+        room_bytes = (ROOT / "examples/resources/scumm_v5/c10_room_ops.scrp").read_bytes()
+        room = decode_script(
+            room_bytes, identity="fixture/room-ops", kind="SCRP", number=1,
+            room=None, resource_key="script.1", game_name="fixture",
+            source_member="fixture", resource_offset=0, source_offset=800,
+        )
+        room_instructions = [item for item in room.instructions if item.operation == "room_ops"]
+        self.assertGreaterEqual(len(room_instructions), 14)
+        self.assertTrue(all(item.semantic_status == "SEMANTIC_IR_AVAILABLE"
+                            for item in room_instructions))
+        self.assertIn("save_string_resource", [
+            dict(item.operands)["operation"] for item in room_instructions
+        ])
+        self.assertIn("transform_room", [
+            dict(item.operands)["operation"] for item in room_instructions
+        ])
+
+    def test_stop_and_running_script_operations_have_semantic_operands(self) -> None:
+        program = bytes((
+            0x62, 7,                 # stopScript direct
+            0xE2, 0, 0,              # stopScript variable v0
+            0x68, 1, 0, 7,           # isScriptRunning result v1, direct script
+            0xE8, 2, 0, 0, 0,       # result v2, variable script v0
+            0x80,
+        ))
+        result = decode_script(
+            program, identity="fixture/script-lifecycle", kind="SCRP", number=1,
+            room=None, resource_key="script.1", game_name="fixture",
+            source_member="fixture", resource_offset=0, source_offset=900,
+        )
+        self.assertEqual([item.operation for item in result.instructions], [
+            "stop_script", "stop_script", "is_script_running",
+            "is_script_running", "yield",
+        ])
+        values = [dict(item.operands) for item in result.instructions[:4]]
+        self.assertEqual(values[0]["script_number"], {"mode": "direct", "value": 7})
+        self.assertEqual(values[1]["script_number"]["index"], 0)
+        self.assertEqual(values[2]["result"]["index"], 1)
+        self.assertEqual(values[2]["script_number"], {"mode": "direct", "value": 7})
+        self.assertEqual(values[3]["result"]["index"], 2)
+        self.assertEqual(values[3]["script_number"]["index"], 0)
+        self.assertTrue(all(item.semantic_status == "SEMANTIC_IR_AVAILABLE"
+                            for item in result.instructions))
+
+    def test_stop_script_terminates_path_without_truncating_branch_target_census(self) -> None:
+        # The false branch reaches stopScript(0); the true branch skips it and
+        # executes the later write. Source scanning must preserve both blocks.
+        program = bytes((
+            0x28, 0, 0, 2, 0,  # if VAR[0] == 0, branch to PC 7
+            0x62, 0,            # stopScript(0), terminates only fallthrough
+            0x1A, 1, 0, 7, 0,  # write VAR[1] = 7
+            0xA0,
+        ))
+        result = decode_script(
+            program, identity="fixture/branch-past-stop", kind="SCRP", number=1,
+            room=None, resource_key="script.1", game_name="fixture",
+            source_member="fixture", resource_offset=0, source_offset=0,
+        )
+        self.assertTrue(result.decode_complete)
+        self.assertEqual(
+            [(item.pc, item.operation) for item in result.instructions],
+            [(0, "branch_equal_zero"), (5, "stop_script"),
+             (7, "write_variable"), (12, "stop_object_code")],
+        )
+        self.assertEqual(result.instructions[1].control_flow, "TERMINATOR")
+        self.assertEqual(result.instructions[0].branch_target, 7)
 
     def test_object_verb_opaque_boundary_uses_source_pc_coordinates(self) -> None:
         program = b"\x2F\x0A\xC8\xFF"
@@ -148,7 +331,7 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
         )
         self.assertTrue(result.decode_complete)
         self.assertEqual([item.operation for item in result.instructions],
-                         ["print_text", "write_variable", "stop_script"])
+                         ["print_text", "write_variable", "stop_object_code"])
         self.assertEqual(result.instructions[0].raw_hex, "14010f486900")
         self.assertEqual(result.instructions[1].pc, 6)
 
@@ -216,7 +399,41 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
                 self.assertEqual(values["ego_actor"], {
                     "mode": "implicit_variable", "namespace": "global", "index": 1,
                 })
-                self.assertEqual(stop.operation, "stop_script")
+                self.assertEqual(stop.operation, "stop_object_code")
+
+    def test_camera_and_sound_status_families_have_explicit_semantic_ir(self) -> None:
+        program = bytes((
+            0x32, 0x34, 0x12,             # setCameraAt($1234)
+            0xB2, 0x02, 0x00,             # setCameraAt(var[2])
+            0x12, 0x78, 0x56,             # panCameraTo($5678)
+            0x92, 0x03, 0x00,             # panCameraTo(var[3])
+            0x7C, 0x04, 0x00, 9,          # var[4] = isSoundRunning(9)
+            0xFC, 0x05, 0x00, 0x06, 0x00, # var[5] = isSoundRunning(var[6])
+            0x71, 0x07, 0x00, 2,          # var[7] = getActorCostume(2)
+            0xF1, 0x08, 0x00, 0x09, 0x00, # var[8] = getActorCostume(var[9])
+            0x00,
+        ))
+        script = decode_script(
+            program, identity="synthetic/entry", kind="ENCD", number=None,
+            room=1, resource_key="room.1", game_name="synthetic-conformance",
+            source_member="fixture", resource_offset=0, source_offset=2000,
+        )
+        self.assertTrue(script.decode_complete)
+        self.assertEqual([item.operation for item in script.instructions], [
+            "set_camera_at", "set_camera_at", "pan_camera_to", "pan_camera_to",
+            "is_sound_running", "is_sound_running", "get_actor_costume",
+            "get_actor_costume", "stop_object_code",
+        ])
+        decoded = [dict(item.operands) for item in script.instructions]
+        self.assertEqual(decoded[0]["x"], {"mode": "direct", "value": 0x1234})
+        self.assertEqual(decoded[1]["x"]["mode"], "variable")
+        self.assertEqual(decoded[2]["x"], {"mode": "direct", "value": 0x5678})
+        self.assertEqual(decoded[3]["x"]["index"], 3)
+        self.assertEqual(decoded[4]["result"]["index"], 4)
+        self.assertEqual(decoded[4]["sound"], {"mode": "direct", "value": 9})
+        self.assertEqual(decoded[5]["sound"]["mode"], "variable")
+        self.assertEqual(decoded[6]["actor"], {"mode": "direct", "value": 2})
+        self.assertEqual(decoded[7]["actor"]["index"], 9)
 
     def test_load_room_with_ego_emits_static_and_dynamic_room_object_edges(self) -> None:
         base = _compile(1, source_rooms()[1])
@@ -266,6 +483,27 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
         self.assertEqual(operands["x"], {"mode": "direct", "value": 0x1234})
         self.assertEqual(operands["y"], {"mode": "direct", "value": 0x5678})
 
+    def test_walk_actor_to_actor_has_two_flagged_bytes_and_literal_distance(self) -> None:
+        script = decode_script(
+            bytes((0xCD, 3, 0, 4, 0, 0xFF, 0)),
+            identity="synthetic/entry", kind="ENCD", number=None,
+            room=1, resource_key="room.1", game_name="synthetic-conformance",
+            source_member="fixture", resource_offset=0, source_offset=1000,
+        )
+        self.assertTrue(script.decode_complete)
+        operation = script.instructions[0]
+        self.assertEqual(operation.operation, "walk_actor_to_actor")
+        operands = dict(operation.operands)
+        self.assertEqual(operands["actor"], {
+            "mode": "variable", "namespace": "global", "index": 3,
+            "indexed": False, "index_reference": None,
+        })
+        self.assertEqual(operands["target_actor"], {
+            "mode": "variable", "namespace": "global", "index": 4,
+            "indexed": False, "index_reference": None,
+        })
+        self.assertEqual(operands["distance"], 0xFF)
+
     def test_actor_room_placement_and_camera_follow_are_separate_edges(self) -> None:
         base = _compile(1, source_rooms()[1])
         script = decode_script(
@@ -277,7 +515,7 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
         )
         self.assertEqual([item.operation for item in script.instructions],
                          ["end_cutscene", "put_actor_in_room", "put_actor",
-                          "actor_follow_camera", "stop_script"])
+                          "actor_follow_camera", "stop_object_code"])
         report = analyze_room(
             replace(base.room_ir, scripts=(script,)), global_script_count=200,
         )

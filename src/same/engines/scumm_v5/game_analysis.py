@@ -25,6 +25,88 @@ from .program_units import build_program_unit_model, build_residency_manifest
 from .selector_demand import build_selector_demand_model, build_selector_directory
 from .native_residency import NativeProgramDirectory, directory_assembly
 from .v5_opcode_schema import opcode_schema, schema_coverage
+from .capability_frontier import (
+    build_capability_frontier, build_whole_game_readiness,
+)
+
+
+_OPERATION_SUPPORT_EVIDENCE: dict[str, dict[str, tuple[str, str]]] = {
+    "draw_box": {
+        "host_runtime": (
+            "SUPPORTED",
+            "conformance tests cover direct/variable operands, inclusive/reversed bounds, "
+            "viewport projection, clipping, and color writes",
+        ),
+        "snes_runtime": (
+            "UNSUPPORTED",
+            "native path currently consumes the instruction operands without drawing pixels",
+        ),
+    },
+    "get_actor_width": {
+        "host_runtime": (
+            "SUPPORTED",
+            "conformance tests cover direct/variable actor operands and actorOps width mutation",
+        ),
+        "snes_backend": (
+            "SUPPORTED",
+            "the SNES backend retains the SCUMM v5 opcode and compiles to the native dispatch path",
+        ),
+        "snes_backend": (
+            "SUPPORTED",
+            "the SCUMM v5 backend retains the canonical opcode and its runtime directory dispatches it",
+        ),
+        "snes_runtime": (
+            "SUPPORTED",
+            "native C14 conformance verifies direct and variable-selected width queries against actorOps state",
+        ),
+        "native_conformance": (
+            "SUPPORTED",
+            "bounded C14 Nexen control checks actor 1 width 35 and actor 2 default width 24",
+        ),
+        "save_restore": (
+            "NOT_APPLICABLE",
+            "getActorWidth is read-only; actor and variable persistence are owned by their existing state records",
+        ),
+        "save_restore": (
+            "NOT_APPLICABLE",
+            "getActorWidth is read-only; width persistence is owned by actor state and ordinary variable state",
+        ),
+    },
+    "walk_actor_to_actor": {
+        "host_runtime": (
+            "SUPPORTED",
+            "conformance covers direct and variable actor IDs, explicit and automatic stand-off distance, and invalid/nonresident actors",
+        ),
+        "snes_backend": (
+            "SUPPORTED",
+            "SCUMM bytecode is retained and routed through the generic native movement dispatch",
+        ),
+        "snes_runtime": (
+            "SUPPORTED",
+            "bounded native C32 conformance checks actor-relative destination and room state without VM error",
+        ),
+        "native_conformance": (
+            "SUPPORTED",
+            "Nexen C32 movement fixture reaches the expected actor-relative destination and balanced terminal state",
+        ),
+        "save_restore": (
+            "PARTIAL",
+            "host actor/script records preserve movement continuation; portable SNES save coverage is not yet certified",
+        ),
+    },
+    "load_room_with_ego": {
+        "host_runtime": (
+            "SUPPORTED",
+            "generic conformance tests cover direct/variable operands, destination preflight, "
+            "entry-object placement, optional walk, and VAR_WALKTO_OBJ across ENCD yield",
+        ),
+        "snes_runtime": (
+            "PARTIAL",
+            "native request/room-commit/postamble implementation exists; operation-level "
+            "semantic conformance remains incomplete",
+        ),
+    },
+}
 
 
 def canonical_json(value: Any) -> bytes:
@@ -116,6 +198,8 @@ class GameAnalysis:
     selector_directory: dict[str, Any]
     native_program_directory: dict[str, Any]
     selector_residency: dict[str, Any]
+    capability_frontier: dict[str, Any]
+    whole_game_readiness: dict[str, Any]
     room_compilations: dict[int, RoomBundleCompilation]
 
     def files(self) -> dict[str, bytes]:
@@ -126,6 +210,8 @@ class GameAnalysis:
             "dependency_graph.json": canonical_json(self.dependency_graph),
             "reachability.json": canonical_json(self.reachability),
             "capabilities.json": canonical_json(self.capabilities),
+            "capability_frontier.json": canonical_json(self.capability_frontier),
+            "whole_game_readiness.json": canonical_json(self.whole_game_readiness),
             "unsupported_frontier.json": canonical_json(self.unsupported_frontier),
             "opaque_analysis.json": canonical_json(self.opaque_analysis),
             "capacity.json": canonical_json(self.capacity),
@@ -172,6 +258,8 @@ class GameAnalysis:
             f"Largest callable room SelectorUnit bundle: {self.selector_demand['room_capacity_summary']['largest_room_selector_unit_count']}",
             f"Largest known static room+global SelectorUnit set: {self.selector_demand['room_capacity_summary']['largest_static_room_plus_global_set']}",
             f"Current selector capacity: {self.selector_residency['selector_capacity']['capacity']}",
+            f"Semantic frontier: {self.capability_frontier['semantic_unsupported_occurrences']} unsupported occurrences across {self.capability_frontier['family_count']} families",
+            f"Whole-game readiness: {self.whole_game_readiness['status']}",
             f"Selector-unit residency recommendation: {self.selector_residency['recommendation']['choice']}",
             "Semantic executable count, resource records, emitted legacy IDs, callable SelectorUnits, and simultaneous pins are distinct; see selector_demand.json and selector_residency.json.", "",
             "Opaque analysis remains incomplete; absence of a decoded edge is not proof "
@@ -315,26 +403,49 @@ def _all_scripts(game: GameIR,
 
 
 _CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
-    "script-lifecycle": ("start_script", "chain_script", "stop_script", "yield"),
+    "script-lifecycle": (
+        "start_script", "chain_script", "stop_script", "stop_object_code", "yield",
+        "freeze_scripts",
+    ),
     "variables-and-control-flow": (
         "write_variable", "increment_variable", "decrement_variable", "jump",
+        "set_var_range",
+        "expression", "add", "subtract", "multiply", "divide", "and", "or",
         "branch_equal_zero", "branch_not_equal_zero", "branch_equal",
         "branch_not_equal", "branch_less_than", "branch_greater_than",
         "branch_less_equal", "branch_greater_equal",
     ),
     "object-execution-and-state": (
-        "start_object", "set_object_state", "set_object_class", "matrix_ops",
+        "start_object", "set_object_state", "set_object_class", "set_object_name",
+        "set_object_owner", "pickup_object", "get_object_state", "draw_object",
+        "if_class_of_is", "find_object", "matrix_ops",
     ),
+    "graphics": ("draw_box",),
+    "diagnostics": ("debug_log",),
+    "system-control": ("system_operation",),
     "room-lifecycle": ("load_room", "load_room_with_ego", "put_actor_in_room"),
     "actors-and-movement": (
         "animate_actor", "walk_actor_to", "put_actor", "actor_ops",
+        "walk_actor_to_actor",
         "actor_follow_camera", "wait_for_actor",
+        "put_actor_at_object", "walk_actor_to_object", "face_actor",
+        "get_actor_room", "get_actor_elevation", "get_actor_facing",
+        "get_actor_moving", "get_actor_scale", "get_actor_walkbox",
+        "get_actor_width", "get_anim_counter", "get_actor_x", "get_actor_y",
+        "get_closest_obj_actor", "actor_from_pos",
     ),
+    "inventory": ("get_inventory_count", "get_object_owner", "set_object_owner",
+                  "pickup_object", "get_verb_entrypoint", "find_inventory"),
     "text-and-dialog": ("print_text", "print_ego"),
-    "waits-and-timers": ("wait", "delay"),
-    "cutscenes": ("begin_cutscene", "end_cutscene"),
-    "audio": ("start_music", "start_sound", "stop_sound", "sound_kludge"),
-    "resource-services": ("resource_routines", "cursor_command"),
+    "waits-and-timers": ("wait", "delay", "delay_variable"),
+    "cutscenes": ("begin_cutscene", "end_cutscene", "set_cutscene_override"),
+    "verbs-and-sentences": (
+        "submit_sentence", "cancel_sentence_queue", "save_restore_verbs",
+    ),
+    "audio": ("start_music", "start_sound", "stop_sound", "sound_kludge",
+              "is_sound_running"),
+    "camera": ("set_camera_at", "pan_camera_to"),
+    "resource-services": ("resource_routines", "cursor_command", "pseudo_room_map"),
 }
 _OP_TO_CAPABILITY = {operation: group for group, operations in _CAPABILITY_GROUPS.items()
                      for operation in operations}
@@ -366,6 +477,10 @@ def _control_flow_certainty(script: ScriptIR) -> dict[int, str]:
         if ins.control_flow == "CONDITIONAL_BRANCH":
             if ins.branch_target is not None:
                 pending.append((ins.branch_target, True))
+            if next_pc in by_pc:
+                pending.append((next_pc, True))
+            continue
+        if ins.control_flow == "CONDITIONAL_TERMINATOR":
             if next_pc in by_pc:
                 pending.append((next_pc, True))
             continue
@@ -910,6 +1025,25 @@ def analyze_capabilities(
             reason = ("dispatch handler exists, but operation-level conformance is not certified"
                       if all(handler_hits) else
                       "one or more decoded opcode variants have no host dispatch handler")
+        support_evidence = _OPERATION_SUPPORT_EVIDENCE.get(operation, {})
+        if "host_runtime" in support_evidence:
+            host_status, reason = support_evidence["host_runtime"]
+        snes_runtime_status, snes_runtime_evidence = support_evidence.get(
+            "snes_runtime",
+            ("UNKNOWN", "whole-game census does not certify native semantics"),
+        )
+        native_conformance_status, native_conformance_evidence = support_evidence.get(
+            "native_conformance",
+            ("UNKNOWN", "not inferred from source analysis"),
+        )
+        backend_status, backend_evidence = support_evidence.get(
+            "snes_backend",
+            ("PARTIAL", "source script bytes are retained in SC5C; no per-op lowering certification"),
+        )
+        save_restore_status, save_restore_evidence = support_evidence.get(
+            "save_restore",
+            ("UNKNOWN", "not inferred from opcode decoding"),
+        )
         record = {
             "capability": group,
             "operation": operation,
@@ -922,15 +1056,15 @@ def analyze_capabilities(
                             "evidence": ("structural-only form; semantics are not normalized"
                                          if semantic_unsupported else
                                          "semantic operation and operands are normalized")},
-            "snes_backend": {"status": "PARTIAL",
-                             "evidence": "source script bytes are retained in SC5C; no per-op lowering certification"},
+            "snes_backend": {"status": backend_status,
+                             "evidence": backend_evidence},
             "host_runtime": {"status": host_status, "evidence": reason},
-            "snes_runtime": {"status": "UNKNOWN",
-                             "evidence": "whole-game census does not certify native semantics"},
-            "save_restore": {"status": "UNKNOWN",
-                             "evidence": "not inferred from opcode decoding"},
-            "native_conformance": {"status": "UNKNOWN",
-                                   "evidence": "not inferred from source analysis"},
+            "snes_runtime": {"status": snes_runtime_status,
+                             "evidence": snes_runtime_evidence},
+            "save_restore": {"status": save_restore_status,
+                             "evidence": save_restore_evidence},
+            "native_conformance": {"status": native_conformance_status,
+                                   "evidence": native_conformance_evidence},
             "occurrences": len(occurrences),
         }
         registry[operation] = record
@@ -1303,6 +1437,9 @@ def analyze_game(
     }
     capabilities, frontier = analyze_capabilities(scripts, reachability, paths)
     opcode_coverage = build_opcode_coverage(scripts, reachability, capabilities)
+    capability_frontier = build_capability_frontier(
+        scripts, reachability, paths, capabilities,
+    )
     resource_counts = Counter(str(item["category"]) for item in game.resources)
     status_counts = Counter(str(item["status"]) for item in game.resources)
     executable_status = Counter(executable_analysis_status(item)
@@ -1406,6 +1543,10 @@ def analyze_game(
                    **dict(sorted(executable_status.items()))},
         "items": executable_rows,
     }
+    whole_game_readiness = build_whole_game_readiness(
+        census, executable_report, opcode_coverage, capabilities,
+        capability_frontier,
+    )
     opaque_rows = [item for item in executable_rows if item["analysis_status"] != "COMPLETE"]
     opaque = {
         "schema": "same_scumm_v5_opaque_analysis_v1",
@@ -1472,7 +1613,7 @@ def analyze_game(
                         capabilities, frontier, opaque, capacity, opcode_coverage,
                         program_units, residency_manifest, residency,
                         selector_demand, selector_directory, native_program_directory,
-                        selector_residency,
+                        selector_residency, capability_frontier, whole_game_readiness,
                         compilations)
 
 

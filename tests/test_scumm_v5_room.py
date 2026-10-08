@@ -682,11 +682,23 @@ class ScummV5RawRoomTests(unittest.TestCase):
         self.assertEqual(room.next_box(1, 0), 0)
         self.assertEqual(room.next_box(1, 1), 1)
 
+        implicit_base_mask = raw_room(
+            bytes((1,)) + bytes(16),
+            walkboxes=(sentinel, struct.pack(
+                "<hhhhhhhhBBH", 1, 1, 7, 1, 6, 7, 2, 7, 1, 0x08, 0x8001,
+            )),
+        )
+        implicit_base = decode_room(implicit_base_mask, key="room.implicit-base-mask")
+        self.assertEqual(implicit_base.zplanes, ())
+        self.assertEqual(implicit_base.walkboxes[1].mask, 1)
+
         bad_mask = raw_room(
             bytes((1,)) + bytes(16),
-            walkboxes=(sentinel, trapezoid),
+            walkboxes=(sentinel, struct.pack(
+                "<hhhhhhhhBBH", 1, 1, 7, 1, 6, 7, 2, 7, 2, 0x08, 0x8001,
+            )),
         )
-        with self.assertRaisesRegex(ResourceError, "mask 1 exceeds 0 z-planes"):
+        with self.assertRaisesRegex(ResourceError, "mask 2 exceeds 1 z-buffer slots"):
             decode_room(bad_mask, key="room.bad-box-mask")
 
         bad_matrix = raw_room(

@@ -901,9 +901,14 @@ def _decode_raw(data: bytes, *, key: str) -> ScummV5Room:
     for box_index in range(walkbox_count):
         values = struct.unpack_from("<hhhhhhhhBBH", boxd.payload, 2 + box_index * 20)
         mask = values[8]
-        if mask > zplane_count:
+        # RMIH stores the number of additional ZP planes; the base room
+        # z-buffer is implicit. ScummVM's v5 loader consequently uses
+        # RMIH + 1 buffers. BOXD mask values may name that implicit buffer
+        # even when the room has no explicit ZPxx chunks.
+        if mask > zplane_count + 1:
             raise ResourceError(
-                f"{owner} BOXD box {box_index} mask {mask} exceeds {zplane_count} z-planes"
+                f"{owner} BOXD box {box_index} mask {mask} exceeds "
+                f"{zplane_count + 1} z-buffer slots"
             )
         walkboxes.append(ScummV5Walkbox(
             box_index,
@@ -1379,6 +1384,35 @@ class ScummV5RoomAdapter:
         video.fill(0)
         video.set_palette(0, self.room.palette)
         video.blit_surface(self.composition_surface)
+
+    def draw_box(self, left: int, top: int, right: int, bottom: int, color: int) -> bool:
+        """Draw an inclusive v5 box in the current logical screen viewport."""
+        if self.room is None or self.logical_surface is None:
+            return False
+        if left > right:
+            left, right = right, left
+        if top > bottom:
+            top, bottom = bottom, top
+        logical_width = self.context.profile.video.logical_width or self.context.profile.video.width
+        logical_height = self.context.profile.video.logical_height or self.context.profile.video.height
+        source_x, source_y, _dest_x, _dest_y, width, height = self._projection
+        left = max(0, left)
+        top = max(0, top)
+        right = min(logical_width - 1, right)
+        bottom = min(logical_height - 1, bottom)
+        if left > right or top > bottom:
+            return False
+        self.logical_surface.fill(
+            color,
+            Rect(
+                source_x + left,
+                source_y + top,
+                right - left + 1,
+                bottom - top + 1,
+            ),
+        )
+        self.logical_sha256 = self.logical_surface.hash()
+        return True
 
     def move_cursor(self, logical_x: int, logical_y: int) -> None:
         source_x, source_y, destination_x, destination_y, width, height = self._projection

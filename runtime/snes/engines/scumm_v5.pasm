@@ -2514,10 +2514,25 @@ ScummV5_Engine_Frame__check_actor_y_opcode:
 ScummV5_Engine_Frame__check_actor_y_opcode_a3:
     .a8
     cmp #$A3
-    bne ScummV5_Engine_Frame__check_actor_room_opcode
+    bne ScummV5_Engine_Frame__check_actor_costume_opcode
     jmp ScummV5_Engine_Frame__dispatch_get_actor_y
+ScummV5_Engine_Frame__check_actor_costume_opcode:
+    .a8
+    lda.l SAME_SCUMM_LAST_OPCODE
+    and #$7F
+    cmp #$71
+    bne ScummV5_Engine_Frame__check_actor_room_opcode
+    jmp ScummV5_Op_GetActorCostume
 ScummV5_Engine_Frame__check_actor_room_opcode:
     .a8
+    lda.l SAME_SCUMM_LAST_OPCODE
+    and #$7F
+    cmp #$6C
+    bne ScummV5_Engine_Frame__check_actor_room_opcode_not_width
+    jmp ScummV5_Op_GetActorWidth
+ScummV5_Engine_Frame__check_actor_room_opcode_not_width:
+    .a8
+    lda.l SAME_SCUMM_LAST_OPCODE
     cmp #$03
     bne ScummV5_Engine_Frame__check_actor_room_opcode_not03
     jmp ScummV5_Engine_Frame__dispatch_get_actor_room
@@ -11236,6 +11251,103 @@ ScummV5_Op_GetActorRoom__write:
 ScummV5_Op_GetActorRoom__error:
     jmp ScummV5_Op__error
 
+; Canonical v5 $71/$F1 getActorCostume.  The result variable precedes the
+; direct/variable actor byte; actor records remain the source of current
+; costume state and an out-of-range actor follows the engine's zero-query
+; policy without mutating C14.
+ScummV5_Op_GetActorCostume:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_INITIALIZED
+    bne ScummV5_Op_GetActorCostume__actors_ready
+    jsr ScummV5_C14_ResetState
+ScummV5_Op_GetActorCostume__actors_ready:
+    rep #$30
+    .a16
+    .i16
+    jsr ScummV5_ReadResultOffset
+    bcs ScummV5_Op_GetActorCostume__error
+    sep #$20
+    .a8
+    jsr ScummV5_FetchVarOrDirectByte
+    bcs ScummV5_Op_GetActorCostume__error
+    cmp #$20
+    bcs ScummV5_Op_GetActorCostume__zero
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_COSTUME,x
+    bra ScummV5_Op_GetActorCostume__write
+ScummV5_Op_GetActorCostume__zero:
+    .a8
+    lda #$00
+ScummV5_Op_GetActorCostume__write:
+    rep #$20
+    .a16
+    and #$00FF
+    sta.l SAME_SCUMM_OPERAND
+    jsr ScummV5_WriteResultValue
+    jmp ScummV5_Engine_Frame__next
+ScummV5_Op_GetActorCostume__error:
+    jmp ScummV5_Op__error
+
+; Canonical v5 $6C/$EC getActorWidth. Return the actorOps width byte through
+; the ordinary result-variable path; invalid actor IDs use the bounded zero
+; query policy used by the neighboring actor queries.
+ScummV5_Op_GetActorWidth:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_INITIALIZED
+    bne ScummV5_Op_GetActorWidth__actors_ready
+    jsr ScummV5_C14_ResetState
+ScummV5_Op_GetActorWidth__actors_ready:
+    rep #$30
+    .a16
+    .i16
+    jsr ScummV5_ReadResultOffset
+    bcs ScummV5_Op_GetActorWidth__error
+    sep #$20
+    .a8
+    jsr ScummV5_FetchVarOrDirectByte
+    bcs ScummV5_Op_GetActorWidth__error
+    cmp #$20
+    bcs ScummV5_Op_GetActorWidth__zero
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_WIDTH,x
+    bra ScummV5_Op_GetActorWidth__write
+ScummV5_Op_GetActorWidth__zero:
+    .a8
+    lda #$00
+ScummV5_Op_GetActorWidth__write:
+    rep #$20
+    .a16
+    and #$00FF
+    sta.l SAME_SCUMM_OPERAND
+    jsr ScummV5_WriteResultValue
+    jmp ScummV5_Engine_Frame__next
+ScummV5_Op_GetActorWidth__error:
+    jmp ScummV5_Op__error
+
 ; Canonical v5 $06/$86 getActorElevation.  The actor operand is the normal
 ; flagged byte and the result is the existing C14 elevation word.
 ScummV5_Op_GetActorElevation:
@@ -17089,9 +17201,9 @@ ScummV5_Op_StringOps__check_create:
     jmp ScummV5_Op_StringOps__create
 ScummV5_Op_StringOps__unknown:
     .a8
-    lda #SCUMM_ERR_STRING
-    jsr ScummV5_SetError
-    jmp ScummV5_Op__error
+    ; The SCUMM v5 default arm consumes only the selector and changes no
+    ; state. Structurally unknown/truncated forms are rejected by compilation.
+    jmp ScummV5_Op_StringOps__done
 
 ScummV5_Op_StringOps__load:
     sep #$20

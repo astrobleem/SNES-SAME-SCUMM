@@ -12,11 +12,13 @@ external game files + thin edition profile
   -> existing generic SCUMM/SAME runtime
 ```
 
-**Status:** room-executable compilation, whole-source analysis, and a
-SCUMM-v5 structural opcode schema are implemented as partial stages. Structural
-decode, semantic IR availability, backend support, and runtime support are
-separate. The dialect schema is not yet a complete parser for every v5 form,
-and it does not certify backend/runtime behavior.
+**Status:** room-executable compilation, whole-source analysis, and normalized
+semantic IR for the current canonical DOS-CD FATE corpus are implemented. That
+corpus contains 96 parsed rooms and 116,730 instructions with no structural or
+semantic-IR gaps. This is not a claim of complete parsing for every SCUMM v5
+source edition/form. Structural decode, semantic IR, host semantics, backend
+support and native runtime support remain independent; whole-game readiness is
+still NOT READY.
 `tools/compile_scumm_room.py` and the room cooker use the same
 `room_compiler.compile_room_payload` API. The cooker remains available as the
 legacy selection/visual CLI, and its output continues to use the existing
@@ -28,11 +30,17 @@ and invokes the same `decode_script()` for global scripts. `v5_opcode_schema.py`
 defines opcode families, parameter flags, operand forms and default control
 flow; operation decoders add subcommand-specific boundaries. A known-width
 semantic-unsupported instruction remains in the IR and dependency walk. Only
-unknown structure/truncation becomes an opaque frontier. The CLI emits
+unknown structure/truncation becomes an opaque frontier. For the current
+canonical DOS-CD FATE corpus, every parsed instruction has normalized semantic
+IR. The CLI emits
 canonical semantic identities and resource identities, graph certainty,
 root-based reachability, capability dimensions and opaque frontiers without
 SNES selector allocation. A source room rejected by the current room decoder
-remains inventoried with an explicit unsupported status and diagnostic.
+remains inventoried with an explicit unsupported status and diagnostic. The
+current FATE archive's 96 indexed rooms all parse through the generic decoder.
+The remaining release frontier is implementation/support evidence, not a
+current FATE structural-decoder gap; see
+`CAPABILITY_FRONTIER_BURN_DOWN.md`.
 
 This is incremental. Existing profile loading,
 `LucasartsScummV5ResourceProvider`, room decoders, cooked-room codecs and

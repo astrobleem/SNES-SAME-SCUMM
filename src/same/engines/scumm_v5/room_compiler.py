@@ -469,6 +469,390 @@ def _read_structural_family(
     return operands, target, subopcode
 
 
+def _expression_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the SCUMM v5 RPN expression stream into explicit IR nodes.
+
+    The nested opcode remains a generic VM dispatch node. Its family and
+    structurally decoded operands are retained; this does not certify that
+    every nested opcode has backend/runtime support.
+    """
+    names = {
+        1: "push_word_operand", 2: "add", 3: "subtract",
+        4: "multiply", 5: "divide", 6: "execute_nested_opcode",
+    }
+    normalized = []
+    for item in operands.get("operations", []):
+        token = int(item["subopcode"])
+        subop = token & 0x1F
+        row: dict[str, Any] = {
+            "token": token,
+            "operation": names.get(subop, "reserved_noop"),
+            "parameter_flags": token & 0xE0,
+        }
+        if subop == 1:
+            row["operand"] = item["operand"]
+        elif subop == 6:
+            nested = item["nested"]
+            row["nested_opcode"] = {
+                "opcode": nested["opcode"],
+                "family": nested["family"],
+                "operands": nested["operands"],
+                "control_flow": opcode_schema(nested["opcode"]).control_flow,
+                "branch_target": nested["target"],
+                "subopcode": nested["subopcode"],
+                "result_variable": {"namespace": "global", "index": 0},
+            }
+        normalized.append(row)
+    return {
+        "result": operands["result"],
+        "operations": normalized,
+        "evaluation": "left-to-right RPN with signed 32-bit intermediate stack",
+        "maximum_stack_entries": 256,
+        "reserved_token_behavior": "no-op per SCUMM v5 o5_expression default arm",
+    }
+
+
+def _string_ops_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    """Normalize one SCUMM v5 stringOps command without losing flag modes."""
+    selector = int(operands["subopcode"])
+    key = selector & 0x1F
+    value: dict[str, Any] = {
+        "subopcode": selector,
+        "parameter_flags": selector & 0xE0,
+    }
+    if key == 1:
+        value.update(operation="load_string", destination=operands["string"],
+                     encoded_text_hex=operands["text_hex"])
+    elif key == 2:
+        value.update(operation="copy_string", destination=operands["destination"],
+                     source=operands["source"])
+    elif key == 3:
+        value.update(operation="set_string_char", string=operands["string"],
+                     index=operands["index"], character=operands["character"])
+    elif key == 4:
+        value.update(operation="get_string_char", result=operands["result"],
+                     string=operands["string"], index=operands["index"])
+    elif key == 5:
+        value.update(operation="create_empty_string", string=operands["string"],
+                     size=operands["size"])
+    else:
+        # ScummEngine_v5::o5_stringOps consumes the selector and takes its
+        # default arm without further operands or state changes.
+        value.update(operation="reserved_noop", reserved=True)
+    return value
+
+
+def _verb_ops_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    """Name the SCUMM v5 verb-slot commands and retain decoded flag operands."""
+    names = {
+        1: "set_image", 2: "set_inline_name", 3: "set_color",
+        4: "set_highlight_color", 5: "set_position", 6: "enable",
+        7: "disable", 8: "delete", 9: "create", 16: "set_dim_color",
+        17: "dim", 18: "set_key", 19: "center", 20: "set_name_from_string",
+        22: "assign_object", 23: "set_background_color",
+    }
+    commands = []
+    for command in operands["commands"]:
+        selector = int(command["subopcode"])
+        key = selector & 0x1F
+        row: dict[str, Any] = {
+            "subopcode": selector,
+            "operation": names[key],
+            "parameter_flags": selector & 0xE0,
+        }
+        values = command["values"]
+        if key == 2:
+            row["encoded_name_hex"] = values[0]
+        elif key in (1, 3, 4, 16, 18, 20, 23):
+            row["value"] = values[0]
+        elif key == 5:
+            row["position"] = {"x": values[0], "y": values[1]}
+        elif key == 22:
+            row["object"] = values[0]
+            row["room"] = values[1]
+        elif values:
+            row["values"] = values
+        commands.append(row)
+    return {"verb": operands["verb"], "commands": commands}
+
+
+def _room_ops_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    """Name the v5 roomOps effect while retaining all source argument modes."""
+    names = {
+        1: "set_scroll_range", 2: "room_color_legacy", 3: "set_screen_range",
+        4: "set_palette_color", 5: "enable_shake", 6: "disable_shake",
+        7: "set_scale_slot", 8: "set_intensity", 9: "request_savegame",
+        10: "set_fade_effect", 11: "set_rgb_intensity", 12: "set_shadow",
+        13: "save_string_resource", 14: "load_string_resource",
+        15: "transform_room", 16: "set_color_cycle_speed",
+    }
+    selector = int(operands["subopcode"])
+    value = {
+        "subopcode": selector,
+        "operation": names[selector & 0x1F],
+        "parameter_flags": selector & 0xE0,
+    }
+    for key, item in operands.items():
+        if key != "subopcode":
+            value[key] = item
+    return value
+
+
+def _script_lifecycle_semantic_ir(family: str, operands: dict[str, Any]) -> dict[str, Any]:
+    if family == "stopScript":
+        return {"script_number": operands["operand_0"]}
+    if family == "isScriptRunning":
+        return {
+            "result": operands["operand_0"],
+            "script_number": operands["operand_1"],
+        }
+    raise ValueError(f"unsupported lifecycle IR family {family}")
+
+
+_RESULT_QUERY_IR = {
+    "getRandomNr": ("get_random_nr", "maximum"),
+    "actorFromPos": ("actor_from_pos", "x", "y"),
+    "findObject": ("find_object", "x", "y"),
+    "findInventory": ("find_inventory", "owner", "index"),
+    "getActorCostume": ("get_actor_costume", "actor"),
+    "getActorRoom": ("get_actor_room", "actor"),
+    "getActorElevation": ("get_actor_elevation", "actor"),
+    "getActorFacing": ("get_actor_facing", "actor"),
+    "getActorMoving": ("get_actor_moving", "actor"),
+    "getActorScale": ("get_actor_scale", "actor"),
+    "getActorWalkBox": ("get_actor_walkbox", "actor"),
+    "getActorWidth": ("get_actor_width", "actor"),
+    "getAnimCounter": ("get_anim_counter", "actor"),
+    "getActorX": ("get_actor_x", "actor"),
+    "getActorY": ("get_actor_y", "actor"),
+    "getClosestObjActor": ("get_closest_obj_actor", "actor"),
+    "getDist": ("get_distance", "first_object_or_actor", "second_object_or_actor"),
+    "getInventoryCount": ("get_inventory_count", "owner"),
+    "getObjectState": ("get_object_state", "object"),
+    "getObjectOwner": ("get_object_owner", "object"),
+    "getStringWidth": ("get_string_width", "string"),
+    "getVerbEntrypoint": ("get_verb_entrypoint", "object", "verb"),
+    "isSoundRunning": ("is_sound_running", "sound"),
+}
+
+_CAMERA_COMMAND_IR = {
+    "setCameraAt": "set_camera_at",
+    "panCameraTo": "pan_camera_to",
+}
+
+
+def _result_query_semantic_ir(family: str, operands: dict[str, Any]) -> dict[str, Any]:
+    operation, *argument_names = _RESULT_QUERY_IR[family]
+    result = {"operation": operation, "result": operands["operand_0"]}
+    for index, argument_name in enumerate(argument_names, 1):
+        result[argument_name] = operands[f"operand_{index}"]
+    if family == "getRandomNr":
+        result["range"] = "inclusive 0..maximum"
+    elif family == "findInventory":
+        result["indexing"] = "one-based inventory order; zero when absent"
+    return result
+
+
+def _freeze_scripts_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "operation": "freeze_scripts",
+        "flag": operands["operand_0"],
+        "zero_behavior": "unfreeze previously frozen scripts and sentences",
+        "nonzero_behavior": "freeze eligible scripts and sentences",
+        "force_freeze_resistant_when_at_least": 0x80,
+        "cutscene_override_slot_excluded": True,
+    }
+
+
+def _save_restore_verbs_semantic_ir(
+    operands: dict[str, Any],
+) -> dict[str, Any]:
+    selector = int(operands["subopcode"])
+    command = selector & 0x1F
+    names = {1: "save", 2: "restore", 3: "delete"}
+    values = operands["values"]
+    return {
+        "operation": "save_restore_verbs",
+        "subopcode": selector,
+        "parameter_flags": selector & 0xE0,
+        "command": names.get(command, "invalid_subopcode"),
+        "valid_subopcode": command in names and selector == command,
+        "range_first": values[0],
+        "range_last": values[1],
+        "bank": values[2],
+        "invalid_command_behavior": "SCUMM v5 execution error",
+    }
+
+
+def _object_ownership_semantic_ir(
+    family: str, operands: dict[str, Any],
+) -> dict[str, Any]:
+    if family == "setOwnerOf":
+        return {"operation": "set_object_owner", "object": operands["operand_0"],
+                "owner": operands["operand_1"]}
+    if family == "pickupObject":
+        return {"operation": "pickup_object", "object": operands["operand_0"],
+                "source_room": operands["operand_1"],
+                "recipient": "VAR_EGO", "sets_state": 1,
+                "adds_untouchable_class": True}
+    raise ValueError(f"unsupported object ownership IR family {family}")
+
+
+def _actor_ops_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    """Normalize v5 actor configuration commands while retaining operand modes."""
+    names = {
+        0: "consume_dummy_operand", 1: "set_costume", 2: "set_step_distance",
+        3: "set_sound", 4: "set_walk_animation", 5: "set_talk_animation",
+        6: "set_stand_animation", 7: "consume_legacy_animation_tuple",
+        8: "reset_defaults", 9: "set_elevation", 10: "set_animation_defaults",
+        11: "set_palette", 12: "set_talk_color", 13: "set_actor_name",
+        14: "set_init_animation", 16: "set_width", 17: "set_scale",
+        18: "never_clip", 19: "always_clip", 20: "ignore_boxes",
+        21: "follow_boxes", 22: "set_animation_speed", 23: "set_shadow",
+    }
+    commands = []
+    for command in operands["commands"]:
+        selector = int(command["subopcode"])
+        key = selector & 0x1F
+        row: dict[str, Any] = {
+            "subopcode": selector,
+            "operation": names[key],
+            "parameter_flags": selector & 0xE0,
+            "arguments": command["values"],
+        }
+        if key == 13:
+            # o5_actorOps passes the current script stream to
+            # loadPtrToResource(rtActorName, actor, nullptr), so this operand
+            # is an encoded string despite the runtime storing it as a resource.
+            row["resource_kind"] = "actor_name"
+            row["encoded_name_hex"] = command["values"][0]
+        commands.append(row)
+    return {"actor": operands["actor"], "commands": commands}
+
+
+_SIMPLE_ACTOR_IR = {
+    "putActorAtObject": ("put_actor_at_object", ("actor", "object")),
+    "walkActorToObject": ("walk_actor_to_object", ("actor", "object")),
+    "faceActor": ("face_actor", ("actor", "object_or_actor")),
+}
+
+
+def _simple_actor_semantic_ir(
+    family: str, operands: dict[str, Any],
+) -> dict[str, Any]:
+    operation, names = _SIMPLE_ACTOR_IR[family]
+    return {"operation": operation, **{
+        name: operands[f"operand_{index}"] for index, name in enumerate(names)
+    }}
+
+
+def _class_test_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "operation": "if_class_of_is",
+        "object": operands["object"],
+        "class_predicates": [
+            {"class_value": value,
+             "match": "present when bit7 is set; absent otherwise"}
+            for value in operands["classes"]
+        ],
+        "combination": "all predicates must match",
+        "false_branch_displacement": operands["displacement"],
+    }
+
+
+def _draw_object_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    subopcode = int(operands["subopcode"])
+    operation = {1: "draw_at_position", 2: "draw_state", 0x1F: "draw_current_state"}[subopcode & 0x1F]
+    value: dict[str, Any] = {
+        "operation": "draw_object",
+        "object": operands["object"],
+        "draw_operation": operation,
+        "subopcode": subopcode,
+        "parameter_flags": subopcode & 0xE0,
+    }
+    values = operands.get("values", [])
+    if subopcode & 0x1F == 1:
+        value["x"], value["y"] = values
+    elif subopcode & 0x1F == 2:
+        value["state"] = values[0]
+    return value
+
+
+def _set_var_range_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "operation": "set_var_range",
+        "destination": operands["destination"],
+        "count": operands["count"],
+        "encoded_count": operands["encoded_count"],
+        "value_width_bits": operands["value_width_bits"],
+        "values": operands["values"],
+    }
+
+
+def _pseudo_room_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "operation": "pseudo_room_map",
+        "mappings": [
+            {"resource_room": resource, "pseudo_room": pseudo}
+            for resource, pseudo in operands["room_map"]
+        ],
+    }
+
+
+def _debug_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "operation": "debug_log",
+        "value": operands["operand_0"],
+        "effect": "diagnostic-only; does not mutate SCUMM game state",
+    }
+
+
+def _draw_box_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    values = operands["values"]
+    return {
+        "operation": "draw_box",
+        "x1": values[0], "y1": values[1],
+        "x2": values[2], "y2": values[3], "color": values[4],
+        "auxiliary_parameter_flags": int(operands["aux_selector"]) & 0xE0,
+        "effect": "draw SCUMM v5 debug-box primitive on the current graphics surface",
+    }
+
+
+def _system_ops_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    selector = int(operands["operand_0"])
+    names = {1: "restart", 2: "pause", 3: "quit"}
+    return {
+        "operation": "system_operation",
+        "selector": selector,
+        "command": names.get(selector, "invalid_subopcode"),
+        "valid_selector": selector in names,
+        "invalid_command_behavior": "SCUMM v5 runtime error",
+    }
+
+
+def _sentence_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    verb = operands["verb"]
+    if verb.get("mode") == "direct" and verb.get("value") == 0xFE:
+        return {"operation": "cancel_sentence_queue", "verb": verb}
+    return {
+        "operation": "submit_sentence",
+        "verb": verb,
+        "object_a": operands["object_a"],
+        "object_b": operands["object_b"],
+    }
+
+
+def _wait_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
+    kind = int(operands["subopcode"]) & 0x1F
+    names = {1: "actor_stopped", 2: "message_acknowledged",
+             3: "camera_arrived", 4: "sentence_finished"}
+    result: dict[str, Any] = {"operation": "wait", "condition": names[kind],
+                              "subopcode": int(operands["subopcode"])}
+    if kind == 1:
+        result["actor"] = operands["actor"]
+    return result
+
+
 def _read_structural_command(
     cursor: _Cursor, opcode: int, family: str, form: str, *, depth: int,
 ) -> tuple[int | None, dict[str, Any], int | None]:
@@ -641,8 +1025,11 @@ def _read_structural_command(
         value["commands"] = commands
     elif form == "set_var_range":
         value["destination"] = result()
-        count = cursor.u8()
+        encoded_count = cursor.u8()
+        count = encoded_count or 256
+        value["encoded_count"] = encoded_count
         value["count"] = count
+        value["value_width_bits"] = 16 if opcode & 0x80 else 8
         value["values"] = ([cursor.u16() for _ in range(count)] if opcode & 0x80
                            else [cursor.u8() for _ in range(count)])
     elif form == "set_class":
@@ -751,7 +1138,10 @@ def _read_structural_command(
                     "subopcode": nested_sub,
                 }
             else:
-                raise _StructuralUnknown(f"expression sub-op {key} has unknown width", subopcode=selector)
+                # ScummEngine_v5::o5_expression's default arm consumes the
+                # token and performs no stack operation. Retain it explicitly
+                # as a reserved token; do not lose the following boundary.
+                operation["reserved"] = True
             operations.append(operation)
             if len(operations) > 256:
                 raise _StructuralUnknown("expression exceeds structural bound")
@@ -820,7 +1210,7 @@ def decode_script(
         subopcode = None
         try:
             if opcode in _STOP:
-                operation = "stop_script"
+                operation = "stop_object_code"
             elif opcode in _END_CUTSCENE:
                 operation = "end_cutscene"
             elif opcode == 0x80:
@@ -1010,6 +1400,174 @@ def decode_script(
                 operation = "write_variable"
                 operands["destination"] = cursor.varref()
                 operands["value"] = cursor.word_operand(opcode, 0x80)
+            elif opcode == 0x27:
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "string_ops"
+                operands = _string_ops_semantic_ir(raw_operands)
+            elif schema is not None and schema.family == "verbOps":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "verb_ops"
+                operands = _verb_ops_semantic_ir(raw_operands)
+            elif schema is not None and schema.family == "roomOps":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "room_ops"
+                operands = _room_ops_semantic_ir(raw_operands)
+            elif schema is not None and schema.family in {"stopScript", "isScriptRunning"}:
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = ("stop_script" if schema.family == "stopScript"
+                             else "is_script_running")
+                operands = _script_lifecycle_semantic_ir(schema.family, raw_operands)
+            elif schema is not None and schema.family == "setObjectName":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "set_object_name"
+                operands = {
+                    "object": raw_operands["operand_0"],
+                    "encoded_name_hex": raw_operands["operand_1"],
+                }
+            elif schema is not None and schema.family == "actorOps":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "actor_ops"
+                operands = _actor_ops_semantic_ir(raw_operands)
+            elif schema is not None and schema.family == "ifClassOfIs":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "if_class_of_is"
+                operands = _class_test_semantic_ir(raw_operands)
+            elif schema is not None and schema.family == "drawObject":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "draw_object"
+                operands = _draw_object_semantic_ir(raw_operands)
+            elif schema is not None and schema.family == "delayVariable":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "delay_variable"
+                operands = {"duration_variable": raw_operands["operand_0"]}
+            elif schema is not None and schema.family == "pseudoRoom":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "pseudo_room_map"
+                operands = _pseudo_room_semantic_ir(raw_operands)
+            elif schema is not None and schema.family == "debug":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "debug_log"
+                operands = _debug_semantic_ir(raw_operands)
+            elif schema is not None and schema.family == "drawBox":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "draw_box"
+                operands = _draw_box_semantic_ir(raw_operands)
+            elif schema is not None and schema.family == "systemOps":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "system_operation"
+                operands = _system_ops_semantic_ir(raw_operands)
+            elif schema is not None and schema.family == "setVarRange":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "set_var_range"
+                operands = _set_var_range_semantic_ir(raw_operands)
+            elif schema is not None and schema.family == "doSentence":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operands = _sentence_semantic_ir(raw_operands)
+                operation = operands["operation"]
+            elif schema is not None and schema.family == "beginOverride":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "set_cutscene_override"
+                operands = {"enabled": raw_operands["operand_0"]}
+            elif schema is not None and schema.family == "wait":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operands = _wait_semantic_ir(raw_operands)
+                operation = "wait"
+            elif schema is not None and schema.family == "freezeScripts":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operands = _freeze_scripts_semantic_ir(raw_operands)
+                operation = "freeze_scripts"
+            elif schema is not None and schema.family == "saveRestoreVerbs":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operands = _save_restore_verbs_semantic_ir(raw_operands)
+                operation = "save_restore_verbs"
+            elif schema is not None and schema.family in _CAMERA_COMMAND_IR:
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = _CAMERA_COMMAND_IR[schema.family]
+                operands = {"x": raw_operands["operand_0"]}
+            elif schema is not None and schema.family in _RESULT_QUERY_IR:
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = _RESULT_QUERY_IR[schema.family][0]
+                operands = _result_query_semantic_ir(schema.family, raw_operands)
+            elif schema is not None and schema.family in {"setOwnerOf", "pickupObject"}:
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = ("set_object_owner" if schema.family == "setOwnerOf"
+                             else "pickup_object")
+                operands = _object_ownership_semantic_ir(schema.family, raw_operands)
+            elif schema is not None and schema.family == "walkActorToActor":
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "walk_actor_to_actor"
+                operands = {
+                    "actor": raw_operands["operand_0"],
+                    "target_actor": raw_operands["operand_1"],
+                    "distance": raw_operands["operand_2"],
+                }
+            elif schema is not None and schema.family in _SIMPLE_ACTOR_IR:
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = _SIMPLE_ACTOR_IR[schema.family][0]
+                operands = _simple_actor_semantic_ir(schema.family, raw_operands)
+            elif schema is not None and schema.family in {
+                "add", "subtract", "multiply", "divide", "and", "or",
+            }:
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = schema.family
+                operands["destination"] = raw_operands["operand_0"]
+                operands["right_operand"] = raw_operands["operand_1"]
+            elif opcode == 0xAC:
+                raw_operands, branch_target, subopcode = _read_structural_family(
+                    cursor, opcode, schema,
+                )
+                operation = "expression"
+                operands = _expression_semantic_ir(raw_operands)
             elif opcode in (0x46, 0xC6):
                 operation = "increment_variable" if opcode == 0x46 else "decrement_variable"
                 operands["destination"] = cursor.varref()
@@ -1036,31 +1594,6 @@ def decode_script(
                     if len(selectors) > 64:
                         raise ValueError("class selector list exceeds bound")
                 operands["classes"] = selectors
-            elif opcode in (0x13, 0x53, 0x93, 0xD3):
-                operation = "actor_ops"
-                operands["actor"] = cursor.byte_operand(opcode, 0x80)
-                subops = []
-                selectors = []
-                while True:
-                    selector = cursor.u8()
-                    if selector == 0xFF:
-                        break
-                    subop = selector & 0x1F
-                    subops.append(subop)
-                    counts = {0: 1, 1: 1, 2: 2, 3: 1, 4: 1, 5: 2, 6: 1,
-                              7: 3, 8: 0, 9: 1, 10: 0, 11: 2, 12: 1,
-                              14: 1, 16: 1, 17: 2, 18: 0, 19: 1,
-                              20: 0, 21: 0, 22: 1, 23: 1}
-                    if subop == 13:
-                        raise ValueError("actor name string requires string decoder")
-                    if subop not in counts:
-                        raise ValueError(f"actorOps sub-op {subop} has unknown width")
-                    values = []
-                    for mask_bit in (0x80, 0x40, 0x20)[:counts[subop]]:
-                        values.append(cursor.byte_operand(selector, mask_bit))
-                    selectors.append({"subop": subop, "values": values})
-                operands["subops"] = subops
-                operands["selectors"] = selectors
             elif opcode in (0x52, 0xD2):
                 operation = "actor_follow_camera"
                 operands["actor"] = cursor.byte_operand(opcode, 0x80)
@@ -1116,8 +1649,15 @@ def decode_script(
             flow = "UNCONDITIONAL_BRANCH"
         elif operation.startswith("branch_"):
             flow = "CONDITIONAL_BRANCH"
-        elif operation == "stop_script":
+        elif operation == "stop_object_code":
             flow = "TERMINATOR"
+        elif operation == "stop_script":
+            script_number = operands["script_number"]
+            if script_number["mode"] == "direct":
+                flow = ("TERMINATOR" if script_number["value"] == 0
+                        else "FALLTHROUGH")
+            else:
+                flow = "CONDITIONAL_TERMINATOR"
         next_targets = () if branch_target is None else (pc_base + branch_target,)
         instructions.append(InstructionIR(
             pc_base + start, opcode, operation, tuple(sorted(operands.items())),
@@ -1135,9 +1675,13 @@ def decode_script(
             next_targets,
             0 if schema is None else opcode ^ schema.opcode,
         ))
-        if operation == "stop_script":
-            # Trailing padding/data is retained in the program; it is not
-            # mistaken for executable operations after the authored terminator.
+        if operation == "stop_object_code":
+            # Object-code records end here; unlike stopScript(0), this is the
+            # resource-level terminator for the current object program.
+            # stopScript(0) only terminates the current execution path: a
+            # conditional branch may target a later basic block in the same
+            # global-script body, so structural census must continue scanning
+            # the source body after recording its TERMINATOR control flow.
             break
     return ScriptIR(
         identity, kind, number, object_id, verb_id,
