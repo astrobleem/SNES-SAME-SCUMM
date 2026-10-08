@@ -284,11 +284,34 @@ def main() -> int:
         "--dynamic-program-residency", action="store_true",
         help="emit canonical ProgramUnit directories for the experimental native resolver",
     )
+    parser.add_argument(
+        "--pack-source-tables", action="store_true",
+        help="pack generated per-room metadata tables into bank-bounded pages",
+    )
+    parser.add_argument(
+        "--banked-room-directory-data", action="store_true",
+        help="place dynamic room/global directory arrays in generated ROM data banks",
+    )
     parser.add_argument("--native-directory-output", type=Path)
     parser.add_argument("--native-directory-include", type=Path)
+    parser.add_argument(
+        "--backend-directory-output", type=Path,
+        help="emit canonical ProgramUnit IDs with actual code bank/offset descriptors",
+    )
     args = parser.parse_args()
     if args.dynamic_program_residency and not args.far_programs:
         parser.error("--dynamic-program-residency requires --far-programs")
+    if args.banked_room_directory_data and not args.dynamic_program_residency:
+        parser.error("--banked-room-directory-data requires --dynamic-program-residency")
+    if args.banked_room_directory_data and not args.pack_source_tables:
+        parser.error("--banked-room-directory-data requires --pack-source-tables")
+    for output_path in (
+        args.output, args.data_output, args.report, args.native_directory_output,
+        args.native_directory_include, args.backend_directory_output,
+        args.far_validator_output,
+    ):
+        if output_path is not None:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
     global_append_phases = (
         args.append_global_script,
         args.append_late_global_script,
@@ -1373,6 +1396,13 @@ def main() -> int:
                     program_bank = bank
                     program_offset = 0
                     data_lines.extend((f".bank {program_bank}", ".org $8000"))
+                item["rom_bank"] = program_bank
+                item["bank_offset"] = program_offset
+                item["cpu_rom_bank"] = cpu_visible_rom_bank(
+                    program_bank, sa1_aliases=args.sa1_rom_bank_aliases,
+                )
+                item["cpu_address"] = 0x8000 + program_offset
+                item["cpu_addressable_24bit"] = program_bank <= 0xFF
                 if program_offset == 0:
                     pass
                 else:
@@ -1417,6 +1447,42 @@ def main() -> int:
     bank += 1
     bank = next_free_bank(bank)
     data_lines.extend((f".bank {bank}", ".org $8000"))
+    packed_table_bank: int | None = None
+    packed_table_offset = 0
+    packed_table_next_bank = bank
+
+    def append_room_table(label: str, payload: bytes) -> tuple[int, int]:
+        """Append one bounded table, packing source-wide metadata when requested."""
+        nonlocal packed_table_bank, packed_table_offset, packed_table_next_bank
+        nonlocal bank
+        if len(payload) > 0x8000:
+            raise RuntimeError(f"generated table {label} exceeds one LoROM bank")
+        if not args.pack_source_tables:
+            target_bank = next_free_bank(bank)
+            data_lines.extend((
+                f".bank {target_bank}", ".org $8000",
+                f"{label}_Address = {cpu_rom_address(target_bank)}",
+                f"{label}:", rows(payload),
+            ))
+            bank = target_bank + 1
+            return target_bank, 0
+        if (packed_table_bank is None
+                or packed_table_offset + len(payload) > 0x8000):
+            packed_table_bank = next_free_bank(packed_table_next_bank)
+            packed_table_next_bank = packed_table_bank + 1
+            packed_table_offset = 0
+            data_lines.extend((f".bank {packed_table_bank}", ".org $8000"))
+        target_bank = packed_table_bank
+        target_offset = packed_table_offset
+        data_lines.extend((
+            f"{label}_Address = " + cpu_visible_rom_symbol(
+                target_bank, label, sa1_aliases=args.sa1_rom_bank_aliases,
+            ),
+            f"{label}:", rows(payload),
+        ))
+        packed_table_offset += len(payload)
+        bank = packed_table_next_bank
+        return target_bank, target_offset
     for index, record in enumerate(records):
         if len(record["walkbox_flags"]) > 0xFF:
             raise RuntimeError(
@@ -1434,40 +1500,24 @@ def main() -> int:
              b"".join(name.ljust(32, b"\0") for _object_id, name in record["object_names"])),
         )
         for label, payload in tables:
-            bank = next_free_bank(bank)
-            data_lines.extend((
-                f".bank {bank}", ".org $8000",
-                f"{label}_Address = {cpu_rom_address(bank)}",
-            ))
-            data_lines.extend((f"{label}:", rows(payload)))
-            bank += 1
-        bank = next_free_bank(bank)
-        data_lines.extend((
-            f".bank {bank}", ".org $8000",
-            f"ScummV5_Verb_Record_{index}_Count = ${len(record['verb_entries']):04X}",
-            f"ScummV5_Verb_Record_{index}_Entries_Address = {cpu_rom_address(bank)}",
-            f"ScummV5_Verb_Record_{index}_Entries:",
-            "    .word " + ",".join(
-                f"${object_id:04X},${verb:04X},${offset:04X}"
-                for object_id, verb, offset in record["verb_entries"]
-            ) if record["verb_entries"] else "    .word $0000,$0000,$0000",
-        ))
-        bank += 1
+            append_room_table(label, payload)
+        verb_payload = b"".join(
+            struct.pack("<HHH", object_id, verb, offset)
+            for object_id, verb, offset in record["verb_entries"]
+        ) or b"\0" * 6
+        verb_label = f"ScummV5_Verb_Record_{index}_Entries"
+        data_lines.append(
+            f"ScummV5_Verb_Record_{index}_Count = ${len(record['verb_entries']):04X}"
+        )
+        append_room_table(verb_label, verb_payload)
     if not records:
         # The shared far verb-query closure names the first record's verb
         # table while preparing its diagnostic context, even though its room
         # dispatch will fall through to the no-room result. Provide a real
         # empty table for the supported resource-less profile instead of
         # leaving that shared reference undefined.
-        bank = next_free_bank(bank)
-        data_lines.extend((
-            f".bank {bank}", ".org $8000",
-            f"ScummV5_Verb_Record_0_Count = $0000",
-            f"ScummV5_Verb_Record_0_Entries_Address = {cpu_rom_address(bank)}",
-            "ScummV5_Verb_Record_0_Entries:",
-            "    .word $0000,$0000,$0000",
-        ))
-        bank += 1
+        data_lines.append("ScummV5_Verb_Record_0_Count = $0000")
+        append_room_table("ScummV5_Verb_Record_0_Entries", b"\0" * 6)
     # C16 is a bounded sparse runtime table.  A Fate profile can describe
     # more initially-classed objects than the runtime can hold at once; keep
     # Keep a small mutation reserve for authored setClass operations.  The
@@ -2425,6 +2475,16 @@ def main() -> int:
         *name_routine_lines,
     ))
 
+    banked_directory_tables: list[tuple[str, bytes]] = []
+    room_numbers = bytes(item["room"] for item in records)
+    room_flags = bytes(item["flags"] for item in records)
+    room_script_counts = bytes(len(item["scripts"]) for item in records)
+    room_local_counts = bytes(len(item["locals"]) for item in records)
+    room_executable_local_counts = bytes(len(item["executable_locals"]) for item in records)
+    room_descriptor_checksums = b"".join(struct.pack(
+        "<H", sum(x["id"] + x["kind"] + (x["number"] & 0xFF) + x["length"]
+                  for x in item["scripts"]) & 0xFFFF,
+    ) for item in records) or b"\0\0"
     lines = [
         "; Generated by tools/generate_snes_cooked_rooms.py.",
         f"SCUMM_V5_NUM_GLOBAL_SCRIPTS = ${num_global_scripts:04X}",
@@ -2441,13 +2501,20 @@ def main() -> int:
          if args.dynamic_program_residency else "SCUMM_RESIDENT_UNIT_COUNT = $0000"),
         f"SCUMM_M23A_LAST_BANK = ${bank:02X}",
         f"SCUMM_M23A_GLOBAL_OBJECT_COUNT = ${len(global_states):04X}",
-        "ScummV5_M23A_RoomNumbers:",
-        rows(bytes(item["room"] for item in records)) or "    .byte $00",
-        "ScummV5_M23A_RoomFlags:",
-        rows(bytes(item["flags"] for item in records)) or "    .byte $00",
-        "ScummV5_M23A_RoomScriptCounts:",
-        rows(bytes(len(item["scripts"]) for item in records)) or "    .byte $00",
     ]
+    if args.banked_room_directory_data:
+        banked_directory_tables.extend((
+            ("ScummV5_M23A_RoomNumbers", room_numbers or b"\0"),
+            ("ScummV5_M23A_RoomFlags", room_flags or b"\0"),
+            ("ScummV5_M23A_RoomScriptCounts", room_script_counts or b"\0"),
+        ))
+    else:
+        lines.extend((
+            "ScummV5_M23A_RoomNumbers:", rows(room_numbers) or "    .byte $00",
+            "ScummV5_M23A_RoomFlags:", rows(room_flags) or "    .byte $00",
+            "ScummV5_M23A_RoomScriptCounts:",
+            rows(room_script_counts) or "    .byte $00",
+        ))
     if not args.dynamic_program_residency:
         # Legacy byte-selector directories are unnecessary in a dynamic
         # build, where lifecycle programs resolve from canonical 16-bit IDs.
@@ -2459,17 +2526,25 @@ def main() -> int:
             "ScummV5_M23A_RoomExitPrograms:",
             rows(bytes(int(item["exit"]) & 0xFF for item in records)) or "    .byte $00",
         ))
-    lines.extend((
-        "ScummV5_M23A_RoomLocalCounts:",
-        rows(bytes(len(item["locals"]) for item in records)) or "    .byte $00",
-        "ScummV5_M23A_RoomExecutableLocalCounts:",
-        rows(bytes(len(item["executable_locals"]) for item in records)) or "    .byte $00",
-        "ScummV5_M23A_RoomDescriptorChecksums:",
-        "    .word " + ",".join(
-            f"${sum(x['id'] + x['kind'] + (x['number'] & 0xFF) + x['length'] for x in item['scripts']) & 0xffff:04X}"
-            for item in records
-        ) if records else "    .word $0000",
-    ))
+    if args.banked_room_directory_data:
+        banked_directory_tables.extend((
+            ("ScummV5_M23A_RoomLocalCounts", room_local_counts or b"\0"),
+            ("ScummV5_M23A_RoomExecutableLocalCounts",
+             room_executable_local_counts or b"\0"),
+            ("ScummV5_M23A_RoomDescriptorChecksums", room_descriptor_checksums),
+        ))
+    else:
+        lines.extend((
+            "ScummV5_M23A_RoomLocalCounts:",
+            rows(room_local_counts) or "    .byte $00",
+            "ScummV5_M23A_RoomExecutableLocalCounts:",
+            rows(room_executable_local_counts) or "    .byte $00",
+            "ScummV5_M23A_RoomDescriptorChecksums:",
+            "    .word " + ",".join(
+                f"${int.from_bytes(room_descriptor_checksums[index:index + 2], 'little'):04X}"
+                for index in range(0, len(room_descriptor_checksums), 2)
+            ),
+        ))
     if len(programs) > len(PRIMARY_PROGRAM_IDS):
         # FIRST is allocation-first, not numeric minimum. These constants are
         # diagnostic only; resolvers below use explicit identities. Keep the
@@ -2488,14 +2563,39 @@ def main() -> int:
                 "; PROGRAM_IDS_IN_ALLOCATION_ORDER = " + ",".join(f"${item['id']:02X}" for item in programs),
             ))
     if args.dynamic_program_residency:
-        lines.extend(directory_assembly(native_directory).splitlines())
-        lines.extend((
-            "ScummV5_M23A_RoomEntryProgramUnitIds:",
-            word_rows([int(record["entry"]) for record in records]) or "    .word $FFFF",
-            "ScummV5_M23A_RoomExitProgramUnitIds:",
-            word_rows([int(record["exit"]) for record in records]) or "    .word $FFFF",
-            "ScummV5_Resident_RoomBundleCount = $%04X" % len(records),
-        ))
+        directory_lines = directory_assembly(native_directory).splitlines()
+        if args.banked_room_directory_data:
+            lines.extend(directory_lines[:4])
+            global_directory = native_directory.document["global_directory"]
+            banked_directory_tables.extend((
+                ("ScummV5_Resident_GlobalScriptNumbers",
+                 bytes(int(item["script_number"]) & 0xFF
+                       for item in global_directory) or b"\0"),
+                ("ScummV5_Resident_GlobalProgramUnitIds",
+                 b"".join(struct.pack("<H", int(item["program_unit_id"]))
+                          for item in global_directory) or b"\xff\xff"),
+            ))
+        else:
+            lines.extend(directory_lines)
+        entry_program_ids = b"".join(
+            struct.pack("<H", int(record["entry"])) for record in records
+        ) or b"\xff\xff"
+        exit_program_ids = b"".join(
+            struct.pack("<H", int(record["exit"])) for record in records
+        ) or b"\xff\xff"
+        if args.banked_room_directory_data:
+            banked_directory_tables.extend((
+                ("ScummV5_M23A_RoomEntryProgramUnitIds", entry_program_ids),
+                ("ScummV5_M23A_RoomExitProgramUnitIds", exit_program_ids),
+            ))
+        else:
+            lines.extend((
+                "ScummV5_M23A_RoomEntryProgramUnitIds:",
+                word_rows([int(record["entry"]) for record in records]) or "    .word $FFFF",
+                "ScummV5_M23A_RoomExitProgramUnitIds:",
+                word_rows([int(record["exit"]) for record in records]) or "    .word $FFFF",
+            ))
+        lines.append("ScummV5_Resident_RoomBundleCount = $%04X" % len(records))
         bundle_offsets = []
         bundle_ids = []
         bundle_counts = []
@@ -2519,22 +2619,37 @@ def main() -> int:
             local_counts.append(len(room_locals))
             local_numbers.extend(int(item["number"]) for item in room_locals)
             local_ids.extend(int(item["id"]) for item in room_locals)
-        lines.extend((
-            "ScummV5_Resident_RoomBundleOffsets:",
-            word_rows(bundle_offsets) or "    .word $0000",
-            "ScummV5_Resident_RoomBundleCounts:",
-            rows(bytes(bundle_counts)) or "    .byte $00",
-            "ScummV5_Resident_RoomBundleUnitIds:",
-            word_rows(bundle_ids) or "    .word $FFFF",
-            "ScummV5_Resident_RoomLocalOffsets:",
-            word_rows(local_offsets) or "    .word $0000",
-            "ScummV5_Resident_RoomLocalCounts:",
-            rows(bytes(local_counts)) or "    .byte $00",
-            "ScummV5_Resident_RoomLocalNumbers:",
-            rows(bytes(local_numbers)) or "    .byte $00",
-            "ScummV5_Resident_RoomLocalUnitIds:",
-            word_rows(local_ids) or "    .word $FFFF",
-        ))
+        if args.banked_room_directory_data:
+            banked_directory_tables.extend((
+                ("ScummV5_Resident_RoomBundleOffsets",
+                 b"".join(struct.pack("<H", value) for value in bundle_offsets) or b"\0\0"),
+                ("ScummV5_Resident_RoomBundleCounts", bytes(bundle_counts) or b"\0"),
+                ("ScummV5_Resident_RoomBundleUnitIds",
+                 b"".join(struct.pack("<H", value) for value in bundle_ids) or b"\xff\xff"),
+                ("ScummV5_Resident_RoomLocalOffsets",
+                 b"".join(struct.pack("<H", value) for value in local_offsets) or b"\0\0"),
+                ("ScummV5_Resident_RoomLocalCounts", bytes(local_counts) or b"\0"),
+                ("ScummV5_Resident_RoomLocalNumbers", bytes(local_numbers) or b"\0"),
+                ("ScummV5_Resident_RoomLocalUnitIds",
+                 b"".join(struct.pack("<H", value) for value in local_ids) or b"\xff\xff"),
+            ))
+        else:
+            lines.extend((
+                "ScummV5_Resident_RoomBundleOffsets:",
+                word_rows(bundle_offsets) or "    .word $0000",
+                "ScummV5_Resident_RoomBundleCounts:",
+                rows(bytes(bundle_counts)) or "    .byte $00",
+                "ScummV5_Resident_RoomBundleUnitIds:",
+                word_rows(bundle_ids) or "    .word $FFFF",
+                "ScummV5_Resident_RoomLocalOffsets:",
+                word_rows(local_offsets) or "    .word $0000",
+                "ScummV5_Resident_RoomLocalCounts:",
+                rows(bytes(local_counts)) or "    .byte $00",
+                "ScummV5_Resident_RoomLocalNumbers:",
+                rows(bytes(local_numbers)) or "    .byte $00",
+                "ScummV5_Resident_RoomLocalUnitIds:",
+                word_rows(local_ids) or "    .word $FFFF",
+            ))
     for record_index, record in enumerate(records):
         locals_ = record["executable_locals"]
         if args.dynamic_program_residency:
@@ -2770,6 +2885,25 @@ def main() -> int:
     elif not args.dynamic_program_residency:
         lines.extend(local_lines)
 
+    far_helper_bank = bank
+    if banked_directory_tables:
+        # Keep the data tables out of the fixed bank-0 code window. All runtime
+        # consumers use long-address reads, so these are ordinary ROM data
+        # tables and need no selector or runtime residency binding.
+        packed_table_bank = None
+        packed_table_offset = 0
+        # `bank` denotes the last generated helper bank at this point.  Do not
+        # append packed tables into that same 32 KiB page: the final resolver
+        # routines can already occupy it in a whole-source build.
+        packed_table_next_bank = next_free_bank(bank + 1)
+        for label, payload in banked_directory_tables:
+            append_room_table(label, payload)
+        lines = [
+            (f"SCUMM_M23A_LAST_BANK = ${max(0, bank - 1):02X}"
+             if line.startswith("SCUMM_M23A_LAST_BANK = ") else line)
+            for line in lines
+        ]
+
     # Record validators compare the immutable header/directory byte-for-byte,
     # then checksum the complete pre-trailer record while excluding mutable
     # checksum fields 32..37 exactly as the host encoder does.
@@ -2859,7 +2993,7 @@ def main() -> int:
         for label in far_labels:
             data_lines.append(
                 f"{label}_Address = " + cpu_visible_rom_symbol(
-                    bank, label, sa1_aliases=args.sa1_rom_bank_aliases,
+                    far_helper_bank, label, sa1_aliases=args.sa1_rom_bank_aliases,
                 )
             )
 
@@ -2878,9 +3012,21 @@ def main() -> int:
                 "kind": item["kind_name"], "room": item["room"],
                 "number": item["number"], "length": item["length"],
                 "sha256": hashlib.sha256(item["program"]).hexdigest(),
+                **({
+                    "rom_bank": item.get("rom_bank"),
+                    "bank_offset": item.get("bank_offset"),
+                    "cpu_rom_bank": item.get("cpu_rom_bank"),
+                    "cpu_address": item.get("cpu_address"),
+                    "cpu_addressable_24bit": item.get("cpu_addressable_24bit"),
+                } if args.far_programs else {}),
             }
             for item in programs
         ],
+        "program_code_bytes": sum(int(item["length"]) for item in programs
+                                   if item["executable"]),
+        "program_pool_banks": (0 if not args.far_programs or not programs else
+                                max(int(item.get("rom_bank", 0)) for item in programs) -
+                                min(int(item.get("rom_bank", 0)) for item in programs) + 1),
         "last_bank": bank, "output": str(args.output), "data": str(args.data_output),
     }
     if native_directory is not None:
@@ -2897,6 +3043,44 @@ def main() -> int:
         directory_include.write_text(directory_assembly(native_directory), encoding="ascii")
         report["native_program_directory"] = str(directory_output)
         report["native_program_directory_include"] = str(directory_include)
+        if args.backend_directory_output:
+            backend_entries = []
+            program_by_identity = {
+                str(item.get("unit_identity")): item for item in programs
+                if item.get("unit_identity") is not None
+            }
+            for entry in native_directory.document["entries"]:
+                identity = str(entry["identity"])
+                program = program_by_identity.get(identity)
+                descriptor = None
+                if program is not None:
+                    descriptor = {
+                        "representation": "SCUMM_V5_BYTECODE_PROGRAM_BODY",
+                        "code_label": f"ScummV5_M23A_Program_{int(program['id']):04X}",
+                        "rom_bank": program.get("rom_bank"),
+                        "bank_offset": program.get("bank_offset"),
+                        "cpu_rom_bank": program.get("cpu_rom_bank"),
+                        "cpu_address": program.get("cpu_address"),
+                        "cpu_addressable_24bit": program.get("cpu_addressable_24bit"),
+                        "code_size": int(program["length"]),
+                        "code_sha256": hashlib.sha256(program["program"]).hexdigest(),
+                        "dispatch": entry.get("dispatch", {}),
+                        "lowering_status": "RAW_V5_BYTECODE_RETAINED",
+                        "execution_certification": "SEE_WHOLE_SOURCE_CAPABILITY_REPORT",
+                    }
+                backend_entries.append({**entry, "backend_descriptor": descriptor})
+            backend_document = {
+                "schema": "same_scumm_v5_backend_program_directory_v1",
+                "canonical_directory_sha256": native_directory.sha256,
+                "program_count": len(backend_entries),
+                "entries": backend_entries,
+            }
+            args.backend_directory_output.parent.mkdir(parents=True, exist_ok=True)
+            args.backend_directory_output.write_text(
+                json.dumps(backend_document, sort_keys=True, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            report["backend_program_directory"] = str(args.backend_directory_output)
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(report, indent=2) + "\n")

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,7 @@ from same.engines.scumm_v5.game_analysis import (
     executable_identity, execution_cycles,
     game_analysis_hash,
 )
+from same.engines.scumm_v5.full_source_backend import validate_emitted_program_directory
 from same.engines.scumm_v5.policy import parse_game_policy
 from same.engines.scumm_v5.resources import LucasartsScummV5ResourceProvider
 from same.engines.scumm_v5.room_compiler import compile_room_payload, decode_script
@@ -38,8 +40,10 @@ FATE_ARCHIVE = os.environ.get("SAME_SCUMM_SOURCE_ARCHIVE")
 FATE_PROFILE = ROOT / "examples/profiles/templates/fate_of_atlantis_dos_cd.json"
 
 
-def fixture_analysis(*, selector_capacity=None, data_only_objects=0):
-    index, data = raw_pair(data_only_objects=data_only_objects)
+def fixture_analysis(*, selector_capacity=None, data_only_objects=0,
+                     extra_global_scripts=0):
+    index, data = raw_pair(data_only_objects=data_only_objects,
+                           extra_global_scripts=extra_global_scripts)
     profile_bytes = FIXTURE_PROFILE.read_bytes()
     profile = load_profile(FIXTURE_PROFILE, verify_resources=False)
     provider = LucasartsScummV5ResourceProvider(
@@ -49,7 +53,8 @@ def fixture_analysis(*, selector_capacity=None, data_only_objects=0):
     return analyze_game(
         provider, profile=profile, profile_bytes=profile_bytes,
         archive_sha256=hashlib.sha256(
-            source_zip(data_only_objects=data_only_objects)).hexdigest(),
+            source_zip(data_only_objects=data_only_objects,
+                       extra_global_scripts=extra_global_scripts)).hexdigest(),
         source_members={"game.index": "ANALYSIS.000", "game.data": "ANALYSIS.001"},
         backend_selector_capacity=(None if selector_capacity is None else {
             "value": selector_capacity, "epistemic": "EXACT", "selectors_allocated": False,
@@ -149,6 +154,93 @@ class ScummV5WholeGameAnalysisTests(unittest.TestCase):
                       for row in directory["global_directory"]}
         self.assertEqual(len(global_ids), 5)
         self.assertEqual(len(set(global_ids.values())), 5)
+
+    def test_full_source_backend_emits_every_program_body_over_selector_capacity(self) -> None:
+        extra_globals = 180
+        archive_bytes = source_zip(extra_global_scripts=extra_globals)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive_path = root / "synthetic-v5.zip"
+            archive_path.write_bytes(archive_bytes)
+            cooked = root / "cooked"
+            backend = root / "backend"
+            segments = root / "segments"
+            environment = dict(os.environ)
+            environment["PYTHONPATH"] = str(ROOT / "src")
+            subprocess.run([
+                sys.executable, str(ROOT / "tools/cook_scumm_v5_rooms.py"),
+                "--archive", str(archive_path), "--profile", str(FIXTURE_PROFILE),
+                "--all-source-executables", "--executable", "--output-dir", str(cooked),
+            ], cwd=ROOT, env=environment, check=True, capture_output=True, text=True)
+            subprocess.run([
+                sys.executable, str(ROOT / "tools/generate_snes_cooked_rooms.py"),
+                "--manifest", str(cooked / "manifest.json"),
+                "--output", str(backend / "rooms.inc.pasm"),
+                "--data-output", str(backend / "room-data.inc.pasm"),
+                "--binary-dir", str(segments), "--report", str(backend / "report.json"),
+                "--far-programs", "--dynamic-program-residency", "--pack-source-tables",
+                "--banked-room-directory-data",
+                "--relative-binary-paths",
+                "--native-directory-output", str(backend / "native.json"),
+                "--native-directory-include", str(backend / "native.inc.pasm"),
+                "--backend-directory-output", str(backend / "backend.json"),
+            ], cwd=ROOT, env=environment, check=True, capture_output=True, text=True)
+
+            index, data = raw_pair(extra_global_scripts=extra_globals)
+            profile_bytes = FIXTURE_PROFILE.read_bytes()
+            profile = load_profile(FIXTURE_PROFILE, verify_resources=False)
+            provider = LucasartsScummV5ResourceProvider(
+                MemoryResourceProvider({"game.index": index, "game.data": data}),
+                parse_game_policy(profile),
+            )
+            analysis = analyze_game(
+                provider, profile=profile, profile_bytes=profile_bytes,
+                archive_sha256=hashlib.sha256(archive_bytes).hexdigest(),
+                source_members={"game.index": "ANALYSIS.000",
+                                "game.data": "ANALYSIS.001"},
+            )
+            report = json.loads((backend / "report.json").read_text())
+            self.assertGreater(report["programs"], 178)
+            room_payloads = {
+                int(row["number"]): provider.read(str(row["resource_key"]))
+                for row in provider.source_catalog() if row["category"] == "room"
+            }
+            check = validate_emitted_program_directory(analysis, report, room_payloads)
+            self.assertTrue(check["complete_and_source_identical"], check)
+            self.assertEqual(report["program_code_bytes"], sum(
+                row["length"] for row in report["program_map"]))
+            self.assertTrue((backend / "room-data.inc.pasm").is_file())
+            self.assertTrue((backend / "backend.json").is_file())
+            room_assembly = (backend / "rooms.inc.pasm").read_text()
+            self.assertNotIn("ScummV5_M23A_RoomNumbers:", room_assembly)
+            self.assertNotIn("ScummV5_Resident_GlobalScriptNumbers:", room_assembly)
+            directory = json.loads((backend / "backend.json").read_text())
+            self.assertEqual(len(directory["entries"]), report["programs"])
+            self.assertTrue(all(row["backend_descriptor"] is not None
+                                for row in directory["entries"]))
+            data_assembly = (backend / "room-data.inc.pasm").read_text()
+            for label in (
+                "ScummV5_M23A_RoomNumbers:",
+                "ScummV5_M23A_RoomDescriptorChecksums:",
+                "ScummV5_Resident_GlobalScriptNumbers:",
+                "ScummV5_M23A_RoomEntryProgramUnitIds:",
+                "ScummV5_Resident_RoomBundleUnitIds:",
+            ):
+                self.assertIn(label, data_assembly)
+            for row in directory["entries"]:
+                descriptor = row["backend_descriptor"]
+                match = re.search(
+                    rf"(?m)^{re.escape(descriptor['code_label'])}:\n"
+                    r"((?:[ \t]+\.byte [^\n]*\n)+)", data_assembly,
+                )
+                self.assertIsNotNone(match, row["identity"])
+                emitted = bytes(
+                    int(value.strip().removeprefix("$"), 16)
+                    for line in match.group(1).splitlines()
+                    for value in line.strip().removeprefix(".byte ").split(",")
+                )
+                self.assertEqual(hashlib.sha256(emitted).hexdigest(),
+                                 descriptor["code_sha256"], row["identity"])
 
     def test_graph_distinguishes_static_conditional_dynamic_and_opaque(self) -> None:
         result = fixture_analysis()

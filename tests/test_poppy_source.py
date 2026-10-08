@@ -9,10 +9,17 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from lint_poppy import include_closure  # noqa: E402
+from lint_poppy import include_closure, line_index_at  # noqa: E402
 
 
 class PoppySourceTests(unittest.TestCase):
+    def test_poppy_line_index_matches_prefix_count_at_boundaries(self) -> None:
+        text = "first\nsecond\n\nthird\n"
+        newline_offsets = [match.start() for match in re.finditer("\n", text)]
+        for offset in range(len(text) + 1):
+            self.assertEqual(line_index_at(newline_offsets, offset),
+                             text.count("\n", 0, offset))
+
     def test_include_closure_skips_inactive_build_branch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -54,6 +54,11 @@ if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
         exit 1
     fi
 fi
+if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" &&
+      "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" != "1" ]]; then
+    echo "SAME_SCUMM_WHOLE_SOURCE_MANIFEST requires dynamic SCUMM program residency" >&2
+    exit 1
+fi
 if [[ "${SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT:-0}" == "1" ]]; then
     if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" != "1" ||
           "${SAME_BUILD_SCUMM_AUTHENTIC_STARTUP:-0}" != "1" ||
@@ -294,8 +299,19 @@ fi
 else
     if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" &&
           "${SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT:-0}" != "1" ]]; then
-        DYNAMIC_RESIDENCY_MANIFEST="${SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST:?Set SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST to a generated synthetic cooked-room manifest}"
-        M23A_BUILD="$ROOT/build/scumm-native-residency"
+        if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" ]]; then
+            DYNAMIC_RESIDENCY_MANIFEST="$SAME_SCUMM_WHOLE_SOURCE_MANIFEST"
+            SOURCE_SCOPE="$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("source_scope", ""))' "$DYNAMIC_RESIDENCY_MANIFEST")"
+            if [[ "$SOURCE_SCOPE" != "ALL_AVAILABLE_EXECUTABLES" ]]; then
+                echo "Whole-source manifest does not declare ALL_AVAILABLE_EXECUTABLES" >&2
+                exit 1
+            fi
+            M23A_BUILD="$ROOT/build/scumm-whole-source-backend"
+            ROOM_GENERATOR_ARGS+=(--pack-source-tables --banked-room-directory-data)
+        else
+            DYNAMIC_RESIDENCY_MANIFEST="${SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST:?Set SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST to a generated synthetic cooked-room manifest}"
+            M23A_BUILD="$ROOT/build/scumm-native-residency"
+        fi
         ROOM_MANIFESTS=(--manifest "$DYNAMIC_RESIDENCY_MANIFEST")
         ROOM_BINARY_DIR="${SAME_SCUMM_DYNAMIC_FIXTURE_BINARY_DIR:-$(dirname "$DYNAMIC_RESIDENCY_MANIFEST")/segments}"
         mkdir -p "$M23A_BUILD" "$ROOM_BINARY_DIR"
@@ -836,6 +852,11 @@ else
         ROOM_GENERATOR_ARGS+=(--far-programs --dynamic-program-residency
             --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm
             --reserved-bank 9 --reserved-bank 83)
+    fi
+    if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" ]]; then
+        ROOM_GENERATOR_ARGS+=(--pack-source-tables --banked-room-directory-data
+            --backend-directory-output
+            "$M23A_BUILD/backend_program_directory.json")
     fi
     "$PYTHON" tools/generate_snes_cooked_rooms.py \
         "${ROOM_MANIFESTS[@]}" \

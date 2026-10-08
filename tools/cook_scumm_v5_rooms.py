@@ -79,6 +79,10 @@ def main() -> int:
     parser.add_argument("--rooms", type=int, nargs="+", default=(49, 63))
     parser.add_argument("--global-scripts", type=int, nargs="*", default=())
     parser.add_argument(
+        "--all-source-executables", action="store_true",
+        help="cook every indexed room and every available global executable",
+    )
+    parser.add_argument(
         "--global-script-set",
         help="profile-owned key from options.snes_global_script_sets",
     )
@@ -104,7 +108,20 @@ def main() -> int:
     policy = parse_game_policy(profile)
     if policy is None:
         raise RuntimeError("profile has no SCUMM v5 resource policy")
+    provider = LucasartsScummV5ResourceProvider(MemoryResourceProvider(raw), policy)
     selected_global_scripts = tuple(args.global_scripts)
+    selected_rooms = tuple(args.rooms)
+    if args.all_source_executables:
+        if args.global_scripts or args.global_script_set or args.prepend_global_script:
+            parser.error("--all-source-executables cannot be combined with selected globals or wrappers")
+        catalog = provider.source_catalog()
+        selected_rooms = tuple(sorted(
+            int(row["number"]) for row in catalog if row["category"] == "room"
+        ))
+        selected_global_scripts = tuple(sorted(
+            int(row["number"]) for row in catalog
+            if row["category"] == "global-script" and row["status"] == "INVENTORIED"
+        ))
     if args.prepend_global_script is not None and len(args.prepend_global_script) != 2:
         raise RuntimeError("--prepend-global-script requires TARGET and SCRIPT")
     prepend_target, prepend_script = args.prepend_global_script or (None, None)
@@ -135,7 +152,6 @@ def main() -> int:
             or not isinstance(execution_gate.get("hold_after_started_global_script"), int)
         ):
             raise RuntimeError("profile SNES execution gate is malformed")
-    provider = LucasartsScummV5ResourceProvider(MemoryResourceProvider(raw), policy)
     profile_hash = sha(args.profile.read_bytes())
     game_hash = game_identity(profile)
     archive_hash = sha(archive_bytes)
@@ -147,7 +163,7 @@ def main() -> int:
     global_owners_output = args.output_dir / "global-object-owners.bin"
     global_owners_output.write_bytes(provider.global_objects.owners)
     records = []
-    for room_number in args.rooms:
+    for room_number in selected_rooms:
         key = f"room.{room_number}"
         room_payload = provider.read(key)
         decoded_room = decode_room(room_payload, key=key)
@@ -170,7 +186,7 @@ def main() -> int:
         output = args.output_dir / f"room-{room_number}.sc5c"
         output.write_bytes(compilation.cooked_record)
         visual_manifest = None
-        visual_rooms = set(args.rooms if args.visuals == [] else (args.visuals or ()))
+        visual_rooms = set(selected_rooms if args.visuals == [] else (args.visuals or ()))
         if room_number in visual_rooms:
             palette = b"".join(bytes(color) for color in decoded_room.palette)
             visual = encode_room_visual(
@@ -271,6 +287,8 @@ def main() -> int:
         },
         "records": records,
         "global_scripts": global_scripts,
+        "source_scope": ("ALL_AVAILABLE_EXECUTABLES" if args.all_source_executables
+                         else "EXPLICIT_SELECTION"),
         **({"execution_gate": execution_gate} if execution_gate is not None else {}),
     }
     manifest_path = args.manifest or args.output_dir / "manifest.json"
