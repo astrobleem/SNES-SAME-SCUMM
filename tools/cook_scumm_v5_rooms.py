@@ -269,12 +269,12 @@ def main() -> int:
         "num_global_scripts": provider.global_script_count,
         "synthetic_global_transformations": global_transformations,
         "profile": {
-            "path": str(args.profile.resolve()), "sha256": profile_hash,
+            "path": args.profile.name, "sha256": profile_hash,
             "engine": profile.engine_id, "game": profile.game_id,
             "variant": profile.variant, "identity_sha256": game_hash,
         },
         "source": {
-            "archive": str(args.archive.resolve()), "archive_sha256": archive_hash,
+            "archive": args.archive.name, "archive_sha256": archive_hash,
             "index_member": members["game.index"], "index_sha256": index_hash,
             "data_member": members["game.data"], "data_sha256": data_hash,
         },

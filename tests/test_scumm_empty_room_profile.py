@@ -40,7 +40,10 @@ class EmptyRoomProfileTests(unittest.TestCase):
             self.assertIn("ScummV5_M23A_ResolveGlobalScript_Far:", data)
             self.assertEqual(report["rooms"], [])
             self.assertEqual(report["programs"], 0)
-            self.assertEqual(list((output / "segments").iterdir()), [])
+            self.assertEqual(
+                {path.name for path in (output / "segments").iterdir()},
+                {".same-generated-segments.json"},
+            )
 
     def test_empty_far_room_profile_defines_shared_empty_verb_table(self):
         with tempfile.TemporaryDirectory() as temporary:

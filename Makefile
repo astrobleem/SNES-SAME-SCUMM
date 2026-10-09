@@ -123,7 +123,7 @@ s5-snes: generate validate m24ra-audio
 	SAME_TAD_PREBUILT_DIR=$(M24RA_AUDIO_DIR) \
 	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24ra/catalog.json \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/tad_layout.inc.pasm \
-	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 \
+	SAME_SNES_ENGINE=scumm_v5 SAME_SCUMM_SYNTHETIC_VARIABLES=1 SAME_BUILD_M24RA=1 \
 	SAME_SNES_OUTPUT=build/same-scumm-v5.sfc tools/build_snes.sh
 
 h0: snes

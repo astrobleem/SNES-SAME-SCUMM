@@ -12,13 +12,16 @@ external game files + thin edition profile
   -> existing generic SCUMM/SAME runtime
 ```
 
-**Status:** room-executable compilation, whole-source analysis, and normalized
-semantic IR for the current canonical DOS-CD FATE corpus are implemented. That
-corpus contains 96 parsed rooms and 116,730 instructions with no structural or
-semantic-IR gaps. This is not a claim of complete parsing for every SCUMM v5
-source edition/form. Structural decode, semantic IR, host semantics, backend
-support and native runtime support remain independent; whole-game readiness is
-still NOT READY.
+**Status:** source-room compilation, whole-source analysis, normalized
+semantic IR, complete ProgramUnit directory emission, source-body
+reconciliation, and pre-assembly target-layout rejection are implemented for
+the current canonical DOS-CD FATE corpus. It contains 96 parsed rooms, 4,108
+semantic executable identities, and 2,203 selector-bearing ProgramUnits.
+Structural decode, semantic IR, host behavior, backend lowering, native
+execution and resource support remain independent. The full source payload
+does not fit the current 4 MiB LoROM mapping, and whole-game readiness remains
+NOT READY. See `WHOLE_SOURCE_BACKEND.md` for the byte ledger and measured
+boundary.
 `tools/compile_scumm_room.py` and the room cooker use the same
 `room_compiler.compile_room_payload` API. The cooker remains available as the
 legacy selection/visual CLI, and its output continues to use the existing
@@ -134,29 +137,34 @@ WRAM/capacity checks, compact operation encoding, room/verb directories,
 resource packaging, image/palette/tile conversion, charset packing, audio
 binding and target-to-source maps.
 
-The current program selector is a build-global byte key consumed by generated
-size/fetch dispatch. Room directories and global resolver records share that
-key space; each live C4 slot retains its selector with PC and locals. The
-residency report therefore separates directory addressability from the
-25-slot active-script bound and does not assume selector reuse is safe.
-Paging/reuse needs a resolver plus pinned live bindings or canonical IDs.
+Legacy static builds use stable byte selectors. Dynamic-residency builds use
+the accepted native resolver: a canonical `u16` ProgramUnit ID resolves to a
+temporary member of the existing 178-byte selector pool. Room/global
+directories are compiler-generated metadata; live C4 activations retain a
+pinned selector and generation checks prevent stale dispatch. The 25-slot
+active-script bound, total source units, ROM storage, and simultaneous
+resident bindings are separate capacities. This architecture is accepted;
+the current issue is whole-source storage, not selector residency.
 
-The source compiler now explicitly projects semantic executables into
-selector-bearing `ProgramUnit`s before residency comparison. Global scripts,
-room entry/exit, and local scripts each map to one unit. All semantic
-`ObjectVerb(room,object,verb)` records for a single OBCD map to that object's
-`ObjectProgram`; verb source spans and hashes remain independently preserved.
-The current generator emits one complete OBCD object record, verb-entry table,
-and selector for that unit. `program_units.json` records the projection and
-dependencies; `residency_manifest.json` records bundle-local identities and
-pinning needs without allocating or emitting selector values.
+The compiler projects semantic executables into selector-bearing `ProgramUnit`s
+before backend layout. Global scripts, room entry/exit, and local scripts each
+map to one unit. All semantic `ObjectVerb(room,object,verb)` records for a
+single OBCD map to that object's `ObjectProgram`; verb source spans and hashes
+remain independently preserved. Passive object records acquire no selector.
+The full-source generator emits all 2,203 canonical ProgramUnits for current
+FATE, retaining complete source room records and sharing verified body/prefix
+bytes where address-safe. Backend descriptors preserve source identity, body
+hash, room/bundle, dispatch and storage location; no source identity is
+replaced by a selector.
 
 The capacity analysis keeps separate answers for source semantic identities,
 addressable ProgramUnits, and simultaneous live/pinned bindings. Dynamic
-candidate unions are not interpreted as live sets. Whole-game output counts
-remain lower bounds where source rooms are unparsed. See
-`MILESTONE_5_PROGRAM_UNITS.md` for the runtime-reference audit and proposed
-resolver contract.
+candidate unions are not interpreted as live sets. Current FATE room parsing
+is complete for the indexed 96 rooms; storage placement remains invalid for
+the target because it crosses LoROM mirror pages and exceeds physical
+capacity. See `MILESTONE_5_PROGRAM_UNITS.md` for residency evidence and
+`WHOLE_SOURCE_BACKEND.md` for the current layout ledger and missing storage
+service.
 
 Representation may vary by item:
 
@@ -176,15 +184,19 @@ Representation may vary by item:
 
 `cook_scumm_v5_rooms.py` reads source resources, selects rooms/globals,
 retains offsets/hashes, emits SC5C rooms and manifests, and can emit SC5VIS
-visuals. `generate_snes_cooked_rooms.py` allocates selectors and emits
-directories/banked code and data. Specialized generators handle variables,
-visuals, charset, actor/object sprites, engine selection and save identity.
-These are pipeline assets to modularize, not replace.
+visuals. `compile_scumm_v5_source_image.py` drives all-source cooking and
+directory generation; `generate_snes_cooked_rooms.py` retains the legacy
+static allocator and emits dynamic canonical ProgramUnit directories plus
+banked data. `backend_layout.py` verifies current-target placement and
+accounts payloads before Poppy assembly. Specialized generators handle
+variables, visuals, charset, actor/object sprites, engine selection and save
+identity. These are pipeline assets to modularize, not replace.
 
-The first compiler-owned result exists between parsing and target generation:
-typed room/script records and existing SC5C output. Milestone 2 adds
-whole-edition inventory and conservative graph/capability closure, but does
-not select or emit a complete FATE build. Full closure and support certification
-remain future work. A full compiler-backed profile build reproduced ROM SHA-256
-`f5492f1c…76471fd`; a previously executed bounded Nexen result is reusable for
-that exact ROM. Nexen was not rerun as part of the compiler milestone.
+The compiler-owned result now extends from source parsing through all parsed
+FATE ProgramUnit descriptors and body storage metadata. A complete linked
+FATE image is not emitted: preflight rejects before assembly because the
+directly addressed room records alone exceed the 4 MiB LoROM target and the
+planned pages exceed LoROM addressability. The copyright-free 191-unit
+synthetic image does assemble and has native cross-bank fetch acceptance.
+Selected static/dynamic FATE route builds remain separate, build-root-owned
+regressions; neither one proves full-source execution or asset completeness.

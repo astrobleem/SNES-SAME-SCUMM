@@ -187,10 +187,7 @@ if [[ "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-phase6hb)
 fi
 if [[ "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
-    "$PYTHON" tools/generate_snes_scumm_variables.py \
-        --synthetic --profile examples/profiles/scumm_v5_controller_conformance.json \
-        --include runtime/snes/generated/scumm_v5_variables.inc.pasm \
-        --manifest "${SAME_SNES_OUTPUT:-build/controller-conformance.sfc}.variables.json"
+    : # The shared source/variable include is generated below from this profile.
 fi
 if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" == "1" ]]; then
     if [[ "${SAME_SNES_CARRIER:-lorom}" != "sa1_bwram" || "${SAME_SNES_VIDEO_BACKEND:-legacy_backdrop}" != "mode3_surface" ]]; then
@@ -845,6 +842,7 @@ else
         # can collide with the fixed bank-9 service entry.
         ROOM_GENERATOR_ARGS+=(--reserved-bank 9 --reserved-bank 83)
     fi
+    ROOM_GENERATOR_ARGS+=(--relative-binary-paths)
     if [[ -n "${SAME_SCUMM_ROOM_DATA_FIRST_BANK:-}" ]]; then
         ROOM_GENERATOR_ARGS+=(--first-bank "$SAME_SCUMM_ROOM_DATA_FIRST_BANK")
     fi
@@ -855,6 +853,8 @@ else
     fi
     if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" ]]; then
         ROOM_GENERATOR_ARGS+=(--pack-source-tables --banked-room-directory-data
+            --share-room-program-bodies
+            --share-room-directory-prefixes
             --backend-directory-output
             "$M23A_BUILD/backend_program_directory.json")
     fi
@@ -920,13 +920,6 @@ if [[ "$ROOM_TABLES_GENERATED" != "1" ]]; then
         "${EMPTY_ROOM_ARGS[@]}"
 fi
 "$PYTHON" tools/generate_snes_engine_selection.py "${ENGINE_SELECTION_ARGS[@]}"
-if [[ "${SAME_BUILD_SCUMM_PHASE6HB:-0}" == "1" ]]; then
-    "$PYTHON" tools/generate_snes_scumm_variables.py \
-        --archive "${SAME_FATE_ARCHIVE:?Set SAME_FATE_ARCHIVE to a user-supplied archive}" \
-        --profile "$SAME_FATE_PROFILE" \
-        --include runtime/snes/generated/scumm_v5_variables.inc.pasm \
-        --manifest "${SAME_SNES_OUTPUT:-build/same-snes-demo.sfc}.variables.json"
-fi
 SAME_SNES_CARRIER="${SAME_SNES_CARRIER:-lorom}"
 if [[ "$SAME_SNES_CARRIER" != "lorom" && "$SAME_SNES_CARRIER" != "sa1_bwram" ]]; then
     echo "Unsupported SAME_SNES_CARRIER: $SAME_SNES_CARRIER" >&2
@@ -1031,6 +1024,28 @@ if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" != "1" || \
     printf '%s\n' '; Generated empty object-sprite include (fixture sprites disabled).' \
         > runtime/snes/generated/scumm_v5_object_sprite.inc.pasm
 fi
+if [[ "${SAME_SNES_ENGINE:-demo}" == "scumm_v5" ]]; then
+    VARIABLE_PROFILE="${SAME_SNES_PROFILE:-$SAME_FATE_PROFILE}"
+    VARIABLE_ARGS=(--profile "$VARIABLE_PROFILE"
+        --include runtime/snes/generated/scumm_v5_variables.inc.pasm
+        --manifest "${SAME_SNES_OUTPUT%.sfc}.variables.json")
+    if [[ "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
+        VARIABLE_ARGS=(--synthetic --profile examples/profiles/scumm_v5_controller_conformance.json
+            --include runtime/snes/generated/scumm_v5_variables.inc.pasm
+            --manifest "${SAME_SNES_OUTPUT%.sfc}.variables.json")
+    elif [[ "${SAME_SCUMM_SYNTHETIC_VARIABLES:-0}" == "1" ]]; then
+        VARIABLE_ARGS+=(--synthetic)
+    elif [[ -n "${SAME_FATE_ARCHIVE:-}" ]]; then
+        VARIABLE_ARGS+=(--archive "$SAME_FATE_ARCHIVE")
+    else
+        echo "SCUMM v5 build requires SAME_FATE_ARCHIVE or explicit SAME_SCUMM_SYNTHETIC_VARIABLES=1" >&2
+        exit 1
+    fi
+    "$PYTHON" tools/generate_snes_scumm_variables.py "${VARIABLE_ARGS[@]}"
+fi
+"$PYTHON" tools/manifest_poppy_inputs.py \
+    --root "$ROOT" --main runtime/snes/main.pasm \
+    --output "${SAME_SNES_OUTPUT%.sfc}.poppy-inputs.json"
 "$PYTHON" tools/lint_poppy.py runtime/snes/main.pasm
 mkdir -p build
 SAME_SNES_MAP="${SAME_SNES_OUTPUT%.sfc}.map"

@@ -743,6 +743,66 @@ def run_candidate_probe(args: argparse.Namespace, inputs: dict[str, Any]) -> dic
     }
 
 
+def run_whole_source_bank_fetch(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[str, Any]:
+    """Execute an out-of-initial-set global through the generated far directory."""
+    require(args.generator_report is not None and args.generator_report.is_file(),
+            "whole-source bank-fetch acceptance requires --generator-report")
+    generator = json.loads(args.generator_report.read_text(encoding="utf-8"))
+    rows = {str(row.get("program_unit_identity")): row
+            for row in generator.get("program_map", [])}
+    large = rows.get("GlobalProgram(6)")
+    marker = rows.get("GlobalProgram(7)")
+    require(large is not None and marker is not None,
+            "generated full-source directory omitted the cross-bank fixture programs")
+    require(int(large["length"]) == 0x7FFC,
+            f"large boundary program size mismatch: {large.get('length')}")
+    require(int(large["bank_offset"]) + int(large["length"]) <= 0x8000,
+            "large ProgramUnit crosses its declared LoROM page")
+    require(int(large["rom_bank"]) != int(marker["rom_bank"]),
+            "marker ProgramUnit was not placed in a different ROM page")
+    marker_id = inputs["identity_to_id"].get("GlobalProgram(7)")
+    require(marker_id is not None, "GlobalProgram(7) absent from canonical directory")
+    with _session(args) as session:
+        _cold_reset(session)
+        result = _run_exact(session, args.frames)
+        values = variables(session, (200,))
+        errors = session.read_memory("snesMemory", ERROR, 1)[0]
+        current_room = session.read_memory("snesMemory", ROOM, 1)[0]
+        bindings = valid_bindings(session)
+        resident_ids = {row["program_unit_id"] for row in bindings}
+        final_stats = stats(session)
+        sp = cpu_sp(session)
+    require(result.get("framesAdvanced") == args.frames and not result.get("timedOut"),
+            f"whole-source native test did not advance: {result}")
+    require(values["200"] == 0xA55A,
+            f"cross-bank GlobalProgram(7) did not execute its marker body: {values}")
+    require(errors == 0 and sp == 0x1FFF,
+            f"native fetch failed safely: error={errors}, SP=${sp:04X}")
+    require(len(resident_ids) == len(bindings), "native resolver has aliased resident IDs")
+    require(final_stats["dynamic_global_lookups"] >= 1,
+            "global directory was bypassed instead of resolving the boot script")
+    require(final_stats["exhaustions"] == 0 and final_stats["stale_rejections"] == 0,
+            f"resolver diagnostic counters report failure: {final_stats}")
+    return {
+        "format": "same-scumm-whole-source-bank-fetch-v1",
+        "mode": "whole-source-bank-fetch",
+        **inputs["hashes"], "source": inputs["source"],
+        "selector_capacity": SELECTOR_CAPACITY,
+        "program_unit_count": len(inputs["directory"].get("entries", [])),
+        "tested_programs": {
+            "GlobalProgram(6)": {key: large.get(key) for key in
+                                  ("id", "rom_bank", "bank_offset", "length", "sha256")},
+            "GlobalProgram(7)": {key: marker.get(key) for key in
+                                  ("id", "rom_bank", "bank_offset", "length", "sha256")},
+        },
+        "marker_program_id": marker_id,
+        "resident_program_ids": sorted(resident_ids),
+        "variables": values, "room": current_room, "error": errors,
+        "stats": final_stats, "stack_pointer": sp,
+        "result": "PASS",
+    }
+
+
 def run_exhaustion(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[str, Any]:
     with _session(args) as session:
         _cold_reset(session)
@@ -1303,11 +1363,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("dynamic-route", "dynamic-candidates",
                                             "exhaustion", "load-room-with-ego",
-                                            "find-inventory", "draw-box"),
+                                            "find-inventory", "draw-box",
+                                            "whole-source-bank-fetch"),
                         required=True)
     parser.add_argument("--rom", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--directory", type=Path, required=True)
+    parser.add_argument("--generator-report", type=Path,
+                        help="generated program placement report for whole-source fetch mode")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--frames", type=int, default=360)
     parser.add_argument("--port", type=int, default=46381)
@@ -1323,6 +1386,8 @@ def main() -> int:
         report = run_load_room_with_ego(args, inputs)
     elif args.mode == "find-inventory":
         report = run_find_inventory(args, inputs)
+    elif args.mode == "whole-source-bank-fetch":
+        report = run_whole_source_bank_fetch(args, inputs)
     elif args.mode == "draw-box":
         report = run_draw_box(args, inputs)
     else:

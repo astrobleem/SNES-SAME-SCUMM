@@ -26,6 +26,8 @@ OVERFLOW_PROGRAM_IDS = tuple(range(0xCF, 0x4D, -1))
 
 def cpu_visible_rom_bank(bank: int, *, sa1_aliases: bool) -> int:
     """Return the S-CPU bank window that exposes a generated LoROM bank."""
+    if bank < 0:
+        raise ValueError(f"logical ROM page cannot be negative: {bank}")
     if sa1_aliases and 0x40 <= bank <= 0x4F:
         return bank + 0x40
     # In LoROM, physical banks $7E/$7F are visible only through their upper
@@ -35,10 +37,145 @@ def cpu_visible_rom_bank(bank: int, *, sa1_aliases: bool) -> int:
     return bank
 
 
+def occupied_generated_bank_origins(lines: list[str]) -> set[tuple[int, int]]:
+    """Find payload-bearing generated sections, ignoring empty reservations."""
+    result: set[tuple[int, int]] = set()
+    bank = origin = None
+    payload = False
+    def finish() -> None:
+        if payload and bank is not None and origin is not None:
+            result.add((bank, origin))
+    for line in lines:
+        text = line.strip()
+        match = re.fullmatch(r"\.bank\s+(\d+)", text)
+        if match:
+            finish(); bank = int(match.group(1)); origin = None; payload = False; continue
+        match = re.fullmatch(r"\.org\s+\$([0-9A-Fa-f]+)", text)
+        if match:
+            finish(); origin = int(match.group(1), 16); payload = False; continue
+        if not text or text.startswith(";") or text.endswith(":") or " = " in text:
+            continue
+        if text.startswith(".") and not re.match(r"\.(?:byte|word|long|incbin|db|dw|dl|ds|fill)\b", text, re.I):
+            continue
+        if bank is not None and origin is not None:
+            payload = True
+    finish()
+    return result
+
+
+def validate_generated_bank_origins(lines: list[str], *, allow_out_of_range: bool = False) -> None:
+    """Reject duplicate origins; only report-only mode may retain high pages."""
+    seen: dict[tuple[int, int], str] = {}
+    bank = origin = None
+    payload = False
+    labels: list[str] = []
+    def finish() -> None:
+        nonlocal labels
+        if not payload or bank is None or origin is None:
+            return
+        identity = ", ".join(labels[:4]) or "<unlabeled section>"
+        if bank > 0x7F and not allow_out_of_range:
+            raise RuntimeError(
+                f"generated ROM payload uses logical LoROM page {bank}, outside the "
+                f"supported 4 MiB mapping; CPU bank mirrors cannot extend storage; section={identity}"
+            )
+        key = bank, origin
+        if key in seen:
+            raise RuntimeError(
+                f"generated ROM sections overlap at bank {bank}, origin ${origin:04X}: "
+                f"{seen[key]} vs {identity}"
+            )
+        seen[key] = identity
+        labels = []
+    for line in lines:
+        text = line.strip()
+        match = re.fullmatch(r"\.bank\s+(\d+)", text)
+        if match:
+            finish(); bank = int(match.group(1)); origin = None; payload = False; labels = []; continue
+        match = re.fullmatch(r"\.org\s+\$([0-9A-Fa-f]+)", text)
+        if match:
+            finish(); origin = int(match.group(1), 16); payload = False; labels = []; continue
+        if not text or text.startswith(";") or " = " in text:
+            continue
+        if text.endswith(":"):
+            if bank is not None and origin is not None: labels.append(text[:-1])
+            continue
+        if text.startswith(".") and not re.match(r"\.(?:byte|word|long|incbin|db|dw|dl|ds|fill)\b", text, re.I):
+            continue
+        if bank is not None and origin is not None:
+            payload = True
+    finish()
+
+
+def generated_bank_section_census(lines: list[str]) -> list[dict[str, object]]:
+    """Describe generated section starts without pretending text is machine size."""
+    sections: list[dict[str, object]] = []
+    bank: int | None = None
+    origin: int | None = None
+    start_line = 0
+    labels: list[str] = []
+    line_count = 0
+    data_directive_bytes = 0
+
+    def finish() -> None:
+        if bank is None or origin is None or (not labels and not line_count):
+            return
+        sections.append({
+            "logical_storage_page": bank,
+            "origin": origin,
+            "source_line_start": start_line,
+            "source_line_count": line_count,
+            "labels": labels[:8],
+            "declared_data_bytes_lower_bound": data_directive_bytes,
+            "machine_code_size": None,
+            "machine_code_size_status": "REQUIRES_ASSEMBLER_MAP",
+        })
+
+    for line_number, line in enumerate(lines, 1):
+        text = line.strip()
+        match = re.fullmatch(r"\.bank\s+(\d+)", text)
+        if match:
+            finish()
+            bank = int(match.group(1)); origin = None; start_line = line_number
+            labels = []; line_count = 0; data_directive_bytes = 0
+            continue
+        match = re.fullmatch(r"\.org\s+\$([0-9A-Fa-f]+)", text)
+        if match:
+            finish()
+            origin = int(match.group(1), 16); start_line = line_number
+            labels = []; line_count = 0; data_directive_bytes = 0
+            continue
+        if not text or text.startswith(";") or " = " in text:
+            continue
+        if bank is None or origin is None:
+            continue
+        if text.endswith(":"):
+            labels.append(text[:-1]); line_count += 1
+            continue
+        line_count += 1
+        directive = re.match(r"\.(byte|word|long|db|dw|dl)\s+(.+)$", text, re.I)
+        if directive:
+            width = {"byte": 1, "db": 1, "word": 2, "dw": 2,
+                     "long": 3, "dl": 3}[directive.group(1).lower()]
+            data_directive_bytes += width * len(directive.group(2).split(","))
+        elif text.lower().startswith(".incbin"):
+            # The exact length is separately represented by the binary segment ledger.
+            line_count += 0
+    finish()
+    return sections
+
+
 def cpu_visible_rom_symbol(bank: int, symbol: str, *, sa1_aliases: bool) -> str:
     """Return a CPU-visible long address for a symbol in a generated LoROM bank."""
     visible_bank = cpu_visible_rom_bank(bank, sa1_aliases=sa1_aliases)
     return f"${visible_bank:02X}0000+{symbol}"
+
+
+def cpu_visible_rom_address(bank: int, offset: int, *, sa1_aliases: bool) -> str:
+    if not 0 <= offset < 0x8000:
+        raise ValueError(f"LoROM page offset outside $8000 window: {offset}")
+    visible_bank = cpu_visible_rom_bank(bank, sa1_aliases=sa1_aliases)
+    return f"${visible_bank:02X}{0x8000 + offset:04X}"
 
 
 def reserved_program_ids() -> set[int]:
@@ -280,6 +417,14 @@ def main() -> int:
         action="store_true",
         help="place executable script bytes with profile data instead of bank-0 lookup code",
     )
+    parser.add_argument("--layout-only", action="store_true",
+                        help="emit source directories and placement reports without assembly includes")
+    parser.add_argument("--share-room-program-bodies", action="store_true",
+                        help=("for whole-source layouts, point room scripts/object carriers at their "
+                              "identical bytes in the complete cooked ROOM record when page-safe"))
+    parser.add_argument("--share-room-directory-prefixes", action="store_true",
+                        help=("for whole-source layouts, alias room integrity prefixes into their "
+                              "complete cooked ROOM record when page-safe"))
     parser.add_argument(
         "--dynamic-program-residency", action="store_true",
         help="emit canonical ProgramUnit directories for the experimental native resolver",
@@ -301,6 +446,10 @@ def main() -> int:
     args = parser.parse_args()
     if args.dynamic_program_residency and not args.far_programs:
         parser.error("--dynamic-program-residency requires --far-programs")
+    if args.share_room_program_bodies and not args.far_programs:
+        parser.error("--share-room-program-bodies requires --far-programs")
+    if args.share_room_directory_prefixes and not args.far_programs:
+        parser.error("--share-room-directory-prefixes requires --far-programs")
     if args.banked_room_directory_data and not args.dynamic_program_residency:
         parser.error("--banked-room-directory-data requires --dynamic-program-residency")
     if args.banked_room_directory_data and not args.pack_source_tables:
@@ -536,6 +685,32 @@ def main() -> int:
             raise RuntimeError(f"object selected more than once: {item[0]}:{item[1]}")
         append_last_executable_local_objects.append(item)
     args.binary_dir.mkdir(parents=True, exist_ok=True)
+    ownership_path = args.binary_dir / ".same-generated-segments.json"
+    existing_names = {path.name for path in args.binary_dir.iterdir()}
+    if existing_names:
+        if ownership_path.name not in existing_names:
+            raise RuntimeError(
+                f"binary directory contains unowned/stale files: {args.binary_dir}; "
+                "use a fresh directory or preserve only manifest-owned segments"
+            )
+        ownership = json.loads(ownership_path.read_text(encoding="utf-8"))
+        owned = ownership.get("files")
+        if not isinstance(owned, list):
+            raise RuntimeError(f"invalid segment ownership manifest: {ownership_path}")
+        expected = {str(row["path"]) for row in owned} | {ownership_path.name}
+        if existing_names != expected:
+            raise RuntimeError(f"binary directory contains files outside its manifest: {args.binary_dir}")
+        for row in owned:
+            name = str(row["path"])
+            if Path(name).name != name:
+                raise RuntimeError(f"unsafe owned segment path: {name}")
+            path = args.binary_dir / name
+            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != row.get("sha256"):
+                raise RuntimeError(f"owned segment changed since its manifest: {path}")
+        for row in owned:
+            (args.binary_dir / str(row["path"])).unlink()
+        ownership_path.unlink()
+    written_segments: list[dict[str, object]] = []
     records = []
     programs = []
     global_scripts = []
@@ -1320,36 +1495,57 @@ def main() -> int:
 
     bank = next_free_bank(args.first_bank)
     data_lines = ["; Generated cooked-room bytes; never commit the source payloads."]
+    room_segment_map: list[dict[str, object]] = []
+    room_page = bank
+    room_page_offset = 0
+    room_page_open = False
     for record_index, record in enumerate(records):
         segments = []
         raw = record["raw"]
-        for segment_index, start in enumerate(range(0, len(raw), 0x8000)):
-            # M24R-B owns LoROM bank 9 for its cold lifecycle closure. Keep
-            # generated room payloads out of that bank; otherwise a later
-            # code include silently overwrites the room-63 record used by the
-            # asynchronous storage validator.
-            bank = next_free_bank(bank)
-            payload = raw[start:start + 0x8000]
+        source_offset = 0
+        segment_index = 0
+        while source_offset < len(raw):
+            if not room_page_open:
+                data_lines.extend((f".bank {room_page}",
+                                   f".org ${0x8000 + room_page_offset:04X}"))
+                room_page_open = True
+            start = source_offset
+            payload = raw[source_offset:source_offset + 0x8000 - room_page_offset]
             binary = args.binary_dir / f"record-{record_index}-segment-{segment_index}.bin"
             binary.write_bytes(payload)
+            written_segments.append({"path": binary.name, "size": len(payload),
+                                     "sha256": hashlib.sha256(payload).hexdigest()})
             label = f"ScummV5_M23A_Record_{record_index}_Segment_{segment_index}"
             include_path = (
                 Path(os.path.relpath(binary, start=args.output.parent)).as_posix()
                 if args.relative_binary_paths else str(binary.resolve())
             )
-            data_lines.extend((
-                f".bank {bank}", ".org $8000", f"{label}:",
-                f'    .incbin "{include_path}"',
-            ))
+            data_lines.extend((f"{label}:", f'    .incbin "{include_path}"'))
             segments.append((label, len(payload), start))
-            bank += 1
+            room_segment_map.append({
+                "source_identity": f"RoomResource({record['room']})",
+                "room": int(record["room"]), "record_index": record_index,
+                "source_sha256": hashlib.sha256(raw).hexdigest(),
+                "payload_sha256": hashlib.sha256(payload).hexdigest(),
+                "source_payload_offset": start, "payload_bytes": len(payload),
+                "rom_bank": room_page, "bank_offset": room_page_offset,
+                "segment_index": segment_index,
+                "output_member": record.get("source_record_output"), "label": label,
+            })
+            source_offset += len(payload)
+            room_page_offset += len(payload)
+            segment_index += 1
+            if room_page_offset == 0x8000:
+                room_page = next_free_bank(room_page + 1)
+                room_page_offset = 0
+                room_page_open = False
         record["segments"] = segments
 
     # Bank 9 is reserved by the M24R-B validator/lifecycle closure.  Keep all
     # generated data sections out of it, not just the large room payloads;
     # otherwise adding a room can move the initializer into bank 9 and the
     # later validator include silently overwrites it.
-    bank = next_free_bank(bank)
+    bank = next_free_bank(room_page + (1 if room_page_open else 0))
     # Immutable header/directories are validation data, not executable code.
     # They must not be appended to the final raw-room payload bank: a room
     # directory can grow by 96 bytes when another script is selected, and
@@ -1360,27 +1556,131 @@ def main() -> int:
     # bank would make long-indexed reads cross a bank boundary silently.
     directory_bank = None
     directory_offset = 0
+    expected_directory_map: list[dict[str, object]] = []
     for index, record in enumerate(records):
         prefix = record["raw"][:HEADER.size + len(record["scripts"]) * 96]
         if len(prefix) > 0x8000:
             raise RuntimeError(
                 f"room {record['room']} expected directory exceeds one LoROM bank"
             )
+        directory_label = f"ScummV5_M23A_Record_{index}_ExpectedDirectory"
+        record_index = int(record.get("record_index", index))
+        backing = None
+        if args.share_room_directory_prefixes:
+            backing = next((segment for segment in room_segment_map
+                            if int(segment.get("record_index", -1)) == record_index
+                            and int(segment["source_payload_offset"]) == 0
+                            and len(prefix) <= int(segment["payload_bytes"])
+                            and int(segment["bank_offset"]) + len(prefix) <= 0x8000), None)
+        if backing is not None:
+            # The immutable integrity prefix is already present verbatim at
+            # the start of the complete cooked ROOM record. Point the
+            # validator at those bytes instead of emitting a second copy.
+            if prefix != record["raw"][:len(prefix)]:
+                raise RuntimeError(
+                    f"room {record['room']} directory alias does not match its ROOM source"
+                )
+            expected_directory_map.append({
+                "source_identity": f"RoomDirectory({record['room']})",
+                "source_sha256": hashlib.sha256(prefix).hexdigest(),
+                "payload_sha256": hashlib.sha256(prefix).hexdigest(),
+                "payload_bytes": len(prefix), "rom_bank": int(backing["rom_bank"]),
+                "bank_offset": int(backing["bank_offset"]),
+                "label": directory_label,
+                "consumer": "cooked-room integrity validator",
+                "contained_in_source_identity": f"RoomResource({record['room']})",
+                "contained_in_source_offset": 0,
+                "storage_kind": "ROOM_RECORD_DIRECTORY_ALIAS",
+                "shared_storage": True,
+                "storage_alias_of": f"RoomResource({record['room']})",
+                "storage_source_offset": 0,
+                "storage_payload_match_verified": True,
+                "storage_label": backing["label"],
+            })
+            local_offset = -int(backing["source_payload_offset"])
+            data_lines.append(
+                f"{directory_label} = {backing['label']}+${local_offset:04X}"
+            )
+            continue
         if directory_bank is None or directory_offset + len(prefix) > 0x8000:
             if directory_bank is not None:
                 bank = directory_bank + 1
             directory_bank = next_free_bank(bank)
             directory_offset = 0
             data_lines.extend((f".bank {directory_bank}", ".org $8000"))
-        data_lines.extend((f"ScummV5_M23A_Record_{index}_ExpectedDirectory:", rows(prefix)))
+        expected_directory_map.append({
+            "source_identity": f"RoomDirectory({record['room']})",
+            "source_sha256": hashlib.sha256(prefix).hexdigest(),
+            "payload_sha256": hashlib.sha256(prefix).hexdigest(),
+            "payload_bytes": len(prefix), "rom_bank": directory_bank,
+            "bank_offset": directory_offset,
+            "label": directory_label,
+            "consumer": "cooked-room integrity validator",
+            "contained_in_source_identity": f"RoomResource({record['room']})",
+            "contained_in_source_offset": 0,
+            "storage_kind": "SEPARATE_ROOM_DIRECTORY_COPY",
+            "shared_storage": False,
+            "storage_payload_match_verified": True,
+        })
+        data_lines.extend((f"{directory_label}:", rows(prefix)))
         directory_offset += len(prefix)
     if directory_bank is not None:
         bank = directory_bank + 1
+    def next_unoccupied_generated_bank(start: int) -> int:
+        occupied = {page for page, _origin in occupied_generated_bank_origins(data_lines)}
+        candidate = next_free_bank(start)
+        while candidate in occupied:
+            candidate = next_free_bank(candidate + 1)
+        return candidate
+
+    table_placement_map: list[dict[str, object]] = []
+
     if args.far_programs:
         program_bank = None
         program_offset = 0
+        separate_program_bytes = 0
         for item in programs:
             if item["executable"]:
+                shared = None
+                if args.share_room_program_bodies and item.get("kind_name") != "GLOBAL":
+                    source = item.get("source")
+                    source_offset = (
+                        source.get("cooked_record_offset") if isinstance(source, dict)
+                        else getattr(source, "cooked_record_offset", None)
+                    )
+                    record_index = int(item["record"])
+                    if source_offset is not None and 0 <= record_index < len(records):
+                        source_offset = int(source_offset)
+                        source_end = source_offset + len(item["program"])
+                        if records[record_index]["raw"][source_offset:source_end] == item["program"]:
+                            shared = next((segment for segment in room_segment_map
+                                           if int(segment.get("record_index", -1)) == record_index
+                                           and int(segment["source_payload_offset"]) <= source_offset
+                                           and source_end <= int(segment["source_payload_offset"])
+                                               + int(segment["payload_bytes"])
+                                           and int(segment["bank_offset"])
+                                               + source_offset - int(segment["source_payload_offset"])
+                                               + len(item["program"]) <= 0x8000), None)
+                if shared is not None:
+                    local_offset = source_offset - int(shared["source_payload_offset"])
+                    item["rom_bank"] = int(shared["rom_bank"])
+                    item["bank_offset"] = int(shared["bank_offset"]) + local_offset
+                    item["cpu_rom_bank"] = cpu_visible_rom_bank(
+                        int(item["rom_bank"]), sa1_aliases=args.sa1_rom_bank_aliases,
+                    )
+                    item["cpu_address"] = 0x8000 + int(item["bank_offset"])
+                    item["cpu_addressable_24bit"] = int(item["rom_bank"]) <= 0xFF
+                    item["storage_kind"] = "COOKED_ROOM_RECORD_ALIAS"
+                    item["shared_storage"] = True
+                    item["storage_alias_of"] = shared["source_identity"]
+                    item["storage_source_offset"] = source_offset
+                    item["storage_payload_match_verified"] = True
+                    item["storage_label"] = shared["label"]
+                    data_lines.append(
+                        f"ScummV5_M23A_Program_{program_label_id(item['id'], dynamic=args.dynamic_program_residency)} "
+                        f"= {shared['label']}+${local_offset:04X}"
+                    )
+                    continue
                 # Executable programs are fetched through long labels.  Keep
                 # the packed program pool in explicit LoROM banks so each
                 # label's bank byte remains the bank which actually contains
@@ -1403,6 +1703,10 @@ def main() -> int:
                 )
                 item["cpu_address"] = 0x8000 + program_offset
                 item["cpu_addressable_24bit"] = program_bank <= 0xFF
+                item["storage_kind"] = "SEPARATE_PROGRAM_BODY"
+                item["shared_storage"] = False
+                item["storage_payload_match_verified"] = False
+                separate_program_bytes += len(item["program"])
                 if program_offset == 0:
                     pass
                 else:
@@ -1417,6 +1721,9 @@ def main() -> int:
                 program_offset += len(item["program"])
         if program_bank is not None:
             bank = program_bank + 1
+    else:
+        separate_program_bytes = sum(len(item["program"]) for item in programs
+                                     if item["executable"])
     if args.dynamic_program_residency:
         # Runtime selectors resolve to canonical IDs, then use these compact
         # indexed tables.  This keeps code size constant in corpus size; a
@@ -1426,7 +1733,8 @@ def main() -> int:
             raise RuntimeError(
                 "native program-pointer table exceeds one 32 KiB LoROM bank"
             )
-        bank = next_free_bank(bank)
+        bank = next_unoccupied_generated_bank(bank)
+        pointer_bank = bank
         data_lines.extend((
             f".bank {bank}", ".org $8000",
             "ScummV5_M23A_ProgramLengths:",
@@ -1440,6 +1748,16 @@ def main() -> int:
                 for item in sorted(programs, key=lambda item: int(item["id"]))
             ) if programs else "    .long $000000",
         ))
+        table_placement_map.append({
+            "label": "ScummV5_M23A_ProgramLengths+ProgramPointers",
+            "source_identity": "ProgramUnitPointerDirectory",
+            "consumer": "native dynamic ProgramUnit byte-fetch resolver",
+            "payload_bytes": len(programs) * 5,
+            "rom_bank": pointer_bank, "bank_offset": 0,
+            "representation": "u16 program lengths followed by u24 relocated body pointers",
+            "source_sha256": None, "payload_sha256": None,
+            "resolver_table": True,
+        })
         bank += 1
     # Keep immutable navigation/object tables out of the executable-program
     # bank.  Poppy intentionally does not roll a label whose offset exceeds
@@ -1450,7 +1768,6 @@ def main() -> int:
     packed_table_bank: int | None = None
     packed_table_offset = 0
     packed_table_next_bank = bank
-
     def append_room_table(label: str, payload: bytes) -> tuple[int, int]:
         """Append one bounded table, packing source-wide metadata when requested."""
         nonlocal packed_table_bank, packed_table_offset, packed_table_next_bank
@@ -1458,30 +1775,46 @@ def main() -> int:
         if len(payload) > 0x8000:
             raise RuntimeError(f"generated table {label} exceeds one LoROM bank")
         if not args.pack_source_tables:
-            target_bank = next_free_bank(bank)
+            target_bank = next_unoccupied_generated_bank(bank)
             data_lines.extend((
                 f".bank {target_bank}", ".org $8000",
                 f"{label}_Address = {cpu_rom_address(target_bank)}",
                 f"{label}:", rows(payload),
             ))
             bank = target_bank + 1
+            table_placement_map.append({
+                "label": label, "source_identity": label,
+                "consumer": "SCUMM runtime generated lookup/navigation table",
+                "payload_bytes": len(payload), "payload_sha256": hashlib.sha256(payload).hexdigest(),
+                "rom_bank": target_bank, "bank_offset": 0,
+                "resolver_table": label.startswith("ScummV5_Resident_")
+                or "ProgramUnitIds" in label or "ProgramPointers" in label,
+            })
             return target_bank, 0
         if (packed_table_bank is None
                 or packed_table_offset + len(payload) > 0x8000):
-            packed_table_bank = next_free_bank(packed_table_next_bank)
+            packed_table_bank = next_unoccupied_generated_bank(packed_table_next_bank)
             packed_table_next_bank = packed_table_bank + 1
             packed_table_offset = 0
             data_lines.extend((f".bank {packed_table_bank}", ".org $8000"))
         target_bank = packed_table_bank
         target_offset = packed_table_offset
         data_lines.extend((
-            f"{label}_Address = " + cpu_visible_rom_symbol(
-                target_bank, label, sa1_aliases=args.sa1_rom_bank_aliases,
+            f"{label}_Address = " + cpu_visible_rom_address(
+                target_bank, target_offset, sa1_aliases=args.sa1_rom_bank_aliases,
             ),
             f"{label}:", rows(payload),
         ))
         packed_table_offset += len(payload)
         bank = packed_table_next_bank
+        table_placement_map.append({
+            "label": label, "source_identity": label,
+            "consumer": "SCUMM runtime generated lookup/navigation table",
+            "payload_bytes": len(payload), "payload_sha256": hashlib.sha256(payload).hexdigest(),
+            "rom_bank": target_bank, "bank_offset": target_offset,
+            "resolver_table": label.startswith("ScummV5_Resident_")
+            or "ProgramUnitIds" in label or "ProgramPointers" in label,
+        })
         return target_bank, target_offset
     for index, record in enumerate(records):
         if len(record["walkbox_flags"]) > 0xFF:
@@ -1532,23 +1865,39 @@ def main() -> int:
     initial_class_items = [
         (index, value) for index, value in enumerate(global_classes) if value
     ][:0x01E0]
-    bank = next_free_bank(bank)
-    data_lines.extend((f".bank {bank}", ".org $8000"))
-    data_lines.extend((
-        "ScummV5_SetState_InitialStates:", rows(global_states),
-        "ScummV5_ObjectOwner_InitialOwners:", rows(global_owners),
-        "ScummV5_ObjectClass_InitialCount = $%04X" % len(initial_class_items),
-        "ScummV5_ObjectClass_Initial:",
-        *[f"    .word ${index:04X},${value & 0xFFFF:04X},${(value >> 16) & 0xFFFF:04X}"
-          for index, value in initial_class_items],
-        "ScummV5_GetActorFacing_InitialAngles:",
-        "    .word " + ",".join(f"${value:04X}" for value in actor_facings),
-        "ScummV5_GetActorWalkbox_InitialPositions:",
-        "    .word " + ",".join(
-            f"${x & 0xffff:04X},${y & 0xffff:04X}" for x, y in actor_positions
-        ),
-        "ScummV5_GetActorWalkbox_InitialBoxes:", rows(bytes(actor_walkboxes)),
-    ))
+    if args.pack_source_tables:
+        append_room_table("ScummV5_SetState_InitialStates", bytes(global_states))
+        append_room_table("ScummV5_ObjectOwner_InitialOwners", bytes(global_owners))
+        append_room_table("ScummV5_ObjectClass_Initial",
+                          b"".join(struct.pack("<HHH", index, value & 0xFFFF,
+                                               (value >> 16) & 0xFFFF)
+                                  for index, value in initial_class_items))
+        append_room_table("ScummV5_GetActorFacing_InitialAngles",
+                          b"".join(struct.pack("<H", value & 0xFFFF)
+                                  for value in actor_facings))
+        append_room_table("ScummV5_GetActorWalkbox_InitialPositions",
+                          b"".join(struct.pack("<HH", x & 0xFFFF, y & 0xFFFF)
+                                  for x, y in actor_positions))
+        append_room_table("ScummV5_GetActorWalkbox_InitialBoxes", bytes(actor_walkboxes))
+        data_lines.append("ScummV5_ObjectClass_InitialCount = $%04X" % len(initial_class_items))
+    else:
+        bank = next_free_bank(bank)
+        data_lines.extend((f".bank {bank}", ".org $8000"))
+        data_lines.extend((
+            "ScummV5_SetState_InitialStates:", rows(global_states),
+            "ScummV5_ObjectOwner_InitialOwners:", rows(global_owners),
+            "ScummV5_ObjectClass_InitialCount = $%04X" % len(initial_class_items),
+            "ScummV5_ObjectClass_Initial:",
+            *[f"    .word ${index:04X},${value & 0xFFFF:04X},${(value >> 16) & 0xFFFF:04X}"
+              for index, value in initial_class_items],
+            "ScummV5_GetActorFacing_InitialAngles:",
+            "    .word " + ",".join(f"${value:04X}" for value in actor_facings),
+            "ScummV5_GetActorWalkbox_InitialPositions:",
+            "    .word " + ",".join(
+                f"${x & 0xffff:04X},${y & 0xffff:04X}" for x, y in actor_positions
+            ),
+            "ScummV5_GetActorWalkbox_InitialBoxes:", rows(bytes(actor_walkboxes)),
+        ))
     bank += 1
     bank = next_free_bank(bank)
     data_lines.extend((f".bank {bank}", ".org $8000"))
@@ -1633,9 +1982,8 @@ def main() -> int:
     # Keeping this generic room-local operation out of the room-loader control
     # section prevents OBNA growth from relocating its lifecycle branches.
     name_routine_start = len(data_lines)
-    name_routine_base_bank = bank
-    bank += 1
-    bank = next_free_bank(bank)
+    matrix_helper_bank = bank
+    bank = next_free_bank(bank + 1)
     data_lines.extend((
         f".bank {bank}", ".org $8000",
         "ScummV5_Matrix_LoadActiveRoomNames_Far:",
@@ -1683,7 +2031,7 @@ def main() -> int:
     ))
     name_routine_lines = data_lines[name_routine_start + 2:]
     del data_lines[name_routine_start:]
-    bank = name_routine_base_bank
+    bank = matrix_helper_bank
     # Fetch one complete immutable BOXD record into the bounded working slot.
     # X is the box index on entry; the active generated room selects the ROM
     # table.  This is deliberately one path for low and high box numbers.
@@ -2968,8 +3316,9 @@ def main() -> int:
             "    jsr ScummV5_M23A_ValidateRecord",
             "    rtl",
         ))
-        args.far_validator_output.parent.mkdir(parents=True, exist_ok=True)
-        args.far_validator_output.write_text("\n".join(validator_lines) + "\n")
+        if not args.layout_only:
+            args.far_validator_output.parent.mkdir(parents=True, exist_ok=True)
+            args.far_validator_output.write_text("\n".join(validator_lines) + "\n")
     else:
         lines.extend(validator_lines)
         # Poppy validates include existence even when the conditional include
@@ -2977,7 +3326,8 @@ def main() -> int:
         # inline-validator builds so stale labels from a prior M24 build cannot
         # collide with this generated table.
         inert_far = args.output.with_name("scumm_v5_room_validator_far.inc.pasm")
-        inert_far.write_text("; Validator is emitted inline for this build.\n")
+        if not args.layout_only:
+            inert_far.write_text("; Validator is emitted inline for this build.\n")
 
     if args.far_programs:
         # Far helpers share the final generated bank. LoROM banks $7E/$7F are
@@ -2997,10 +3347,15 @@ def main() -> int:
                 )
             )
 
+    validate_generated_bank_origins(
+        data_lines + lines + (validator_lines if not args.far_validator_output else []),
+        allow_out_of_range=args.layout_only,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.data_output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text("\n".join(lines) + "\n")
-    args.data_output.write_text("\n".join(data_lines) + "\n")
+    if not args.layout_only:
+        args.output.write_text("\n".join(lines) + "\n")
+        args.data_output.write_text("\n".join(data_lines) + "\n")
     report = {
         "rooms": [item["room"] for item in records], "programs": len(programs),
         "program_id_namespace": ("canonical_program_unit_id"
@@ -3018,6 +3373,13 @@ def main() -> int:
                     "cpu_rom_bank": item.get("cpu_rom_bank"),
                     "cpu_address": item.get("cpu_address"),
                     "cpu_addressable_24bit": item.get("cpu_addressable_24bit"),
+                    "storage_kind": item.get("storage_kind"),
+                    "shared_storage": bool(item.get("shared_storage", False)),
+                    "storage_alias_of": item.get("storage_alias_of"),
+                    "storage_source_offset": item.get("storage_source_offset"),
+                    "storage_payload_match_verified": bool(
+                        item.get("storage_payload_match_verified", False)
+                    ),
                 } if args.far_programs else {}),
             }
             for item in programs
@@ -3027,7 +3389,26 @@ def main() -> int:
         "program_pool_banks": (0 if not args.far_programs or not programs else
                                 max(int(item.get("rom_bank", 0)) for item in programs) -
                                 min(int(item.get("rom_bank", 0)) for item in programs) + 1),
-        "last_bank": bank, "output": str(args.output), "data": str(args.data_output),
+        "first_bank": args.first_bank,
+        "last_bank": bank, "output": args.output.name, "data": args.data_output.name,
+        "layout_only": args.layout_only,
+        "sa1_rom_bank_aliases": args.sa1_rom_bank_aliases,
+        "reserved_banks": sorted(reserved_banks),
+        "room_segments": room_segment_map,
+        "expected_room_directories": expected_directory_map,
+        "generated_table_placements": table_placement_map,
+        "generated_bank_sections": generated_bank_section_census(data_lines),
+        "generated_assembly_source": {
+            "room_include_text_bytes": len(("\n".join(lines) + "\n").encode("utf-8")),
+            "banked_include_text_bytes": len(("\n".join(data_lines) + "\n").encode("utf-8")),
+            "room_include_lines": len(lines),
+            "banked_include_lines": len(data_lines),
+        },
+        "generated_table_payload_bytes": sum(int(item["payload_bytes"]) for item in table_placement_map),
+        "resolver_table_bytes": sum(int(item["payload_bytes"]) for item in table_placement_map
+                                     if item.get("resolver_table")),
+        "program_pointer_directory_bytes": len(programs) * 5 if args.dynamic_program_residency else 0,
+        "room_segment_manifest": room_segment_map,
     }
     if native_directory is not None:
         report["native_program_directory_sha256"] = native_directory.sha256
@@ -3040,9 +3421,15 @@ def main() -> int:
         directory_output.parent.mkdir(parents=True, exist_ok=True)
         directory_include.parent.mkdir(parents=True, exist_ok=True)
         directory_output.write_bytes(native_directory.canonical_bytes())
-        directory_include.write_text(directory_assembly(native_directory), encoding="ascii")
-        report["native_program_directory"] = str(directory_output)
-        report["native_program_directory_include"] = str(directory_include)
+        if not args.layout_only:
+            directory_include.write_text(directory_assembly(native_directory), encoding="ascii")
+        report_base = (args.report.parent if args.report is not None else args.output.parent).resolve()
+        report["native_program_directory"] = os.path.relpath(
+            directory_output.resolve(), start=report_base,
+        )
+        report["native_program_directory_include"] = os.path.relpath(
+            directory_include.resolve(), start=report_base,
+        )
         if args.backend_directory_output:
             backend_entries = []
             program_by_identity = {
@@ -3064,6 +3451,13 @@ def main() -> int:
                         "cpu_addressable_24bit": program.get("cpu_addressable_24bit"),
                         "code_size": int(program["length"]),
                         "code_sha256": hashlib.sha256(program["program"]).hexdigest(),
+                        "storage_kind": program.get("storage_kind"),
+                        "shared_storage": bool(program.get("shared_storage", False)),
+                        "storage_alias_of": program.get("storage_alias_of"),
+                        "storage_source_offset": program.get("storage_source_offset"),
+                        "storage_payload_match_verified": bool(
+                            program.get("storage_payload_match_verified", False)
+                        ),
                         "dispatch": entry.get("dispatch", {}),
                         "lowering_status": "RAW_V5_BYTECODE_RETAINED",
                         "execution_certification": "SEE_WHOLE_SOURCE_CAPABILITY_REPORT",
@@ -3080,10 +3474,14 @@ def main() -> int:
                 json.dumps(backend_document, sort_keys=True, indent=2) + "\n",
                 encoding="utf-8",
             )
-            report["backend_program_directory"] = str(args.backend_directory_output)
+            report["backend_program_directory"] = args.backend_directory_output.name
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(report, indent=2) + "\n")
+    ownership_path.write_text(json.dumps({
+        "schema": "same_generated_room_segments_v1",
+        "files": sorted(written_segments, key=lambda item: str(item["path"])),
+    }, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report))
     return 0
 

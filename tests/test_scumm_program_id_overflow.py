@@ -1014,7 +1014,11 @@ class ProgramIdOverflowTests(unittest.TestCase):
             self.assertEqual(generated['program_id_namespace'], 'canonical_program_unit_id')
             self.assertEqual(generated['programs'], 209)
             self.assertEqual(len(generated['program_map']), 209)
-            directory_bytes = Path(generated['native_program_directory']).read_bytes()
+            self.assertFalse(Path(generated['native_program_directory']).is_absolute())
+            directory_path = Path(generated['native_program_directory'])
+            if not directory_path.is_absolute():
+                directory_path = report.parent / directory_path
+            directory_bytes = directory_path.read_bytes()
             directory_doc = json.loads(directory_bytes)
             self.assertEqual(hashlib.sha256(directory_bytes).hexdigest(),
                              generated['native_program_directory_sha256'])

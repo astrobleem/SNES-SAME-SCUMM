@@ -622,7 +622,7 @@ def _native_directory_for_build(identity_path: Path) -> dict[str, Any]:
     report = json.loads(build_report.read_text(encoding="utf-8"))
     directory_path = Path(report["native_program_directory"])
     if not directory_path.is_absolute():
-        directory_path = ROOT / directory_path
+        directory_path = build_report.parent / directory_path
     directory_bytes = directory_path.read_bytes()
     directory = json.loads(directory_bytes)
     digest = hashlib.sha256(directory_bytes).hexdigest()

@@ -26,6 +26,9 @@ from generate_snes_cooked_rooms import OVERFLOW_PROGRAM_IDS, PRIMARY_PROGRAM_IDS
 from same.engines.scumm_v5.full_source_backend import (
     build_lowering_report, validate_emitted_program_directory,
 )
+from same.engines.scumm_v5.backend_layout import (
+    build_layout_ledger, preflight_lorom_layout,
+)
 from same.engines.scumm_v5.game_analysis import (
     analyze_game, canonical_json, game_analysis_hash,
 )
@@ -44,6 +47,33 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
+def load_cooked_records(cooked: Path) -> dict[str, object]:
+    """Load and validate only room files explicitly owned by the cook manifest."""
+    path = cooked / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    records = manifest.get("records")
+    if not isinstance(records, list):
+        raise ValueError("cooked-room manifest has no records list")
+    root = cooked.resolve()
+    for record in records:
+        relative = Path(str(record.get("output", "")))
+        if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+            raise ValueError(f"cooked-room manifest has unsafe output path {relative}")
+        room_path = (root / relative).resolve()
+        if not room_path.is_relative_to(root):
+            raise ValueError(f"cooked-room output escapes its manifest root: {relative}")
+        payload = room_path.read_bytes()
+        if len(payload) != int(record.get("record_length", -1)):
+            raise ValueError(f"cooked-room record length differs from manifest: {relative}")
+        if sha256(payload) != str(record.get("record_sha256", "")):
+            raise ValueError(f"cooked-room record hash differs from manifest: {relative}")
+    return manifest
+
+
+def cooked_record_bytes(manifest: dict[str, object]) -> int:
+    return sum(int(record["record_length"]) for record in manifest["records"])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True,
@@ -57,8 +87,15 @@ def main() -> int:
     parser.add_argument("--capacity-bytes", type=lambda value: int(value, 0),
                         default=0x400000,
                         help="measured backend carrier limit (default: current 4 MiB mapping)")
+    parser.add_argument("--layout-only", action="store_true",
+                        help="stop after deterministic placement analysis; do not emit assembly includes")
     args = parser.parse_args()
     output = args.output.resolve()
+    if output.exists() and any(output.iterdir()):
+        raise SystemExit(
+            f"refusing non-empty build root {output}; use a fresh output directory so stale artifacts "
+            "cannot enter this build"
+        )
     output.mkdir(parents=True, exist_ok=True)
 
     raw, members, source_hash = read_source(args.source)
@@ -106,7 +143,8 @@ def main() -> int:
         sys.executable, str(ROOT / "tools/cook_scumm_v5_rooms.py"),
         "--archive", str(args.source.resolve()), "--profile", str(args.profile.resolve()),
         "--all-source-executables", "--executable", "--output-dir", str(cooked),
-    ], cwd=ROOT, env=command_env, check=True)
+    ], cwd=ROOT, env=command_env, check=True, stdout=subprocess.DEVNULL)
+    cooked_manifest = load_cooked_records(cooked)
 
     rooms_include = backend / "scumm_v5_rooms.inc.pasm"
     data_include = backend / "scumm_v5_room_data.inc.pasm"
@@ -114,19 +152,23 @@ def main() -> int:
     native_include = backend / "native_program_directory.inc.pasm"
     backend_dir = backend / "backend_program_directory.json"
     raw_report_path = backend / "generator-report.raw.json"
-    subprocess.run([
+    generator_base = [
         sys.executable, str(ROOT / "tools/generate_snes_cooked_rooms.py"),
         "--manifest", str(cooked / "manifest.json"),
         "--output", str(rooms_include), "--data-output", str(data_include),
         "--binary-dir", str(binary_dir), "--report", str(raw_report_path),
         "--first-bank", str(args.first_bank), "--far-programs",
+        "--share-room-program-bodies",
+        "--share-room-directory-prefixes",
         "--dynamic-program-residency", "--pack-source-tables",
         "--banked-room-directory-data",
         "--relative-binary-paths", "--native-directory-output", str(native_dir),
         "--native-directory-include", str(native_include),
         "--backend-directory-output", str(backend_dir),
         "--reserved-bank", "9", "--reserved-bank", "83",
-    ], cwd=ROOT, env=command_env, check=True, stdout=subprocess.DEVNULL)
+    ]
+    subprocess.run([*generator_base, "--layout-only"], cwd=ROOT, env=command_env,
+                   check=True, stdout=subprocess.DEVNULL)
 
     raw_report = json.loads(raw_report_path.read_text(encoding="utf-8"))
     canonical_report = {
@@ -135,6 +177,7 @@ def main() -> int:
                        "native_program_directory_include", "backend_program_directory"}
     }
     write_json(backend / "generator-report.json", canonical_report)
+    layout_generator_report = canonical_report
     room_payloads = {
         int(row["number"]): provider.read(str(row["resource_key"]))
         for row in provider.source_catalog() if row["category"] == "room"
@@ -145,6 +188,104 @@ def main() -> int:
     write_json(backend / "source-emission-check.json", projection_check)
     lowering = build_lowering_report(analysis)
     write_json(backend / "lowering-report.json", lowering)
+    layout_ledger = build_layout_ledger(canonical_report, cooked_manifest,
+                                        capacity_bytes=args.capacity_bytes)
+    write_json(backend / "layout-ledger.json", layout_ledger)
+
+    def write_build_artifacts_manifest() -> dict[str, object]:
+        rows = []
+        for path in sorted((item for item in output.rglob("*") if item.is_file()),
+                           key=lambda item: item.relative_to(output).as_posix()):
+            if path.name == "build-artifacts.json":
+                continue
+            payload = path.read_bytes()
+            rows.append({"path": path.relative_to(output).as_posix(),
+                         "size": len(payload), "sha256": sha256(payload)})
+        document = {"schema": "same_scumm_v5_build_artifacts_v1", "files": rows}
+        write_json(output / "build-artifacts.json", document)
+        return document
+
+    if layout_ledger["layout_preflight"]["result"] != "pass":
+        report = {
+            "schema": "same_scumm_v5_whole_source_layout_preflight_v1",
+            "game": {"id": profile.game_id, "variant": profile.variant,
+                     "profile_sha256": sha256(profile_bytes), "source_sha256": source_hash},
+            "source_census": {
+                "indexed_rooms": int(analysis.census.get("rooms_inventoried", 0)),
+                "parsed_rooms": int(analysis.census.get("rooms_parsed", 0)),
+                "semantic_executable_identities": int(
+                    analysis.selector_demand["counts"]["semantic_executable_identities"]),
+                "selector_units": int(analysis.selector_demand["counts"]["selector_units"]),
+                "program_units": int(canonical_report["programs"]),
+                "resource_records": int(analysis.selector_demand["counts"]["resource_records"]),
+            },
+            "program_body_bytes": int(canonical_report["program_code_bytes"]),
+            "room_resource_bytes": cooked_record_bytes(cooked_manifest),
+            "logical_span_bytes": layout_ledger["target"]["logical_page_span_bytes"],
+            "layout_preflight": layout_ledger["layout_preflight"],
+            "ledger": "backend/layout-ledger.json",
+            "assembly_emitted": False,
+            "build_artifacts": "build-artifacts.json",
+        }
+        write_json(output / "whole-source-backend.json", report)
+        write_build_artifacts_manifest()
+        print(json.dumps({"result": "LAYOUT_REJECTED_BEFORE_ASSEMBLY",
+                          "issues": len(layout_ledger["layout_preflight"]["issues"]),
+                          "logical_span_bytes": report["logical_span_bytes"],
+                          "capacity_bytes": args.capacity_bytes,
+                          "report": str(output / "whole-source-backend.json")}, sort_keys=True),
+              file=sys.stderr)
+        return 4
+
+    if args.layout_only:
+        report = {
+            "schema": "same_scumm_v5_whole_source_layout_preflight_v1",
+            "game": {"id": profile.game_id, "variant": profile.variant,
+                     "profile_sha256": sha256(profile_bytes), "source_sha256": source_hash},
+            "source_census": {
+                "indexed_rooms": int(analysis.census.get("rooms_inventoried", 0)),
+                "parsed_rooms": int(analysis.census.get("rooms_parsed", 0)),
+                "semantic_executable_identities": int(
+                    analysis.selector_demand["counts"]["semantic_executable_identities"]),
+                "selector_units": int(analysis.selector_demand["counts"]["selector_units"]),
+                "program_units": int(canonical_report["programs"]),
+                "resource_records": int(analysis.selector_demand["counts"]["resource_records"]),
+            },
+            "program_body_bytes": int(canonical_report["program_code_bytes"]),
+            "room_resource_bytes": cooked_record_bytes(cooked_manifest),
+            "logical_span_bytes": layout_ledger["target"]["logical_page_span_bytes"],
+            "layout_preflight": layout_ledger["layout_preflight"],
+            "assembly_emitted": False,
+        }
+        write_json(output / "whole-source-backend.json", report)
+        write_build_artifacts_manifest()
+        print(json.dumps({"result": "LAYOUT_PASS_NO_ASSEMBLY", "report":
+                          str(output / "whole-source-backend.json")}, sort_keys=True))
+        return 0
+
+    # Only after placement fits the real target do we materialize Poppy input.
+    subprocess.run(generator_base, cwd=ROOT, env=command_env,
+                   check=True, stdout=subprocess.DEVNULL)
+    raw_report = json.loads(raw_report_path.read_text(encoding="utf-8"))
+    canonical_report = {
+        key: value for key, value in raw_report.items()
+        if key not in {"output", "data", "native_program_directory",
+                       "native_program_directory_include", "backend_program_directory"}
+    }
+    layout_comparable = dict(layout_generator_report)
+    assembled_comparable = dict(canonical_report)
+    layout_comparable.pop("layout_only", None)
+    assembled_comparable.pop("layout_only", None)
+    if layout_comparable != assembled_comparable:
+        raise RuntimeError(
+            "placement changed between preflight and assembly generation; refusing to use a layout "
+            "ledger for different emitted inputs"
+        )
+    write_json(backend / "generator-report.json", canonical_report)
+    projection_check = validate_emitted_program_directory(
+        analysis, canonical_report, room_payloads,
+    )
+    write_json(backend / "source-emission-check.json", projection_check)
 
     backend_document = json.loads(backend_dir.read_text(encoding="utf-8"))
     unit_status = lowering["program_unit_status"]
@@ -160,8 +301,8 @@ def main() -> int:
     banks = sorted({int(row["rom_bank"]) for row in canonical_report["program_map"]
                     if row.get("rom_bank") is not None})
     code_bytes = int(canonical_report["program_code_bytes"])
-    room_bytes = sum(path.stat().st_size for path in cooked.glob("room-*.sc5c"))
-    bank_span_bytes = (int(canonical_report["last_bank"]) + 1) * 0x8000
+    room_bytes = cooked_record_bytes(cooked_manifest)
+    bank_span_bytes = int(layout_ledger["target"]["logical_page_span_bytes"])
     cpu_lorom_address_space_bytes = 0x100 * 0x8000
     cross_bank_edges = 0
     identities_to_bank = {
@@ -245,6 +386,9 @@ def main() -> int:
             value != "LOWERABLE_WITH_EVIDENCE"
             for value in lowering["program_unit_status"].values()),
         "source_code_bytes": code_bytes,
+        "physically_placed_payload_bytes_non_double_counted": int(
+            layout_ledger["totals"]["physically_placed_payload_bytes_non_double_counted"]
+        ),
         "room_bundle_resource_bytes": room_bytes,
         "backend_program_directory_bytes": directory_bytes,
         "program_banks": banks,
@@ -289,10 +433,11 @@ def main() -> int:
         "whole_game_readiness": analysis.whole_game_readiness,
         "generator_directory_entries": len(descriptors["entries"]),
         "generator_map_entry_count": len(canonical_report["program_map"]),
-        "room_count": len(list(cooked.glob("room-*.sc5c"))),
+        "room_count": len(cooked_manifest["records"]),
         "global_program_count": len(analysis.native_program_directory["global_directory"]),
     }
     write_json(output / "whole-source-backend.json", full_image)
+    write_build_artifacts_manifest()
     if not projection_check["complete_and_source_identical"]:
         print("Whole-source backend emission does not match the source directory; "
               "artifacts retained for diagnosis.", file=sys.stderr)

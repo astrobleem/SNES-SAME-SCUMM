@@ -18,7 +18,7 @@ boundaries.
 | `src/same/engines/scumm_v5/engine.py` | Interpret v5 bytecode; own scheduler, variables/bits, slots, actors, object state, verbs, room lifecycle, messages, cutscenes and logical sound requests. | SAME `EngineHost`, semantic tests | `GENERIC_SCUMM` | Preserve as host runtime/behavioral oracle; compare compiled operation execution against it. |
 | `cooked_room.py`, `room_visual.py` | Encode/decode versioned SC5C/SC5VIS records, source/profile/archive hashes and executable directories. | Host provider, build generators, native runtime | `GENERIC_SCUMM` | Stable compiler interchange/backend artifact schemas with explicit provenance. |
 | `tools/cook_scumm_v5_rooms.py`, `tools/compile_scumm_room.py`, `tools/compile_scumm_game.py` | Room compiler emits SC5C/IR; game analyzer emits source census, GameIR projection, graph, reachability, capabilities and frontiers deterministically. | SNES generators, source-build tooling, developer/tests | `BUILD_TOOLING` + `GENERIC_SCUMM` front end | Keep legacy room cooker; Milestone 3 may consume trusted analysis to derive backend manifests. **Room compilation and game analysis implemented, partial.** |
-| `tools/generate_snes_cooked_rooms.py` | Allocate stable executable selectors, serialize directories, place data in LoROM banks, emit Poppy includes/binaries/reports. | SNES build and M23A resource service | `SNES_BACKEND` | Backend layout/encoding over analyzed identities, preserving selector stability. |
+| `tools/generate_snes_cooked_rooms.py`, `backend_layout.py`, `compile_scumm_v5_source_image.py` | Emit legacy static or canonical dynamic ProgramUnit directories, share verified immutable room/body bytes, place source resources/tables, preflight LoROM pages and produce a source-bound byte ledger. | SNES build, M23A resource service, full-source diagnostics | `SNES_BACKEND` + `BUILD_TOOLING` | Keep source IDs selector-free; use manifest-owned inputs and a checked target-specific storage plan. |
 | `tools/generate_snes_scumm_variables.py` | Derive source variable capacity or synthetic equivalent; emit WRAM symbols and identity manifest. | Assembly and memory audits | `SNES_BACKEND` | GameIR source limits plus target-specific WRAM layout report. |
 | `tools/generate_snes_room_visuals.py`, `generate_snes_scumm_charset.py`, actor/object sprite generators | Convert decoded visual/font/costume/object source to bank-safe SNES data and descriptors. | Native rendering services and ROM build | `SNES_BACKEND` | Keep source parsing upstream; retain target palette/tile/bank packing here. |
 | `src/same/engines/scumm_v5/audio.py`, `same.music`, SCUMM/FATE music import tools | Preserve logical audio intent and build score realizations; title adapters read external formats. | Host audio services and SNES audio build | `GENERIC_SCUMM` + `BUILD_TOOLING` | Generic sound IR, title importer/profile, backend realization. |
@@ -55,26 +55,24 @@ support remains explicitly NOT READY because known host gaps and backend/native
 support evidence remain. See `CAPABILITY_ANALYSIS.md` and
 `CAPABILITY_FRONTIER_BURN_DOWN.md` for the measured frontier.
 
-`selector_demand.py` refines the earlier ProgramUnit projection into distinct
-source semantic executables, OBCD object resource records, VM-enterable
-executable carriers, selector units, and future resident bindings. The old
-projection counted every parsed object record as a selector-bearing unit;
-593 FATE OBCD records have no verb entries and cannot pass the native
-`Verb_Query` gate. The generator currently allocates an ID for those records
-if included, but runtime dispatch never references those IDs. The new
-`selector_demand.json` and `selector_residency.json` are authoritative for
-selector demand; the older `program_units.json`/`residency.json` projection is
-retained as historical compatibility data. See
-`MILESTONE_6_TRUE_SELECTOR_DEMAND.md` for the backend/runtime trace and exact
-room-7/room-98 reconciliation.
+`selector_demand.py` distinguishes source semantic executables, OBCD resource
+records, executable carriers, selector units, and resident bindings. Passive
+object records have no selector. The current canonical full-source census is
+96 parsed rooms, 4,108 semantic executable identities, 2,203 true selector
+units, and 1,372 object resource records. The dynamic resolver maps canonical
+ProgramUnit IDs to temporary byte selectors; legacy static mode remains
+available. See `MILESTONE_6_TRUE_SELECTOR_DEMAND.md` and
+`WHOLE_SOURCE_BACKEND.md` for the dispatch trace and current storage boundary.
 
 `residency_contract.py` consumes that selector-free directory in the simulator;
-the accepted native resolver now uses canonical ProgramUnit IDs, generated
+the accepted native resolver uses canonical ProgramUnit IDs, generated
 global/room directories, temporary selector bindings, generations and live
 activation pins. The bounded deterministic FATE route has passed with dynamic
-residency and matches the static control at semantic checkpoints. This proves
-the route, not whole-game FATE support; actual liveness outside tested states
-remains subject to capability and runtime validation.
+residency and matches the static control at semantic checkpoints. Separately,
+the compiler can emit all parsed source ProgramUnits, but full FATE does not
+fit the current directly addressed 4 MiB LoROM target. This proves the route
+and source representation, not whole-game FATE support; see
+`WHOLE_SOURCE_BACKEND.md`.
 
 The architectural invariant is:
 
@@ -90,9 +88,11 @@ Milestone 4's room-43 overflow claim (185 semantic records) was not a selector
 overflow. Milestone 5 corrected semantic-to-object carrier grouping, but its
 1,362 OBCD “ProgramUnits” still included 593 passive records. Milestone 6
 traces actual native dispatch and separates those resource records from
-callable selectors. The corrected full-source selector map is 2,195 units;
-largest known room+static/conditional global set is 71, and the exact live
-simultaneous set remains unknown.
+callable selectors. The corrected full-source directory has 2,203 Selector
+Units, while the accepted runtime binds only a bounded resident subset.
+Whole-source body emission is complete for the current parsed corpus, but the
+ROM payload/layout exceeds the current carrier; addressability, image storage,
+and simultaneous residency remain separate constraints.
 
 Leakage to address incrementally:
 

@@ -35,7 +35,8 @@ def _data_only_object(object_id: int, index: int) -> bytes:
 
 
 def raw_pair(*, data_only_objects: int = 0,
-             extra_global_scripts: int = 0) -> tuple[bytes, bytes]:
+             extra_global_scripts: int = 0,
+             cross_bank_body_size: int = 0) -> tuple[bytes, bytes]:
     # Global 1 has an unconditional start, a conditional start, a direct room
     # transition, and a variable script selector. Global 2 contains a known-
         # width semantic-only debug command before a StartScript dependency, then an
@@ -67,6 +68,16 @@ def raw_pair(*, data_only_objects: int = 0,
         raise ValueError("extra_global_scripts must fit the 200-slot fixture directory")
     for number in range(6, 6 + extra_global_scripts):
         globals_[number] = bytes((0xA0,))
+    if cross_bank_body_size:
+        if not 16 <= cross_bank_body_size <= 0x7FFF:
+            raise ValueError("cross_bank_body_size must be in 16..32767")
+        if extra_global_scripts < 2:
+            raise ValueError("cross-bank fixture requires globals 6 and 7")
+        # A large, valid instruction stream ending in stopScript instructions
+        # fills the first body page. Global 7's state mutation then occupies a
+        # distinct page and is executed by the bounded native fetch test.
+        globals_[6] = bytes((0xA0,)) * (cross_bank_body_size - 1) + b"\x00"
+        globals_[7] = bytes((0x1A, 200, 0, 0x5A, 0xA5, 0xA0))
     room1_container = bytearray(_chunk(b"ROOM", room1()))
     offsets = [0] * 200
     room_slots = bytearray(200)
@@ -101,9 +112,11 @@ def raw_pair(*, data_only_objects: int = 0,
 
 
 def source_zip(*, data_only_objects: int = 0,
-               extra_global_scripts: int = 0) -> bytes:
+               extra_global_scripts: int = 0,
+               cross_bank_body_size: int = 0) -> bytes:
     index, data = raw_pair(data_only_objects=data_only_objects,
-                           extra_global_scripts=extra_global_scripts)
+                           extra_global_scripts=extra_global_scripts,
+                           cross_bank_body_size=cross_bank_body_size)
     output = BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
         for name, payload in (("fixture/ANALYSIS.000", index),
