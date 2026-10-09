@@ -855,6 +855,11 @@ else
         ROOM_GENERATOR_ARGS+=(--far-programs --dynamic-program-residency
             --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm
             --reserved-bank 9 --reserved-bank 83)
+    elif [[ "${SAME_SCUMM_FAR_PROGRAMS:-0}" == "1" ]]; then
+        # Keep the legacy global selector ABI while placing selected source
+        # bodies in the existing banked-ROM fetch path. This is useful for
+        # larger static-control corpora that exceed the bank-0 inline area.
+        ROOM_GENERATOR_ARGS+=(--far-programs)
     fi
     if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" ]]; then
         ROOM_GENERATOR_ARGS+=(--pack-source-tables --banked-room-directory-data

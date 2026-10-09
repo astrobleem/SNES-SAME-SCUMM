@@ -32,6 +32,10 @@ packing, or dispatch behavior.
   the same compact table packing used by the whole-source compiler. It keeps
   small per-room metadata tables from consuming one full ROM page apiece;
   dynamic-residency builds also use the banked room-directory representation.
+- `SAME_SCUMM_FAR_PROGRAMS=1` keeps the legacy static selector namespace but
+  uses the existing banked body-fetch path for executable bytes, avoiding
+  bank-0 inline-body overflow without changing selector semantics. Dynamic
+  residency enables this representation automatically.
 - `strict` rejects non-certified ProgramUnits. The explicit
   `experimental-diagnostic` policy keeps unsupported/unverified semantics
   visible; it does not manufacture behavior or certify an executable game.
