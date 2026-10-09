@@ -228,6 +228,13 @@ class ScummWholeSourceLayoutTests(unittest.TestCase):
             self.assertGreater(report["source_census"]["program_units"], 178)
             self.assertEqual(report["assembly_emitted"], False)
             self.assertEqual(report["layout_preflight"]["result"], "pass")
+            graph = json.loads((output / "analysis/dependency_graph.json").read_text())
+            self.assertTrue(any(
+                row["source"] == "GlobalScript(1)"
+                and row["kind"] == "load_room"
+                and row["target"] == "RoomEntry(2)"
+                for row in graph["edges"]
+            ))
             ledger = json.loads((output / "backend/layout-ledger.json").read_text())
             self.assertEqual(ledger["totals"]["program_unit_body_bytes"],
                              json.loads((output / "backend/generator-report.json").read_text())
@@ -276,12 +283,6 @@ class ScummWholeSourceLayoutTests(unittest.TestCase):
                 and row["target"] == "GlobalScript(7)"
                 and row["kind"] == "start_script"
                 and row["resolution"] == "STATIC"
-                for row in graph["edges"]
-            ))
-            self.assertTrue(any(
-                row["source"] == "GlobalScript(1)"
-                and row["kind"] == "load_room"
-                and row["target"] == "RoomEntry(2)"
                 for row in graph["edges"]
             ))
             generator = json.loads((output / "backend/generator-report.json").read_text())

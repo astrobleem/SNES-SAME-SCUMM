@@ -777,8 +777,10 @@ def run_whole_source_bank_fetch(args: argparse.Namespace, inputs: dict[str, Any]
             f"whole-source native test did not advance: {result}")
     require(values["200"] == 0xA55A,
             f"cross-bank GlobalProgram(7) did not execute its marker body: {values}")
-    require(current_room == 2,
-            f"whole-source boot did not complete its room-2 transition: room={current_room}")
+    require(current_room == 0,
+            f"cross-bank fetch control unexpectedly left the cold null scene: room={current_room}, "
+            f"variables={values}, error={errors}, slots={slots}, bindings={bindings}, "
+            f"stats={final_stats}")
     require(errors == 0 and sp == 0x1FFF,
             f"native fetch failed safely: error={errors}, SP=${sp:04X}, "
             f"room={current_room}, variables={values}, slots={slots}, "
@@ -794,6 +796,7 @@ def run_whole_source_bank_fetch(args: argparse.Namespace, inputs: dict[str, Any]
         **inputs["hashes"], "source": inputs["source"],
         "selector_capacity": SELECTOR_CAPACITY,
         "program_unit_count": len(inputs["directory"].get("entries", [])),
+        "room_bundle_count": len(generator.get("rooms", [])),
         "tested_programs": {
             "GlobalProgram(6)": {key: large.get(key) for key in
                                   ("id", "rom_bank", "bank_offset", "length", "sha256")},
