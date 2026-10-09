@@ -102,6 +102,9 @@ Same_Frame_Run__sp_ok_02:
     .i16
 .endif
     jsr Same_Engine_Frame
+.if SAME_BUILD_MSU1_STORAGE
+    jsr Same_Storage_Process
+.endif
 .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
     php
     rep #$20
@@ -235,7 +238,7 @@ Same_Frame_Run__sp_ok_08:
     .if SAME_BUILD_SCUMM_ROOM_VISUAL && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl ScummV5_Visual_Frame_Far
     .endif
-    .if !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+    .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE == 0
     jsr Same_Audio_Process
 .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
     php

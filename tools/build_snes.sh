@@ -18,7 +18,12 @@ SAME_FATE_DEMO_ARCHIVE="${SAME_FATE_DEMO_ARCHIVE:-$SAME_FATE_ARCHIVE}"
 # gameplay ROM distinct from the larger validator personality.
 M25A_CONTENT_PROFILE="${SAME_BUILD_SCUMM_M25A_VALIDATOR:-0}"
 M25A_PROFILE_CASE="${SAME_M25A_VALIDATOR_CASE:-normal}"
-if [[ "${SAME_BUILD_SCUMM_AUTHENTIC_STARTUP:-0}" == "1" ]]; then
+if [[ "${SAME_SNES_ENGINE:-demo}" == "winston_io" ]]; then
+    # The package/audio diagnostic is not a Fate build and does not consume a
+    # game profile. Keep its build identity from implying otherwise.
+    SAME_FATE_PROFILE="${SAME_FATE_PROFILE-}"
+    SAME_SNES_PROFILE="${SAME_SNES_PROFILE-}"
+elif [[ "${SAME_BUILD_SCUMM_AUTHENTIC_STARTUP:-0}" == "1" ]]; then
     if [[ "${SAME_SNES_ENGINE:-demo}" != "scumm_v5" || \
           "${SAME_BUILD_SCUMM_M23A:-0}" != "1" || \
           "${SAME_BUILD_SCUMM_M25A_VALIDATOR:-0}" == "1" ]]; then
@@ -31,7 +36,9 @@ if [[ "${SAME_BUILD_SCUMM_AUTHENTIC_STARTUP:-0}" == "1" ]]; then
 else
 SAME_FATE_PROFILE="${SAME_FATE_PROFILE:-examples/profiles/templates/fate_of_atlantis_demo.json}"
 fi
-SAME_SNES_PROFILE="${SAME_SNES_PROFILE:-$SAME_FATE_PROFILE}"
+if [[ "${SAME_SNES_ENGINE:-demo}" != "winston_io" ]]; then
+    SAME_SNES_PROFILE="${SAME_SNES_PROFILE:-$SAME_FATE_PROFILE}"
+fi
 export SAME_FATE_ARCHIVE SAME_FATE_DEMO_ARCHIVE SAME_FATE_PROFILE SAME_SNES_PROFILE
 
 if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
@@ -952,6 +959,61 @@ if [[ "$ROOM_TABLES_GENERATED" != "1" ]]; then
         --report build/empty-scumm-rooms/report.json \
         "${EMPTY_ROOM_ARGS[@]}"
 fi
+if [[ "${SAME_SNES_ENGINE:-demo}" == "winston_io" ]]; then
+    if [[ -z "${SAME_MSU1_PACKAGE:-}" || -z "${SAME_MSU1_READ_CASES:-}" ]]; then
+        echo "winston_io requires SAME_MSU1_PACKAGE and SAME_MSU1_READ_CASES" >&2
+        exit 1
+    fi
+    if [[ ! -f "$SAME_MSU1_PACKAGE" || ! -f "$SAME_MSU1_READ_CASES" ]]; then
+        echo "MSU package or read-case manifest is missing" >&2
+        exit 1
+    fi
+    "$PYTHON" tools/generate_snes_msu1_directory.py "$SAME_MSU1_PACKAGE" \
+        --include runtime/snes/generated/msu1_package.inc.pasm \
+        --manifest "${SAME_SNES_OUTPUT:-build/winston_io.sfc}.msu1-directory.json" \
+        --read-cases "$SAME_MSU1_READ_CASES" \
+        --cases-include runtime/snes/generated/msu1_read_cases.inc.pasm
+    ENGINE_SELECTION_ARGS+=(--msu1-storage)
+    if [[ "${SAME_MSU1_TEST_FORCE_BUSY:-0}" == "1" ]]; then
+        ENGINE_SELECTION_ARGS+=(--msu1-test-force-busy)
+    fi
+    SAME_MSU1_PCM_DIR="${SAME_MSU1_PCM_DIR:-$(dirname "$SAME_MSU1_PACKAGE")}"
+
+    SAME_MSU1_STEM="${SAME_SNES_OUTPUT##*/}"
+    SAME_MSU1_STEM="${SAME_MSU1_STEM%.sfc}"
+    SAME_MSU1_DEST_DIR="$(dirname "$SAME_SNES_OUTPUT")"
+    mkdir -p "$SAME_MSU1_DEST_DIR"
+    SAME_MSU1_PACKAGE_DEST="$SAME_MSU1_DEST_DIR/$SAME_MSU1_STEM.msu"
+    if [[ -e "$SAME_MSU1_PACKAGE_DEST" ]]; then
+        if ! cmp -s "$SAME_MSU1_PACKAGE" "$SAME_MSU1_PACKAGE_DEST"; then
+            echo "Refusing to overwrite non-identical MSU package: $SAME_MSU1_PACKAGE_DEST" >&2
+            exit 1
+        fi
+    else
+        cp "$SAME_MSU1_PACKAGE" "$SAME_MSU1_PACKAGE_DEST"
+    fi
+    for track in 1 2 101 102 103 104; do
+        SAME_MSU1_PCM_SOURCE="$SAME_MSU1_PCM_DIR/winston_io-$track.pcm"
+        SAME_MSU1_PCM_DEST="$SAME_MSU1_DEST_DIR/$SAME_MSU1_STEM-$track.pcm"
+        if [[ ! -f "$SAME_MSU1_PCM_SOURCE" ]]; then
+            echo "Missing required diagnostic PCM sidecar: $SAME_MSU1_PCM_SOURCE" >&2
+            exit 1
+        fi
+        if [[ -e "$SAME_MSU1_PCM_DEST" ]]; then
+            if ! cmp -s "$SAME_MSU1_PCM_SOURCE" "$SAME_MSU1_PCM_DEST"; then
+                echo "Refusing to overwrite non-identical PCM sidecar: $SAME_MSU1_PCM_DEST" >&2
+                exit 1
+            fi
+        else
+            cp "$SAME_MSU1_PCM_SOURCE" "$SAME_MSU1_PCM_DEST"
+        fi
+    done
+else
+    printf '%s\n' '; Generated empty MSU-1 package directory (provider disabled).' \
+        > runtime/snes/generated/msu1_package.inc.pasm
+    printf '%s\n' '; Generated empty MSU-1 test vectors (diagnostic engine disabled).' \
+        > runtime/snes/generated/msu1_read_cases.inc.pasm
+fi
 "$PYTHON" tools/generate_snes_engine_selection.py "${ENGINE_SELECTION_ARGS[@]}"
 SAME_SNES_CARRIER="${SAME_SNES_CARRIER:-lorom}"
 if [[ "$SAME_SNES_CARRIER" != "lorom" && "$SAME_SNES_CARRIER" != "sa1_bwram" ]]; then
@@ -1056,6 +1118,10 @@ if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" != "1" || \
         > runtime/snes/generated/scumm_v5_actor_sprite.inc.pasm
     printf '%s\n' '; Generated empty object-sprite include (fixture sprites disabled).' \
         > runtime/snes/generated/scumm_v5_object_sprite.inc.pasm
+fi
+if [[ "${SAME_SNES_ENGINE:-demo}" != "scumm_v5" ]]; then
+    printf '%s\n' '; Generated empty SCUMM variable include (SCUMM engine disabled).' \
+        > runtime/snes/generated/scumm_v5_variables.inc.pasm
 fi
 if [[ "${SAME_SNES_ENGINE:-demo}" == "scumm_v5" ]]; then
     VARIABLE_PROFILE="${SAME_SNES_PROFILE:-$SAME_FATE_PROFILE}"

@@ -20,6 +20,11 @@ SAME_INPUT_TALK_OWNED_SEQUENCE = $7E220A ; u16 edge sequence captured by active 
 SAME_INPUT_TALK_OWNED_VALID = $7E220C ; u8 token survives polls until controller consumes it
 SAME_FRAME_COUNTER           = $7E2210
 SAME_VIDEO_BACKDROP_SHADOW   = $7E2212
+SAME_VIDEO_BG1_CONFIG_VALID  = $7E2249 ; NMI-owned PPU register shadow
+SAME_VIDEO_BG1_MODE          = $7E224A ; u8 BGMODE
+SAME_VIDEO_BG1_SCREEN        = $7E224B ; u8 BG1SC
+SAME_VIDEO_BG1_CHARS         = $7E224C ; u8 BG12NBA
+SAME_VIDEO_MAIN_LAYERS       = $7E224D ; u8 TM shadow
 SAME_AUDIO_LAST_OPCODE       = $7E2214
 SAME_AUDIO_LAST_ARG0         = $7E2216
 SAME_AUDIO_LAST_ARG1         = $7E221A
@@ -52,6 +57,83 @@ SAME_TAD_REJECTED             = $7E225C ; non-dropping queue-full count
 SAME_TAD_PROBE_REQUEST        = $7E225D ; debugger requests real sound id
 SAME_TAD_DEFERRED_SONG        = $7E225E ; M20 backend follow-up after blank
 SAME_TAD_READY                = $7E225F ; driver playing/paused state reached
+
+; Generic SAME checked-read provider state. The single MSU-1 data cursor and
+; request state are service-owned; callers supply their own destination. This
+; 72-byte record lives in the audited gap before the SCUMM C8 table at $7E3000.
+SAME_MSU1_STATE               = $7E2F00
+SAME_MSU1_STATUS              = $7E2F00 ; u8 provider/init/read state
+SAME_MSU1_ERROR               = $7E2F01 ; u8 explicit provider error
+SAME_MSU1_FLAGS               = $7E2F02 ; u8 stream/ring flags
+SAME_MSU1_INIT_INDEX          = $7E2F03 ; u8 initialization phase
+SAME_MSU1_REQUEST_OFFSET      = $7E2F04 ; u32 package byte offset
+SAME_MSU1_REQUEST_LENGTH      = $7E2F08 ; u32 requested bytes
+SAME_MSU1_DESTINATION         = $7E2F0C ; 24-bit WRAM address
+SAME_MSU1_DEST_CAPACITY       = $7E2F0F ; u16 caller-owned capacity
+SAME_MSU1_EXPECTED_CRC        = $7E2F11 ; u32 request CRC32
+SAME_MSU1_REMAINING            = $7E2F15 ; u32 untransferred bytes
+SAME_MSU1_DEST_INDEX           = $7E2F19 ; u16 destination/ring cursor
+SAME_MSU1_CRC_STATE            = $7E2F1B ; u32 reflected CRC state
+SAME_MSU1_STEP_REMAINING       = $7E2F1F ; u16 per-frame transfer budget
+SAME_MSU1_BYTE_SCRATCH         = $7E2F21 ; u8 data byte
+SAME_MSU1_TIMEOUT              = $7E2F22 ; u8 bounded status poll budget
+SAME_MSU1_PREFIX_INDEX         = $7E2F23 ; u16 trusted metadata cursor
+SAME_MSU1_END_OFFSET           = $7E2F25 ; u32 overflow-checked exclusive end
+SAME_MSU1_CRC_LSB              = $7E2F29 ; u8 CRC polynomial scratch
+SAME_MSU1_CRC_BITS             = $7E2F2A ; u8 CRC bit count
+SAME_MSU1_SEEK_COUNT           = $7E2F2B ; u16 diagnostic seeks
+SAME_MSU1_BYTES_READ           = $7E2F2D ; u32 diagnostic transfer count
+SAME_MSU1_READ_COUNT           = $7E2F31 ; u16 completed/failed request count
+SAME_MSU1_TIMEOUT_COUNT        = $7E2F33 ; u16 bounded timeout count
+SAME_MSU1_RANGE_REJECT_COUNT   = $7E2F35 ; u16 range/capacity rejects
+SAME_MSU1_VERIFY_COUNT         = $7E2F37 ; u16 accepted metadata identities
+SAME_MSU1_LAST_OFFSET          = $7E2F39 ; u32 last request offset
+SAME_MSU1_LAST_LENGTH          = $7E2F3D ; u32 last request length
+SAME_MSU1_AUDIO_TRACK          = $7E2F41 ; u16 selected PCM track
+SAME_MSU1_AUDIO_FLAGS          = $7E2F43 ; u16 play flags
+SAME_MSU1_AUDIO_LAST_STATUS    = $7E2F45 ; u8 latest MSU status snapshot
+SAME_MSU1_SECTION_TEMP         = $7E2F46 ; u16 generated-section index math
+SAME_MSU1_STATE_END            = $7E2F48 ; exclusive
+
+.if SAME_BUILD_WINSTON_IO
+; Diagnostic-client staging only. It is not provider state and is deliberately
+; unavailable to SCUMM builds, whose object-name cache owns $7E9000-$7F1000.
+.if SAME_BUILD_SCUMM_M19
+    .error "Winston IO staging cannot share the SCUMM engine personality"
+.endif
+SAME_WINSTON_IO_STAGE          = $7E6000 ; 20,480-byte image/staging buffer
+SAME_WINSTON_IO_STAGE_SIZE     = $5000
+SAME_WINSTON_IO_RING            = $7EB000 ; 256-byte rolling test read window
+SAME_WINSTON_IO_RING_SIZE       = $0100
+SAME_WINSTON_IO_GUARD           = $7EB100 ; canaries and frame/result state
+SAME_WINSTON_IO_STATE_END       = $7EB200
+SAME_WINSTON_IO_STATUS          = $7EB100 ; u8 0=init, 1=cases, 2=pass, $FF=fail
+SAME_WINSTON_IO_CASE_INDEX      = $7EB101 ; u8 current generated read case
+SAME_WINSTON_IO_CASES_PASSED    = $7EB102 ; u16 completed positive/reject checks
+SAME_WINSTON_IO_CASES_EXPECTED  = $7EB104 ; u16 generated native oracle count
+SAME_WINSTON_IO_FAILED_CASE     = $7EB106 ; u16 first failure, $FFFF means none
+SAME_WINSTON_IO_AUDIO_STARTED   = $7EB108 ; u8 background track is active
+SAME_WINSTON_IO_DEST_MODE       = $7EB109 ; u8 0=stage, 1=rolling ring
+SAME_WINSTON_IO_SAMPLE_LENGTH   = $7EB10A ; u8 generated prefix sample length
+SAME_WINSTON_IO_COMPARE_INDEX   = $7EB10B ; u8 sample cursor
+SAME_WINSTON_IO_GUARD_BEFORE    = $7EB10C ; u8 rolling-buffer canary
+SAME_WINSTON_IO_GUARD_AFTER     = $7EB10D ; u8 rolling-buffer canary
+SAME_WINSTON_IO_TOTAL_READS     = $7EB10E ; u16 requests begun
+SAME_WINSTON_IO_REJECTS         = $7EB110 ; u16 expected range rejects observed
+SAME_WINSTON_IO_EXPECTED_STATUS = $7EB112 ; u8 generated status expectation
+SAME_WINSTON_IO_TEMP            = $7EB114 ; u16 case-table arithmetic scratch
+SAME_WINSTON_IO_ASSET_STAGE     = $7EB116 ; u8 visual-demo state machine
+SAME_WINSTON_IO_TILE_OFFSET     = $7EB118 ; u16 staged tile DMA cursor
+SAME_WINSTON_IO_SCENE_ID        = $7EB11A ; u8 0=hidden, 1=closed, 2=open, 3=verge, 4=slate
+SAME_WINSTON_IO_ASSET_SUBSTATE  = $7EB11B ; u8 0=read, 1=queue, 2=DMA pending
+SAME_WINSTON_IO_ASSET_SECTION   = $7EB11C ; u16 last generated section index
+SAME_WINSTON_IO_ASSET_SIZE      = $7EB11E ; u16 last validated resource size
+SAME_WINSTON_IO_ASSET_READS     = $7EB120 ; u16 validated visual-section reads
+SAME_WINSTON_IO_ASSET_CRC_OK    = $7EB122 ; u8 last checked read passed CRC
+SAME_WINSTON_IO_ASSET_FAILURE   = $7EB123 ; u8 explicit visual/demo failure class
+SAME_WINSTON_IO_TILE_DMA_COUNT  = $7EB124 ; u16 accepted tile DMA chunks
+SAME_WINSTON_IO_AUDIO_CHECK_FRAMES = $7EB126 ; u16 track-2 loop observation frames
+.endif
 ; Kernel-owned DMA request staging and queue.  A descriptor contains no
 ; hardware channel field: channel 7 is an implementation detail of the SNES
 ; commit backend.  Slots are marked active only after every other field lands.

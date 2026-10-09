@@ -195,15 +195,15 @@ Same_Scumm_Residency_Diagnostic_Halt:
     ; TAD's one-time IPL upload spans several raw video periods. Boot the
     ; semantic engine first so debugger-visible state is deterministic while
     ; interrupts and display remain disabled during that required transfer.
-    .if !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+    .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE == 0
     jsr Same_Audio_Reset
     .endif
     jsr Same_Kernel_DrainEvents
-.if !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE == 0
 .include "generated/video_backend_boot.inc.pasm"
 .endif
 .include "generated/video_overlay_boot.inc.pasm"
-.if SAME_VIDEO_BACKEND_LEGACY
+.if SAME_VIDEO_BACKEND_LEGACY && !SAME_BUILD_WINSTON_IO
     .if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl Same_K1_Fixture_QueueInitial_Far
     .else
@@ -214,27 +214,23 @@ Same_Scumm_Residency_Diagnostic_Halt:
 
     sep #$20
     .a8
-    ; The blocking IPL upload can finish at any raster position. Arm NMI only
-    ; at the start of active display so the first semantic frame receives a
-    ; complete CPU budget instead of being sampled halfway through execution.
-reset_wait_vblank:
-    .a8
-    lda HVBJOY
-    and #$80
-    beq reset_wait_vblank
-reset_wait_active:
-    .a8
-    lda HVBJOY
-    and #$80
-    bne reset_wait_active
+    ; The blocking IPL upload can finish at any raster position. Avoid a
+    ; synchronous HVBJOY poll here: some supported emulator/target paths do
+    ; not expose its VBlank bit consistently. Once NMI is armed, the first
+    ; WAI below waits for the next frame boundary, giving the engine a full
+    ; logical-frame budget without an unbounded boot-time hardware poll.
     lda #$81 ; NMI + automatic joypad read
     sta NMITIMEN
+    .if SAME_BUILD_WINSTON_IO
+    lda #$80 ; keep the MSU asset diagnostic hidden until checked data is ready
+    .else
     lda #$0F
+    .endif
     sta INIDISP
     sta.l SAME_VIDEO_DISPLAY_SHADOW
     ; This final fixture is intentionally forced-blank-only.  It is queued
     ; after display enable so K1 can prove NMI defers it during active display.
-.if SAME_VIDEO_BACKEND_LEGACY
+.if SAME_VIDEO_BACKEND_LEGACY && !SAME_BUILD_WINSTON_IO
     .if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl Same_K1_Fixture_QueueDeferred_Far
     .else
@@ -460,6 +456,9 @@ brk_handler__capture_stack:
 .include "services/input.pasm"
 .include "services/video.pasm"
 .include "services/audio.pasm"
+.if SAME_BUILD_MSU1_STORAGE
+.include "services/audio_msu1.pasm"
+.endif
 .include "services/storage.pasm"
 .include "kernel/frame.pasm"
 .if SAME_BUILD_SCUMM_M22
@@ -468,7 +467,9 @@ brk_handler__capture_stack:
 .if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 .include "generated/scumm_v5_rooms.inc.pasm"
 .endif
+.if !SAME_BUILD_WINSTON_IO
 .include "engines/scumm_v5.pasm"
+.endif
 .include "engines/agi_v2.pasm"
 .include "generated/active_engine.inc.pasm"
 .include "targets/demo.pasm"

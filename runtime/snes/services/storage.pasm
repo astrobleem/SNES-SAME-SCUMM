@@ -1,6 +1,14 @@
 ; Storage ABI endpoint placeholder.  SAME package directory reads and MSU-1 seeks
 ; land here; no target may access MSU registers directly once this backend exists.
+.if SAME_BUILD_MSU1_STORAGE
+.include "../generated/msu1_package.inc.pasm"
+.include "storage_msu1.pasm"
+.endif
+
 Same_Storage_Reset:
+.if SAME_BUILD_MSU1_STORAGE
+    jsr Same_Msu1_Reset
+.endif
 .if SAME_BUILD_SCUMM_M20
     sep #$20
     .a8
@@ -13,6 +21,14 @@ Same_Storage_Reset:
     sta.l SAME_SAVE_WRITE_COUNT
     sta.l SAME_SAVE_LOAD_COUNT
     sta.l SAME_SAVE_REJECT_COUNT
+.endif
+    rts
+
+; Called once per logical frame by the kernel storage phase. Work is bounded
+; inside Same_Msu1_Process; no client spins on the hardware data-ready bit.
+Same_Storage_Process:
+.if SAME_BUILD_MSU1_STORAGE
+    jsr Same_Msu1_Process
 .endif
     rts
 
