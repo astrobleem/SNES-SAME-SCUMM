@@ -73,6 +73,9 @@ def raw_pair(*, data_only_objects: int = 0,
             raise ValueError("cross_bank_body_size must be in 16..32767")
         if extra_global_scripts < 2:
             raise ValueError("cross-bank fixture requires globals 6 and 7")
+        # Reach the second-bank marker through SCUMM's normal dynamic global
+        # resolver so the native test proves body fetch, not just placement.
+        globals_[1] = bytes((0x0A, 7, 0xFF)) + globals_[1]
         # A large, valid instruction stream ending in stopScript instructions
         # fills the first body page. Global 7's state mutation then occupies a
         # distinct page and is executed by the bounded native fetch test.

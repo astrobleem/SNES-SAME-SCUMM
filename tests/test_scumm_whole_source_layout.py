@@ -270,6 +270,14 @@ class ScummWholeSourceLayoutTests(unittest.TestCase):
             report = json.loads((output / "whole-source-backend.json").read_text())
             self.assertEqual(report["program_units_emitted"], 191)
             self.assertGreater(report["source_code_bytes"], 0x7FFC)
+            graph = json.loads((output / "analysis/dependency_graph.json").read_text())
+            self.assertTrue(any(
+                row["source"] == "GlobalScript(1)"
+                and row["target"] == "GlobalScript(7)"
+                and row["kind"] == "start_script"
+                and row["resolution"] == "STATIC"
+                for row in graph["edges"]
+            ))
             generator = json.loads((output / "backend/generator-report.json").read_text())
             self.assertEqual(len(generator["program_map"]), 191)
             by_id = {row["program_unit_identity"]: row for row in generator["program_map"]}
