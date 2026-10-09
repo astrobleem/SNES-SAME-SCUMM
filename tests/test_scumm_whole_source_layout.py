@@ -278,6 +278,12 @@ class ScummWholeSourceLayoutTests(unittest.TestCase):
                 and row["resolution"] == "STATIC"
                 for row in graph["edges"]
             ))
+            self.assertTrue(any(
+                row["source"] == "GlobalScript(1)"
+                and row["kind"] == "load_room"
+                and row["target"] == "RoomEntry(2)"
+                for row in graph["edges"]
+            ))
             generator = json.loads((output / "backend/generator-report.json").read_text())
             self.assertEqual(len(generator["program_map"]), 191)
             by_id = {row["program_unit_identity"]: row for row in generator["program_map"]}

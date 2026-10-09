@@ -770,14 +770,19 @@ def run_whole_source_bank_fetch(args: argparse.Namespace, inputs: dict[str, Any]
         current_room = session.read_memory("snesMemory", ROOM, 1)[0]
         bindings = valid_bindings(session)
         resident_ids = {row["program_unit_id"] for row in bindings}
+        slots = active_slots(session)
         final_stats = stats(session)
         sp = cpu_sp(session)
     require(result.get("framesAdvanced") == args.frames and not result.get("timedOut"),
             f"whole-source native test did not advance: {result}")
     require(values["200"] == 0xA55A,
             f"cross-bank GlobalProgram(7) did not execute its marker body: {values}")
+    require(current_room == 2,
+            f"whole-source boot did not complete its room-2 transition: room={current_room}")
     require(errors == 0 and sp == 0x1FFF,
-            f"native fetch failed safely: error={errors}, SP=${sp:04X}")
+            f"native fetch failed safely: error={errors}, SP=${sp:04X}, "
+            f"room={current_room}, variables={values}, slots={slots}, "
+            f"bindings={bindings}, stats={final_stats}")
     require(len(resident_ids) == len(bindings), "native resolver has aliased resident IDs")
     require(final_stats["dynamic_global_lookups"] >= 1,
             "global directory was bypassed instead of resolving the boot script")
