@@ -59,6 +59,11 @@ if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" &&
     echo "SAME_SCUMM_WHOLE_SOURCE_MANIFEST requires dynamic SCUMM program residency" >&2
     exit 1
 fi
+if [[ "${SAME_SCUMM_PACK_SOURCE_TABLES:-0}" != "0" &&
+      "${SAME_SCUMM_PACK_SOURCE_TABLES:-0}" != "1" ]]; then
+    echo "SAME_SCUMM_PACK_SOURCE_TABLES must be 0 or 1" >&2
+    exit 1
+fi
 if [[ "${SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT:-0}" == "1" ]]; then
     if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" != "1" ||
           "${SAME_BUILD_SCUMM_AUTHENTIC_STARTUP:-0}" != "1" ||
@@ -857,6 +862,16 @@ else
             --share-room-directory-prefixes
             --backend-directory-output
             "$M23A_BUILD/backend_program_directory.json")
+    elif [[ "${SAME_SCUMM_PACK_SOURCE_TABLES:-0}" == "1" ]]; then
+        # Selected source-backed controls can contain many room metadata
+        # tables too. Pack their immutable tables rather than spending one
+        # entire 32 KiB ROM page on each small field. Dynamic builds also use
+        # the banked room-directory representation required by their
+        # canonical ProgramUnit resolver.
+        ROOM_GENERATOR_ARGS+=(--pack-source-tables)
+        if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
+            ROOM_GENERATOR_ARGS+=(--banked-room-directory-data)
+        fi
     fi
     "$PYTHON" tools/generate_snes_cooked_rooms.py \
         "${ROOM_MANIFESTS[@]}" \

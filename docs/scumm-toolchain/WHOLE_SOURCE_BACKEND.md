@@ -28,6 +28,10 @@ packing, or dispatch behavior.
   `.incbin` payloads. ROM, map, build identity, and generated inputs remain
   build-root-local. Independent builds use independent roots; a replay bound
   to one ROM cannot silently consume another build's generated tables.
+- `SAME_SCUMM_PACK_SOURCE_TABLES=1` opts selected source-backed builds into
+  the same compact table packing used by the whole-source compiler. It keeps
+  small per-room metadata tables from consuming one full ROM page apiece;
+  dynamic-residency builds also use the banked room-directory representation.
 - `strict` rejects non-certified ProgramUnits. The explicit
   `experimental-diagnostic` policy keeps unsupported/unverified semantics
   visible; it does not manufacture behavior or certify an executable game.
