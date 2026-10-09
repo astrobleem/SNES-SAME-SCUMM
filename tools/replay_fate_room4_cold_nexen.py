@@ -616,7 +616,23 @@ def _parse_global_script_selector(generated_source: str, script: int) -> int:
 
 def _native_directory_for_build(identity_path: Path) -> dict[str, Any]:
     """Load and verify this dynamic ROM's compiler-generated ID directory."""
-    build_report = identity_path.parent / "cooked-rooms.json"
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    explicit_environment = identity.get("explicit_environment", {})
+    report_candidates = [identity_path.parent / "cooked-rooms.json"]
+    if explicit_environment.get("SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY") == "1":
+        # build_snes.sh deliberately isolates dynamic-residency artifacts from
+        # the legacy/static M23A build root. Follow that build-owned location;
+        # never glob for a report or consume stale compiler output.
+        report_candidates.insert(
+            0, identity_path.parent / "fate-dynamic-residency" / "cooked-rooms.json",
+        )
+    existing_reports = [path for path in report_candidates if path.is_file()]
+    if len(existing_reports) > 1:
+        raise RuntimeError(
+            "dynamic room compiler report is ambiguous for this build identity: "
+            + ", ".join(str(path) for path in existing_reports)
+        )
+    build_report = existing_reports[0] if existing_reports else report_candidates[0]
     if not build_report.is_file():
         raise RuntimeError(f"dynamic room compiler report is missing: {build_report}")
     report = json.loads(build_report.read_text(encoding="utf-8"))

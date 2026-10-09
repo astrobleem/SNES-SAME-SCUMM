@@ -28,6 +28,7 @@ from fate_replay import (  # noqa: E402
 )
 from validate_fate_authentic_startup_nexen import _button_names  # noqa: E402
 from replay_fate_room4_cold_nexen import (  # noqa: E402
+    _native_directory_for_build,
     _observed_pinned_selectors,
     _known_resident_bindings,
     _record_residency_events,
@@ -452,6 +453,64 @@ class FakeRoom7CatSession(FakeRoom4Session):
 
 
 class FateReplayTests(unittest.TestCase):
+    def test_dynamic_build_report_is_resolved_from_its_isolated_output_root(self) -> None:
+        import hashlib
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temporary:
+            build_root = Path(temporary) / "build"
+            dynamic_root = build_root / "fate-dynamic-residency"
+            dynamic_root.mkdir(parents=True)
+            directory = {"entries": [{
+                "program_unit_id": 7,
+                "identity": "GlobalProgram(1)",
+            }]}
+            directory_bytes = (json.dumps(directory, sort_keys=True) + "\n").encode()
+            (dynamic_root / "native-program-directory.json").write_bytes(directory_bytes)
+            report = {
+                "native_program_directory": "native-program-directory.json",
+                "native_program_directory_sha256": hashlib.sha256(
+                    directory_bytes
+                ).hexdigest(),
+            }
+            (dynamic_root / "cooked-rooms.json").write_text(
+                json.dumps(report), encoding="utf-8",
+            )
+            identity_path = build_root / "dynamic.build_identity.json"
+            identity_path.write_text(json.dumps({
+                "explicit_environment": {
+                    "SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY": "1",
+                },
+            }), encoding="utf-8")
+
+            result = _native_directory_for_build(identity_path)
+
+        self.assertEqual(result["path"], str(
+            dynamic_root / "native-program-directory.json"
+        ))
+        self.assertEqual(result["by_identity"]["GlobalProgram(1)"]["program_unit_id"], 7)
+
+    def test_dynamic_build_report_discovery_rejects_ambiguous_outputs(self) -> None:
+        import tempfile
+        import json
+
+        with tempfile.TemporaryDirectory() as temporary:
+            build_root = Path(temporary) / "build"
+            dynamic_root = build_root / "fate-dynamic-residency"
+            dynamic_root.mkdir(parents=True)
+            (build_root / "cooked-rooms.json").write_text("{}", encoding="utf-8")
+            (dynamic_root / "cooked-rooms.json").write_text("{}", encoding="utf-8")
+            identity_path = build_root / "dynamic.build_identity.json"
+            identity_path.write_text(json.dumps({
+                "explicit_environment": {
+                    "SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY": "1",
+                },
+            }), encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "ambiguous"):
+                _native_directory_for_build(identity_path)
+
     def test_generated_input_provenance_uses_sealed_manifest_not_mutable_workspace(self) -> None:
         import hashlib
         import json
