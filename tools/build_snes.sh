@@ -128,6 +128,19 @@ fi
     --lifecycle-output runtime/snes/generated/music_lifecycle_catalog.inc.pasm \
     $([[ "${SAME_BUILD_SCUMM_PHASE6L_A1D:-0}" == "1" ]] && echo --exclude-compiled-song fate_sound_80_default --exclude-compiled-song fate_sound_80_hook14)
 ENGINE_SELECTION_ARGS=(--engine "${SAME_SNES_ENGINE:-demo}")
+if [[ "${SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS:-1}" != "0" &&
+      "${SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS:-1}" != "1" ]]; then
+    echo "SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS must be 0 or 1" >&2
+    exit 1
+fi
+if [[ "${SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS:-1}" == "0" ]]; then
+    if [[ "${SAME_SNES_ENGINE:-demo}" != "scumm_v5" ||
+          "${SAME_BUILD_SCUMM_M23A:-0}" != "1" ]]; then
+        echo "Disabling embedded SCUMM test programs requires SCUMM v5 source-backed M23A programs" >&2
+        exit 1
+    fi
+    ENGINE_SELECTION_ARGS+=(--scumm-disable-embedded-test-programs)
+fi
 if [[ "${SAME_BUILD_M24RA:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--m24ra)
 fi

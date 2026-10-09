@@ -25,6 +25,11 @@ def main() -> int:
     parser.add_argument("--scumm-m22", action="store_true")
     parser.add_argument("--scumm-m23a", action="store_true")
     parser.add_argument(
+        "--scumm-disable-embedded-test-programs",
+        action="store_true",
+        help="omit ROM-resident C1/C2 conformance bytecode; source misses remain errors",
+    )
+    parser.add_argument(
         "--scumm-dynamic-program-residency", action="store_true",
         help="enable the experimental canonical ProgramUnit resident resolver",
     )
@@ -119,6 +124,12 @@ def main() -> int:
         parser.error(
             "--scumm-dynamic-program-residency requires SCUMM v5 M23A and M24RB room services"
         )
+    if args.scumm_disable_embedded_test_programs and (
+        args.engine != "scumm_v5" or not args.scumm_m23a
+    ):
+        parser.error(
+            "--scumm-disable-embedded-test-programs requires SCUMM v5 M23A source programs"
+        )
     if args.scumm_residency_diagnostic and not args.scumm_dynamic_program_residency:
         parser.error("--scumm-residency-diagnostic requires --scumm-dynamic-program-residency")
     if args.scumm_authentic_boot_script is not None:
@@ -152,6 +163,7 @@ def main() -> int:
         f"SAME_BUILD_SCUMM_M21 = ${1 if args.engine == 'scumm_v5' and args.scumm_m21 else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M22 = ${1 if args.engine == 'scumm_v5' and args.scumm_m22 else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23A = ${1 if args.engine == 'scumm_v5' and args.scumm_m23a else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS = ${1 if args.engine == 'scumm_v5' and not args.scumm_disable_embedded_test_programs else 0:02X}\n"
         f"SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY = ${1 if args.engine == 'scumm_v5' and args.scumm_dynamic_program_residency else 0:02X}\n"
         f"SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC = ${1 if args.engine == 'scumm_v5' and args.scumm_residency_diagnostic else 0:02X}\n"
         f"SAME_BUILD_SCUMM_ROOM_SERVICE = ${1 if args.engine == 'scumm_v5' and (args.scumm_m23a or args.scumm_controller_conformance) else 0:02X}\n"

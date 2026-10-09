@@ -18378,6 +18378,16 @@ ScummV5_GetProgramSize:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsr ScummV5_M23A_GetProgramSize
     bcs ScummV5_GetProgramSize__m23a
+    .if SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS == 0
+    ; A source-backed profile has no implicit C1/C2 fallback. A missing
+    ; selector is a resource error, never a conformance program alias.
+    lda #SCUMM_ERR_RESOURCE
+    jsr ScummV5_SetError
+    rep #$20
+    .a16
+    lda #$0000
+    rts
+    .endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
@@ -19059,6 +19069,14 @@ ScummV5_FetchSelectedByteAtX:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsr ScummV5_M23A_FetchProgramByte
     bcc ScummV5_FetchSelectedByteAtX__m23a
+    .if SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS == 0
+    ; Keep the same explicit missing-source policy for byte fetches. The
+    ; returned zero is paired with the nonzero SCUMM error state.
+    lda #SCUMM_ERR_RESOURCE
+    jsr ScummV5_SetError
+    lda #$00
+    rts
+    .endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
@@ -19680,6 +19698,8 @@ ScummV5_SetError:
     sta.l SAME_SCUMM_STATUS
     rts
 
+; The generated include retains fixture identities/sizes for assembly-time
+; references, while its program bytes are gated by the explicit build flag.
 .if SAME_BUILD_SCUMM_PHASE6LA1D == $00 && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 .include "../generated/scumm_v5_conformance.inc.pasm"
 .endif
