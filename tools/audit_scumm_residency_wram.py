@@ -16,8 +16,13 @@ MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 # Intervals are half-open. Their endpoints are ownership boundaries declared
 # in memory.pasm; unrelated ownership overlap fails closed.
 REGIONS = (
+    ("program_cache", "SAME_SCUMM_MSU_PROGRAM_CACHE_BASE",
+     "SAME_SCUMM_MSU_PROGRAM_CACHE_END"),
+    ("program_cache_metadata", "SAME_SCUMM_MSU_CACHE_STATE0",
+     "SAME_SCUMM_MSU_ROOM_STATE_END"),
     ("input_edges", "SAME_INPUT_HELD", "SAME_FRAME_COUNTER"),
     ("c4_scheduler", "SAME_SCUMM_C4_SLOT_STATUS", "SAME_SCUMM_C4_STATE_END"),
+    ("owner_scratch", "SAME_SCUMM_OWNER_INDEX", "SAME_SCUMM_OWNER_INDEX_END"),
     ("controller_and_interaction", "SAME_SCUMM_CONTROLLER_RENDER_X",
      "SAME_SCUMM_OBJECT_COUNT"),
     ("c19", "SAME_SCUMM_C19_STACK_POINTER", "SAME_SCUMM_C19_STATE_END"),
@@ -70,12 +75,16 @@ def audit() -> dict[str, Any]:
     resolver = next(item for item in intervals if item["owner"] == "resident_resolver")
     if resolver["bytes"] != 960:
         raise ValueError(f"resident resolver WRAM span changed: {resolver['bytes']} bytes")
+    cache = next(item for item in intervals if item["owner"] == "program_cache")
+    if cache["bytes"] != 0x1000:
+        raise ValueError(f"ProgramUnit cache WRAM span changed: {cache['bytes']} bytes")
     return {
         "format": "same-scumm-residency-wram-ownership-v1",
         "result": "pass",
         "interval_convention": "half-open",
         "features_coexist": ["resolver", "controller/input", "name cache",
-                             "save validator", "C4", "C19", "room lifecycle"],
+                             "save validator", "C4", "C19", "room lifecycle",
+                             "bounded streamed-program execution context"],
         "regions": intervals,
         "overlaps": [],
     }

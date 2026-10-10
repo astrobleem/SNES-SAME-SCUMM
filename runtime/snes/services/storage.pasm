@@ -1,7 +1,6 @@
 ; Storage ABI endpoint placeholder.  SAME package directory reads and MSU-1 seeks
 ; land here; no target may access MSU registers directly once this backend exists.
 .if SAME_BUILD_MSU1_STORAGE
-.include "../generated/msu1_package.inc.pasm"
 .include "storage_msu1.pasm"
 .endif
 
@@ -28,6 +27,19 @@ Same_Storage_Reset:
 ; inside Same_Msu1_Process; no client spins on the hardware data-ready bit.
 Same_Storage_Process:
 .if SAME_BUILD_MSU1_STORAGE
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    php
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_PROCESS_TURNS
+    inc
+    sta.l SAME_SCUMM_MSU_PROCESS_TURNS
+    sep #$20
+    .a8
+    lda.l SAME_MSU1_STATUS
+    sta.l SAME_SCUMM_MSU_PROCESS_LAST_STATUS
+    plp
+.endif
     jsr Same_Msu1_Process
 .endif
     rts
@@ -69,6 +81,15 @@ Same_Storage_Handle:
     .else
     jsr ScummV5_M23A_Trace
     .endif
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; The compiled ROM directory is still validated by the legacy service,
+    ; then the matching compiler-owned SC5ROOM payload must pass SAMEPKG CRC
+    ; and structural checks before M23A may run the outgoing EXCD.
+    jsl ScummV5_MsuRoom_Request_Far
+    lda #$04
+    sta.l SAME_SCUMM_M23A_PHASE
+    rts
+.endif
     lda #$05
     sta.l SAME_SCUMM_M23A_PHASE
     .if SAME_BUILD_SCUMM_M25A_VALIDATOR

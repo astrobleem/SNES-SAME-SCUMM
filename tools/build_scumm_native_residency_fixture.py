@@ -90,10 +90,12 @@ def raw_room(room: int, *, load_room_with_ego: bool = False,
     elif room < ROOM_COUNT:
         entry = bytes((0x1A, 24, 0, room, 0, 0x72, room + 1, 0xA0))
     else:
-        # Start the pressure/churn caller independently of GlobalScript(1).
-        # Its initial yield window lets the persistent global retire before
-        # the pool needs to recycle its first selector.
-        entry = bytes((0x1A, 24, 0, room, 0, 0x0A, 4, 0xFF, 0xA0))
+        # Start the local executable from the room entry. The local records
+        # its own marker, then starts the pressure/churn global caller. Its
+        # initial yield window lets the persistent global retire before the
+        # pool needs to recycle its first selector.
+        entry = bytes((0x1A, 24, 0, room, 0, 0x0A, GLOBAL_COUNT,
+                       0xFF, 0xA0))
     if load_room_with_ego and room in (1, 2):
         objects = object_chunks(70 if room == 1 else 72)
     else:
@@ -108,7 +110,12 @@ def raw_room(room: int, *, load_room_with_ego: bool = False,
         chunk(b"BOXD", struct.pack("<H", 1) + walkbox),
         chunk(b"BOXM", b"\xff"), *objects,
         chunk(b"ENCD", entry), chunk(b"EXCD", exit_code),
-        chunk(b"LSCR", bytes((GLOBAL_COUNT, 0xA0))),
+        chunk(b"LSCR", (
+            bytes((GLOBAL_COUNT, 0x1A, 25, 0, 1, 0, 0x0A, 4, 0xFF, 0xA0))
+            if room == ROOM_COUNT and not (
+                load_room_with_ego or draw_box
+            ) else bytes((GLOBAL_COUNT, 0xA0))
+        )),
     ))
 
 
@@ -273,15 +280,23 @@ def main() -> int:
     # finish before selector pressure reaches its first evictable binding.
     global_four_code.extend((0x80,) * 40)
     # Exercise actual reuse instead of assuming the allocator should evict a
-    # still-useful binding while free selectors remain.  These children are
-    # serialized through one caller, keeping live activations bounded while
-    # the candidate universe exceeds the 178-selector resident pool.
-    for target in range(5, 191):
-        global_four_code.extend((
-            0x1A, 7, 0, target, 0,
-            0x8A, 7, 0, 0xFF,
-            0x80,
-        ))
+    # still-useful binding while free selectors remain. A compact SCUMM loop
+    # serializes the same 5..190 targets through one caller, keeping live
+    # activations bounded while the candidate universe exceeds the selector
+    # pool. This prevents test-body size from dominating storage latency.
+    global_four_code.extend((0x1A, 7, 0, 5, 0))
+    global_loop_start = len(global_four_code)
+    global_four_code.extend((
+        0x8A, 7, 0, 0xFF,             # StartScript(variable[7])
+        0x80,                         # wait for the child to stop
+        0x46, 7, 0,                   # increment candidate
+        0x38, 7, 0, 191, 0, 0, 0,    # if var[7] >= 191, exit loop
+    ))
+    global_loop_branch = len(global_four_code) - 2
+    struct.pack_into(
+        "<h", global_four_code, global_loop_branch,
+        global_loop_start - len(global_four_code),
+    )
     global_four_code.extend((
         0x1A, 7, 0, 191, 0,
         0x8A, 7, 0, 0xFF,

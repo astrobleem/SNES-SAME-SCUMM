@@ -752,6 +752,17 @@ Same_Msu1_Seek:
     plp
     rts
 
+; Far-call veneers keep engine consumers on SAME's storage-service boundary.
+; The SCUMM bytecode cache supplies the standard checked request descriptor;
+; it never touches MSU hardware registers itself.
+Same_Msu1_ReadBegin_FarEntry:
+    jsr Same_Msu1_ReadBegin
+    rtl
+
+Same_Msu1_InitBegin_FarEntry:
+    jsr Same_Msu1_InitBegin
+    rtl
+
 Same_Msu1_Fail:
     php
     sep #$20

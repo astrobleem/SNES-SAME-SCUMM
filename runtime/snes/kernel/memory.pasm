@@ -95,6 +95,80 @@ SAME_MSU1_AUDIO_LAST_STATUS    = $7E2F45 ; u8 latest MSU status snapshot
 SAME_MSU1_SECTION_TEMP         = $7E2F46 ; u16 generated-section index math
 SAME_MSU1_STATE_END            = $7E2F48 ; exclusive
 
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+; Two bounded executable-body windows. In this feature personality the native
+; stack ends below $7E1000 and the kernel event queue begins at $7E2000.
+SAME_SCUMM_MSU_PROGRAM_CACHE_BASE       = $7E1000
+SAME_SCUMM_MSU_PROGRAM_CACHE_SLOT_SIZE = $0800
+SAME_SCUMM_MSU_PROGRAM_CACHE0           = $7E1000
+SAME_SCUMM_MSU_PROGRAM_CACHE1           = $7E1800
+SAME_SCUMM_MSU_PROGRAM_CACHE_END        = $7E2000
+; Cache metadata stays in the provider's audited WRAM gap.
+SAME_SCUMM_MSU_CACHE_STATE0              = $7E2F48
+SAME_SCUMM_MSU_CACHE_STATE1              = $7E2F49
+SAME_SCUMM_MSU_CACHE_ID0                 = $7E2F4A
+SAME_SCUMM_MSU_CACHE_ID1                 = $7E2F4C
+SAME_SCUMM_MSU_CACHE_SIZE0               = $7E2F4E
+SAME_SCUMM_MSU_CACHE_SIZE1               = $7E2F50
+SAME_SCUMM_MSU_CACHE_PINS0               = $7E2F52
+SAME_SCUMM_MSU_CACHE_PINS1               = $7E2F53
+SAME_SCUMM_MSU_CACHE_GENERATION0         = $7E2F54
+SAME_SCUMM_MSU_CACHE_GENERATION1         = $7E2F56
+SAME_SCUMM_MSU_CACHE_REQUEST_ID          = $7E2F58
+SAME_SCUMM_MSU_CACHE_REQUEST_SLOT        = $7E2F5A
+SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT          = $7E2F5B
+SAME_SCUMM_MSU_CACHE_ACTIVE_ID           = $7E2F5C
+SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION   = $7E2F5E
+SAME_SCUMM_MSU_CACHE_CURRENT_COUNT       = $7E2F60
+SAME_SCUMM_MSU_CACHE_PEAK_COUNT          = $7E2F62
+SAME_SCUMM_MSU_CACHE_LOADS               = $7E2F64
+SAME_SCUMM_MSU_CACHE_EVICTIONS            = $7E2F66
+SAME_SCUMM_MSU_CACHE_FAILURES             = $7E2F68
+SAME_SCUMM_MSU_CACHE_TABLE_INDEX          = $7E2F6A ; u16 indexed 10-byte record
+SAME_SCUMM_MSU_CACHE_TEMP                 = $7E2F6C ; u16 multiply scratch
+SAME_SCUMM_MSU_CACHE_RETURN_P             = $7E2F6E ; u8 saved interpreter P
+SAME_SCUMM_MSU_ACTIVE_SELECTOR             = $7E2F6F ; ephemeral selector owning active fetch
+SAME_SCUMM_MSU_PENDING_CHILD_SLOT         = $7E2F70 ; 25 u8, slot+1 or zero
+SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM      = $7E2F89 ; 25 u8 selector identity
+SAME_SCUMM_MSU_C19_ERROR_STAGE             = $7E2FA2 ; u8 C19 failure call-site
+SAME_SCUMM_MSU_C19_ERROR_OPCODE            = $7E2FA3 ; u8 last decoded opcode
+SAME_SCUMM_MSU_C19_ERROR_PROGRAM           = $7E2FA4 ; u8 ephemeral selector
+SAME_SCUMM_MSU_C19_ERROR_PC                = $7E2FA5 ; u16 logical body PC
+SAME_SCUMM_MSU_C19_ERROR_SLOT              = $7E2FA7 ; u8 C4 owner
+SAME_SCUMM_MSU_PROCESS_TURNS               = $7E2FA8 ; u16 storage frame turns
+SAME_SCUMM_MSU_PROCESS_LAST_STATUS         = $7E2FAA ; u8 state at last turn
+SAME_SCUMM_MSU_FRAME_ENTRIES               = $7E2FAB ; u16 logical kernel frame entries
+SAME_SCUMM_MSU_ENGINE_RETURNS              = $7E2FAD ; u16 SCUMM engine frame returns
+SAME_SCUMM_MSU_FRAME_STAGE                 = $7E2FAF ; u8 last frame boundary
+; Bounded interpreter-entry stack. The VM's existing common completion paths
+; call Leave to release a body pin and restore a nested caller's cache context.
+; The 25-entry limit matches C4's activation ceiling; source PCs remain in the
+; existing C4 logical-PC tables, never as cache pointers.
+SAME_SCUMM_MSU_EXEC_DEPTH                  = $7E2FB0 ; u8 active interpreter entries
+SAME_SCUMM_MSU_EXEC_PREV_SLOT              = $7E2FB1 ; 25 u8 parent cache slot/FF
+SAME_SCUMM_MSU_EXEC_PREV_SELECTOR          = $7E2FCA ; 25 u8 parent selector/FF
+SAME_SCUMM_MSU_DIRECT_ROOM_CALL            = $7E2FE3 ; u8 Engine_Frame tail-call marker
+SAME_SCUMM_MSU_RESOLVE_CALLS               = $7E2FE4 ; u16 resolver adapter entries
+SAME_SCUMM_MSU_LAST_SELECTOR               = $7E2FE6 ; u8 most recent adapter selector
+SAME_SCUMM_MSU_CACHE_END                   = $7E2FEB ; end of executable-cache metadata
+; Incoming cooked-room preflight reuses one unpinned ProgramUnit window. It is
+; not published as executable; the checked room directory/header is validated
+; before M23A is allowed to run EXCD or retire the current room.
+SAME_SCUMM_MSU_ROOM_STATE                  = $7E2FEB ; 0 idle, 1 requested, 2 reading, 3 validated, FF failed
+SAME_SCUMM_MSU_ROOM_ID                     = $7E2FEC ; requested logical room
+SAME_SCUMM_MSU_ROOM_REQUESTS               = $7E2FED ; u16
+SAME_SCUMM_MSU_ROOM_VALIDATIONS            = $7E2FEF ; u16
+SAME_SCUMM_MSU_ROOM_FAILURES               = $7E2FF1 ; u16
+SAME_SCUMM_MSU_MAX_FETCH_LATENCY            = $7E2FF3 ; u16 transfer-to-validated frames, code or room
+SAME_SCUMM_MSU_ROOM_START_FRAME            = $7E2FF5 ; u16
+SAME_SCUMM_MSU_ROOM_LAST_LENGTH            = $7E2FF7 ; u16
+SAME_SCUMM_MSU_ROOM_SCRIPT_COUNT            = $7E2FF9 ; u16 parse scratch/result
+SAME_SCUMM_MSU_ROOM_DATA_OFFSET             = $7E2FFB ; u16 cooked SC5ROOM payload offset
+SAME_SCUMM_MSU_ROOM_TEMP                    = $7E2FFD ; u16 arithmetic scratch
+SAME_SCUMM_MSU_ROOM_CACHE_SLOT              = $7E2FFF ; u8 staging window owner
+SAME_SCUMM_MSU_ROOM_STATE_END               = $7E3000
+.endif
+
 .if SAME_BUILD_WINSTON_IO
 ; Diagnostic-client staging only. It is not provider state and is deliberately
 ; unavailable to SCUMM builds, whose object-name cache owns $7E9000-$7F1000.
@@ -964,7 +1038,10 @@ SAME_SCUMM_CONTROLLER_DIAG                = $7E5FEC ; fixture-only gate breadcru
 SAME_SCUMM_CONTROLLER_DIAG_ROOM           = $7E5FED
 SAME_SCUMM_CONTROLLER_DIAG_PHASE          = $7E5FEE
 SAME_SCUMM_CONTROLLER_DIAG_INPUT          = $7E5FEF
-SAME_SCUMM_OWNER_INDEX                     = $7E101E ; u16 setOwner scratch
+; setOwner scratch used to overlap the hardware stack window. The explicit
+; MSU program-cache layout requires it to live in this audited gap.
+SAME_SCUMM_OWNER_INDEX                     = $7E2B28 ; u16 setOwner scratch
+SAME_SCUMM_OWNER_INDEX_END                 = $7E2B2A
 SAME_SCUMM_SETSTATE_OBJECT                = $7E5FF2 ; u16 operand/trace
 SAME_SCUMM_SETSTATE_VALUE                 = $7E5FF4 ; u8 operand/trace
 SAME_SCUMM_SETSTATE_LOCAL_FOUND           = $7E5FF5 ; u8

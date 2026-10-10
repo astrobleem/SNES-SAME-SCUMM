@@ -61,6 +61,20 @@ if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
         exit 1
     fi
 fi
+if [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" == "1" ]]; then
+    if [[ "${SAME_SNES_ENGINE:-demo}" != "scumm_v5" ||
+          "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_M23A:-0}" != "1" ||
+          "${SAME_BUILD_M24RB:-0}" != "1" ]]; then
+        echo "MSU-backed SCUMM ProgramUnits require SCUMM v5, dynamic residency, M23A, and M24RB" >&2
+        exit 1
+    fi
+    if [[ -n "${SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS:-0}" &&
+          "${SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS:-0}" != "0" ]]; then
+        echo "MSU-backed SCUMM builds cannot retain embedded test-program fallback" >&2
+        exit 1
+    fi
+fi
 if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" &&
       "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" != "1" ]]; then
     echo "SAME_SCUMM_WHOLE_SOURCE_MANIFEST requires dynamic SCUMM program residency" >&2
@@ -265,6 +279,10 @@ if [[ "${SAME_BUILD_SCUMM_M23A:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CON
     fi
 if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-dynamic-program-residency)
+fi
+if [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" == "1" ]]; then
+    ENGINE_SELECTION_ARGS+=(--msu1-storage --scumm-msu1-programs
+        --scumm-disable-embedded-test-programs)
 fi
 if [[ "${SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-residency-diagnostic)
@@ -881,12 +899,39 @@ else
         # larger static-control corpora that exceed the bank-0 inline area.
         ROOM_GENERATOR_ARGS+=(--far-programs)
     fi
+    if [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" == "1" ]]; then
+        MSU_PROGRAM_STORAGE_DIR="${SAME_SCUMM_MSU1_PROGRAM_STORAGE_DIR:-$M23A_BUILD/msu-program-storage}"
+        mkdir -p "$MSU_PROGRAM_STORAGE_DIR"
+        ROOM_GENERATOR_ARGS+=(--msu1-program-storage-dir "$MSU_PROGRAM_STORAGE_DIR"
+            --msu1-program-directory-include runtime/snes/generated/scumm_v5_msu_programs.inc.pasm
+            --msu1-program-directory-bank 10
+            --reserved-bank 10 --reserved-bank 11)
+        if [[ -n "${SAME_SCUMM_MSU1_PREFIX_PACKAGE:-}" ||
+              -n "${SAME_SCUMM_MSU1_PREFIX_SECTION:-}" ||
+              "${SAME_SCUMM_MSU1_PREFIX_ALL_SECTIONS:-0}" == "1" ]]; then
+            if [[ -z "${SAME_SCUMM_MSU1_PREFIX_PACKAGE:-}" ||
+                  ! -f "${SAME_SCUMM_MSU1_PREFIX_PACKAGE}" ]]; then
+                echo "MSU ProgramUnit prefix requires an existing SAMEPKG source and section name" >&2
+                exit 1
+            fi
+            ROOM_GENERATOR_ARGS+=(--msu1-program-prefix-package "$SAME_SCUMM_MSU1_PREFIX_PACKAGE")
+            if [[ "${SAME_SCUMM_MSU1_PREFIX_ALL_SECTIONS:-0}" == "1" ]]; then
+                ROOM_GENERATOR_ARGS+=(--msu1-program-prefix-all-sections)
+            elif [[ -n "${SAME_SCUMM_MSU1_PREFIX_SECTION:-}" ]]; then
+                ROOM_GENERATOR_ARGS+=(--msu1-program-prefix-section "$SAME_SCUMM_MSU1_PREFIX_SECTION")
+            else
+                echo "MSU ProgramUnit prefix selection is missing" >&2
+                exit 1
+            fi
+        fi
+    fi
     if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" ]]; then
         ROOM_GENERATOR_ARGS+=(--pack-source-tables --banked-room-directory-data
-            --share-room-program-bodies
-            --share-room-directory-prefixes
-            --backend-directory-output
-            "$M23A_BUILD/backend_program_directory.json")
+            --backend-directory-output "$M23A_BUILD/backend_program_directory.json")
+        if [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" != "1" ]]; then
+            ROOM_GENERATOR_ARGS+=(--share-room-program-bodies
+                --share-room-directory-prefixes)
+        fi
     elif [[ "${SAME_SCUMM_PACK_SOURCE_TABLES:-0}" == "1" ]]; then
         # Selected source-backed controls can contain many room metadata
         # tables too. Pack their immutable tables rather than spending one
@@ -1008,6 +1053,29 @@ if [[ "${SAME_SNES_ENGINE:-demo}" == "winston_io" ]]; then
             cp "$SAME_MSU1_PCM_SOURCE" "$SAME_MSU1_PCM_DEST"
         fi
     done
+elif [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" == "1" ]]; then
+    MSU_PROGRAM_PACKAGE="$MSU_PROGRAM_STORAGE_DIR/scumm-programs.msu"
+    if [[ ! -s "$MSU_PROGRAM_PACKAGE" ]]; then
+        echo "Compiler did not produce the SCUMM ProgramUnit SAMEPKG: $MSU_PROGRAM_PACKAGE" >&2
+        exit 1
+    fi
+    "$PYTHON" tools/generate_snes_msu1_directory.py "$MSU_PROGRAM_PACKAGE" \
+        --include runtime/snes/generated/msu1_package.inc.pasm \
+        --manifest "${SAME_SNES_OUTPUT:-build/same-scumm-v5-msu-programs.sfc}.msu1-directory.json"
+    MSU_PROGRAM_ROM="${SAME_SNES_OUTPUT:-build/same-engine-host.sfc}"
+    MSU_PROGRAM_STEM="${MSU_PROGRAM_ROM##*/}"
+    MSU_PROGRAM_STEM="${MSU_PROGRAM_STEM%.sfc}"
+    MSU_PROGRAM_DEST_DIR="$(dirname "$MSU_PROGRAM_ROM")"
+    mkdir -p "$MSU_PROGRAM_DEST_DIR"
+    MSU_PROGRAM_DEST="$MSU_PROGRAM_DEST_DIR/$MSU_PROGRAM_STEM.msu"
+    if [[ -e "$MSU_PROGRAM_DEST" ]]; then
+        if ! cmp -s "$MSU_PROGRAM_PACKAGE" "$MSU_PROGRAM_DEST"; then
+            echo "Refusing to overwrite non-identical SCUMM MSU package: $MSU_PROGRAM_DEST" >&2
+            exit 1
+        fi
+    else
+        cp "$MSU_PROGRAM_PACKAGE" "$MSU_PROGRAM_DEST"
+    fi
 else
     printf '%s\n' '; Generated empty MSU-1 package directory (provider disabled).' \
         > runtime/snes/generated/msu1_package.inc.pasm

@@ -149,3 +149,8 @@ program-buffer lifetime, or general resource-cache behavior is claimed.
 Audio gaps, hardware-only behavior, and wider resource integration remain
 outside this milestone. No fixture package, generated PCM, image payload, ROM,
 or savestate is part of the source change.
+
+Follow-up work now demonstrates a separate, feature-gated SCUMM ProgramUnit
+execution path over the same provider. Its bounded cache, yielded activation
+behavior, native synthetic route, and still-partial room-resource boundary are
+documented in [NATIVE_MSU1_STREAMED_SCUMM.md](scumm-toolchain/NATIVE_MSU1_STREAMED_SCUMM.md).

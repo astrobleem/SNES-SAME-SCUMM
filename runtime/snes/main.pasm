@@ -58,7 +58,13 @@ reset__diagnostic_continue:
     rep #$30
     .a16
     .i16
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; Reserve $7E1000-$7E1FFF for two bounded checked ProgramUnit bodies.
+    ; The 4 KiB native call stack remains in $7E0000-$7E0FFF.
+    lda #$0FFF
+    .else
     lda #$1FFF
+    .endif
     tcs
 
     ; Persistent reset-vector diagnostic; this runs before kernel/engine state
@@ -203,7 +209,7 @@ Same_Scumm_Residency_Diagnostic_Halt:
 .include "generated/video_backend_boot.inc.pasm"
 .endif
 .include "generated/video_overlay_boot.inc.pasm"
-.if SAME_VIDEO_BACKEND_LEGACY && !SAME_BUILD_WINSTON_IO
+.if SAME_VIDEO_BACKEND_LEGACY && SAME_BUILD_WINSTON_IO == 0
     .if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl Same_K1_Fixture_QueueInitial_Far
     .else
@@ -230,7 +236,7 @@ Same_Scumm_Residency_Diagnostic_Halt:
     sta.l SAME_VIDEO_DISPLAY_SHADOW
     ; This final fixture is intentionally forced-blank-only.  It is queued
     ; after display enable so K1 can prove NMI defers it during active display.
-.if SAME_VIDEO_BACKEND_LEGACY && !SAME_BUILD_WINSTON_IO
+.if SAME_VIDEO_BACKEND_LEGACY && SAME_BUILD_WINSTON_IO == 0
     .if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl Same_K1_Fixture_QueueDeferred_Far
     .else
@@ -467,7 +473,7 @@ brk_handler__capture_stack:
 .if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 .include "generated/scumm_v5_rooms.inc.pasm"
 .endif
-.if !SAME_BUILD_WINSTON_IO
+.if SAME_BUILD_WINSTON_IO == 0
 .include "engines/scumm_v5.pasm"
 .endif
 .include "engines/agi_v2.pasm"
@@ -558,6 +564,9 @@ Same_Tad_BlankSong:
 .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
 .include "engines/scumm_v5_resident_resolver.pasm"
 .endif
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+.include "engines/scumm_v5_msu_programs.pasm"
+.endif
 .include "engines/scumm_v5_camera_far.pasm"
 .if SAME_VIDEO_BACKEND_LEGACY
 .include "services/video_k1_far.pasm"
@@ -579,4 +588,19 @@ ScummV5_M24RB_FarCodeEnd:
 .endif
 .include "services/video_surface.pasm"
 .include "engines/scumm_v5_visual.pasm"
+.endif
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+; This directory occupies its own bank. Emit it after executable code so its
+; .bank/.org directives cannot relocate the SCUMM interpreter or engine code.
+.include "generated/scumm_v5_msu_programs.inc.pasm"
+ .endif
+.if SAME_BUILD_MSU1_STORAGE
+; The checked SAMEPKG identity and fixed section directory scale with the
+; package's section count. Keep this immutable metadata out of bank zero for
+; both diagnostic and streamed-SCUMM personalities; the provider reads it via
+; long addresses. This single include also keeps build personalities from
+; accidentally emitting duplicate package directories.
+.bank 11
+.org $8000
+.include "generated/msu1_package.inc.pasm"
 .endif
