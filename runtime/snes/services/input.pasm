@@ -18,6 +18,7 @@ Same_Input_Reset:
     .a8
     lda #$00
     sta.l SAME_INPUT_TALK_OWNED_VALID
+    sta.l SAME_INPUT_AUTOJOY_TIMEOUTS
     plp
     rts
 
@@ -44,11 +45,31 @@ Same_Input_Poll__diag_entry_ok:
     .a8
 .endif
 Same_Input_Poll__wait_autojoy:
+    ; Hardware auto-joy busy is expected to clear shortly after NMI, but an
+    ; unbounded wait can strand the whole logical frame on emulator/target
+    ; paths that hold HVBJOY busy. Bound the poll; on timeout retain the last
+    ; complete input snapshot and retry next frame rather than publishing a
+    ; partial/stale edge.
+    rep #$10
+    .i16
+    ldx #$0400
+Same_Input_Poll__wait_autojoy_bounded:
     sep #$20
     .a8
     lda HVBJOY
     and #$01
-    bne Same_Input_Poll__wait_autojoy
+    beq Same_Input_Poll__autojoy_ready
+    dex
+    bne Same_Input_Poll__wait_autojoy_bounded
+    lda.l SAME_INPUT_AUTOJOY_TIMEOUTS
+    cmp #$FF
+    bne Same_Input_Poll__record_timeout
+    jmp Same_Input_Poll__done
+Same_Input_Poll__record_timeout:
+    inc
+    sta.l SAME_INPUT_AUTOJOY_TIMEOUTS
+    jmp Same_Input_Poll__done
+Same_Input_Poll__autojoy_ready:
 
     rep #$30
     .a16

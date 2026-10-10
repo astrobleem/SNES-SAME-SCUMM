@@ -41,7 +41,11 @@ SAME_VIDEO_SURFACE_DAMAGE_WIDTH       = SAME_VIDEO_SURFACE_STATE+$38
 SAME_VIDEO_SURFACE_DAMAGE_HEIGHT      = SAME_VIDEO_SURFACE_STATE+$3A
 SAME_VIDEO_SURFACE_DAMAGE_X1          = SAME_VIDEO_SURFACE_STATE+$3C
 SAME_VIDEO_SURFACE_DAMAGE_Y1          = SAME_VIDEO_SURFACE_STATE+$3E
-SAME_VIDEO_SURFACE_STATE_SIZE         = $0040
+; Target-neutral RGB8 palette install request.  The SCUMM producer supplies a
+; validated source pointer; this service alone knows the selected backend's
+; palette storage and copies the fixed 256-entry palette into it.
+SAME_VIDEO_SURFACE_PALETTE_SOURCE      = SAME_VIDEO_SURFACE_STATE+$40
+SAME_VIDEO_SURFACE_STATE_SIZE         = $0043
 ; Debug-only service pipeline witness.  This is in the unused tail of the
 ; backend-reserved block, after the surface descriptor/state and before no
 ; other published service allocation.  It is not visible to SCUMM.
@@ -94,6 +98,43 @@ SAME_VIDEO_DIAG_WITNESS_MOVING          = SAME_VIDEO_DIAG_BASE+$3E
 SAME_VIDEO_DIAG_RENDER_ENTRIES          = SAME_VIDEO_DIAG_BASE+$40
 SAME_VIDEO_DIAG_RENDER_DESIRED          = SAME_VIDEO_DIAG_BASE+$42
 SAME_VIDEO_DIAG_RENDER_MOVING_ENTRIES   = SAME_VIDEO_DIAG_BASE+$44
+
+; Install the target-neutral 256-entry RGB8 palette from a validated far
+; memory source. Input is a 24-bit source pointer in the public surface state.
+; The SCUMM producer never names Mode-3 storage or a carrier address.
+Same_VideoSurface_InstallPalette_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_SURFACE_PALETTE_SOURCE
+    sta SAME_VIDEO_SURFACE_DP_SOURCE
+    lda.l SAME_VIDEO_SURFACE_PALETTE_SOURCE+$01
+    sta SAME_VIDEO_SURFACE_DP_SOURCE+$01
+    lda.l SAME_VIDEO_SURFACE_PALETTE_SOURCE+$02
+    sta SAME_VIDEO_SURFACE_DP_SOURCE+$02
+    rep #$30
+    .a16
+    .i16
+    ldx #$0000
+    ldy #$0000
+Same_VideoSurface_InstallPalette_Far__copy:
+    sep #$20
+    .a8
+    lda [SAME_VIDEO_SURFACE_DP_SOURCE],y
+    sta.l SAME_MODE3_LIVE_PALETTE,x
+    rep #$30
+    .a16
+    .i16
+    inx
+    iny
+    cpy #$0300
+    bcc Same_VideoSurface_InstallPalette_Far__copy
+    plp
+    clc
+    rtl
 SAME_VIDEO_SURFACE_STATUS_OK          = $01
 SAME_VIDEO_SURFACE_STATUS_UNAVAILABLE = $02
 SAME_VIDEO_SURFACE_STATUS_INVALID     = $03
@@ -1439,6 +1480,22 @@ Same_VideoSurface_ComposeRoom_Far:
     .a8
     jsl Same_VideoSurface_CanWrite_Far
     bcs Same_VideoSurface_ComposeRoom__locked_diag
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; In live-room mode pixels/palette have already been CRC-validated and
+    ; installed into the existing shared surface. Never consult the ROM
+    ; visual directory as a fallback.
+    pla
+    sta.l SAME_VIDEO_SURFACE_ROOM
+    ; The incoming-transfer valid bit is cleared as soon as the next room
+    ; request starts. Presentation consumes the separately-lived active
+    ; visual, which remains valid until a newly checked image is published.
+    lda.l SCUMM_LIVE_ROOM_ACTIVE_VISUAL_VALID
+    cmp #$01
+    bne Same_VideoSurface_ComposeRoom__invalid
+    jsr Same_VideoSurface_PushPresentation
+    bcs Same_VideoSurface_ComposeRoom__invalid
+    bra Same_VideoSurface_ComposeRoom__presented
+.endif
     pla
     jsr Same_VideoSurface_FindVisual
     bcs Same_VideoSurface_ComposeRoom__missing
@@ -1454,6 +1511,7 @@ Same_VideoSurface_ComposeRoom_Far:
     .a8
     jsr Same_VideoSurface_PushPresentation
     bcs Same_VideoSurface_ComposeRoom__invalid
+Same_VideoSurface_ComposeRoom__presented:
     sep #$20
     .a8
     lda #SAME_VIDEO_SURFACE_STATUS_OK

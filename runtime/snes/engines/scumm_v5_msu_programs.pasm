@@ -20,6 +20,34 @@ SCUMM_MSU_ROOM_HEADER_BYTES = $00E8
 SCUMM_MSU_ROOM_SCRIPT_BYTES = $0060
 SCUMM_MSU_ROOM_TRAILER_BYTES = $0020
 
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+SCUMM_LIVE_ROOM_BASE = SAME_SCUMM_LIVE_ROOM_STAGING_BASE
+SCUMM_LIVE_ROOM_PENDING = SAME_SCUMM_LIVE_ROOM_PENDING_BASE
+SCUMM_LIVE_ROOM_STAGE = SAME_SCUMM_LIVE_ROOM_CONTROL+$00
+SCUMM_LIVE_ROOM_VALID = SAME_SCUMM_LIVE_ROOM_CONTROL+$01
+SCUMM_LIVE_ROOM_READ_LENGTH = SAME_SCUMM_LIVE_ROOM_CONTROL+$02
+SCUMM_LIVE_ROOM_WIDTH = SAME_SCUMM_LIVE_ROOM_CONTROL+$04
+SCUMM_LIVE_ROOM_HEIGHT = SAME_SCUMM_LIVE_ROOM_CONTROL+$06
+SCUMM_LIVE_ROOM_PITCH = SAME_SCUMM_LIVE_ROOM_CONTROL+$08
+SCUMM_LIVE_ROOM_COPY_INDEX = SAME_SCUMM_LIVE_ROOM_CONTROL+$0A
+; Transaction validity is cleared when a new incoming resource request starts.
+; The active visual has a separate lifetime and remains valid until the next
+; checked pixel/palette pair is atomically published to the video surface.
+SCUMM_LIVE_ROOM_ACTIVE_VISUAL_VALID = SAME_SCUMM_LIVE_ROOM_CONTROL+$21
+; M24R-B may be re-entered while the incoming visual is fetched. This
+; transaction bit makes retiring the outgoing resolver bundle idempotent.
+SCUMM_LIVE_ROOM_OLD_BUNDLE_RELEASED = SAME_SCUMM_LIVE_ROOM_CONTROL+$22
+SCUMM_LIVE_ROOM_MAGIC = $004C ; 'SC5LIVE' prefix checked bytewise
+SCUMM_LIVE_ROOM_HEADER_SIZE = $0052
+SCUMM_LIVE_ROOM_MAX_SIZE = $0800
+SCUMM_LIVE_ROOM_STAGE_COOKED = $00
+SCUMM_LIVE_ROOM_STAGE_METADATA = $01
+SCUMM_LIVE_ROOM_STAGE_PREFLIGHT_READY = $02
+SCUMM_LIVE_ROOM_STAGE_PALETTE = $03
+SCUMM_LIVE_ROOM_STAGE_PIXELS = $04
+SCUMM_LIVE_ROOM_STAGE_COMMIT_READY = $05
+.endif
+
 ScummV5_MsuProgram_Reset_Far:
     php
     rep #$30
@@ -98,6 +126,16 @@ ScummV5_MsuProgram_Reset_Far__pending:
     sta.l SAME_SCUMM_MSU_ROOM_CACHE_SLOT
     lda #SCUMM_MSU_ROOM_IDLE
     sta.l SAME_SCUMM_MSU_ROOM_STATE
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #SCUMM_LIVE_ROOM_STAGE_COOKED
+    sta.l SCUMM_LIVE_ROOM_STAGE
+    lda #$00
+    sta.l SCUMM_LIVE_ROOM_VALID
+    sta.l SCUMM_LIVE_ROOM_ACTIVE_VISUAL_VALID
+    sta.l SCUMM_LIVE_ROOM_OLD_BUNDLE_RELEASED
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$20
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
+    .endif
     jsl Same_Msu1_InitBegin_FarEntry
     bcs ScummV5_MsuProgram_Reset_Far__failed
     rep #$10
@@ -152,6 +190,10 @@ ScummV5_MsuProgram_FrameReady_Far__ready:
     rtl
 ScummV5_MsuProgram_FrameReady_Far__failed:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$96
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
+    .endif
     lda #SCUMM_ERR_RESOURCE
     sta.l SAME_SCUMM_ERROR
     lda #SCUMM_VM_ERROR
@@ -180,6 +222,14 @@ ScummV5_MsuRoom_Request_Far:
     beq ScummV5_MsuRoom_Request_Far__coalesced
     lda.l SAME_SCUMM_M23A_PENDING_ROOM
     sta.l SAME_SCUMM_MSU_ROOM_ID
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$0C
+    lda #SCUMM_LIVE_ROOM_STAGE_COOKED
+    sta.l SCUMM_LIVE_ROOM_STAGE
+    lda #$00
+    sta.l SCUMM_LIVE_ROOM_VALID
+    sta.l SCUMM_LIVE_ROOM_OLD_BUNDLE_RELEASED
+    .endif
     lda #SCUMM_MSU_ROOM_REQUESTED
     sta.l SAME_SCUMM_MSU_ROOM_STATE
     rep #$20
@@ -199,18 +249,32 @@ ScummV5_MsuRoom_Request_Far__coalesced:
 
 ; Nonblocking room-resource state machine. A read owns one unpinned body-cache
 ; window only while transfer/validation runs; after parsing, the window is
-; invalidated before M23A starts EXCD. Runtime-generated room tables still
-; supply object/render/service data in this prototype.
+; invalidated before M23A starts EXCD. In live-room mode the validated
+; SC5LIVE/SC5VIS resources become the source for implemented room consumers;
+; legacy mode continues to use its generated ROM-backed room directories.
 ScummV5_MsuRoom_Service_Far:
     sep #$20
     .a8
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$A0
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1D
+.endif
     lda.l SAME_SCUMM_MSU_ROOM_STATE
     cmp #SCUMM_MSU_ROOM_IDLE
-    beq ScummV5_MsuRoom_Service_Far__no_request
+    bne ScummV5_MsuRoom_Service_Far__check_validated
+    jmp ScummV5_MsuRoom_Service_Far__no_request
+ScummV5_MsuRoom_Service_Far__check_validated:
+    .a8
     cmp #SCUMM_MSU_ROOM_VALIDATED
-    beq ScummV5_MsuRoom_Service_Far__ready
+    bne ScummV5_MsuRoom_Service_Far__check_failed
+    jmp ScummV5_MsuRoom_Service_Far__ready
+ScummV5_MsuRoom_Service_Far__check_failed:
+    .a8
     cmp #SCUMM_MSU_ROOM_FAILED
-    beq ScummV5_MsuRoom_Service_Far__failed
+    bne ScummV5_MsuRoom_Service_Far__check_requested
+    jmp ScummV5_MsuRoom_Service_Far__failed
+ScummV5_MsuRoom_Service_Far__check_requested:
+    .a8
     cmp #SCUMM_MSU_ROOM_REQUESTED
     beq ScummV5_MsuRoom_Service_Far__start
     cmp #SCUMM_MSU_ROOM_READING
@@ -231,9 +295,29 @@ ScummV5_MsuRoom_Service_Far__poll:
     clc
     rtl
 ScummV5_MsuRoom_Service_Far__validate:
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    .a8
+    lda #$A1
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1D
+    lda.l SCUMM_LIVE_ROOM_STAGE
+    beq ScummV5_MsuRoom_Service_Far__validate_cooked
+    lda #$A2
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1D
+    jml ScummV5_MsuLiveRoom_ValidateCompletedRead_Far
+ScummV5_MsuRoom_Service_Far__validate_cooked:
+    .a8
+.endif
     jsl ScummV5_MsuRoom_Validate_Far
     bcs ScummV5_MsuRoom_Service_Far__fail
     jsl ScummV5_MsuRoom_ReleaseWindow_Far
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #SCUMM_LIVE_ROOM_STAGE_METADATA
+    sta.l SCUMM_LIVE_ROOM_STAGE
+    lda #SCUMM_MSU_ROOM_REQUESTED
+    sta.l SAME_SCUMM_MSU_ROOM_STATE
+    clc
+    rtl
+.endif
     sep #$20
     .a8
     lda #SCUMM_MSU_ROOM_VALIDATED
@@ -282,10 +366,16 @@ ScummV5_MsuRoom_Service_Far__fail:
 ScummV5_MsuRoom_Service_Far__mark_failed:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$91
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
+    .endif
     lda #SCUMM_MSU_ROOM_FAILED
     sta.l SAME_SCUMM_MSU_ROOM_STATE
     lda #$06
     sta.l SAME_SCUMM_M23A_PHASE
+    lda #SCUMM_ERR_RESOURCE
+    sta.l SAME_SCUMM_ERROR
     rep #$20
     .a16
     lda.l SAME_SCUMM_MSU_ROOM_FAILURES
@@ -300,6 +390,12 @@ ScummV5_MsuRoom_Service_Far__mark_failed:
 ; begin the existing SAMEPKG checked read. If both windows are transiently
 ; pinned, this frame simply waits; it never overwrites a live interpreter.
 ScummV5_MsuRoom_Start_Far:
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SCUMM_LIVE_ROOM_STAGE
+    beq ScummV5_MsuRoom_Start_Far__legacy
+    jml ScummV5_MsuRoom_Start_Far__live
+.endif
+ScummV5_MsuRoom_Start_Far__legacy:
     sep #$20
     .a8
     lda.l SAME_MSU1_STATUS
@@ -442,6 +538,10 @@ ScummV5_MsuRoom_Start_Far__invalid_descriptor:
 ScummV5_MsuRoom_Start_Far__window_busy:
     clc
     rtl
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+ScummV5_MsuRoom_Start_Far__live:
+    jml ScummV5_MsuLiveRoom_Start_Far
+.endif
 
 ; The generic SAME read CRC authenticates every byte before this parser sees
 ; the buffer. Validate the existing SC5ROOM v1 header/table geometry without

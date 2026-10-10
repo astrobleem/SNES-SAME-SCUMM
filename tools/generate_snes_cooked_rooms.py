@@ -18,6 +18,8 @@ from same.engines.scumm_v5.native_residency import (
 from same.engines.scumm_v5.program_storage import (
     build_program_storage, read_package_prefix_sections,
 )
+from same.engines.scumm_v5.live_room_resources import encode_live_room
+from same.engines.scumm_v5.room_visual import decode_room_visual
 from same.engines.scumm_v5.room import decode_room
 
 
@@ -453,6 +455,10 @@ def main() -> int:
     parser.add_argument("--msu1-program-directory-bank", type=int, default=10)
     parser.add_argument("--msu1-program-cache-bytes", type=lambda value: int(value, 0), default=0x0800)
     parser.add_argument(
+        "--msu1-live-room-resources", action="store_true",
+        help="package compiler-owned room tables and visuals for live MSU consumers",
+    )
+    parser.add_argument(
         "--pack-source-tables", action="store_true",
         help="pack generated per-room metadata tables into bank-bounded pages",
     )
@@ -473,6 +479,8 @@ def main() -> int:
         parser.error("--msu1-program-storage-dir requires --dynamic-program-residency")
     if args.msu1_program_storage_dir and not args.msu1_program_directory_include:
         parser.error("MSU ProgramUnit storage requires --msu1-program-directory-include")
+    if args.msu1_live_room_resources and not args.msu1_program_storage_dir:
+        parser.error("--msu1-live-room-resources requires --msu1-program-storage-dir")
     if args.msu1_program_prefix_all_sections and args.msu1_program_prefix_section:
         parser.error("choose either --msu1-program-prefix-all-sections or named prefix sections")
     prefix_requested = bool(args.msu1_program_prefix_all_sections or args.msu1_program_prefix_section)
@@ -872,6 +880,16 @@ def main() -> int:
             raw = path.read_bytes()
             decoded = decode_cooked_room(raw, expected_room=int(source_record["room"]))
             decoded_room = decode_room(decoded.room_payload, key=f"room.{decoded.room}")
+            visual_raw = None
+            visual_spec = source_record.get("visual")
+            if visual_spec is not None:
+                visual_path = manifest_path.parent / str(visual_spec["output"])
+                visual_raw = visual_path.read_bytes()
+                decoded_visual = decode_room_visual(visual_raw, expected_room=decoded.room)
+                if hashlib.sha256(visual_raw).hexdigest() != visual_spec.get("record_sha256"):
+                    raise RuntimeError(
+                        f"{manifest_path}: room {decoded.room} visual record hash differs"
+                    )
             record_index = len(records)
             script_records = []
             for script in decoded.scripts:
@@ -1024,6 +1042,7 @@ def main() -> int:
                 object_programs.append(program_item)
             records.append({
                 "room": decoded.room, "flags": decoded.flags, "raw": raw,
+                "visual_raw": visual_raw,
                 "checksum": decoded.compact_checksum, "scripts": script_records,
                 "entry": next((x["id"] for x in script_records if x["kind_name"] == "ENCD"), 0),
                 "exit": next((x["id"] for x in script_records if x["kind_name"] == "EXCD"), 0),
@@ -1507,6 +1526,24 @@ def main() -> int:
             int(record["room"]): bytes(record["raw"])
             for record in records
         }
+        live_room_resources = {}
+        room_visual_resources = {}
+        if args.msu1_live_room_resources:
+            missing_visuals = [int(record["room"]) for record in records
+                               if record.get("visual_raw") is None]
+            if missing_visuals:
+                raise RuntimeError(
+                    "live room-resource mode requires a checked SC5VIS record for every room; "
+                    f"missing {missing_visuals[:8]}"
+                )
+            live_room_resources = {
+                int(record["room"]): encode_live_room(record, program_units=programs)
+                for record in records
+            }
+            room_visual_resources = {
+                int(record["room"]): bytes(record["visual_raw"])
+                for record in records
+            }
         prefix_sections = read_package_prefix_sections(
             args.msu1_program_prefix_package,
             None if args.msu1_program_prefix_all_sections
@@ -1517,6 +1554,8 @@ def main() -> int:
             max_cached_body_bytes=args.msu1_program_cache_bytes,
             prefix_sections=prefix_sections,
             room_resources=room_resources,
+            live_room_resources=live_room_resources,
+            room_visual_resources=room_visual_resources,
             rom_bank=args.msu1_program_directory_bank,
         )
         args.msu1_program_directory_include.parent.mkdir(parents=True, exist_ok=True)
@@ -1856,6 +1895,27 @@ def main() -> int:
         """Append one bounded table, packing source-wide metadata when requested."""
         nonlocal packed_table_bank, packed_table_offset, packed_table_next_bank
         nonlocal bank
+        if args.msu1_live_room_resources and label.startswith((
+            "ScummV5_Matrix_Record_", "ScummV5_PutActor_Record_",
+            "ScummV5_Movement_Record_", "ScummV5_SetState_Record_",
+            "ScummV5_Verb_Record_",
+        )):
+            # These records are authoritative in the checked SC5LIVE payload.
+            # Keep the legacy symbols linkable, but leave only one sentinel
+            # byte so live mode has no hidden ROM copy of room data.
+            payload = b"\0"
+        if args.msu1_live_room_resources and label in {
+            "ScummV5_M23A_RoomEntryProgramUnitIds",
+            "ScummV5_M23A_RoomExitProgramUnitIds",
+            "ScummV5_Resident_RoomBundleOffsets",
+            "ScummV5_Resident_RoomBundleCounts",
+            "ScummV5_Resident_RoomBundleUnitIds",
+            "ScummV5_Resident_RoomLocalOffsets",
+            "ScummV5_Resident_RoomLocalCounts",
+            "ScummV5_Resident_RoomLocalNumbers",
+            "ScummV5_Resident_RoomLocalUnitIds",
+        }:
+            payload = b"\xff\xff" if label.endswith(("UnitIds", "ProgramUnitIds")) else b"\0"
         if len(payload) > 0x8000:
             raise RuntimeError(f"generated table {label} exceeds one LoROM bank")
         if not args.pack_source_tables:
@@ -1990,6 +2050,9 @@ def main() -> int:
     # it never parses or special-cases a title, room number, or script.
     data_lines.extend((
         "ScummV5_Matrix_LoadActiveRoom_Far:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_LoadActiveRoom_Far",
+        ".endif",
         "    php",
         "    sep #$20", "    .a8", "    rep #$10", "    .i16",
         # The room commit path carries the active-record index in X across
@@ -2071,6 +2134,9 @@ def main() -> int:
     data_lines.extend((
         f".bank {bank}", ".org $8000",
         "ScummV5_Matrix_LoadActiveRoomNames_Far:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_LoadNames_Far",
+        ".endif",
         "    sep #$20", "    .a8", "    rep #$10", "    .i16",
         "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2121,6 +2187,9 @@ def main() -> int:
     # table.  This is deliberately one path for low and high box numbers.
     data_lines.extend((
         "ScummV5_PutActor_LoadGeometry_Far:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_LoadGeometry_Far",
+        ".endif",
         "; Input X=u16 box index; output A width=8, X width=16; carry clear",
         "; on success and set on missing record/box. Callers must restore M",
         "; themselves after consuming the carry result.",
@@ -2256,6 +2325,9 @@ def main() -> int:
         "    beq ScummV5_Movement_NextBox_Far__static",
         "    jml ScummV5_Movement_NextBox_Dynamic_Far",
         "ScummV5_Movement_NextBox_Far__static:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_NextBox_Far",
+        ".endif",
         "    .a8",
         "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2297,6 +2369,9 @@ def main() -> int:
     data_lines.extend(("ScummV5_Movement_NextBox_Far__fail:", "    clc", "    rtl"))
     data_lines.extend((
         "ScummV5_Movement_Portal_Far:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_Portal_Far",
+        ".endif",
         "; Inputs route source and route-next; publishes canonical shared edge.",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2352,6 +2427,9 @@ def main() -> int:
     data_lines.extend(("ScummV5_Movement_Portal_Far__fail:", "    sep #$20", "    .a8", "    clc", "    rtl"))
     data_lines.extend((
         "ScummV5_Movement_ObjectWalk_Far:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_ObjectWalk_Far",
+        ".endif",
         "; Input object in scratch; output walk x/y/direction in scratch, carry set.",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2489,6 +2567,9 @@ def main() -> int:
     # presented as a cursor verb.  Next wraps in source order.
     data_lines.extend((
         "ScummV5_Verb_First_Far:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_VerbFirst_Far",
+        ".endif",
         "; Input SAME_SCUMM_VERB_OBJECT; output verb in SAME_SCUMM_VERB_RESULT.",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2519,6 +2600,9 @@ def main() -> int:
         "    lda #$0000", "    sta.l SAME_SCUMM_VERB_RESULT",
         "    sep #$20", "    .a8", "    clc", "    rtl",
         "ScummV5_Verb_Next_Far:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_VerbNext_Far",
+        ".endif",
         "; Input object/current verb; output next explicit authored verb, wrapping.",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2571,6 +2655,10 @@ def main() -> int:
         for object_id, verb, _offset in record["verb_entries"]
         if verb != 0xFF
     ]
+    if args.msu1_live_room_resources:
+        # Live-mode controller enumeration uses the active SC5LIVE verb table.
+        # The global flattened table would otherwise be an unvalidated shadow.
+        flat_verb_entries = []
     data_lines.append("ScummV5_Interaction_Verb_Table:")
     if flat_verb_entries:
         for start in range(0, len(flat_verb_entries), 16):
@@ -2650,6 +2738,9 @@ def main() -> int:
         "    lda #$0000", "    sta.l SAME_SCUMM_INTERACTION_OBJECT",
         "    sep #$20", "    .a8", "    clc", "    rtl",
         "ScummV5_Generic_Verb_First_Far:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_GenericVerbFirst_Far",
+        ".endif",
         "    rep #$30", "    .a16", "    .i16",
     ))
     for entry_index, (_room, object_id, verb) in enumerate(flat_verb_entries):
@@ -2664,6 +2755,9 @@ def main() -> int:
     data_lines.extend((
         "    sep #$20", "    .a8", "    lda #$00", "    sta.l SAME_SCUMM_VERB_RESULT", "    clc", "    rtl",
         "ScummV5_Generic_Verb_Next_Far:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_GenericVerbNext_Far",
+        ".endif",
         "    rep #$30", "    .a16", "    .i16", "    lda #$0000", "    sta.l SAME_SCUMM_INTERACTION_VERB_FIRST",
         "    lda #$0000", "    sta.l SAME_SCUMM_INTERACTION_VERB_AFTER",
     ))
@@ -2699,6 +2793,9 @@ def main() -> int:
     data_lines.extend((f".bank {bank}", ".org $8000"))
     data_lines.extend((
         "ScummV5_Verb_Query_Far:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_VerbQuery_Far",
+        ".endif",
         "; Inputs object/verb scratch; output u16 OBCD-relative entry in result.",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
         "    sta.l $7E5465",
@@ -2746,6 +2843,9 @@ def main() -> int:
     ))
     data_lines.extend((
         "ScummV5_ObjectProgram_Resolve_Far:",
+        ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
+        "    jml ScummV5_LiveRoom_ObjectProgramResolve_Far",
+        ".endif",
         "; Inputs object/verb scratch; output A=u8 OBCD program, entry in verb result.",
         "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
         "    sta.l $7E545C",

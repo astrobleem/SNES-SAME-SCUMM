@@ -755,6 +755,38 @@ ScummV5_M24RB_Far_CommitRoom:
     jmp ScummV5_M24RB_Far_CommitNullRoom
 ScummV5_M24RB_Far_CommitRoom__resource_room:
     .a8
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; The renderer reads the tile-shadow allocation while converting the
+    ; outgoing room. Live SC5VIS pixels use that same bounded staging region,
+    ; so drain pending presentation before retiring room state or starting the
+    ; incoming pixel transfer. A busy return preserves the old room and retries
+    ; this pre-commit point on a later engine frame.
+    lda.l SCUMM_LIVE_ROOM_STAGE
+    cmp #SCUMM_LIVE_ROOM_STAGE_PREFLIGHT_READY
+    bne ScummV5_M24RB_Far_CommitRoom__video_preflight_done
+    jsl Same_VideoSurface_ServiceEvents_Far
+    jsl Same_VideoSurface_CanWrite_Far
+    bcs ScummV5_M24RB_Far_CommitRoom__live_visual_wait
+    lda #$00
+    sta.l SAME_SCUMM_M23A_HOLD
+ScummV5_M24RB_Far_CommitRoom__video_preflight_done:
+    .a8
+    bra ScummV5_M24RB_Far_CommitRoom__first_entry
+ScummV5_M24RB_Far_CommitRoom__live_visual_wait:
+    .a8
+    ; Keep the ordinary scheduler held, but leave all outgoing room state
+    ; intact. EXCD has already stopped, so phase 3 records that lifecycle
+    ; boundary and lets the engine retry CommitRoom directly instead of
+    ; dispatching the outgoing EXCD again while presentation drains.
+    lda #$03
+    sta.l SAME_SCUMM_M23A_PHASE
+    lda #$01
+    sta.l SAME_SCUMM_M23A_HOLD
+    clc
+    rts
+ScummV5_M24RB_Far_CommitRoom__first_entry:
+.endif
+    .a8
     ; Pending sentences belong to the outgoing room. Drop them at the same
     ; generic room boundary as cutscene state so the next API sentence starts
     ; at queue record zero instead of replaying an old room action first.
@@ -851,6 +883,13 @@ ScummV5_M24RB_Far_CommitRoom__retire_next:
     .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
     ; Preserve the outgoing room bundle through EXCD, then retire its owner
     ; pins before releasing the bundle. Global activations keep their binding.
+    ; Live-resource visual fetches re-enter CommitRoom asynchronously, so the
+    ; outgoing bundle release is owned by this incoming-room transaction and
+    ; must happen exactly once across those resumptions.
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SCUMM_LIVE_ROOM_OLD_BUNDLE_RELEASED
+    bne ScummV5_M24RB_Far_CommitRoom__old_bundle_released
+.endif
     lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
     cmp #$FF
     beq ScummV5_M24RB_Far_CommitRoom__old_bundle_released
@@ -861,11 +900,72 @@ ScummV5_M24RB_Far_CommitRoom__retire_next:
     sec
     rts
 ScummV5_M24RB_Far_CommitRoom__old_bundle_released:
-    sep #$20
     .a8
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$01
+    sta.l SCUMM_LIVE_ROOM_OLD_BUNDLE_RELEASED
+.endif
+    ; The outgoing EXCD is complete and its bundle is no longer callable.
+    ; Clear its lifecycle directory before any asynchronous visual reads:
+    ; ResourceReady is re-entered when those reads finish and must not start
+    ; the retired EXCD a second time. The incoming ENCD/EXCD selectors are
+    ; installed only after the incoming room bundle has been bound below.
     lda #$00
     sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
     sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SCUMM_LIVE_ROOM_STAGE
+    cmp #SCUMM_LIVE_ROOM_STAGE_PREFLIGHT_READY
+    beq ScummV5_M24RB_Far_CommitRoom__begin_live_visuals
+    jmp ScummV5_M24RB_Far_CommitRoom__load_incoming_bundle
+ScummV5_M24RB_Far_CommitRoom__begin_live_visuals:
+    .a8
+    ; Metadata CRC/schema validation completed before EXCD.  At this point
+    ; outgoing locals and bundle pins are retired, so publish the validated
+    ; directory into its separately-owned active buffer, then fetch visuals.
+    rep #$30
+    .a16
+    .i16
+    ldx #$0000
+ScummV5_M24RB_Far_CommitRoom__live_metadata_copy:
+    txa
+    cmp.l SCUMM_LIVE_ROOM_READ_LENGTH
+    bcs ScummV5_M24RB_Far_CommitRoom__live_metadata_copied
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_PENDING,x
+    sta.l SCUMM_LIVE_ROOM_BASE,x
+    rep #$20
+    .a16
+    inx
+    bra ScummV5_M24RB_Far_CommitRoom__live_metadata_copy
+ScummV5_M24RB_Far_CommitRoom__live_metadata_copied:
+    sep #$20
+    .a8
+    lda #SCUMM_LIVE_ROOM_STAGE_PALETTE
+    sta.l SCUMM_LIVE_ROOM_STAGE
+    jsl ScummV5_MsuLiveRoom_Start_Far
+    bcc ScummV5_M24RB_Far_CommitRoom__live_palette_started
+    lda #$92
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
+    lda #SCUMM_ERR_RESOURCE
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitRoom__live_palette_started:
+    .a8
+    lda #$04
+    sta.l SAME_SCUMM_M23A_PHASE
+    clc
+    rts
+ScummV5_M24RB_Far_CommitRoom__load_incoming_bundle:
+    .a8
+    ; Ensure the pre-commit video wait cannot leak into the incoming room.
+    lda #$00
+    sta.l SAME_SCUMM_M23A_HOLD
+.endif
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_M23A_PENDING_RECORD
     jsl ScummV5_Resident_LoadRoomBundle_Far
     bcs ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded
@@ -888,6 +988,18 @@ ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded:
     lda.l SAME_SCUMM_M23A_PENDING_ROOM
     sta.l SAME_SCUMM_M23A_ACTIVE_ROOM
     sta.l SAME_SCUMM_C22_CURRENT_ROOM
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    jsl ScummV5_LiveRoom_PublishVisual_Far
+    bcc ScummV5_M24RB_Far_CommitRoom__live_visual_published
+    lda #$93
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
+    lda #SCUMM_ERR_RESOURCE
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitRoom__live_visual_published:
+    .a8
+.endif
     lda #$00
     sta.l SAME_SCUMM_C22_NULL_SCENE
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && !SAME_SCUMM_SCENARIO_SOURCE_ACTOR_STATE
@@ -1180,11 +1292,19 @@ ScummV5_M24RB_Far_CommitRoom__load_ego_done:
     .i8
     lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
     tax
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_BUNDLE_COUNT
+    sta.l SAME_SCUMM_M23A_DESCRIPTOR_COUNT
+    sta.l SAME_SCUMM_M23A_REGISTER_COUNT
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_LOCAL_COUNT
+    sta.l SAME_SCUMM_M23A_LOCAL_COUNT
+.else
     lda.l ScummV5_M23A_RoomScriptCounts,x
     sta.l SAME_SCUMM_M23A_DESCRIPTOR_COUNT
     sta.l SAME_SCUMM_M23A_REGISTER_COUNT
     lda.l ScummV5_M23A_RoomLocalCounts,x
     sta.l SAME_SCUMM_M23A_LOCAL_COUNT
+.endif
     .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
     ; The generated room lifecycle table stores canonical ProgramUnit IDs.
     ; Resolve them only after the incoming bundle is pinned, then publish the
@@ -1195,7 +1315,11 @@ ScummV5_M24RB_Far_CommitRoom__load_ego_done:
     and #$00FF
     asl
     tax
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SCUMM_LIVE_ROOM_BASE+$0018
+.else
     lda.l ScummV5_M23A_RoomEntryProgramUnitIds,x
+.endif
     cmp #$FFFF
     beq ScummV5_M24RB_Far_CommitRoom__no_dynamic_entry
     jsl ScummV5_Resident_ResolveProgramUnit_Far
@@ -1218,7 +1342,11 @@ ScummV5_M24RB_Far_CommitRoom__dynamic_entry_ready:
     and #$00FF
     asl
     tax
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SCUMM_LIVE_ROOM_BASE+$001A
+.else
     lda.l ScummV5_M23A_RoomExitProgramUnitIds,x
+.endif
     cmp #$FFFF
     beq ScummV5_M24RB_Far_CommitRoom__no_dynamic_exit
     jsl ScummV5_Resident_ResolveProgramUnit_Far
@@ -1284,7 +1412,11 @@ ScummV5_M24RB_Far_CommitRoom__no_locals_registered:
     tax
     sep #$20
     .a8
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SCUMM_LIVE_ROOM_BASE+$000D
+.else
     lda.l ScummV5_M23A_RoomFlags,x
+.endif
     and #$01
     beq ScummV5_M24RB_Far_CommitRoom__execute
     lda #$03
@@ -1418,6 +1550,39 @@ ScummV5_M23A_EndRoomScript_FarEntry:
 ScummV5_M23A_CommitRoom_FarEntry:
     jsr ScummV5_M24RB_Far_CommitRoom
     rtl
+
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+; Retry a phase-3 commit after EXCD has completed. The old room and bundle
+; remain installed until the renderer relinquishes its shared tile-shadow
+; staging region. This entry is selected only for a checked incoming room in
+; PREFLIGHT_READY; other phase-3/yield semantics stay on the existing path.
+ScummV5_M24RB_Far_ResumeVisualCommit:
+    .a8
+    lda.l SCUMM_LIVE_ROOM_STAGE
+    cmp #SCUMM_LIVE_ROOM_STAGE_PREFLIGHT_READY
+    bne ScummV5_M24RB_Far_ResumeVisualCommit__done
+    jsl Same_VideoSurface_ServiceEvents_Far
+    jsl Same_VideoSurface_CanWrite_Far
+    bcs ScummV5_M24RB_Far_ResumeVisualCommit__wait
+    lda #$00
+    sta.l SAME_SCUMM_M23A_HOLD
+    jsr ScummV5_M24RB_Far_CommitRoom
+    rts
+ScummV5_M24RB_Far_ResumeVisualCommit__wait:
+    .a8
+    lda #$03
+    sta.l SAME_SCUMM_M23A_PHASE
+    lda #$01
+    sta.l SAME_SCUMM_M23A_HOLD
+ScummV5_M24RB_Far_ResumeVisualCommit__done:
+    .a8
+    clc
+    rts
+
+ScummV5_M24RB_Far_ResumeVisualCommit_FarEntry:
+    jsr ScummV5_M24RB_Far_ResumeVisualCommit
+    rtl
+.endif
 
 .if SAME_BUILD_SCUMM_M23B
 ; M25A bounded nested-script context switch. This is the same interpreter and

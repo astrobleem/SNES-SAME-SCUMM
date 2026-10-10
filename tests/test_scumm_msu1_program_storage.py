@@ -15,7 +15,9 @@ from same.engines import default_registry
 from same.engines.scumm_v5.program_storage import (
     build_program_storage, read_package_prefix_sections,
 )
+from same.engines.scumm_v5.live_room_resources import encode_live_room
 from same.engines.scumm_v5.room_compiler import compile_room_payload
+from same.engines.scumm_v5.room_visual import encode_room_visual
 from same.input import SnesButton
 from same.package import build_package, inspect_package
 from same.profile import load_profile
@@ -163,6 +165,81 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
             self.assertIn("SCUMM_MSU1_ROOM_COUNT = $000A", include)
             self.assertIn("ScummV5_MsuRoomRecords:", include)
             self.assertNotIn("selector =", include.lower())
+
+    def test_live_tables_and_visual_payloads_are_package_owned(self) -> None:
+        directory = self.directory()
+        bodies = {
+            "GlobalProgram(4)": b"\0",
+            "RoomEntryProgram(2)": b"\xa0",
+            "ObjectProgram(room=2,object=9)": b"\0",
+        }
+        room = {
+            "room": 2, "raw": b"synthetic source room", "entry": 1, "exit": 0xFFFF,
+            "walkbox_flags": b"\x00", "walkbox_geometry": bytes(18),
+            "box_routes": b"\xff", "portals": bytes(7),
+            "objects": b"", "object_names": (), "object_walk": b"",
+            "object_programs": (), "executable_locals": (),
+        }
+        room_units = [
+            {"id": 1, "room": 2, "unit_identity": "RoomEntryProgram(2)"},
+            {"id": 2, "room": 2, "unit_identity": "ObjectProgram(room=2,object=9)"},
+        ]
+        live = encode_live_room(room, program_units=room_units)
+        identities = [hashlib.sha256(name.encode()).hexdigest() for name in (
+            "archive", "index", "data", "room",
+        )]
+        palette = bytes(value for i in range(256) for value in (i, 255 - i, i // 2))
+        pixels = bytes((x + y) & 0xFF for y in range(224) for x in range(256))
+        visual = encode_room_visual(
+            room=2, width=256, height=224, pitch=256, palette=palette, pixels=pixels,
+            archive_sha256=identities[0], index_sha256=identities[1],
+            data_sha256=identities[2], room_sha256=identities[3],
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = build_program_storage(
+                directory, bodies, root, room_resources={2: b"SC5ROOM"},
+                live_room_resources={2: live}, room_visual_resources={2: visual},
+            )
+            package = inspect_package(root / "scumm-programs.msu", verify=True)
+            self.assertEqual([s.name for s in package.sections],
+                             ["SC5ROOM", "SC5LIVE", "SC5VIS", "SC5CODE"])
+            raw = (root / "scumm-programs.msu").read_bytes()
+            live_row = result["live_room_records"][0]
+            visual_row = result["visual_records"][0]
+            self.assertEqual(raw[int(live_row["package_offset"]):
+                                 int(live_row["package_offset"]) + len(live)], live)
+            self.assertEqual(raw[int(visual_row["pixel_package_offset"]):
+                                 int(visual_row["pixel_package_offset"]) + len(pixels)], pixels)
+            include = (root / "scumm_msu1_programs.inc.pasm").read_text()
+            self.assertIn("ScummV5_MsuLiveRoomRecords:", include)
+            self.assertIn("ScummV5_MsuVisualRecords:", include)
+            self.assertEqual(result["live_room_resource_count"], 1)
+            self.assertEqual(result["visual_resource_count"], 1)
+
+    def test_live_room_fixture_has_distinct_checked_visuals_for_each_room(self) -> None:
+        from same.engines.scumm_v5.room_visual import decode_room_visual
+
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary)
+            subprocess.run(
+                [sys.executable, str(ROOT / "tools/build_scumm_native_residency_fixture.py"),
+                 "--output-dir", str(fixture), "--live-room-resources",
+                 "--load-room-with-ego"],
+                cwd=ROOT, check=True, capture_output=True, text=True,
+            )
+            manifest = json.loads((fixture / "manifest.json").read_text())
+            visual_hashes = []
+            for record in manifest["records"]:
+                self.assertIn("visual", record)
+                visual = decode_room_visual(
+                    (fixture / record["visual"]["output"]).read_bytes(),
+                    expected_room=int(record["room"]),
+                )
+                self.assertEqual(len(visual.pixels), 256 * 224)
+                visual_hashes.append(visual.record_sha256)
+            self.assertEqual(len(visual_hashes), 4)
+            self.assertEqual(len(set(visual_hashes)), 4)
 
     def test_missing_extra_and_oversized_units_fail_before_directory_publish(self) -> None:
         directory = self.directory()

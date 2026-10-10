@@ -19,9 +19,21 @@ SAME_MSU1_STATE_READING      = $04
 SAME_MSU1_STATE_READ_OK      = $05
 SAME_MSU1_STATE_ERROR        = $FF
 SAME_MSU1_FLAG_RING           = $01
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+; The indexed live-room package contains a full 57-KiB surface. 256 bytes is
+; still a bounded per-service-turn quantum and keeps room transitions
+; resumable; native input/NMI/audio controls certify this larger diagnostic
+; personality budget. Other provider clients retain the accepted 64-byte cap.
+SAME_MSU1_STEP_BUDGET         = $0100
+.else
 SAME_MSU1_STEP_BUDGET         = $0040
+.endif
 SAME_MSU1_BUSY_POLL_LIMIT     = $40
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+SAME_MSU1_MAX_CAPACITY        = $E000 ; audited SA-1 tile-shadow staging window
+.else
 SAME_MSU1_MAX_CAPACITY        = $8000
+.endif
 SAME_MSU1_DP_DEST             = $00D0 ; direct-page 24-bit WRAM destination
 
 Same_Msu1_Reset:
@@ -95,7 +107,7 @@ Same_Msu1_InitBegin__no_device:
     rts
 
 ; One bounded storage-service turn. Identity verification is also incremental;
-; request copying is capped at 64 bytes and each not-ready poll is bounded.
+; request copying uses SAME_MSU1_STEP_BUDGET and each not-ready poll is bounded.
 Same_Msu1_Process:
     php
     rep #$30
@@ -387,8 +399,99 @@ Same_Msu1_ReadBegin__destination_no_wrap:
     beq Same_Msu1_ReadBegin__dest_bank_ok
     cmp #$7F
     beq Same_Msu1_ReadBegin__dest_bank_ok
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    cmp #$41 ; SA-1 BW-RAM tile-shadow window, independently layout-audited
+    beq Same_Msu1_ReadBegin__dest_bwram_ok
+    cmp #$40 ; only explicitly audited palette and pending-metadata ranges
+    beq Same_Msu1_ReadBegin__dest_palette_ok
+    .endif
     jml Same_Msu1_ReadBegin__capacity_error
 Same_Msu1_ReadBegin__dest_bank_ok:
+    ; Ordinary WRAM buffers retain their 32 KiB ceiling even in a live-room
+    ; build; only the explicitly audited BWRAM window may use the larger cap.
+    rep #$20
+    .a16
+    lda.l SAME_MSU1_DEST_CAPACITY
+    cmp #$8001
+    bcc Same_Msu1_ReadBegin__destination_bank_limit_ok
+    jml Same_Msu1_ReadBegin__capacity_error16
+Same_Msu1_ReadBegin__destination_bank_limit_ok:
+    sep #$20
+    .a8
+    bra Same_Msu1_ReadBegin__dest_capacity_ok
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+Same_Msu1_ReadBegin__dest_bwram_ok:
+    rep #$20
+    .a16
+    ; The only large direct-read destination in this personality is the
+    ; layout-audited indexed tile shadow at 41:0000. Do not treat every $41
+    ; address as writable BWRAM or let a large read cross into CGRAM/reserved
+    ; storage.
+    lda.l SAME_MSU1_DESTINATION
+    beq Same_Msu1_ReadBegin__bwram_base_ok
+    jml Same_Msu1_ReadBegin__capacity_error16
+Same_Msu1_ReadBegin__bwram_base_ok:
+    .a16
+    lda.l SAME_MSU1_DEST_CAPACITY
+    cmp #$E001
+    bcc Same_Msu1_ReadBegin__dest_capacity_ok16
+    jml Same_Msu1_ReadBegin__capacity_error16
+Same_Msu1_ReadBegin__dest_capacity_ok16:
+    sep #$20
+    .a8
+    bra Same_Msu1_ReadBegin__dest_capacity_ok
+.endif
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+Same_Msu1_ReadBegin__dest_palette_ok:
+    sep #$20
+    .a8
+    lda.l SAME_MSU1_DESTINATION
+    cmp #<SAME_BWRAM_LIVE_ROOM_PALETTE_STAGE
+    bne Same_Msu1_ReadBegin__check_pending_address
+    .a8
+    lda.l SAME_MSU1_DESTINATION+1
+    cmp #>SAME_BWRAM_LIVE_ROOM_PALETTE_STAGE
+    beq Same_Msu1_ReadBegin__dest_palette_high_ok
+Same_Msu1_ReadBegin__check_pending_address:
+    .a8
+    lda.l SAME_MSU1_DESTINATION
+    cmp #<SAME_BWRAM_LIVE_ROOM_PENDING
+    bne Same_Msu1_ReadBegin__dest_invalid
+    lda.l SAME_MSU1_DESTINATION+1
+    cmp #>SAME_BWRAM_LIVE_ROOM_PENDING
+    bne Same_Msu1_ReadBegin__dest_invalid
+Same_Msu1_ReadBegin__dest_pending_high_ok:
+    rep #$20
+    .a16
+    lda.l SAME_MSU1_DEST_CAPACITY
+    cmp #$0801
+    bcc Same_Msu1_ReadBegin__dest_pending_capacity_ok16
+    jml Same_Msu1_ReadBegin__capacity_error16
+Same_Msu1_ReadBegin__dest_pending_capacity_ok16:
+    sep #$20
+    .a8
+    bra Same_Msu1_ReadBegin__dest_capacity_ok
+Same_Msu1_ReadBegin__dest_palette_low_ok:
+    .a8
+    lda.l SAME_MSU1_DESTINATION+1
+    cmp #>SAME_BWRAM_LIVE_ROOM_PALETTE_STAGE
+    beq Same_Msu1_ReadBegin__dest_palette_high_ok
+    jml Same_Msu1_ReadBegin__capacity_error
+Same_Msu1_ReadBegin__dest_palette_high_ok:
+    rep #$20
+    .a16
+    lda.l SAME_MSU1_DEST_CAPACITY
+    cmp #$0301
+    bcc Same_Msu1_ReadBegin__dest_palette_capacity_ok
+    jml Same_Msu1_ReadBegin__capacity_error16
+Same_Msu1_ReadBegin__dest_palette_capacity_ok:
+    sep #$20
+    .a8
+    bra Same_Msu1_ReadBegin__dest_capacity_ok
+Same_Msu1_ReadBegin__dest_invalid:
+    jml Same_Msu1_ReadBegin__capacity_error
+.endif
+Same_Msu1_ReadBegin__dest_capacity_ok:
     .a8
     lda.l SAME_MSU1_FLAGS
     and #SAME_MSU1_FLAG_RING

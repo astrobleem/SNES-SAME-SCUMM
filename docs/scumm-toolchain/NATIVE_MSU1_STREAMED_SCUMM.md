@@ -63,19 +63,32 @@ working sets that cannot be pinned fail explicitly; the compiler rejects an
 individual body above this cache limit. This is bounded prototype behavior,
 not evidence that every FATE activation pattern fits.
 
-## Room boundary: partial
+## Room boundary: implemented for the synthetic live-room profile
 
-The native fixture fetches and CRC-validates each compiler-generated cooked
-room record in `SC5ROOM` before it advances the room-transition lifecycle.
-This gates the existing EXCD/commit/ENCD ordering and demonstrates that a
-failed incoming record is not published as a successful transition.
+The follow-on live-room profile fetches and validates `SC5ROOM`, `SC5LIVE`,
+`SC5VIS`, and palette records through SAMEPKG/MSU-1. `SC5LIVE` supplies the
+implemented active room metadata: object records and names, object placement,
+object/verb-carrier dispatch, local-script and bundle directories, walkbox
+flags/geometry, movement routes/portals, and lifecycle ProgramUnit IDs.
+`SC5VIS` supplies indexed pixels and palette data; checked pixels are copied to
+the active surface and the existing Mode-3 video backend realizes that surface
+into PPU tile VRAM/CGRAM. Program bodies remain in the separate checked
+bytecode cache.
 
-The fetched record is currently a validation/staging input, not the full room
-resource backing store. The generated ROM room/object tables and existing
-render/resource data still provide the live room contents. Therefore this is
-not complete room streaming. Fonts, room images, costume data, and general
-resource lookups are not transparently serviced from the external package by
-this change.
+The transition retains the outgoing room through incoming metadata validation
+and the existing EXCD/commit/ENCD boundary. Incoming visual resources are
+validated before the incoming room is published. Failures before the retirement
+boundary preserve the outgoing room; failures after it set the explicit SCUMM
+resource error rather than claiming rollback. Room-resource buffers are
+separate from the two bytecode windows and from resolver/controller/C19/name
+cache/save-validator state; see
+[NATIVE_MSU1_LIVE_ROOM_RESOURCES.md](NATIVE_MSU1_LIVE_ROOM_RESOURCES.md).
+
+This is a bounded generic storage seam, not transparent decoding of every
+original SCUMM resource. The fixture's indexed `SC5VIS` is already a
+compiler-owned display representation: original room-image codec coverage,
+costume/charset/font services, general string loading, and audio asset
+conversion remain separate. ROM-backed room mode remains available.
 
 ## Native synthetic acceptance
 
@@ -128,8 +141,10 @@ voice mixing. The MSU PCM device remains single-track.
 - **IMPLEMENTED, experimental:** compiler-packed ProgramUnit bodies, u32
   package offsets, CRC-checked asynchronous native fetch, two bounded cache
   windows, interpreter execution, and the synthetic native route.
-- **PARTIAL:** cooked room record fetch gates lifecycle; live room contents
-  still use generated ROM tables.
+- **IMPLEMENTED, experimental:** synthetic live room tables and indexed visual
+  records are consumed from checked external storage by the existing engine.
+- **PARTIAL:** general source-game room codecs and all other resource classes
+  are not yet transparently externalized.
 - **PLANNED:** general MSU-backed resource services, portable save-state
   reconstruction for streamed activations, broader cache-capacity policy,
   physical FXPAK acceptance, and whole-game FATE streaming.

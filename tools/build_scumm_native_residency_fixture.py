@@ -138,6 +138,10 @@ def main() -> int:
         "--draw-box", action="store_true",
         help="generate a native indexed-surface drawBox conformance program",
     )
+    parser.add_argument(
+        "--live-room-resources", action="store_true",
+        help="attach distinct copyright-free indexed visuals to every room for MSU-backed loading",
+    )
     args = parser.parse_args()
     if sum((args.load_room_with_ego, args.find_inventory, args.draw_box)) > 1:
         parser.error("choose only one focused conformance program")
@@ -168,14 +172,25 @@ def main() -> int:
         name = f"room-{room}.sc5c"
         (out / name).write_bytes(compiled.cooked_record)
         record = {**compiled.record_manifest, "output": name}
-        if room == 1 and args.draw_box:
+        if (room == 1 and args.draw_box) or args.live_room_resources:
             visual_name = "room-1.sc5v"
+            if args.live_room_resources:
+                visual_name = f"room-{room}.sc5v"
             visual_palette = bytes(
-                value for index in range(256) for value in (index, index, index)
+                value for index in range(256) for value in (
+                    (index + room * 17) & 0xFF,
+                    (index * 3 + room * 29) & 0xFF,
+                    (index // 2 + room * 41) & 0xFF,
+                )
+            )
+            visual_pixels = bytes(
+                (x + 3 * y + 37 * room) & 0xFF
+                for y in range(224) for x in range(256)
             )
             visual_payload = encode_room_visual(
-                room=1, width=256, height=224, pitch=256,
-                palette=visual_palette, pixels=bytes(256 * 224),
+                room=room if args.live_room_resources else 1,
+                width=256, height=224, pitch=256,
+                palette=visual_palette, pixels=visual_pixels,
                 archive_sha256=ids["archive"], index_sha256=ids["index"],
                 data_sha256=ids["data"], room_sha256=sha(payload),
             )
