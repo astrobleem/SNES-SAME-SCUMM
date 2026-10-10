@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import struct
+import tempfile
 import unittest
 from pathlib import Path
 
+from same.msu1 import (
+    CheckedPackageReader, FileDataPort, Msu1ReadError, ReadStatus,
+    trusted_package,
+)
+from same.package import build_package
 from same.engines.scumm_v5.live_room_resources import (
     HEADER, MAX_ACTIVE_BYTES, decode_live_room, encode_live_room,
 )
@@ -69,6 +76,55 @@ class LiveRoomResourceTests(unittest.TestCase):
         raw = encode_live_room(record, program_units=units) + b"x"
         with self.assertRaisesRegex(Exception, "length exceeds"):
             decode_live_room(raw)
+
+    def test_checked_live_room_crc_failure_does_not_publish_staging(self) -> None:
+        record, units = self.source_record()
+        live_record = encode_live_room(record, program_units=units)
+        with tempfile.TemporaryDirectory(prefix="same-live-room-crc-") as temporary:
+            root = Path(temporary)
+            (root / "room.bin").write_bytes(live_record)
+            manifest = root / "package.json"
+            manifest.write_text(json.dumps({
+                "same_package": 1,
+                "sections": [{
+                    "name": "SC5LIVE", "kind": "SCVR", "path": "room.bin",
+                    "alignment": 1, "flags": ["read_only", "streamable"],
+                }],
+            }))
+            package = root / "room.msu"
+            build_package(manifest, package)
+            trusted, length = trusted_package(package)
+            section = trusted.sections[0]
+
+            damaged = bytearray(package.read_bytes())
+            damaged[section.offset + HEADER.size] ^= 0x01
+            corrupt_package = root / "room-corrupt.msu"
+            corrupt_package.write_bytes(damaged)
+
+            reader = CheckedPackageReader(
+                FileDataPort(corrupt_package), trusted, package_length=length,
+            )
+            destination = bytearray([0xA7] * section.size)
+            with self.assertRaises(Msu1ReadError) as raised:
+                reader.read_section("SC5LIVE", destination)
+            self.assertEqual(raised.exception.status, ReadStatus.SECTION_CRC)
+            self.assertEqual(destination, bytearray([0xA7] * section.size))
+
+    def test_live_room_metadata_capacity_failure_is_explicit(self) -> None:
+        record, units = self.source_record()
+        object_ids = range(22, 122)
+        record["objects"] = b"".join(
+            struct.pack("<HhhhhB", object_id, 0, 0, 1, 1, 0)
+            for object_id in object_ids
+        )
+        record["object_names"] = tuple((object_id, b"synthetic")
+                                       for object_id in object_ids)
+        record["object_walk"] = b"".join(
+            struct.pack("<HhhBhhB", object_id, 0, 0, 0, 0, 0, 0)
+            for object_id in object_ids
+        )
+        with self.assertRaisesRegex(Exception, "audited active room buffer is 2048 bytes"):
+            encode_live_room(record, program_units=units)
 
     def test_visual_source_record_is_checked_before_storage_projection(self) -> None:
         identities = [hashlib.sha256(name.encode()).hexdigest()
