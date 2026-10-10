@@ -1231,17 +1231,17 @@ ScummV5_Engine_Frame__m23a_rehydrate:
     sta.l SAME_SCUMM_C4_SLOT_STATUS
     jmp ScummV5_Engine_Frame__complete_success
 ScummV5_Engine_Frame__m23a_room_runnable:
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
     ; The preceding program-size comparison is 16-bit. The direct-call flag
     ; and tail-entry adapter are byte state, so make the processor width
     ; explicit before touching them.
     sep #$20
     .a8
-    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
     ; This is a tail-call into the interpreter. Mark the call shape so a
     ; pending checked read can unwind the engine frame correctly.
     lda #$01
     sta.l SAME_SCUMM_MSU_DIRECT_ROOM_CALL
-    .endif
+.endif
     jmp ScummV5_Engine_RunSelected
 ScummV5_Engine_Frame__m23a_driver:
     .a8
