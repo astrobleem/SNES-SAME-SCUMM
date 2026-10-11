@@ -2040,6 +2040,12 @@ def compile_room_payload(
             "original_room_offset": body_room_offset,
             "original_chunk_offset": body_chunk_offset,
             "normalized_script_offset": 0,
+            "instruction_spans": [
+                [item.pc, item.instruction_width]
+                for item in ir.instructions if item.instruction_width > 0
+            ],
+            "opaque_ranges": ([[ir.opaque_from_pc, len(body)]]
+                              if ir.opaque_from_pc is not None else []),
             **({"local_script_index": number - global_script_count} if chunk.tag == "LSCR" else {}),
         })
 
@@ -2064,6 +2070,7 @@ def compile_room_payload(
         # entry is analyzed from its original offset; the complete OBCD remains
         # the backend program to preserve existing runtime entrypoint semantics.
         offsets = sorted({offset for _verb, offset in obj.verb_entries})
+        object_scripts: list[ScriptIR] = []
         for verb, entry_offset in obj.verb_entries:
             if entry_offset not in offsets or not 0 <= entry_offset < len(obj.obcd):
                 continue
@@ -2074,14 +2081,29 @@ def compile_room_payload(
             verb_irs.append(ObjectVerbIR(
                 verb, entry_offset, verb_identity, source_offset, sha256(body),
             ))
-            scripts.append(decode_script(
+            verb_ir = decode_script(
                 body, identity=verb_identity,
                 kind="OBCD", number=None, room=room_number, resource_key=resource_key,
                 game_name=game_name, source_member=source_member,
                 resource_offset=source_container_offset,
                 source_offset=source_offset, object_id=obj.object_id, verb_id=verb,
                 source_body_sha256=sha256(body), pc_base=entry_offset,
-            ))
+            )
+            scripts.append(verb_ir)
+            object_scripts.append(verb_ir)
+        object_manifest[-1]["instruction_spans"] = [
+            [instruction.pc, instruction.instruction_width]
+            for script in object_scripts
+            for instruction in script.instructions if instruction.instruction_width > 0
+        ]
+        verb_entry_by_id = {verb.verb_id: verb.entry_offset for verb in verb_irs}
+        object_manifest[-1]["opaque_ranges"] = []
+        for script in object_scripts:
+            if script.opaque_from_pc is not None:
+                body_end = verb_entry_by_id[int(script.verb_id)] + len(script.program)
+                object_manifest[-1]["opaque_ranges"].append(
+                    [script.opaque_from_pc, body_end]
+                )
         objects.append(ObjectIR(
             obj.object_id, obj.x, obj.y, obj.width, obj.height, obj.flags, obj.parent,
             obj.walk_x, obj.walk_y, obj.actor_direction, owner, state, classes,

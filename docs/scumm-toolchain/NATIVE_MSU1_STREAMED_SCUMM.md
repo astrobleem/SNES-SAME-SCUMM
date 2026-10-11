@@ -25,22 +25,24 @@ unchanged. Logical body PCs stay with the activation; a resumed activation
 reacquires its canonical body rather than treating a WRAM address as source
 identity.
 
-The transfer is resumable across frame processing. At most 64 bytes are
-transferred per service turn. In the current 206-unit fixture, the largest
-body is 86 bytes and the longest checked fetch (a room record) took 49 logical
-frames. The bounded four-room run read 28,110 bytes over 1,410 logical frames
-(19.94 bytes/logical frame; 24.07 bytes in frames where data progressed), with
-zero provider timeouts or range rejects. The raw service ceiling is 64 bytes
-per frame (3,840 bytes/s at 60 Hz), not a measured sustained hardware rate.
+The transfer is resumable across frame processing. Ordinary checked-read
+clients retain a 64-byte per-service-turn budget. The live-room diagnostic
+personality uses a bounded 256-byte quantum, validated with its input/NMI/audio
+controls, so the 57-KiB indexed room surface does not take thousands of frames
+to stage. These are emulator-observed service budgets, not a claim about
+physical-hardware throughput.
 
 ## Bounded cache and ownership
 
-The feature reserves two 2 KiB bytecode windows:
+The feature reserves three 2 KiB bytecode pages (6 KiB total) on the SA-1
+BW-RAM carrier. The third page is feature-exclusive and mechanically
+represented in the BWRAM layout; the two ordinary WRAM pages remain unchanged:
 
 | WRAM | Purpose |
 | --- | --- |
 | `$7E1000-$7E17FF` | Program cache slot 0 |
 | `$7E1800-$7E1FFF` | Program cache slot 1 |
+| `$41E800-$41EFFF` | Program cache slot 2 (SA-1 BW-RAM; separate from room metadata) |
 | `$7E2F00-$7E2F47` | Existing 72-byte MSU provider state |
 | `$7E2F48-$7E2FEA` | Program cache metadata, generations, ownership and diagnostics |
 | `$7E2FEB-$7E2FFF` | Room-resource fetch/validation state |
@@ -54,14 +56,20 @@ identity, selector ownership and logical PC; their bytes may be reclaimed and
 are checked/refetched when execution resumes. A nested caller saves its
 logical PC and releases its transient cache pin; the child runs through the
 same adapter and the parent is validated/refetched before resuming. The cache
-allocator consumes an empty second window before evicting a ready body. The
-room-owned lifecycle code uses the same adapter. Generations and canonical
-IDs are checked before a cache window is used.
+allocator fills unused windows first, then evicts the oldest unpinned page
+using deterministic three-way LRU ranks. The room-owned lifecycle code uses
+the same adapter. Generations and canonical IDs are checked before a cache
+window is used.
 
-The cache can hold at most two bodies of 2 KiB each. Larger bodies or nested
-working sets that cannot be pinned fail explicitly; the compiler rejects an
-individual body above this cache limit. This is bounded prototype behavior,
-not evidence that every FATE activation pattern fits.
+Each cache page holds at most 2 KiB of one instruction-aligned body segment.
+The compiler emits checked segment boundaries and per-segment CRCs; logical
+source PCs remain independent of the physical window. Large ProgramUnits are
+fetched page by page. The 6-KiB cache is bounded; an all-pinned working set
+fails explicitly rather than reusing a live page. The third page uses SA-1
+BW-RAM `$41:E800..EFFF`, feature-exclusive with the Mode-3 conformance fixture
+workspace. The live room tile shadow occupies `$41:0000..DFFF`, palette shadow
+`$41:E000..E1FF`, and active room metadata `$41:F000..FFFF`; none overlap the
+code page. Reset and mechanical WRAM/BWRAM audits cover this ownership.
 
 ## Room boundary: implemented for the synthetic live-room profile
 
@@ -118,6 +126,85 @@ diff matched selectors, generations, transition tables, counters, and reuse.
 This establishes this synthetic route, not general semantic support for all
 compiler IR.
 
+## First authentic FATE room (bounded external integration)
+
+The canonical external source is `/home/chad/ATLANTIS.zip`, profile
+`fate_of_atlantis_dos_cd.json`, game identity
+`indy4-fate-dos-cd-en`. No original resource payloads are checked in. The
+whole parsed source currently projects to 2,203 selector-bearing ProgramUnits
+with 1,000,867 executable-body bytes. The largest is
+`RoomLocalProgram(room=27,local=208)` (21,002 bytes; logical body PCs 0 through
+21,001); 78 bodies exceed 2 KiB, 33 exceed 4 KiB, 16 exceed 8 KiB, and three
+exceed 16 KiB. The largest object carrier is
+`ObjectProgram(room=92,object=1195)` at 2,116 bytes, with verb entry offsets
+50, 219, 1,816, and 2,069. Program body lengths and OBCD-relative verb entry
+offsets are represented as 16-bit values, which cover this observed corpus.
+The directory retains distinct source identities and entry offsets; this
+size census is not a claim that every unit has complete runtime semantics.
+
+The room-4 experiment packages the deterministic route's selected 209
+ProgramUnits (152,548 body bytes) and required room resources, not all 2,203
+units. Its package SHA-256 is
+`c41b176eb5a86014c048af4a123c0d153e08e8cee5ef8145571832b9881d5d44`. The
+fresh isolated Nexen replay used ROM SHA-256
+`898f5a6c37305eab2fd660e9ff62b89dc6323593a2925e0df28afad96e7bd2c6`, map
+SHA-256 `6f4588c6275c5c2a5219022185b1d6afa437e96d52bb0e6266b772bdb9d94637`,
+build-identity SHA-256
+`fee6a568a6db336dafd7846ac8177cdfd62dcfab90d1666c114a4ca01d00bb50`, and
+ProgramUnit-directory SHA-256
+`bc6768224ba6850e2084a752fac5e8c5b439348598d37ffa3982dd3e52c6a0e3`.
+Generated ROM, map, package, and emulator reports remain ignored build
+artifacts. Room 4's 2,372-byte live record contains 15
+objects, 38 verb entries, 23 room locals, and 10 walkboxes; its visual record
+contains a 57,344-byte indexed surface and 768-byte palette. The native
+replay follows only `0 → 68 → 0 → 4`, settles room 4, and performs the single
+established Open submission on object 61/verb 3. At the checkpoint the VM is
+in room 4 with error 0, lifecycle settled, Ego in room 4 at `(77,136)`, and
+the controller submission count increased once. The runtime consumed the
+checked `SC5LIVE`/`SC5VIS` data: live object/walkbox/palette/surface hashes
+matched their package records, and 892 of 896 drained PPU tiles matched the
+compiled visual realization. This is an acceptance of one bounded route and
+room, not whole-game FATE execution.
+
+The ROM-backed reference is the previously accepted, source-bound static
+build (`f5492f1c…71fd`, map `151a977a…64eec`) recorded in
+`examples/replays/fate-room4-open-trapdoor.json`. Its cold replay observed
+the same room-4 Open action on object 61/verb 3 and continued from room 4.
+This MSU run reproduces the room/error/lifecycle state, cursor, hit object,
+selected verb, and one-submission delta. The old ROM and native result are not
+present in this isolated workspace, so there is no new same-session binary
+comparison. A newly assembled static-selector control from this worktree did
+not reach room 4 and is excluded as invalid control evidence; the streamed
+build is independently validated against the source-derived replay and the
+historical accepted semantic observations.
+
+Across that replay the residency observer recorded a peak of 46 selectors,
+40 observed pinned bindings, 10 selector rebinds, two bundle loads and one
+release, and 12 dynamic global resolutions; stale executions, aliases,
+invalid generations, and exhaustion were all zero. Provider byte accounting
+reached 169,304 bytes by the post-action checkpoint. The route took 6,858
+emulator frames from reset through the post-action observation (about 24.7
+provider bytes/frame over that whole interval, including script and authored
+wait time). Room publications occurred at frames 1,867, 3,007, and 4,747;
+the room-4 body/resource request began at frame 4,722, 25 frames before its
+publication. The cache observer's maximum checked-fetch interval was 1,589
+frames across the run; it is an end-to-end request interval, not the duration
+of one 256-byte service quantum. The live-room profile's service is bounded
+and nonblocking, but this replay did not include PCM
+(`pcm_during_room_load` is null), so it is not evidence of PCM continuity
+during authentic FATE loading. The separate synthetic Winston PCM/data test
+remains the audio concurrency evidence: four room-transition capture windows
+had no silent 20-ms windows while its track was active. That is emulator
+evidence only; MSU PCM is still a single-track interface.
+
+A copyright-free native failure control mutates one byte of the incoming
+room-2 `SC5LIVE` payload while preserving the original package header and
+directory. The provider detects CRC error 6, SCUMM reports resource error 16,
+and the outgoing room-1 live record remains installed with its original
+length and SHA-256. No ROM fallback is used. This specifically covers a
+failure before transition commit; it does not imply arbitrary post-commit
+rollback.
+
 ## Failure and audio evidence
 
 The existing checked-read controls continue to cover missing devices, wrong
@@ -139,15 +226,20 @@ voice mixing. The MSU PCM device remains single-track.
 ## Status
 
 - **IMPLEMENTED, experimental:** compiler-packed ProgramUnit bodies, u32
-  package offsets, CRC-checked asynchronous native fetch, two bounded cache
-  windows, interpreter execution, and the synthetic native route.
+  package offsets, CRC-checked asynchronous native fetch, three bounded
+  instruction-aligned cache pages (6 KiB), interpreter execution, and the
+  synthetic and bounded authentic room-4 native routes.
 - **IMPLEMENTED, experimental:** synthetic live room tables and indexed visual
   records are consumed from checked external storage by the existing engine.
-- **PARTIAL:** general source-game room codecs and all other resource classes
-  are not yet transparently externalized.
+- **PARTIAL:** the selected FATE route uses compiler-generated external room
+  representations, but general source-game room codecs and all other resource
+  classes are not yet transparently externalized. Only the selected 209 of
+  2,203 FATE ProgramUnits are in this experiment.
 - **PLANNED:** general MSU-backed resource services, portable save-state
-  reconstruction for streamed activations, broader cache-capacity policy,
-  physical FXPAK acceptance, and whole-game FATE streaming.
+  reconstruction for streamed activations, physical FXPAK acceptance, and
+  whole-game FATE streaming. The current three-page cache was measured against
+  the corpus maximum, but this bounded route does not certify every body's
+  semantic/runtime behavior or every concurrent live-body working set.
 
 The storage provider contract and its previous checked-read acceptance remain
 documented in [MSU1_CHECKED_READS.md](../MSU1_CHECKED_READS.md). The earlier

@@ -58,6 +58,7 @@ SAME_TAD_REJECTED             = $7E225C ; non-dropping queue-full count
 SAME_TAD_PROBE_REQUEST        = $7E225D ; debugger requests real sound id
 SAME_TAD_DEFERRED_SONG        = $7E225E ; M20 backend follow-up after blank
 SAME_TAD_READY                = $7E225F ; driver playing/paused state reached
+SAME_TAD_STATE_END           = $7E2260 ; exclusive kernel/TAD ownership boundary
 
 ; Generic SAME checked-read provider state. The single MSU-1 data cursor and
 ; request state are service-owned; callers supply their own destination. This
@@ -97,13 +98,46 @@ SAME_MSU1_SECTION_TEMP         = $7E2F46 ; u16 generated-section index math
 SAME_MSU1_STATE_END            = $7E2F48 ; exclusive
 
 .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
-; Two bounded executable-body windows. In this feature personality the native
-; stack ends below $7E1000 and the kernel event queue begins at $7E2000.
+; Three bounded executable-body windows. The third SA-1 cache page is a
+; feature-exclusive alias of the unused Mode-3 conformance fixture workspace.
 SAME_SCUMM_MSU_PROGRAM_CACHE_BASE       = $7E1000
 SAME_SCUMM_MSU_PROGRAM_CACHE_SLOT_SIZE = $0800
 SAME_SCUMM_MSU_PROGRAM_CACHE0           = $7E1000
 SAME_SCUMM_MSU_PROGRAM_CACHE1           = $7E1800
 SAME_SCUMM_MSU_PROGRAM_CACHE_END        = $7E2000
+; Mode-3 conformance and streamed SCUMM are mutually exclusive personalities.
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS && SAME_CARRIER_IS_SA1_BWRAM
+SAME_SCUMM_MSU_PROGRAM_CACHE2           = $41E800
+SAME_SCUMM_MSU_PROGRAM_CACHE2_BANK      = $41
+SAME_SCUMM_MSU_PROGRAM_CACHE2_END       = $41F000
+SAME_SCUMM_MSU_CACHE_HAS_PAGE2           = $01
+.else
+SAME_SCUMM_MSU_PROGRAM_CACHE2           = $000000
+SAME_SCUMM_MSU_PROGRAM_CACHE2_BANK      = $00
+SAME_SCUMM_MSU_PROGRAM_CACHE2_END       = $000000
+SAME_SCUMM_MSU_CACHE_HAS_PAGE2           = $00
+.endif
+; Page-fault lookup/request scratch in the audited gap before provider cache
+; metadata. Logical PCs remain source-body offsets; no cache address is saved.
+SAME_SCUMM_MSU_PAGE_REQUEST_PC          = $7E2EAC ; u16 current logical PC
+SAME_SCUMM_MSU_PAGE_REQUEST_START       = $7E2EAE ; u16 selected segment start PC
+SAME_SCUMM_MSU_PAGE_REQUEST_LENGTH      = $7E2EB0 ; u16 checked segment length
+SAME_SCUMM_MSU_PAGE_SCAN_INDEX          = $7E2EB2 ; u16 global page-record index
+SAME_SCUMM_MSU_PAGE_SCAN_COUNT          = $7E2EB4 ; u16 remaining records
+SAME_SCUMM_MSU_CACHE_PAGE_START0        = $7E2EB6 ; u16 logical start in slot 0
+SAME_SCUMM_MSU_CACHE_PAGE_START1        = $7E2EB8 ; u16 logical start in slot 1
+SAME_SCUMM_MSU_PAGE_BODY_LENGTH         = $7E2EBA ; u16 canonical full-body size
+SAME_SCUMM_MSU_PAGE_REQUEST_CRC         = $7E2EBC ; u32 segment CRC-32
+SAME_SCUMM_MSU_CACHE_LRU0               = $7E2EC0 ; u8 relative LRU rank, 0 oldest
+SAME_SCUMM_MSU_CACHE_LRU1               = $7E2EC1
+SAME_SCUMM_MSU_CACHE_LRU2               = $7E2EC2 ; u8 rank 2 is most recent
+SAME_SCUMM_MSU_CACHE_STATE2             = $7E2EC3
+SAME_SCUMM_MSU_CACHE_ID2                = $7E2EC4 ; u16 canonical directory ID
+SAME_SCUMM_MSU_CACHE_SIZE2              = $7E2EC6 ; u16 validated page bytes
+SAME_SCUMM_MSU_CACHE_PINS2              = $7E2EC8
+SAME_SCUMM_MSU_CACHE_GENERATION2        = $7E2EC9 ; u16
+SAME_SCUMM_MSU_CACHE_PAGE_START2        = $7E2ECB ; u16 logical body PC
+SAME_SCUMM_MSU_PAGE_LOOKUP_END          = $7E2ECD
 ; Cache metadata stays in the provider's audited WRAM gap.
 SAME_SCUMM_MSU_CACHE_STATE0              = $7E2F48
 SAME_SCUMM_MSU_CACHE_STATE1              = $7E2F49
@@ -120,8 +154,8 @@ SAME_SCUMM_MSU_CACHE_REQUEST_SLOT        = $7E2F5A
 SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT          = $7E2F5B
 SAME_SCUMM_MSU_CACHE_ACTIVE_ID           = $7E2F5C
 SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION   = $7E2F5E
-SAME_SCUMM_MSU_CACHE_CURRENT_COUNT       = $7E2F60
-SAME_SCUMM_MSU_CACHE_PEAK_COUNT          = $7E2F62
+SAME_SCUMM_MSU_CACHE_CURRENT_BYTES       = $7E2F60 ; validated resident page bytes
+SAME_SCUMM_MSU_CACHE_PEAK_BYTES          = $7E2F62 ; exact simultaneous cache high-water
 SAME_SCUMM_MSU_CACHE_LOADS               = $7E2F64
 SAME_SCUMM_MSU_CACHE_EVICTIONS            = $7E2F66
 SAME_SCUMM_MSU_CACHE_FAILURES             = $7E2F68
@@ -859,6 +893,8 @@ SAME_SCUMM_M23A_LIFECYCLE_COUNT          = $7FF2D6
 SAME_SCUMM_M23A_LIFECYCLE                = $7FF2D7 ; 14 ordered phase codes
 SAME_SCUMM_M23A_RETURN_PC                = $7FF2E5 ; u16 driver continuation
 SAME_SCUMM_M23A_SLOT_ROOMS               = $7FF2E7 ; 25 room-owner bytes
+SAME_SCUMM_M23A_CHAIN_SLOT               = $7FF2D8 ; lifecycle chain target, $FF when idle
+SAME_SCUMM_M23A_CHAIN_PHASE              = $7FF2D9 ; nonzero while slot-zero continuation is chained
 SAME_SCUMM_M23A_STATE_END                = $7FF300
 SAME_SCUMM_M23A_STATE_SIZE               = $0042
 SAME_SAVE_STAGING                        = $7FF300 ; complete versioned save record
@@ -948,6 +984,21 @@ SAME_VIDEO_TEXT_CONTROLLER_VALID         = $7E5FC5 ; u8 pending controller text
 SAME_SCUMM_OBJECT_NAME_OBJECT            = $7E5FA0 ; u16 $54 operand scratch
 SAME_SCUMM_OBJECT_NAME_INDEX             = $7E5FA2 ; u8 encoded-name cursor
 SAME_SCUMM_CONTROLLER_INPUT_RAW         = $7E5F8E ; debug-only last raw pressed word
+; First-error capture latch for the experimental streamed-room VM diagnostic.
+; The C25 fixture owns $7E5F0E-$7E5F12 and its error counters begin at $7E5F20;
+; reserve only the verified six-byte gap between them. Controller input begins
+; at $7E5F8E and is not diagnostic scratch.
+SAME_SCUMM_STREAM_ERROR_REQUEST_ID      = $7E5F13 ; u16 failing ProgramUnit ID
+SAME_SCUMM_STREAM_ERROR_REQUEST_PC      = $7E5F15 ; u16 requested logical PC
+SAME_SCUMM_STREAM_ERROR_SITE            = $7E5F17 ; u8 first generic resource-error site
+SAME_SCUMM_STREAM_ERROR_CAPTURE_VALID   = $7E5F18 ; u8, feature-gated diagnostic only
+SAME_SCUMM_STREAM_ZERO_SELECT           = $7E5F19 ; u8 invalid selector witness
+SAME_SCUMM_STREAM_ZERO_CURRENT_SLOT     = $7E5F1A ; u8 C4 current slot
+SAME_SCUMM_STREAM_ZERO_SLOT_PROGRAM     = $7E5F1B ; u8 owner slot selector
+SAME_SCUMM_STREAM_ZERO_SLOT_STATUS      = $7E5F1C ; u8 owner slot status
+SAME_SCUMM_STREAM_ZERO_SCHED_SLOT       = $7E5F1D ; u8 scheduler slot
+SAME_SCUMM_STREAM_ZERO_LAST_ALLOCATED   = $7E5F1E ; u8 latest allocator result
+SAME_SCUMM_STREAM_ZERO_SCAN_SLOT        = $7E5F1F ; u8 allocation/scheduler scratch
 ; The render scratch occupies the documented diagnostic gap $7E5E10-$7E5E21,
 ; after the opcode trace ($7E5A02-$7E5E01) and before the persistent
 ; scenario breadcrumbs ($7E5F00+).
@@ -1756,6 +1807,10 @@ SAME_M24RB_LSCR_SCHEDULED                 = $7FFA35
 SAME_M24RB_FRAME_END_FLUSHES              = $7FFA36
 SAME_M24RB_FRAME_END_ACTIVE               = $7FFA37
 SAME_M24RB_TRIGGER_MARKER                 = $7FFA38 ; u16 SCUMM/iMUSE marker word
+SAME_M24RB_C25_RETURN_FRAME                = $7FFA3A ; wrapper-owned far-flush JSL return
+SAME_M24RB_C25_DEBUG_STAGE                 = $7FFA3B ; diagnostic build only
+SAME_M24RB_C25_DEBUG_ENTRY_SP              = $7FFA3C ; u16 diagnostic stack snapshot
+SAME_M24RB_C25_DEBUG_RETURN_SP             = $7FFA3E ; u16 diagnostic stack snapshot
 SAME_M24RB_STATE_END                      = $7FFA40
 
 ; Canonical v5 mutable walkbox flags. Geometry and BOXM routes remain immutable

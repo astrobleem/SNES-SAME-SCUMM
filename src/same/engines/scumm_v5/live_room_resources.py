@@ -19,7 +19,7 @@ from ...errors import ResourceError
 MAGIC = b"SC5LIVE\0"
 VERSION = 1
 HEADER = struct.Struct("<8sHHBB" + "H" * 18 + "32s")
-MAX_ACTIVE_BYTES = 0x0800  # Dedicated active-room metadata window; renderer-disjoint.
+MAX_ACTIVE_BYTES = 0x0A00  # Largest accepted record, bounded by the audited pending buffer.
 OBJECT = struct.Struct("<HhhhhB")
 NAME = struct.Struct("<H32s")
 OBJECT_WALK = struct.Struct("<HhhBhhB")

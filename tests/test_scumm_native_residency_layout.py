@@ -10,7 +10,9 @@ import sys
 import tempfile
 import unittest
 
-from tools.validate_scumm_native_residency_nexen import git_identity
+from tools.validate_scumm_native_residency_nexen import (
+    LIVE_ROOM_ACTIVE_BASE, LIVE_ROOM_ACTIVE_CAPACITY, git_identity,
+)
 from tools.audit_scumm_residency_wram import audit as audit_wram
 
 
@@ -29,6 +31,14 @@ def symbols() -> dict[str, int]:
 
 
 class NativeResidencyLayoutTests(unittest.TestCase):
+    def test_live_room_validator_reads_the_audited_active_record_region(self) -> None:
+        layout = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json")
+                            .read_text(encoding="utf-8"))
+        active = layout["live_room_active"]
+        self.assertEqual(int(active["address"].replace(":", ""), 16),
+                         LIVE_ROOM_ACTIVE_BASE)
+        self.assertEqual(active["bytes"], LIVE_ROOM_ACTIVE_CAPACITY)
+
     def test_winston_storage_personality_keeps_its_generated_package_directory(self) -> None:
         source = (ROOT / "runtime/snes/main.pasm").read_text()
         self.assertIn(".if SAME_BUILD_MSU1_STORAGE\n", source)
@@ -45,12 +55,18 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         self.assertEqual(report["features_coexist"], [
             "resolver", "controller/input", "name cache", "save validator",
             "C4", "C19", "room lifecycle",
-            "bounded streamed-program execution context",
+            "three-page streamed-program cache", "Mode-3 live staging",
         ])
         resolver = next(row for row in report["regions"]
                         if row["owner"] == "resident_resolver")
         self.assertEqual((resolver["start"], resolver["end_exclusive"], resolver["bytes"]),
                          ("$7E8C00", "$7E8FC0", 960))
+        self.assertEqual(report["bwram_aliases"], [{
+            "owner": "SCUMM checked ProgramUnit page cache",
+            "address": "$41E800", "bytes": 0x800,
+            "exclusive_with": "Mode-3 conformance fixture engine",
+            "active_mode3_staging_unaffected": True,
+        }])
 
     def test_engine_selection_allows_dynamic_residency_with_production_services(self) -> None:
         with tempfile.TemporaryDirectory(prefix="same-residency-selection-") as raw:
@@ -67,6 +83,26 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             self.assertIn("SAME_BUILD_SCUMM_CONTROLLER = $01", config)
             self.assertIn("SAME_BUILD_SCUMM_SAVE_PERSISTENCE_VALIDATOR = $01", config)
             self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = $01", config)
+
+    def test_first_brk_capture_is_explicit_and_requires_diagnostic_storage(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="same-first-brk-selection-") as raw:
+            output = Path(raw) / "active_engine.inc.pasm"
+            subprocess.run([
+                sys.executable, str(ROOT / "tools/generate_snes_engine_selection.py"),
+                "--engine", "scumm_v5", "--capture-first-brk",
+                "--output", str(output),
+            ], check=True, capture_output=True, text=True)
+            config = output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn("SAME_BUILD_CAPTURE_FIRST_BRK = $01", config)
+
+            invalid = subprocess.run([
+                sys.executable, str(ROOT / "tools/generate_snes_engine_selection.py"),
+                "--engine", "scumm_v5", "--capture-first-brk",
+                "--disable-reset-diagnostics", "--output",
+                str(Path(raw) / "invalid.inc.pasm"),
+            ], capture_output=True, text=True)
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("requires reset diagnostics storage", invalid.stderr)
 
     def test_live_room_pcm_diagnostic_is_feature_gated_by_room_storage(self) -> None:
         with tempfile.TemporaryDirectory(prefix="same-live-room-pcm-selection-") as raw:
@@ -100,6 +136,121 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         self.assertIn("SAME_MSU1_STEP_BUDGET         = $0100", source)
         self.assertIn("SAME_MSU1_STEP_BUDGET         = $0040", source)
         self.assertIn("request copying uses SAME_MSU1_STEP_BUDGET", source)
+        self.assertIn("cmp #SAME_BWRAM_LIVE_ROOM_PENDING_SIZE+1", source)
+
+    def test_live_room_pending_read_capacity_tracks_audited_buffer_layout(self) -> None:
+        layout = json.loads(
+            (ROOT / "runtime/snes/carriers/sa1_bwram_layout.json").read_text()
+        )
+        pending = layout["backend_reserved"]["allocations"]["live_room_pending"]
+        self.assertEqual(pending["bytes"], 0x0A00)
+        source = (ROOT / "runtime/snes/services/storage_msu1.pasm").read_text()
+        pending_guard = source.split(
+            "Same_Msu1_ReadBegin__dest_pending_high_ok:", 1
+        )[1].split("Same_Msu1_ReadBegin__dest_pending_capacity_ok16:", 1)[0]
+        self.assertIn("SAME_BWRAM_LIVE_ROOM_PENDING_SIZE+1", pending_guard)
+        self.assertNotIn("cmp #$0801", pending_guard)
+
+    def test_live_walkbox_geometry_copy_preserves_each_two_byte_coordinate(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm").read_text()
+        loader = source.split("ScummV5_LiveRoom_LoadGeometry_Far__copy:", 1)[1]
+        loader = loader.split("ScummV5_LiveRoom_LoadGeometry_Far__bad:", 1)[0]
+        self.assertIn("lda.l SCUMM_LIVE_ROOM_BASE,x", loader)
+        self.assertIn("sta.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK,x", loader)
+        self.assertIn(
+            "lda.l SCUMM_LIVE_ROOM_TEMP0\n"
+            "    inc\n"
+            "    inc\n"
+            "    sta.l SCUMM_LIVE_ROOM_TEMP0",
+            loader,
+        )
+        self.assertIn(
+            "lda.l SCUMM_LIVE_ROOM_TEMP1\n"
+            "    inc\n"
+            "    inc\n"
+            "    sta.l SCUMM_LIVE_ROOM_TEMP1",
+            loader,
+        )
+
+    def test_streamed_program_accepts_only_the_exact_final_body_boundary(self) -> None:
+        programs = (ROOT / "runtime/snes/engines/scumm_v5_msu_programs.pasm").read_text()
+        terminal = programs.split(
+            "ScummV5_MsuProgram_FindPage_Far__terminal_candidate:", 1
+        )[1].split("ScummV5_MsuProgram_FindPage_Far__found:", 1)[0]
+        self.assertIn("SAME_SCUMM_MSU_PAGE_SCAN_COUNT", terminal)
+        self.assertIn("cmp #$0001", terminal)
+        self.assertIn("ScummV5_MsuProgramRecords,x", terminal)
+        self.assertIn("cmp.l SAME_SCUMM_MSU_PAGE_REQUEST_PC", terminal)
+        self.assertIn(
+            "cmp.l SAME_SCUMM_PROGRAM_SIZE\n    bcc ScummV5_Engine_Frame__start_runnable",
+            (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text(),
+        )
+
+    def test_stream_error_diagnostic_sites_are_unique(self) -> None:
+        tags: list[tuple[str, int]] = []
+        for path in (ROOT / "runtime/snes/engines").glob("*.pasm"):
+            source = path.read_text()
+            for raw in re.findall(
+                r"lda\s+#\$([0-9A-Fa-f]{2})\s*\n\s*"
+                r"jsl\s+ScummV5_Stream_RecordErrorSite_FarEntry",
+                source,
+                re.IGNORECASE,
+            ):
+                tags.append((str(path.relative_to(ROOT)), int(raw, 16)))
+        self.assertTrue(tags)
+        values = [tag for _, tag in tags]
+        self.assertEqual(len(values), len(set(values)), tags)
+
+    def test_stream_error_capture_uses_only_the_c25_verified_scratch_gap(self) -> None:
+        address = symbols()
+        capture_start = address["SAME_SCUMM_STREAM_ERROR_REQUEST_ID"]
+        capture_end = address["SAME_SCUMM_STREAM_ERROR_CAPTURE_VALID"] + 1
+        c25_record_start = 0x7E5F0E
+        c25_record_end = c25_record_start + 5
+        c25_counters_start = 0x7E5F20
+        self.assertEqual(capture_start, 0x7E5F13)
+        self.assertEqual(capture_end, 0x7E5F19)
+        self.assertLessEqual(c25_record_end, capture_start)
+        self.assertLess(capture_end, c25_counters_start)
+
+    def test_third_checked_program_page_aliases_only_the_mode3_fixture_workspace(self) -> None:
+        memory = MEMORY.read_text()
+        self.assertIn("SAME_SCUMM_MSU_PROGRAM_CACHE2           = $41E800", memory)
+        self.assertIn("SAME_SCUMM_MSU_PROGRAM_CACHE2_END       = $41F000", memory)
+        report = audit_wram()
+        self.assertEqual(report["bwram_aliases"][0]["address"], "$41E800")
+        video = json.loads(
+            (ROOT / "runtime/snes/video_backends/mode3_surface_layout.json").read_text()
+        )
+        self.assertEqual(video["fixture"], {"address": "41:E800", "bytes": 2048})
+        provider = (ROOT / "runtime/snes/services/storage_msu1.pasm").read_text()
+        self.assertIn("cmp #<SAME_SCUMM_MSU_PROGRAM_CACHE2", provider)
+        self.assertIn("cmp #SAME_SCUMM_MSU_PROGRAM_CACHE_SLOT_SIZE+1", provider)
+        cache_check = provider.split(
+            "Same_Msu1_ReadBegin__dest_bwram_ok:", 1
+        )[1].split("Same_Msu1_ReadBegin__bwram_cache_page_low_ok:", 1)[0]
+        self.assertRegex(
+            cache_check,
+            r"sep #\$20\s+\.a8\s+lda\.l SAME_MSU1_DESTINATION\s+"
+            r"cmp #<SAME_SCUMM_MSU_PROGRAM_CACHE2",
+        )
+        programs = (ROOT / "runtime/snes/engines/scumm_v5_msu_programs.pasm").read_text()
+        self.assertIn("SAME_SCUMM_MSU_PROGRAM_CACHE2,x", programs)
+        target2 = programs.split(
+            "ScummV5_MsuProgram_EnsureSelected_Far__target2:", 1
+        )[1].split("ScummV5_MsuProgram_EnsureSelected_Far__destination_ready:", 1)[0]
+        self.assertIn("lda #SAME_SCUMM_MSU_PROGRAM_CACHE2_BANK", target2)
+        self.assertIn("SAME_SCUMM_MSU_PROGRAM_CACHE2_BANK      = $41", MEMORY.read_text())
+        self.assertIn("SAME_SCUMM_MSU_CACHE_GENERATION2", programs)
+        self.assertIn("SAME_SCUMM_MSU_CACHE_PINS2", programs)
+        lookup = programs.split(
+            "ScummV5_MsuProgram_EnsureSelected_Far__check_slot1:", 1
+        )[1].split(
+            "ScummV5_MsuProgram_EnsureSelected_Far__check_slot2:", 1
+        )[0]
+        self.assertIn(
+            "jml ScummV5_MsuProgram_EnsureSelected_Far__check_slot2", lookup
+        )
 
     def test_dynamic_boot_clears_name_cache_before_resolver_initialization(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()

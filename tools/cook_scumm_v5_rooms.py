@@ -13,7 +13,7 @@ from same.engines.scumm_v5.policy import parse_game_policy
 from same.engines.scumm_v5.resources import LucasartsScummV5ResourceProvider
 from same.engines.scumm_v5.room import decode_room, iter_scumm_chunks
 from same.engines.scumm_v5.room_compiler import (
-    compile_room_payload, profile_game_identity, source_member_pair,
+    compile_room_payload, decode_script, profile_game_identity, source_member_pair,
 )
 from same.engines.scumm_v5.room_visual import encode_room_visual, decode_room_visual
 from same.profile import load_profile
@@ -252,6 +252,22 @@ def main() -> int:
             "decoded_payload_offset": payload_offset,
             "chunk_length": len(program) + 8,
         }
+        global_ir = decode_script(
+            program, identity=f"{key}/SCRP.{number}", kind="SCRP", number=number,
+            room=source_room, resource_key=key,
+            game_name=f"{profile.game_id}:{profile.variant}",
+            source_member=members["game.data"],
+            resource_offset=int(source_location["container_offset"]),
+            source_offset=payload_offset, source_body_sha256=sha(program),
+        )
+        script_manifest["instruction_spans"] = [
+            [item.pc, item.instruction_width]
+            for item in global_ir.instructions if item.instruction_width > 0
+        ]
+        script_manifest["opaque_ranges"] = (
+            [[global_ir.opaque_from_pc, len(program)]]
+            if global_ir.opaque_from_pc is not None else []
+        )
         if transformation is None:
             script_manifest["content_provenance"] = "authentic-resource-unchanged"
         else:

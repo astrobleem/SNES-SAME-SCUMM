@@ -18,9 +18,13 @@ MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 REGIONS = (
     ("program_cache", "SAME_SCUMM_MSU_PROGRAM_CACHE_BASE",
      "SAME_SCUMM_MSU_PROGRAM_CACHE_END"),
+    ("event_queue", "SAME_EVENT_HEAD", "SAME_INPUT_HELD"),
+    ("program_cache_page_lookup", "SAME_SCUMM_MSU_PAGE_REQUEST_PC",
+     "SAME_SCUMM_MSU_PAGE_LOOKUP_END"),
     ("program_cache_metadata", "SAME_SCUMM_MSU_CACHE_STATE0",
      "SAME_SCUMM_MSU_ROOM_STATE_END"),
     ("input_edges", "SAME_INPUT_HELD", "SAME_FRAME_COUNTER"),
+    ("kernel_frame_tad", "SAME_FRAME_COUNTER", "SAME_TAD_STATE_END"),
     ("c4_scheduler", "SAME_SCUMM_C4_SLOT_STATUS", "SAME_SCUMM_C4_STATE_END"),
     ("owner_scratch", "SAME_SCUMM_OWNER_INDEX", "SAME_SCUMM_OWNER_INDEX_END"),
     ("controller_and_interaction", "SAME_SCUMM_CONTROLLER_RENDER_X",
@@ -52,6 +56,11 @@ def symbols() -> dict[str, int]:
     return result
 
 
+def parse_address(value: str) -> int:
+    bank, offset = value.split(":", 1)
+    return (int(bank, 16) << 16) | int(offset, 16)
+
+
 def audit() -> dict[str, Any]:
     values = symbols()
     intervals: list[dict[str, Any]] = []
@@ -77,14 +86,35 @@ def audit() -> dict[str, Any]:
         raise ValueError(f"resident resolver WRAM span changed: {resolver['bytes']} bytes")
     cache = next(item for item in intervals if item["owner"] == "program_cache")
     if cache["bytes"] != 0x1000:
-        raise ValueError(f"ProgramUnit cache WRAM span changed: {cache['bytes']} bytes")
+        raise ValueError(f"ProgramUnit base cache span changed: {cache['bytes']} bytes")
+    bwram = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json").read_text())
+    video = json.loads((ROOT / "runtime/snes/video_backends/mode3_surface_layout.json").read_text())
+    alias = bwram["future_staging"]["allocations"]["scumm_program_cache_page2"]
+    alias_address = parse_address(str(bwram["future_staging"]["address"])) + alias["offset"]
+    fixture_address = parse_address(str(video["fixture"]["address"]))
+    if (alias_address, alias["bytes"]) != (fixture_address, video["fixture"]["bytes"]):
+        raise ValueError("third ProgramUnit page must exactly alias Mode-3 fixture workspace")
+    if not alias.get("alias") or alias.get("exclusive_with") != (
+        "runtime/snes/video_backends/mode3_surface_layout.json:fixture"
+    ):
+        raise ValueError("third ProgramUnit page alias lacks explicit exclusive ownership")
+    runtime_source = (ROOT / "runtime/snes/services/video_mode3.pasm").read_text()
+    if "SAME_BUILD_SCUMM_MSU1_PROGRAMS && SAME_CARRIER_IS_SA1_BWRAM" not in runtime_source:
+        raise ValueError("Mode-3 reset does not preserve the aliased streamed code page")
     return {
         "format": "same-scumm-residency-wram-ownership-v1",
         "result": "pass",
         "interval_convention": "half-open",
         "features_coexist": ["resolver", "controller/input", "name cache",
                              "save validator", "C4", "C19", "room lifecycle",
-                             "bounded streamed-program execution context"],
+                             "three-page streamed-program cache", "Mode-3 live staging"],
+        "bwram_aliases": [{
+            "owner": "SCUMM checked ProgramUnit page cache",
+            "address": f"${alias_address:06X}",
+            "bytes": alias["bytes"],
+            "exclusive_with": "Mode-3 conformance fixture engine",
+            "active_mode3_staging_unaffected": True,
+        }],
         "regions": intervals,
         "overlaps": [],
     }

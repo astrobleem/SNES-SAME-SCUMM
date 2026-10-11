@@ -240,12 +240,21 @@ class ProgramIdOverflowTests(unittest.TestCase):
                 if item['identity'] == 'room.42/object.61/OBCD'
             )
             self.assertEqual(object_mapping['id'], max(before_ids.values()) + 1)
-            self.assertIn(
-                f'    cmp #$003D\n    beq ScummV5_ObjectProgram_Resolve_Far__object_{object_mapping["id"]:02X}',
+            object_label = (
+                f'ScummV5_ObjectProgram_Resolve_Far__object_{object_mapping["id"]:02X}'
+            )
+            # Large room tables use a short inverse branch around a long
+            # branch. Keep checking the ID-to-carrier mapping without
+            # requiring an out-of-range conditional branch form.
+            self.assertRegex(
                 after_data,
+                rf'    cmp #\$003D\n'
+                rf'    bne (ScummV5_ObjectProgram_Resolve_Far__object_match_\d+_\d+)\n'
+                rf'    brl {object_label}\n'
+                rf'\1:',
             )
             self.assertIn(
-                f'ScummV5_ObjectProgram_Resolve_Far__object_{object_mapping["id"]:02X}:',
+                f'{object_label}:',
                 after_data,
             )
 

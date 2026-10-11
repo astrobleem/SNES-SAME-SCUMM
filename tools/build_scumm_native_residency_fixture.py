@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import struct
 
-from same.engines.scumm_v5.room_compiler import compile_room_payload
+from same.engines.scumm_v5.room_compiler import compile_room_payload, decode_script
 from same.engines.scumm_v5.room_visual import encode_room_visual
 
 
@@ -44,7 +44,8 @@ def object_chunks(object_id: int = 70) -> tuple[bytes, bytes]:
 
 
 def raw_room(room: int, *, load_room_with_ego: bool = False,
-             draw_box: bool = False) -> bytes:
+             draw_box: bool = False,
+             room_resource_failure: bool = False) -> bytes:
     palette = bytes(value for index in range(256) for value in (index, index, index))
     smap = chunk(b"SMAP", struct.pack("<I", 12) + bytes((1,)) + bytes(range(16)))
     rmim = chunk(b"RMIM", chunk(b"RMIH", b"\0\0") + chunk(b"IM00", smap))
@@ -119,6 +120,64 @@ def raw_room(room: int, *, load_room_with_ego: bool = False,
     ))
 
 
+def large_program_body() -> bytes:
+    """Build a >21 KiB valid body with a yield and cross-page branches."""
+    code = bytearray((0x80,))  # retain the caller while this child yields
+
+    def set_var(number: int, value: int) -> None:
+        code.extend((0x1A, number & 0xFF, number >> 8,
+                     value & 0xFF, value >> 8))
+
+    def inc_var(number: int) -> None:
+        code.extend((0x46, number & 0xFF, number >> 8))
+
+    def inc_many(number: int, count: int) -> None:
+        for index in range(count):
+            inc_var(number)
+            if (index + 1) % 8 == 0 and index + 1 < count:
+                code.append(0x80)  # bounded yield keeps host/native ticks fair
+
+    def comparison_branch(opcode: int, number: int, value: int, target: int) -> None:
+        code.extend((opcode, number & 0xFF, number >> 8,
+                     value & 0xFF, value >> 8, 0, 0))
+        struct.pack_into("<h", code, len(code) - 2, target - len(code))
+
+    # The generic v5 comparison handler takes the relative branch when its
+    # comparison is false.  With direct rhs=1, lhs=0 makes the first branch
+    # skip the large region; the later set to 1 is the observable marker.
+    set_var(50, 0)
+    set_var(51, 0)
+    # Taken branch skips a distinct 6 KiB region and lands beyond three
+    # validated 2 KiB cache pages. The skipped counter remains zero.
+    branch_start = len(code)
+    code.extend((0x38, 50, 0, 1, 0, 0, 0))
+    forward_target = 0x1801
+    while (forward_target - len(code)) % 3:
+        forward_target += 1
+    while len(code) + 3 <= forward_target:
+        inc_var(51)
+    if len(code) != forward_target:
+        raise AssertionError("large-body forward branch target is misaligned")
+    struct.pack_into("<h", code, branch_start + 5,
+                     forward_target - (branch_start + 7))
+    set_var(50, 1)
+    while len(code) + 3 <= 15000:
+        inc_many(52, min(128, (15000 - len(code)) // 3))
+    if len(code) < 14000:
+        raise AssertionError("large-body loop entry did not cross page boundary")
+
+    set_var(54, 0)
+    loop_start = len(code)
+    inc_var(54)
+    inc_many(53, 2000)
+    comparison_branch(0x48, 54, 2, loop_start)
+    set_var(6, 2)
+    code.append(0xA0)
+    if not 21002 < len(code) <= 0xFFFF:
+        raise AssertionError(f"large ProgramUnit length is outside target: {len(code)}")
+    return bytes(code)
+
+
 def sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
@@ -142,9 +201,21 @@ def main() -> int:
         "--live-room-resources", action="store_true",
         help="attach distinct copyright-free indexed visuals to every room for MSU-backed loading",
     )
+    parser.add_argument(
+        "--large-program-body", action="store_true",
+        help="make GlobalProgram(2) a >21 KiB yielding branch/page conformance body",
+    )
+    parser.add_argument(
+        "--room-resource-failure", action="store_true",
+        help="generate a copyright-free boot-global room1->room2 CRC-failure route",
+    )
     args = parser.parse_args()
-    if sum((args.load_room_with_ego, args.find_inventory, args.draw_box)) > 1:
+    if sum((args.load_room_with_ego, args.find_inventory, args.draw_box,
+            args.room_resource_failure)) > 1:
         parser.error("choose only one focused conformance program")
+    if args.large_program_body and any((args.load_room_with_ego, args.find_inventory,
+                                        args.draw_box, args.room_resource_failure)):
+        parser.error("--large-program-body is for the default dynamic route fixture")
     out = args.output_dir.resolve()
     out.mkdir(parents=True, exist_ok=True)
     ids = {
@@ -157,8 +228,10 @@ def main() -> int:
     records = []
     for room in range(1, ROOM_COUNT + 1):
         payload = raw_room(
-            room, load_room_with_ego=args.load_room_with_ego,
+            room, load_room_with_ego=(args.load_room_with_ego
+                                      or args.room_resource_failure),
             draw_box=args.draw_box,
+            room_resource_failure=args.room_resource_failure,
         )
         compiled = compile_room_payload(
             payload, room_number=room,
@@ -205,16 +278,18 @@ def main() -> int:
     # resolution. A separate candidate-probe global selects two distant
     # members from the >178-global universe; no candidate universe is eagerly
     # bound merely because it exists.
-    if args.load_room_with_ego:
+    if args.load_room_with_ego or args.room_resource_failure:
         global_one_code = bytearray((
             0x1A, 1, 0, 1, 0,            # VAR_EGO = actor 1
             0x1A, 40, 0, 99, 0,          # decoys: first transition is direct
             0x1A, 41, 0, 99, 0,
             0x1A, 101, 0, 0x34, 0x12,    # ENCD must overwrite this after yield
             # First room entry has no optional walk, then the live caller
-            # issues a second transition from room 1 to room 2. Room 1 EXCD
-            # must run, the room-1 bundle must retire, and the same global
-            # activation must remain valid while room 2 ENCD yields.
+            # issues a second LoadRoomWithEgo transition from room 1 to room
+            # 2. Room 1 EXCD must run, the room-1 bundle must retire, and the
+            # same global activation must remain valid while room 2 ENCD
+            # yields. In the failure variant the incoming SC5LIVE bytes can
+            # be corrupted before publication without changing this route.
             0x24, 70, 0, 1, 0xFF, 0xFF, 0, 0,
             0x80,                         # let room-1 ENCD resume its postamble
             0x1A, 40, 0, 72, 0,
@@ -281,11 +356,13 @@ def main() -> int:
             0xA0,
         ))
     global_one = bytes(global_one_code)
-    global_two = bytes((
-        0x80,
-        0x1A, 6, 0, 2, 0,       # marker: yielded child resumed and completed
-        0xA0,
-    ))
+    global_two = (
+        large_program_body() if args.large_program_body else bytes((
+            0x80,
+            0x1A, 6, 0, 2, 0,       # marker: yielded child resumed and completed
+            0xA0,
+        ))
+    )
     global_three = bytes((
         0x1A, 8, 0, 3, 0,       # marker: second dynamic target executed
         0xA0,
@@ -355,11 +432,44 @@ def main() -> int:
         "conformance_case": (
             "load-room-with-ego" if args.load_room_with_ego else
             "find-inventory" if args.find_inventory else
-            "draw-box" if args.draw_box else "resident-binding"
+            "draw-box" if args.draw_box else
+            "room-resource-failure" if args.room_resource_failure else
+            "large-program-body" if args.large_program_body else "resident-binding"
         ),
+        "large_program_body": ({
+            "identity": "GlobalProgram(2)",
+            "length": len(global_two),
+            "branch_targets": [
+                int(item.branch_target) for item in decode_script(
+                    global_two, identity="GlobalProgram(2)", kind="global",
+                    number=2, room=0, resource_key="global.2",
+                    game_name="copyright-free-native-residency-fixture",
+                    source_member="fixture/global-2.bin", resource_offset=0,
+                    source_offset=0,
+                ).instructions if item.branch_target is not None
+            ],
+            "expected_markers": {
+                "6": 2, "50": 1, "51": 0, "53": 4000, "54": 2,
+            },
+        } if args.large_program_body else None),
         "records": records,
         "global_scripts": [
-            {"number": number, "output": f"global-{number}.bin", "length": len(program)}
+            {
+                "number": number,
+                "output": f"global-{number}.bin",
+                "length": len(program),
+                "instruction_spans": [
+                    [item.pc, item.instruction_width]
+                    for item in decode_script(
+                        program, identity=f"GlobalProgram({number})", kind="global",
+                        number=number, room=0, resource_key=f"global.{number}",
+                        game_name="copyright-free-native-residency-fixture",
+                        source_member=f"fixture/global-{number}.bin",
+                        resource_offset=0, source_offset=0,
+                    ).instructions
+                ],
+                "opaque_ranges": [],
+            }
             for number, program in globals_
         ],
     }

@@ -60,6 +60,12 @@ Same_Storage_Handle:
     jsr ScummV5_M23A_FindRoom
     bcs Same_Storage_Handle__m23a_failed
     sta.l SAME_SCUMM_M23A_PENDING_RECORD
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; The generated room-number/ProgramUnit directory is identity metadata
+    ; only in live mode. Authenticate the actual incoming room through its
+    ; checked SC5LIVE/SC5VIS package records; never require or consult a ROM
+    ; copy of the cooked room/resource payload.
+.else
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR || SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_FAR_ROOM_VALIDATOR
     jsl ScummV5_M23A_ValidateRecord_FarEntry
     .else
@@ -81,6 +87,7 @@ Same_Storage_Handle:
     .else
     jsr ScummV5_M23A_Trace
     .endif
+.endif
 .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
     ; The compiled ROM directory is still validated by the legacy service,
     ; then the matching compiler-owned SC5ROOM payload must pass SAMEPKG CRC

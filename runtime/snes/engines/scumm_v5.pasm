@@ -126,7 +126,9 @@ ScummV5_Engine_Boot__clear_m23a:
     lda #$FF
     sta.l SAME_SCUMM_M23A_ACTIVE_RECORD
     sta.l SAME_SCUMM_M23A_PENDING_RECORD
+    sta.l SAME_SCUMM_M23A_CHAIN_SLOT
     lda #$00
+    sta.l SAME_SCUMM_M23A_CHAIN_PHASE
     sta.l SAME_SCUMM_M23A_RETURN_VALID
     sta.l SAME_SCUMM_M23A_RETURN_SLOT
     sta.l SAME_SCUMM_M23A_RETURN_MODE
@@ -138,6 +140,25 @@ ScummV5_Engine_Boot__clear_m23a:
     ; neither an actor-presence byte nor a route flag may inherit cold WRAM.
     jsr ScummV5_C14_ResetState
     jsr ScummV5_C31_ResetState
+    .endif
+    .if SAME_BUILD_M24RB
+    ; The M24R-B frame-end return marker is control-flow state: C25 may RTL
+    ; through it only when a real far-call wrapper owns that return frame.
+    ; This block is outside the compact VM clear, so clear the bounded M24RB
+    ; state before any script can issue a tail-entered soundKludge flush.
+    rep #$30
+    .a16
+    .i16
+    lda #$0000
+    ldx #$0000
+ScummV5_Engine_Boot__clear_m24rb:
+    .a16
+    .i16
+    sta.l SAME_M24RB_STATE,x
+    inx
+    inx
+    cpx #(SAME_M24RB_STATE_END - SAME_M24RB_STATE)
+    bcc ScummV5_Engine_Boot__clear_m24rb
     .endif
     rep #$30
     .a16
@@ -1103,8 +1124,26 @@ ScummV5_Engine_Frame__controller_root_done:
     .endif
     .endif
     .endif
+    ; A chained lifecycle target is a normal C4 activation. Poll its owner at
+    ; the frame boundary, but let the ordinary scheduler run while it remains
+    ; live; slot zero was retired by the handoff and cannot replay ENCD/EXCD.
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    jsl ScummV5_M23A_PollLifecycleChain_FarEntry
+    bcs ScummV5_Engine_Frame__m23a_error
+    .else
+    lda.l SAME_SCUMM_M23A_CHAIN_PHASE
+    beq ScummV5_Engine_Frame__m23a_chain_poll_done
+    jsr ScummV5_M23A_PollLifecycleChain
+    bcs ScummV5_Engine_Frame__m23a_error
+    .endif
+ScummV5_Engine_Frame__m23a_chain_poll_done:
+    .a8
+    .endif
     lda.l SAME_SCUMM_M23A_PHASE
+    .if !SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY || SAME_BUILD_SCUMM_M25A_VALIDATOR
     sta.l SAME_SCUMM_SCENARIO_PHASE_BRANCH
+    .endif
     cmp #$04
     beq ScummV5_Engine_Frame__m23a_wait
     cmp #$05
@@ -1128,7 +1167,7 @@ ScummV5_Engine_Frame__controller_root_done:
     beq ScummV5_Engine_Frame__m23a_wait
     lda.l SAME_SCUMM_M23A_HOLD
     bne ScummV5_Engine_Frame__m23a_wait
-    jmp ScummV5_Engine_Frame__m23a_continue
+    bra ScummV5_Engine_Frame__m23a_continue
 .endif
     bra ScummV5_Engine_Frame__m23a_hold_check
 ScummV5_Engine_Frame__m23a_ready:
@@ -1160,6 +1199,14 @@ ScummV5_Engine_Frame__m23a_error:
     rts
 ScummV5_Engine_Frame__m23a_failed:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SAME_SCUMM_STREAM_ERROR_SITE
+    bne ScummV5_Engine_Frame__m23a_failed__site_recorded
+    lda #$01
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+ScummV5_Engine_Frame__m23a_failed__site_recorded:
+    .a8
+    .endif
     .if SAME_BUILD_SCUMM_M23B
     lda #$E4
     sta.l SAME_SCUMM_M23B_ERROR_SITE
@@ -1850,6 +1897,8 @@ ScummV5_Engine_RunSelected:
     phy
     sep #$20
     .a8
+ScummV5_Engine_RunSelected__msu_selector_ready:
+    .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
     sta.l SAME_SCUMM_MSU_LAST_SELECTOR
     rep #$20
@@ -1859,7 +1908,7 @@ ScummV5_Engine_RunSelected:
     sta.l SAME_SCUMM_MSU_RESOLVE_CALLS
     sep #$20
     .a8
-    jsl ScummV5_MsuProgram_EnsureSelected_Far
+    jsl ScummV5_MsuProgram_EnsureSelectedForActivation_Far
     bcs ScummV5_Engine_RunSelected__msu_ready
     rep #$20
     .a16
@@ -1941,6 +1990,7 @@ ScummV5_Engine_RunSelected__msu_ready:
     sta.l SAME_SCUMM_STATUS
     bra ScummV5_Engine_RunSelected__msu_resource_return
 ScummV5_Engine_RunSelected__msu_depth_ok:
+    .a8
     tax
     lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
     sta.l SAME_SCUMM_MSU_EXEC_PREV_SLOT,x
@@ -1954,6 +2004,14 @@ ScummV5_Engine_RunSelected__msu_depth_ok:
     lda.l SAME_SCUMM_MSU_CACHE_TEMP
     sta.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
     beq ScummV5_Engine_RunSelected__msu_select0
+    cmp #$01
+    beq ScummV5_Engine_RunSelected__msu_select1
+    .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+    cmp #$02
+    beq ScummV5_Engine_RunSelected__msu_select2
+    .endif
+    jmp ScummV5_Engine_RunSelected__msu_regular_error
+ScummV5_Engine_RunSelected__msu_select1:
     lda.l SAME_SCUMM_MSU_CACHE_PINS1
     inc
     sta.l SAME_SCUMM_MSU_CACHE_PINS1
@@ -1964,6 +2022,19 @@ ScummV5_Engine_RunSelected__msu_depth_ok:
     lda.l SAME_SCUMM_MSU_CACHE_GENERATION1
     sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
     bra ScummV5_Engine_RunSelected__msu_enter
+    .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+ScummV5_Engine_RunSelected__msu_select2:
+    lda.l SAME_SCUMM_MSU_CACHE_PINS2
+    inc
+    sta.l SAME_SCUMM_MSU_CACHE_PINS2
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_ID2
+    sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_ID
+    lda.l SAME_SCUMM_MSU_CACHE_GENERATION2
+    sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
+    bra ScummV5_Engine_RunSelected__msu_enter
+    .endif
 ScummV5_Engine_RunSelected__msu_select0:
     lda.l SAME_SCUMM_MSU_CACHE_PINS0
     inc
@@ -2091,6 +2162,19 @@ ScummV5_Engine_Frame__next:
     clc
     rts
 ScummV5_Engine_Frame__outer_next:
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; Segment boundaries are compiler-selected instruction boundaries. Yield
+    ; before fetching an opcode at the next page; Engine_RunSelected resumes
+    ; the same canonical activation and obtains its CRC-checked page.
+    jsl ScummV5_MsuProgram_ActivePageContainsPC_Far
+    bcs ScummV5_Engine_Frame__page_ready
+    sep #$20
+    .a8
+    lda #SCUMM_VM_WAIT_RESOURCE
+    sta.l SAME_SCUMM_STATUS
+    jmp ScummV5_Engine_Frame__complete_success
+ScummV5_Engine_Frame__page_ready:
+    .endif
     rep #$30
     .a16
     .i16
@@ -2947,6 +3031,48 @@ ScummV5_Engine_Frame__budget_error:
     jsr ScummV5_SetError
 
 ScummV5_Engine_Frame__error:
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; Experimental streamed-source failures need the VM owner and logical PC
+    ; captured before Leave_Far or room-lifecycle unwinding can replace them.
+    ; These diagnostic bytes are not consulted by execution and share the
+    ; scenario-error witness area only in this non-release build personality.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_STREAM_ERROR_CAPTURE_VALID
+    bne ScummV5_Engine_Frame__error__diagnostic_done
+    lda #$01
+    sta.l SAME_SCUMM_STREAM_ERROR_CAPTURE_VALID
+    php
+    rep #$20
+    .a16
+    pha
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    sta.l SAME_SCUMM_SCENARIO_ERROR_CODE
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    sta.l SAME_SCUMM_SCENARIO_ERROR_PROGRAM
+    lda.l SAME_SCUMM_LAST_OPCODE
+    sta.l SAME_SCUMM_SCENARIO_ERROR_OPCODE
+    lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    sta.l SAME_SCUMM_SCENARIO_ERROR_ROOM
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_SCENARIO_ERROR_SLOT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_SCENARIO_ERROR_PC
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_SCENARIO_ERROR_COUNT
+    inc
+    sta.l SAME_SCUMM_SCENARIO_ERROR_COUNT
+    rep #$20
+    .a16
+    pla
+    plp
+ScummV5_Engine_Frame__error__diagnostic_done:
+.endif
     .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
     jsl ScummV5_MsuProgram_Leave_Far
     .endif
@@ -5675,6 +5801,10 @@ ScummV5_Op_ResourceRoutines__operand_error:
     jmp ScummV5_Op__error
 ScummV5_Op_ResourceRoutines__invalid:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$04
+    jsl ScummV5_Stream_RecordErrorSite_FarEntry
+    .endif
     .if SAME_BUILD_SCUMM_M23B
     lda #$E5
     sta.l SAME_SCUMM_M23B_ERROR_SITE
@@ -13378,7 +13508,24 @@ ScummV5_Op_SoundKludge__nonempty:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
     ; This opcode is already a tail path into the engine-frame dispatcher.
     ; Enter the far flush body directly; the returning bank-0 wrapper is for
-    ; callers that really do return (notably M24RB frame-end service).
+    ; callers that really do return (notably M24RB frame-end service). Clear
+    ; its return marker here: this JML path owns no JSL return frame, and a
+    ; stale frame-end marker must never make the far body RTL through a
+    ; scheduler/script caller's stack.
+    .if SAME_BUILD_M24RB
+    lda #$00
+    sta.l SAME_M24RB_C25_RETURN_FRAME
+    .if SAME_BUILD_CAPTURE_FIRST_BRK
+    lda #$01
+    sta.l SAME_M24RB_C25_DEBUG_STAGE
+    php
+    rep #$30
+    tsc
+    sta.l SAME_M24RB_C25_DEBUG_ENTRY_SP
+    plp
+    .a8
+    .endif
+    .endif
     jml ScummV5_C25_Flush_Far
     .else
     jmp ScummV5_C25_Flush
@@ -13528,13 +13675,62 @@ ScummV5_Op_SoundKludge__m24rb_continue:
 
 ScummV5_C25_Flush:
 .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    .if SAME_BUILD_M24RB
+    sep #$20
+    .a8
+    ; FRAME_END_ACTIVE describes work, not call-stack shape. Only this
+    ; wrapper-owned JSL frame is allowed to authorize the far body's RTL.
+    lda #$00
+    sta.l SAME_M24RB_C25_RETURN_FRAME
+    lda.l SAME_M24RB_FRAME_END_ACTIVE
+    cmp #$01
+    bne ScummV5_C25_Flush__call_far
+    lda #$01
+    sta.l SAME_M24RB_C25_RETURN_FRAME
+ScummV5_C25_Flush__call_far:
+    .a8
+    .endif
+    .if SAME_BUILD_M24RB && SAME_BUILD_CAPTURE_FIRST_BRK
+    lda #$02
+    sta.l SAME_M24RB_C25_DEBUG_STAGE
+    php
+    rep #$30
+    tsc
+    sta.l SAME_M24RB_C25_DEBUG_ENTRY_SP
+    plp
+    .a8
+    .endif
     jsl ScummV5_C25_Flush_Far
+    .if SAME_BUILD_M24RB && SAME_BUILD_CAPTURE_FIRST_BRK
+    lda #$06
+    sta.l SAME_M24RB_C25_DEBUG_STAGE
+    php
+    rep #$30
+    tsc
+    sta.l SAME_M24RB_C25_DEBUG_RETURN_SP
+    plp
+    .a8
+    .endif
+    .if SAME_BUILD_M24RB
+    lda #$00
+    sta.l SAME_M24RB_C25_RETURN_FRAME
+    .endif
     rts
 ScummV5_C25_Flush_Bank0_Resume:
     .bank 83
     .org $8000
 ScummV5_C25_Flush_Far:
 .endif
+    sep #$20
+    .a8
+    lda #$03
+    sta.l SAME_M24RB_C25_DEBUG_STAGE
+    php
+    rep #$30
+    tsc
+    sta.l SAME_M24RB_C25_DEBUG_ENTRY_SP
+    plp
+    .a8
     sep #$20
     .a8
     lda.l SAME_SCUMM_C25_QUEUE_COUNT
@@ -14596,11 +14792,44 @@ ScummV5_C25_Flush__complete:
     jml ScummV5_C25_ServiceError
 ScummV5_C25_Flush__complete_emitted:
     .a8
+    .if SAME_BUILD_CAPTURE_FIRST_BRK
+    lda #$04
+    sta.l SAME_M24RB_C25_DEBUG_STAGE
+    .endif
     .if SAME_BUILD_M24RB
     lda.l SAME_M24RB_FRAME_END_ACTIVE
     beq ScummV5_C25_Flush__not_frame_end_return
+    cmp #$01
+    beq ScummV5_C25_Flush__frame_end_return
+    ; A corrupt non-boolean marker must fail explicitly rather than taking a
+    ; return path through an unrelated caller's stack frame.
+    jml ScummV5_C25_ServiceError
+ScummV5_C25_Flush__frame_end_tail:
+    .a8
+    ; A tail-entered flush owns no wrapper return frame. Retire the stale work
+    ; marker and continue through the normal engine-frame tail path.
     lda #$00
     sta.l SAME_M24RB_FRAME_END_ACTIVE
+    sta.l SAME_M24RB_C25_RETURN_FRAME
+    .if SAME_BUILD_CAPTURE_FIRST_BRK
+    lda #$05
+    sta.l SAME_M24RB_C25_DEBUG_STAGE
+    php
+    rep #$30
+    tsc
+    sta.l SAME_M24RB_C25_DEBUG_RETURN_SP
+    plp
+    .a8
+    .endif
+    jmp ScummV5_C25_Flush__not_frame_end_return
+ScummV5_C25_Flush__frame_end_return:
+    .a8
+    lda.l SAME_M24RB_C25_RETURN_FRAME
+    cmp #$01
+    bne ScummV5_C25_Flush__frame_end_tail
+    lda #$00
+    sta.l SAME_M24RB_FRAME_END_ACTIVE
+    sta.l SAME_M24RB_C25_RETURN_FRAME
     .if SAME_BUILD_M24RB && !SAME_BUILD_SCUMM_M20 && !SAME_BUILD_SCUMM_M21 && !SAME_BUILD_SCUMM_M22
     rtl
     .else
@@ -14671,7 +14900,27 @@ ScummV5_C25_Flush__complete_continue:
 .endif
 .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR || SAME_BUILD_SCUMM_ROOM_SERVICE
 ScummV5_C25_FarCall_EmitAudio:
+    .if SAME_BUILD_M24RB && SAME_BUILD_CAPTURE_FIRST_BRK
+    lda #$07
+    sta.l SAME_M24RB_C25_DEBUG_STAGE
+    php
+    rep #$30
+    tsc
+    sta.l SAME_M24RB_C25_DEBUG_ENTRY_SP
+    plp
+    .a8
+    .endif
     jsr ScummV5_C25_EmitAudio
+    .if SAME_BUILD_M24RB && SAME_BUILD_CAPTURE_FIRST_BRK
+    lda #$08
+    sta.l SAME_M24RB_C25_DEBUG_STAGE
+    php
+    rep #$30
+    tsc
+    sta.l SAME_M24RB_C25_DEBUG_RETURN_SP
+    plp
+    .a8
+    .endif
     rtl
 .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 ScummV5_C25_FarCall_SetSfxActive:
@@ -16921,6 +17170,12 @@ ScummV5_Op_StartScript__alloc_trace_done:
     .a8
     txa
     sta.l SAME_SCUMM_C4_LAST_ALLOCATED
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE && SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    ; A slot-zero chain target may start nested scripts before returning to
+    ; ENCD/EXCD. Capture the replacement at allocation time; LAST_ALLOCATED
+    ; is mutable and therefore cannot identify the lifecycle continuation.
+    jsl ScummV5_M23A_CaptureLifecycleChainTarget_FarEntry
+    .endif
     lda #SCUMM_VM_RUNNING
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda.l SAME_SCUMM_CONDITION
@@ -17174,6 +17429,15 @@ ScummV5_Op_StartScript__run_without_parent:
     bcc ScummV5_Op_StartScript__chain_complete
     jmp ScummV5_Op__error
 ScummV5_Op_StartScript__chain_complete:
+    .a8
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    jsl ScummV5_M23A_HandoffLifecycleChain_FarEntry
+    .else
+    jsr ScummV5_M23A_HandoffLifecycleChain
+    .endif
+    .a8
+    .endif
     jmp ScummV5_Engine_Frame__complete_success
 ScummV5_Op_StartScript__run_nested:
     jsr ScummV5_C4_RunNestedChild
@@ -17234,6 +17498,26 @@ ScummV5_Op_ChainScript:
     ; continuation convention; it is not an opcode-availability flag.
 ScummV5_Op_ChainScript__c6:
     .a8
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    ; A chain from slot zero replaces the synchronous EXCD/ENCD body. Save
+    ; which lifecycle owns the continuation; ordinary child chains do not
+    ; modify this marker.
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    jsl ScummV5_M23A_RecordLifecycleChain_FarEntry
+    .else
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    bne ScummV5_Op_ChainScript__lifecycle_context_done
+    lda.l SAME_SCUMM_M23A_PHASE
+    cmp #$01
+    beq ScummV5_Op_ChainScript__record_lifecycle_phase
+    cmp #$02
+    bne ScummV5_Op_ChainScript__lifecycle_context_done
+ScummV5_Op_ChainScript__record_lifecycle_phase:
+    sta.l SAME_SCUMM_M23A_CHAIN_PHASE
+ScummV5_Op_ChainScript__lifecycle_context_done:
+    .a8
+    .endif
+    .endif
     lda.l SAME_SCUMM_C4_CURRENT_SLOT
     tax
     lda.l SAME_SCUMM_C4_SLOT_FREEZE_RESISTANT,x
@@ -18894,6 +19178,12 @@ ScummV5_GetProgramSize:
     ; A source-backed profile has no implicit C1/C2 fallback. A missing
     ; selector is a resource error, never a conformance program alias.
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SAME_SCUMM_STREAM_ERROR_SITE
+    bne ScummV5_GetProgramSize__resource_site_recorded
+    lda #$02
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+ScummV5_GetProgramSize__resource_site_recorded:
+    .a8
     lda #$97
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
     .endif
@@ -19590,6 +19880,12 @@ ScummV5_FetchSelectedByteAtX:
     jsl ScummV5_MsuProgram_FetchByte_Far
     bcc ScummV5_FetchSelectedByteAtX__m23a
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SAME_SCUMM_STREAM_ERROR_SITE
+    bne ScummV5_FetchSelectedByteAtX__resource_site_recorded
+    lda #$03
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+ScummV5_FetchSelectedByteAtX__resource_site_recorded:
+    .a8
     lda #$98
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
     .endif
@@ -20152,6 +20448,16 @@ ScummV5_SetError:
     ; Capture the error before its path can restore the active program/slot.
     ; The authentic-bootstrap profile enables this observation only; none of
     ; these bytes feed back into interpreter state or error handling.
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SAME_SCUMM_STREAM_ERROR_CAPTURE_VALID
+    beq ScummV5_SetError__stream_diagnostic_capture
+    brl ScummV5_SetError__stream_diagnostic_done
+ScummV5_SetError__stream_diagnostic_capture:
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_STREAM_ERROR_CAPTURE_VALID
+    lda.l $7E5457
+    .endif
     sta.l SAME_SCUMM_SCENARIO_ERROR_CODE
     lda.l $7E5500
     sta.l SAME_SCUMM_SCENARIO_ERROR_COUNT
@@ -20173,11 +20479,11 @@ ScummV5_SetError:
     sta.l SAME_SCUMM_SCENARIO_ERROR_C14_ACTOR
     lda.l SAME_SCUMM_C14_SUBOP
     sta.l SAME_SCUMM_SCENARIO_ERROR_C14_SUBOP
-    ; The error code is still on the stack from the entry PHA; the JSR
-    ; return address therefore begins at S+2.
-    lda 2,s
+    ; The entry PHA was already balanced above. The active call return begins
+    ; at S+1 now (S+2 would skip its low byte and misidentify the caller).
+    lda 1,s
     sta.l SAME_SCUMM_SCENARIO_ERROR_RET
-    lda 3,s
+    lda 2,s
     sta.l SAME_SCUMM_SCENARIO_ERROR_RET+1
     lda 1,s
     sta.l SAME_SCUMM_SCENARIO_ERROR_STACK
@@ -20203,6 +20509,9 @@ ScummV5_SetError:
     sta.l SAME_SCUMM_SCENARIO_ERROR_OPERAND
     lda.l SAME_SCUMM_RESULT_OFFSET
     sta.l SAME_SCUMM_SCENARIO_ERROR_RESULT
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+ScummV5_SetError__stream_diagnostic_done:
+    .endif
     .endif
     ; Restore the error code from the common scratch.  The scenario-specific
     ; capture is diagnostic only and must not be the source of runtime error
@@ -20230,6 +20539,26 @@ ScummV5_SetError:
     lda #SCUMM_VM_ERROR
     sta.l SAME_SCUMM_STATUS
     rts
+
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+; A is a generic error-site tag. Preserve processor status and retain only the
+; first source so later cleanup/unwind errors cannot obscure the root failure.
+ScummV5_Stream_RecordErrorSite_FarEntry:
+    php
+    sep #$20
+    .a8
+    pha
+    lda.l SAME_SCUMM_STREAM_ERROR_SITE
+    bne ScummV5_Stream_RecordErrorSite_FarEntry__done
+    pla
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    plp
+    rtl
+ScummV5_Stream_RecordErrorSite_FarEntry__done:
+    pla
+    plp
+    rtl
+.endif
 
 ; The generated include retains fixture identities/sizes for assembly-time
 ; references, while its program bytes are gated by the explicit build flag.

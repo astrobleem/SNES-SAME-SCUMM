@@ -2598,6 +2598,56 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertIn("SAME_SCUMM_C25_QUEUE_CAPACITY_BYTES      = $0200", memory)
         self.assertIn("SAME_SCUMM_C26_SAVED                     = $7FD900", memory)
 
+    def test_m24rb_frame_end_marker_is_initialized_and_cannot_misreturn(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        boot = source.split("ScummV5_Engine_Boot:", 1)[1].split(
+            "ScummV5_Engine_Frame:", 1
+        )[0]
+        self.assertIn(".if SAME_BUILD_M24RB\n    ; The M24R-B frame-end return marker", boot)
+        clear = boot.split("ScummV5_Engine_Boot__clear_m24rb:", 1)[1].split(
+            ".endif", 1
+        )[0]
+        self.assertIn("sta.l SAME_M24RB_STATE,x", clear)
+        self.assertIn("SAME_M24RB_STATE_END - SAME_M24RB_STATE", clear)
+        memory = (ROOT / "runtime/snes/kernel/memory.pasm").read_text()
+        self.assertIn("SAME_M24RB_C25_RETURN_FRAME                = $7FFA3A", memory)
+
+        flush = source.split("ScummV5_C25_Flush__complete_emitted:", 1)[1].split(
+            "ScummV5_C25_Flush__not_frame_end_return:", 1
+        )[0]
+        self.assertIn("cmp #$01", flush)
+        self.assertIn("jml ScummV5_C25_ServiceError", flush)
+        self.assertIn("ScummV5_C25_Flush__frame_end_return:", flush)
+        frame_return = flush.split("ScummV5_C25_Flush__frame_end_return:", 1)[1]
+        self.assertIn("SAME_M24RB_C25_RETURN_FRAME", frame_return)
+        self.assertIn("ScummV5_C25_Flush__frame_end_tail", flush)
+        self.assertIn("SAME_BUILD_M24RB && !SAME_BUILD_SCUMM_M20", frame_return)
+        self.assertRegex(frame_return, r"(?m)^\s*rtl\s*$")
+        self.assertRegex(frame_return, r"(?m)^\s*rts\s*$")
+
+        c25_wrapper = source.split("ScummV5_C25_Flush:", 1)[1].split(
+            "ScummV5_C25_Flush_Bank0_Resume:", 1
+        )[0]
+        self.assertIn("sta.l SAME_M24RB_C25_RETURN_FRAME", c25_wrapper)
+        self.assertIn("jsl ScummV5_C25_Flush_Far", c25_wrapper)
+        self.assertRegex(c25_wrapper, r"(?m)^\s*rts\s*$")
+
+        far_wrapper = source.split("ScummV5_M24RB_FarCall_C25Flush:", 1)[1].split(
+            "ScummV5_M24RB_FarCall_ClearSfx:", 1
+        )[0]
+        self.assertIn("jsr ScummV5_C25_Flush\n    rtl", far_wrapper)
+        self.assertIn("jsr ScummV5_C25_Flush", source.split(
+            "ScummV5_M24RB_Driver__frame_end_pending:", 1
+        )[1].split("ScummV5_M24RB_Driver__wait_fade:", 1)[0])
+
+        tail_flush = source.split("ScummV5_Op_SoundKludge__nonempty:", 1)[1].split(
+            "ScummV5_Op_SoundKludge__queue:", 1
+        )[0]
+        self.assertLess(
+            tail_flush.index("sta.l SAME_M24RB_C25_RETURN_FRAME"),
+            tail_flush.index("jml ScummV5_C25_Flush_Far"),
+        )
+
     def test_c25_queue_uses_canonical_256_word_budget_not_sixteen_records(self) -> None:
         def command(*values: int) -> bytes:
             return bytes((
@@ -4037,6 +4087,36 @@ class ScummV5EngineTests(unittest.TestCase):
         retire = runtime.split("ScummV5_Op_StartScript__chain_retired:", 1)[0]
         retire = retire.rsplit("    lda.l SAME_SCUMM_C4_CURRENT_SLOT", 1)[-1]
         self.assertIn("beq ScummV5_Op_StartScript__chain_retired", retire)
+
+    def test_native_room_lifecycle_chain_tracks_allocated_root_not_last_child(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        allocated = runtime.split("ScummV5_Op_StartScript__found:", 1)[1].split(
+            "ScummV5_Op_StartScript__m23a_program:", 1
+        )[0]
+        self.assertIn("ScummV5_M23A_CaptureLifecycleChainTarget_FarEntry", allocated)
+        self.assertLess(
+            allocated.index("ScummV5_M23A_CaptureLifecycleChainTarget_FarEntry"),
+            allocated.index("lda #SCUMM_VM_RUNNING"),
+        )
+
+        far = (ROOT / "runtime/snes/engines/scumm_v5_m24rb_far.pasm").read_text()
+        capture = far.split("ScummV5_M23A_CaptureLifecycleChainTarget:", 1)[1].split(
+            "ScummV5_M23A_HandoffLifecycleChain:", 1
+        )[0]
+        self.assertIn("SAME_SCUMM_C4_SCAN_SLOT", capture)
+        self.assertNotIn("SAME_SCUMM_C4_LAST_ALLOCATED", capture)
+        handoff = far.split("ScummV5_M23A_HandoffLifecycleChain:", 1)[1].split(
+            "ScummV5_M23A_RecordLifecycleChain:", 1
+        )[0]
+        self.assertIn("SAME_SCUMM_M23A_CHAIN_SLOT", handoff)
+        self.assertNotIn("SAME_SCUMM_C4_LAST_ALLOCATED", handoff)
+        retire = handoff.split("ScummV5_M24RB_Far_EndRoomScript", 1)[1]
+        self.assertRegex(
+            retire,
+            r"lda #SCUMM_VM_STOPPED\s+sta\.l SAME_SCUMM_STATUS",
+            "the outer scheduler must save the retired lifecycle as stopped, "
+            "not overwrite it with a replacement child's wait status",
+        )
 
     def test_native_chain_retirement_zero_extends_byte_slot_index(self) -> None:
         runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()

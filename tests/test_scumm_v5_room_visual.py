@@ -14,6 +14,7 @@ from same.engines.scumm_v5.room_visual import (
     ROW,
     decode_room_visual,
     encode_room_visual,
+    project_room_visual,
 )
 from same.errors import ResourceError
 from same.video import IndexedSurface, Rect
@@ -51,6 +52,39 @@ class ScummV5RoomVisualTests(unittest.TestCase):
         self.assertEqual(visual.record_sha256, hashlib.sha256(encoded).hexdigest())
         self.assertEqual(visual.visible_row(4), bytes((x * 11 + 4 * 29) & 0xFF for x in range(13)))
         self.assertEqual(visual.pixels[13:17], b"\xCC" * 4)
+
+    def test_target_projection_preserves_indexed_image_with_aspect_fit(self) -> None:
+        width, height, pitch = 320, 200, 323
+        palette = bytes((index * factor) & 0xFF
+                        for index in range(256) for factor in (3, 5, 7))
+        pixels = bytearray([0xEE] * (pitch * height))
+        for y in range(height):
+            pixels[y * pitch:y * pitch + width] = bytes(
+                (x ^ y) & 0xFF for x in range(width)
+            )
+        source = encode_room_visual(
+            room=4, width=width, height=height, pitch=pitch,
+            palette=palette, pixels=bytes(pixels), archive_sha256=identity("archive"),
+            index_sha256=identity("index"), data_sha256=identity("data"),
+            room_sha256=identity("room"),
+        )
+        projected, projection = project_room_visual(
+            source, target_width=256, target_height=224,
+        )
+        target = decode_room_visual(projected, expected_room=4)
+        self.assertEqual((target.width, target.height, target.pitch), (256, 224, 256))
+        self.assertEqual(len(target.pixels), 256 * 224)
+        self.assertEqual(target.palette, palette)
+        self.assertEqual(projection["source_pixels_sha256"], hashlib.sha256(pixels).hexdigest())
+        self.assertEqual(
+            {key: projection[key] for key in ("content_width", "content_height", "offset_x", "offset_y")},
+            {"content_width": 256, "content_height": 160, "offset_x": 0, "offset_y": 32},
+        )
+        self.assertEqual(target.visible_row(31), bytes(256))
+        self.assertEqual(target.visible_row(32)[0], 0 ^ 0)
+        self.assertEqual(target.visible_row(32)[-1], (319 ^ 0) & 0xFF)
+        self.assertEqual(target.visible_row(191)[-1], (319 ^ 199) & 0xFF)
+        self.assertEqual(target.visible_row(192), bytes(256))
 
     def test_record_is_an_ordinary_indexed_source_not_a_precomposed_screen(self) -> None:
         visual = decode_room_visual(fixture(), expected_room=7)

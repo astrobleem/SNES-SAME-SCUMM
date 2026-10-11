@@ -27,15 +27,41 @@ def _read_u16(session: Any, address: int) -> int:
     return int.from_bytes(session.read_memory("snesMemory", address, 2), "little")
 
 
+def _signed16(value: int) -> int:
+    value &= 0xFFFF
+    return value - 0x10000 if value & 0x8000 else value
+
+
 def room4_controller_snapshot(session: Any) -> dict[str, int]:
     """Read the ordinary controller/scene state used by the saved prefix."""
     c19_depth = session.read_u8(0x7FD348)
     c19_override_pc = _read_u16(session, 0x7FD354 + c19_depth * 2)
     c19_override_slot = session.read_u8(0x7FD35E + c19_depth)
+    cursor_x = _read_u16(session, 0x7E5FE1)
+    cursor_y = _read_u16(session, 0x7E5FE3)
+    camera_y = _read_u16(session, 0x7E7FAA)
+    camera_x_start = _read_u16(session, 0x7E7FB8)
     return {
         "room": session.read_u8(0x7FF2BF),
         "phase": session.read_u8(0x7FF2C2),
         "error": session.read_u8(0x7E2303),
+        "error_diagnostic": {
+            "code": session.read_u8(0x7E5F21),
+            "program": session.read_u8(0x7E5F22),
+            "pc": _read_u16(session, 0x7E5F23),
+            "opcode": session.read_u8(0x7E5F25),
+            "room": session.read_u8(0x7E5F26),
+            "slot": session.read_u8(0x7E5F8D),
+            "resource_site": session.read_u8(0x7E5F17),
+            "c14_site": session.read_u8(0x7E5F04),
+            "c14_pc": _read_u16(session, 0x7E5F05),
+            "c14_opcode": session.read_u8(0x7E5F07),
+        },
+        "vm_pc": _read_u16(session, 0x7E2364),
+        "program_select": session.read_u8(0x7E2362),
+        "current_slot": session.read_u8(0x7E2A88),
+        "c13": [session.read_u8(address) for address in
+                (0x7F36B4, 0x7F36B5, 0x7F36B6, 0x7F36B7, 0x7F36B8)],
         "lifecycle": session.read_u8(0x7E2221),
         "ready": session.read_u8(0x7E5E8A),
         "controller_diag": session.read_u8(0x7E5FEC),
@@ -45,8 +71,15 @@ def room4_controller_snapshot(session: Any) -> dict[str, int]:
         "talk_delay": _read_u16(session, 0x7E7A24),
         "talk_generation": _read_u16(session, 0x7E7A26),
         "mode": session.read_u8(0x7E5FE0),
-        "x": _read_u16(session, 0x7E5FE1),
-        "y": _read_u16(session, 0x7E5FE3),
+        "x": cursor_x,
+        "y": cursor_y,
+        # Controller storage is screen-relative; the engine uses these exact
+        # transforms before room-object hit testing.  Keep both coordinate
+        # spaces explicit so a camera pan does not look like semantic drift.
+        "cursor_world_x": _signed16(cursor_x + camera_x_start),
+        "cursor_world_y": _signed16(cursor_y + camera_y - 0x0064),
+        "camera_x_start": camera_x_start,
+        "camera_current_y": camera_y,
         "verb": session.read_u8(0x7E5FE5),
         "object": _read_u16(session, 0x7E5FE6),
         "hit_object": _read_u16(session, 0x7E5F94),
@@ -77,7 +110,31 @@ def room4_controller_snapshot(session: Any) -> dict[str, int]:
         "same_frame_counter": _read_u16(session, 0x7E2210),
         "same_engine_frame_ops": _read_u16(session, 0x7E2224),
         "same_engine_frame_busy": session.read_u8(0x7E2231),
+        "actor_adjust": {
+            "request": [_read_u16(session, 0x7FFEC6), _read_u16(session, 0x7FFEC8)],
+            "point": [_read_u16(session, 0x7FFED4), _read_u16(session, 0x7FFED6)],
+            "box": session.read_u8(0x7FFECE),
+            "scan_box": session.read_u8(0x7FFECF),
+            "top": _read_u16(session, 0x7FFEF0),
+            "bottom": _read_u16(session, 0x7FFEF2),
+            "current_y": _read_u16(session, 0x7FFEF4),
+            "left_edges": [_read_u16(session, 0x7FFEE8), _read_u16(session, 0x7FFEEA)],
+            "right_edges": [_read_u16(session, 0x7FFEEC), _read_u16(session, 0x7FFEEE)],
+        },
         "hvbjoy": session.read_u8(0x004212),
+    }
+
+
+def room4_c19_record_snapshot(session: Any, stack_index: int) -> dict[str, int]:
+    """Read one C19 record by stable stack index, not the moving top pointer."""
+    if not 0 <= stack_index < 5:
+        raise ValueError(f"C19 stack index is outside the native table: {stack_index}")
+    slot = session.read_u8(0x7FD35E + stack_index)
+    return {
+        "stack_index": stack_index,
+        "override_pc": _read_u16(session, 0x7FD354 + stack_index * 2),
+        "override_slot": slot,
+        "owner_slot_depth": session.read_u8(0x7FD363 + slot),
     }
 
 
@@ -280,6 +337,8 @@ def controller_synchronous_input_edge(
     wait_for_release_sample: bool = True,
     poll_boundary_address: int | None = None,
     poll_boundary_timeout_frames: int = 120,
+    pre_press_poll_boundary_address: int | None = None,
+    pre_press_predicate: Any = None,
 ) -> dict[str, Any]:
     """Send one edge, observing each exact frame until SCUMM samples it.
 
@@ -312,9 +371,12 @@ def controller_synchronous_input_edge(
         session.pause()
         end = int(session.get_state()["frameCount"])
         if result.get("reason") != "hookFired":
+            current = room4_controller_snapshot(session)
+            cpu = session.get_cpu_state() if hasattr(session, "get_cpu_state") else None
             raise RuntimeError(
                 "SAME input-poll boundary was not reached within its frame bound: "
-                f"result={result!r}, start={start}, end={end}"
+                f"result={result!r}, start={start}, end={end}, "
+                f"state={current!r}, cpu={cpu!r}"
             )
         return {
             "start_frame": start,
@@ -327,6 +389,46 @@ def controller_synchronous_input_edge(
     try:
         with ControllerInputLease(session) as controller:
             start_frame = int(session.get_state()["frameCount"])
+            pre_press_boundary: dict[str, Any] | None = None
+            if pre_press_poll_boundary_address is not None:
+                if not hasattr(session, "add_exec_hook"):
+                    raise RuntimeError(
+                        "pre-press input-poll synchronization requires execution hooks"
+                    )
+                pre_hook = session.add_exec_hook(pre_press_poll_boundary_address)
+                try:
+                    result = session.run_until(
+                        max_frames=poll_boundary_timeout_frames,
+                        hook_handle=pre_hook,
+                    )
+                    session.pause()
+                    if result.get("reason") != "hookFired":
+                        current = room4_controller_snapshot(session)
+                        cpu = session.get_cpu_state() if hasattr(session, "get_cpu_state") else None
+                        raise RuntimeError(
+                            "pre-press input-poll boundary was not reached: "
+                            f"result={result!r}, state={current!r}, cpu={cpu!r}"
+                        )
+                    synchronized = room4_controller_snapshot(session)
+                    if pre_press_predicate is not None and not pre_press_predicate(
+                        before, synchronized
+                    ):
+                        raise RuntimeError(
+                            "controller precondition changed before the input-poll "
+                            f"boundary: initial={before!r}; synchronized={synchronized!r}"
+                        )
+                    pre_press_boundary = {
+                        "start_frame": start_frame,
+                        "end_frame": int(session.get_state()["frameCount"]),
+                        "frames_advanced": (
+                            int(session.get_state()["frameCount"]) - start_frame
+                        ),
+                        "state": synchronized,
+                    }
+                    before = synchronized
+                    sequence_before = before["edge_sequence"]
+                finally:
+                    session.remove_hook(pre_hook)
             controller.hold(mask)
             press_frames: list[dict[str, Any]] = []
             sampled: dict[str, Any] | None = None
@@ -440,6 +542,7 @@ def controller_synchronous_input_edge(
             "Same_Input_Poll__edge_sequence_done"
             if poll_boundary_address is not None else "bounded-frame-observation"
         ),
+        "pre_press_poll_boundary": pre_press_boundary,
         "press_frames": action_frames,
         "release_frames": release_frames,
         "release_sampled": wait_for_release_sample,
@@ -463,10 +566,13 @@ def skip_room4_authored_override(
     session: Any,
     *,
     expected_override_program: int = 0xF9,
+    expected_override_slot: int = 3,
+    expected_override_pc: int = 0x0019,
     defer_release_sample: bool = False,
     poll_interval_frames: int = 1,
     poll_boundary_address: int | None = None,
     poll_boundary_timeout_frames: int = 120,
+    pre_press_poll_boundary_address: int | None = None,
 ) -> dict[str, Any]:
     """Skip the active, source-authentic room-4 LSCR206 intro override once.
 
@@ -486,12 +592,11 @@ def skip_room4_authored_override(
         "lifecycle": 2,
         "ready": 1,
         "c19_stack_pointer": 1,
-        "c19_override_pc": 0x0019,
-        "c19_override_slot": 3,
+        "c19_override_pc": expected_override_pc,
+        "c19_override_slot": expected_override_slot,
         "c19_override_script": 206,
         "c19_override_program": expected_override_program,
         "c19_override_room": 4,
-        "c19_override_slot_depth": 1,
     }
     mismatch = {
         key: (before[key], value)
@@ -502,18 +607,67 @@ def skip_room4_authored_override(
             f"room-4 authored override precondition mismatch: {mismatch!r}; "
             f"state={before!r}"
         )
+    record_index = before["c19_stack_pointer"]
+    record_before = room4_c19_record_snapshot(session, record_index)
+    owner_depth_before = record_before["owner_slot_depth"]
+    if (record_before["override_pc"] != expected_override_pc
+            or record_before["override_slot"] != expected_override_slot):
+        raise RuntimeError(
+            "room-4 C19 stack record is not a live authored override: "
+            f"record={record_before!r}; state={before!r}"
+        )
+
+    # C19's per-slot depth counts cutscene ownership, not the lifetime of the
+    # C4 activation itself. A second override in the same cutscene can be
+    # live after an earlier override edge has reduced that counter to zero.
+    # Validate the actual C4 owner separately so a stale record is not treated
+    # as executable merely because its selector byte still looks plausible.
+    owner_status = session.read_u8(0x7E2380 + expected_override_slot)
+    owner_script = session.read_u8(0x7E2399 + expected_override_slot)
+    owner_program = session.read_u8(0x7E23B2 + expected_override_slot)
+    owner_room = session.read_u8(0x7FF2E7 + expected_override_slot)
+    if owner_status in (0, 4) or owner_script != 206 or owner_room != 4:
+        raise RuntimeError(
+            "room-4 C19 override has no live LSCR206 C4 owner: "
+            f"status={owner_status}; script={owner_script}; room={owner_room}; "
+            f"program={owner_program}; record={record_before!r}"
+        )
+
+    def same_override(_old: dict[str, int], current: dict[str, int]) -> bool:
+        return (
+            current["room"] == 4
+            and current["error"] == 0
+            and current["c19_stack_pointer"] == record_index
+            and current["c19_override_pc"] == expected_override_pc
+            and current["c19_override_slot"] == expected_override_slot
+            and current["c19_override_script"] == 206
+            and current["c19_override_room"] == 4
+            and current["c19_override_slot_depth"] == owner_depth_before
+        )
+
+    def override_record_consumed(
+        _old: dict[str, int], _current: dict[str, int],
+    ) -> bool:
+        return (
+            _read_u16(session, 0x7FD354 + record_index * 2) == 0
+            and session.read_u8(0x7FD35E + record_index) == 0
+            and session.read_u8(0x7FD363 + expected_override_slot)
+            == max(0, owner_depth_before - 1)
+        )
 
     try:
         step = controller_synchronous_input_edge(
             session,
             0x100,
-            lambda _old, current: (
-                current["error"] == 0 and current["c19_override_pc"] == 0
-            ),
+            override_record_consumed,
             poll_interval_frames=poll_interval_frames,
             wait_for_release_sample=not defer_release_sample,
             poll_boundary_address=poll_boundary_address,
             poll_boundary_timeout_frames=poll_boundary_timeout_frames,
+            pre_press_poll_boundary_address=pre_press_poll_boundary_address,
+            pre_press_predicate=(
+                same_override if pre_press_poll_boundary_address is not None else None
+            ),
         )
     except Exception as exc:
         cpu = session.get_cpu_state() if hasattr(session, "get_cpu_state") else None
@@ -522,22 +676,27 @@ def skip_room4_authored_override(
             f"{exc}; execution-frontier={execution!r}; cpu={cpu!r}"
         ) from exc
     cleared_record = {
-        "stack_index": 1,
-        "override_pc": _read_u16(session, 0x7FD354 + 2),
-        "override_slot": session.read_u8(0x7FD35E + 1),
-        "owner_slot_depth": session.read_u8(0x7FD363 + before["c19_override_slot"]),
+        "stack_index": record_index,
+        "override_pc": _read_u16(session, 0x7FD354 + record_index * 2),
+        "override_slot": session.read_u8(0x7FD35E + record_index),
+        "owner_slot": expected_override_slot,
+        "owner_slot_depth": session.read_u8(0x7FD363 + expected_override_slot),
     }
-    if cleared_record != {
-        "stack_index": 1, "override_pc": 0, "override_slot": 0,
-        "owner_slot_depth": 0,
-    }:
-        raise RuntimeError(f"room-4 override record was not consumed: {cleared_record!r}")
+    if (cleared_record["override_pc"] != 0
+            or cleared_record["override_slot"] != 0
+            or cleared_record["owner_slot_depth"]
+            != max(0, owner_depth_before - 1)):
+        raise RuntimeError(
+            "room-4 override record was not consumed: "
+            f"record={cleared_record!r}; before={before!r}; "
+            f"input_step={step!r}; after={room4_controller_snapshot(session)!r}"
+        )
     after = room4_controller_snapshot(session)
     if (after["room"] != 4 or after["error"] != 0
-            or after["c19_stack_pointer"] != 1):
+            or after["c19_stack_pointer"] > before["c19_stack_pointer"]):
         raise RuntimeError(f"room-4 override skip left an invalid scene: {after!r}")
     return {
-        "action": "skip authored room-4 LSCR206 beginOverride",
+        "action": f"skip authored room-4 LSCR206 beginOverride at PC {expected_override_pc}",
         "button": "X",
         "button_mask": "0x100",
         "before": before,
@@ -552,36 +711,44 @@ def finish_room4_authored_cutscene(session: Any, *, max_frames: int = 300) -> di
     """Let the resumed authentic room-4 cutscene run without synthetic input."""
     before = room4_controller_snapshot(session)
     if (before["room"] != 4 or before["error"] != 0
-            or before["c19_stack_pointer"] != 1
+            or not 1 <= before["c19_stack_pointer"] < 5
             or before["c19_override_pc"] != 0):
         raise RuntimeError(f"room-4 cutscene continuation precondition mismatch: {before!r}")
 
-    owner_slot = 3
-    owner = lambda: {
-        "status": session.read_u8(0x7E2380 + owner_slot),
-        "script": session.read_u8(0x7E2399 + owner_slot),
-        "program": session.read_u8(0x7E23B2 + owner_slot),
-        "saved_pc": _read_u16(session, 0x7E23E4 + owner_slot * 2),
-        "room_owner": session.read_u8(0x7FF2E7 + owner_slot),
-        "cutscene_depth": session.read_u8(0x7FD363 + owner_slot),
-    }
+    def owners() -> list[dict[str, int]]:
+        rows = []
+        for owner_slot in range(25):
+            depth = session.read_u8(0x7FD363 + owner_slot)
+            if depth == 0:
+                continue
+            rows.append({
+                "slot": owner_slot,
+                "status": session.read_u8(0x7E2380 + owner_slot),
+                "script": session.read_u8(0x7E2399 + owner_slot),
+                "program": session.read_u8(0x7E23B2 + owner_slot),
+                "saved_pc": _read_u16(session, 0x7E23E4 + owner_slot * 2),
+                "room_owner": session.read_u8(0x7FF2E7 + owner_slot),
+                "cutscene_depth": depth,
+            })
+        return rows
+
     timeline = [{"frame": int(session.get_state()["frameCount"]),
-                 "cutscene_stack": before["c19_stack_pointer"], "owner": owner()}]
+                 "cutscene_stack": before["c19_stack_pointer"], "owners": owners()}]
     elapsed = 0
-    last_signature = (before["c19_stack_pointer"], owner())
+    last_signature = (before["c19_stack_pointer"], owners())
     while elapsed < max_frames:
         advanced = advance_bounded(session, min(4, max_frames - elapsed))
         elapsed += advanced["frames_advanced"]
         state = room4_controller_snapshot(session)
         if state["error"]:
             raise RuntimeError(f"SCUMM error during room-4 cutscene continuation: {state!r}")
-        current_owner = owner()
-        signature = (state["c19_stack_pointer"], current_owner)
+        current_owners = owners()
+        signature = (state["c19_stack_pointer"], current_owners)
         if signature != last_signature:
             timeline.append({
                 "frame": int(session.get_state()["frameCount"]),
                 "cutscene_stack": state["c19_stack_pointer"],
-                "owner": current_owner,
+                "owners": current_owners,
             })
             last_signature = signature
         if state["c19_stack_pointer"] == 0:
@@ -589,13 +756,13 @@ def finish_room4_authored_cutscene(session: Any, *, max_frames: int = 300) -> di
                 "idle_frames": elapsed,
                 "timeline": timeline,
                 "final": state,
-                "final_owner": current_owner,
+                "final_owners": current_owners,
                 "result": "authored cutscene completed without further input",
             }
     raise TimeoutError(
         f"room-4 authored cutscene did not end within {max_frames} neutral frames; "
         f"timeline={timeline!r}; final={room4_controller_snapshot(session)!r}; "
-        f"owner={owner()!r}"
+        f"owners={owners()!r}; execution={_execution_frontier_snapshot(session)!r}"
     )
 
 
@@ -621,7 +788,9 @@ def replay_room4_open_trapdoor_prefix(
         "talk_active": initial["talk_active"],
         "controller_mode": initial["mode"],
     }
-    observed["cursor_world"] = (initial["x"], initial["y"])
+    observed["cursor_world"] = (
+        initial["cursor_world_x"], initial["cursor_world_y"]
+    )
     if observed != expected:
         raise RuntimeError(
             f"room-4 replay precondition mismatch: {observed!r} != {expected!r}"
@@ -673,6 +842,79 @@ def replay_room4_open_trapdoor_prefix(
         "steps": steps,
         "final": final,
         "result": "controller submitted Open on object 61 at world (89,132)",
+    }
+
+
+def reposition_room4_cursor_to_world(
+    session: Any,
+    target: tuple[int, int] = (117, 138),
+    *,
+    pulse: Any = None,
+) -> dict[str, Any]:
+    """Move the normal cursor to a known room-world point without submitting.
+
+    Controller WRAM stores screen-relative coordinates.  This bounded helper
+    uses the engine's camera transform exposed by ``room4_controller_snapshot``
+    and sends one sampled directional edge per two world pixels.
+    """
+    start = room4_controller_snapshot(session)
+    if (start["room"], start["phase"], start["error"], start["lifecycle"],
+            start["talk_active"], start["mode"]) != (4, 0, 0, 2, 0, 0):
+        raise RuntimeError(f"room-4 cursor reposition precondition mismatch: {start!r}")
+    target_x, target_y = (int(target[0]), int(target[1]))
+    current_x, current_y = start["cursor_world_x"], start["cursor_world_y"]
+    delta_x, delta_y = target_x - current_x, target_y - current_y
+    if any(delta & 1 for delta in (delta_x, delta_y)):
+        raise RuntimeError(
+            f"room-4 cursor target is not reachable by two-pixel input steps: "
+            f"current={(current_x, current_y)!r}, target={target!r}"
+        )
+    count = abs(delta_x) // 2 + abs(delta_y) // 2
+    if count > 160:
+        raise RuntimeError(
+            f"room-4 cursor reposition exceeds the bounded 160-edge budget: {count}"
+        )
+    before_submissions = start["submissions"]
+    steps: list[dict[str, Any]] = []
+
+    def send(mask: int, expected_x: int, expected_y: int) -> dict[str, Any]:
+        predicate = lambda _before, after: (
+            after["cursor_world_x"] == _signed16(expected_x)
+            and after["cursor_world_y"] == _signed16(expected_y)
+            and after["submissions"] == before_submissions
+            and after["error"] == 0
+        )
+        if pulse is not None:
+            return pulse(session, mask, predicate)
+        with ControllerInputLease(session) as controller:
+            return _room4_pulse_until(session, controller, mask, predicate)
+
+    for axis, delta, x_step, y_step in (
+        ("x", delta_x, 2 if delta_x > 0 else -2, 0),
+        ("y", delta_y, 0, 2 if delta_y > 0 else -2),
+    ):
+        for _ in range(abs(delta) // 2):
+            current_x += x_step
+            current_y += y_step
+            mask = (
+                0x080 if axis == "x" and x_step > 0 else
+                0x040 if axis == "x" else
+                0x020 if y_step > 0 else 0x010
+            )
+            steps.append(send(mask, current_x, current_y))
+    final = room4_controller_snapshot(session)
+    if ((final["cursor_world_x"], final["cursor_world_y"])
+            != (_signed16(target_x), _signed16(target_y))
+            or final["submissions"] != before_submissions
+            or final["error"] != 0):
+        raise RuntimeError(f"room-4 cursor reposition did not settle safely: {final!r}")
+    return {
+        "start": start,
+        "target_world": [target_x, target_y],
+        "steps": steps,
+        "final": final,
+        "sentence_submission_delta": 0,
+        "result": "cursor positioned by sampled controller edges; no sentence submitted",
     }
 
 

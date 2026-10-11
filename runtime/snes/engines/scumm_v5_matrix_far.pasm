@@ -666,6 +666,11 @@ ScummV5_SentenceProcess_Far__done16:
     rtl
 ScummV5_SentenceProcess_Far__resource_error:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$31
+    jsl ScummV5_Stream_RecordErrorSite_FarEntry
+    .a8
+    .endif
     .if SAME_BUILD_SCUMM_M23B
     lda #$E1
     sta.l SAME_SCUMM_M23B_ERROR_SITE
@@ -1401,6 +1406,11 @@ ScummV5_ReadOnlyQuery_Far__argument_error:
     bra ScummV5_ReadOnlyQuery_Far__error
 ScummV5_ReadOnlyQuery_Far__resource_error:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$32
+    jsl ScummV5_Stream_RecordErrorSite_FarEntry
+    .a8
+    .endif
     .if SAME_BUILD_SCUMM_M23B
     lda #$E2
     sta.l SAME_SCUMM_M23B_ERROR_SITE

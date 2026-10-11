@@ -946,6 +946,11 @@ ScummV5_M24RB_Far_CommitRoom__live_metadata_copied:
     sta.l SCUMM_LIVE_ROOM_STAGE
     jsl ScummV5_MsuLiveRoom_Start_Far
     bcc ScummV5_M24RB_Far_CommitRoom__live_palette_started
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$21
+    jsl ScummV5_Stream_RecordErrorSite_FarEntry
+    .a8
+    .endif
     lda #$92
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
     lda #SCUMM_ERR_RESOURCE
@@ -969,6 +974,11 @@ ScummV5_M24RB_Far_CommitRoom__load_incoming_bundle:
     lda.l SAME_SCUMM_M23A_PENDING_RECORD
     jsl ScummV5_Resident_LoadRoomBundle_Far
     bcs ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$22
+    jsl ScummV5_Stream_RecordErrorSite_FarEntry
+    .a8
+    .endif
     lda.l SAME_SCUMM_ERROR
     jsl ScummV5_M24RB_FarCall_SetError
     sec
@@ -991,6 +1001,11 @@ ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded:
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     jsl ScummV5_LiveRoom_PublishVisual_Far
     bcc ScummV5_M24RB_Far_CommitRoom__live_visual_published
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$23
+    jsl ScummV5_Stream_RecordErrorSite_FarEntry
+    .a8
+    .endif
     lda #$93
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
     lda #SCUMM_ERR_RESOURCE
@@ -1549,6 +1564,171 @@ ScummV5_M23A_EndRoomScript_FarEntry:
     rtl
 ScummV5_M23A_CommitRoom_FarEntry:
     jsr ScummV5_M24RB_Far_CommitRoom
+    rtl
+
+; A chainScript executed by scheduler slot zero transfers ownership from the
+; synchronous ENCD/EXCD body to the ordinary C4 activation it starts. Keeping
+; the wait state here avoids growing the already-full bank-zero interpreter.
+ScummV5_M23A_CaptureLifecycleChainTarget:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    bne ScummV5_M23A_CaptureLifecycleChainTarget__done
+    lda.l SAME_SCUMM_M23A_CHAIN_PHASE
+    beq ScummV5_M23A_CaptureLifecycleChainTarget__done
+    ; C4_SCAN_SLOT names the newly allocated root replacement here. Capture
+    ; it before that activation can start nested children and mutate
+    ; C4_LAST_ALLOCATED.
+    lda.l SAME_SCUMM_C4_SCAN_SLOT
+    sta.l SAME_SCUMM_M23A_CHAIN_SLOT
+ScummV5_M23A_CaptureLifecycleChainTarget__done:
+    .a8
+    rtl
+
+ScummV5_M23A_HandoffLifecycleChain:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23A_CHAIN_PHASE
+    beq ScummV5_M23A_HandoffLifecycleChain__done
+    lda.l SAME_SCUMM_M23A_CHAIN_SLOT
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_M23A_HandoffLifecycleChain__invalid
+    jsr ScummV5_M24RB_Far_EndRoomScript
+    ; The replacement activation owns its own saved C4 slot.  The outer
+    ; scheduler still owns slot zero until this interpreter frame returns,
+    ; so leave its shared status stopped; otherwise a child's WAIT_RESOURCE
+    ; status is written back over the lifecycle slot that EndRoomScript just
+    ; retired, and the next scheduler pass dispatches selector zero.
+    lda #SCUMM_VM_STOPPED
+    sta.l SAME_SCUMM_STATUS
+    lda #$00
+    sta.l SAME_SCUMM_M23A_PHASE
+    sta.l SAME_SCUMM_M23A_HOLD
+    bra ScummV5_M23A_HandoffLifecycleChain__done
+ScummV5_M23A_HandoffLifecycleChain__done:
+    .a8
+    clc
+    rts
+ScummV5_M23A_HandoffLifecycleChain__invalid:
+    .a8
+    lda #SCUMM_ERR_SCRIPT
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+
+ScummV5_M23A_RecordLifecycleChain:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    bne ScummV5_M23A_RecordLifecycleChain__done
+    lda.l SAME_SCUMM_M23A_PHASE
+    cmp #$01
+    beq ScummV5_M23A_RecordLifecycleChain__save
+    cmp #$02
+    beq ScummV5_M23A_RecordLifecycleChain__save
+    ; A lifecycle body may yield for an external program page. At that point
+    ; M23A_PHASE is idle and slot zero is resumed by the ordinary scheduler;
+    ; its selector still identifies the currently installed ENCD/EXCD owner.
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM
+    cmp.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    beq ScummV5_M23A_RecordLifecycleChain__exit
+    cmp.l SAME_SCUMM_M23A_ENTRY_PROGRAM
+    bne ScummV5_M23A_RecordLifecycleChain__done
+    lda #$02
+    bra ScummV5_M23A_RecordLifecycleChain__save
+ScummV5_M23A_RecordLifecycleChain__exit:
+    .a8
+    lda #$01
+ScummV5_M23A_RecordLifecycleChain__save:
+    sta.l SAME_SCUMM_M23A_CHAIN_PHASE
+ScummV5_M23A_RecordLifecycleChain__done:
+    .a8
+    rtl
+
+; A=0 means keep waiting; A=1 resumes normal lifecycle/scheduler dispatch.
+; Only a stopped activation advances lifecycle state; yielded, delayed,
+; resource-waiting, and running C4 activations retain ownership.
+ScummV5_M23A_PollLifecycleChain:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23A_CHAIN_SLOT
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_M23A_PollLifecycleChain__invalid
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    cmp #SCUMM_VM_RUNNING
+    beq ScummV5_M23A_PollLifecycleChain__waiting
+    cmp #SCUMM_VM_YIELDED
+    beq ScummV5_M23A_PollLifecycleChain__waiting
+    cmp #SCUMM_VM_DELAYED
+    beq ScummV5_M23A_PollLifecycleChain__waiting
+    cmp #SCUMM_VM_WAIT_RESOURCE
+    beq ScummV5_M23A_PollLifecycleChain__waiting
+    cmp #SCUMM_VM_ERROR
+    beq ScummV5_M23A_PollLifecycleChain__failed
+    cmp #SCUMM_VM_STOPPED
+    beq ScummV5_M23A_PollLifecycleChain__complete
+    cmp #$00
+    bne ScummV5_M23A_PollLifecycleChain__invalid
+ScummV5_M23A_PollLifecycleChain__complete:
+    .a8
+    lda.l SAME_SCUMM_M23A_CHAIN_PHASE
+    pha
+    lda #$FF
+    sta.l SAME_SCUMM_M23A_CHAIN_SLOT
+    lda #$00
+    sta.l SAME_SCUMM_M23A_CHAIN_PHASE
+    sta.l SAME_SCUMM_M23A_PHASE
+    sta.l SAME_SCUMM_M23A_HOLD
+    pla
+    cmp #$01
+    bne ScummV5_M23A_PollLifecycleChain__entry_done
+    jsr ScummV5_M24RB_Far_CommitRoom
+    bcs ScummV5_M23A_PollLifecycleChain__return_error
+    lda #$01
+    clc
+    rts
+ScummV5_M23A_PollLifecycleChain__entry_done:
+    .a8
+    lda #$01
+    clc
+    rts
+ScummV5_M23A_PollLifecycleChain__waiting:
+    .a8
+    lda #$00
+    clc
+    rts
+ScummV5_M23A_PollLifecycleChain__failed:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    bne ScummV5_M23A_PollLifecycleChain__return_error
+ScummV5_M23A_PollLifecycleChain__invalid:
+    .a8
+    lda #SCUMM_ERR_SCRIPT
+    jsl ScummV5_M24RB_FarCall_SetError
+ScummV5_M23A_PollLifecycleChain__return_error:
+    .a8
+    sec
+    rts
+
+ScummV5_M23A_HandoffLifecycleChain_FarEntry:
+    jsr ScummV5_M23A_HandoffLifecycleChain
+    rtl
+ScummV5_M23A_CaptureLifecycleChainTarget_FarEntry:
+    jml ScummV5_M23A_CaptureLifecycleChainTarget
+ScummV5_M23A_RecordLifecycleChain_FarEntry:
+    jml ScummV5_M23A_RecordLifecycleChain
+ScummV5_M23A_PollLifecycleChain_FarEntry:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23A_CHAIN_PHASE
+    beq ScummV5_M23A_PollLifecycleChain_FarEntry__idle
+    jsr ScummV5_M23A_PollLifecycleChain
+    rtl
+ScummV5_M23A_PollLifecycleChain_FarEntry__idle:
+    .a8
+    lda #$00
+    clc
     rtl
 
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES

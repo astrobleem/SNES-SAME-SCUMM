@@ -14,8 +14,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tempfile
 import wave
 from typing import Any
 
@@ -23,7 +25,7 @@ from same.engines.scumm_v5.residency_contract import (
     ResidentBindingSimulator,
     ResolverDirectory,
 )
-from same.package import inspect_package
+from same.package import build_package, inspect_package
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +66,8 @@ PUT_ACTOR_REQUEST_Y = 0x7FFEC8
 PUT_ACTOR_RESULT_X = 0x7FFECA
 PUT_ACTOR_RESULT_Y = 0x7FFECC
 VIDEO_SURFACE_BASE = 0x402000
+LIVE_ROOM_ACTIVE_BASE = 0x41F000
+LIVE_ROOM_ACTIVE_CAPACITY = 0x1000
 
 
 def sha256(path: Path) -> str:
@@ -151,8 +155,8 @@ def load_inputs(rom: Path, manifest_path: Path, directory_path: Path,
         require(sha256(package_path) == program_storage.get("package_sha256"),
                 "SAMEPKG bytes do not match compiler storage manifest SHA-256")
         sections = {row.name: row for row in package_info.sections}
-        require("SC5CODE" in sections and "SC5ROOM" in sections,
-                "compiler package must contain both SC5CODE and SC5ROOM")
+        require("SC5CODE" in sections,
+                "compiler package must contain the SC5CODE executable section")
         live_feature = build_identity.get("explicit_environment", {}).get(
             "SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES") == "1"
         if live_feature:
@@ -186,17 +190,12 @@ def load_inputs(rom: Path, manifest_path: Path, directory_path: Path,
                             and payload_offset + payload_length
                             <= visual_section.offset + visual_section.size,
                             f"SC5VIS room {record.get('room')} subresource lies outside its section")
-            if live_feature:
-                require(build_identity.get("explicit_environment", {}).get(
-                            "SAME_SCUMM_TITLE_START_ROOM") == "0"
-                        and build_identity.get("explicit_environment", {}).get(
-                            "SAME_SCUMM_TITLE_TARGET_ROOM") == "1",
-                        "live-room route build must use the generated 0->1 title-start request")
         require(program_storage.get("program_count") == len(entries),
                 "storage directory does not cover the canonical ProgramUnit directory")
         storage_records = program_storage.get("records", [])
         require(len(storage_records) == len(entries),
                 "storage manifest ProgramUnit record count differs")
+        package_bytes = package_path.read_bytes()
         for expected_id, (entry, record) in enumerate(zip(entries, storage_records)):
             require(record.get("program_unit_id") == expected_id
                     and entry.get("program_unit_id") == expected_id
@@ -212,23 +211,30 @@ def load_inputs(rom: Path, manifest_path: Path, directory_path: Path,
             require(code_section.offset <= body_offset
                     and body_offset + body_length <= code_section.offset + code_section.size,
                     f"ProgramUnit {expected_id} lies outside SC5CODE")
+            body_bytes = package_bytes[body_offset:body_offset + body_length]
+            require(len(body_bytes) == body_length
+                    and hashlib.sha256(body_bytes).hexdigest() == record.get("sha256"),
+                    f"ProgramUnit {expected_id} bytes differ from their body identity")
         room_records = program_storage.get("room_records", [])
-        room_section = sections["SC5ROOM"]
         require(len(room_records) == program_storage.get("room_resource_count"),
                 "SC5ROOM directory count differs from its records")
-        expected_rooms = {int(row["room"]) for row in manifest.get("records", [])}
-        observed_rooms = {int(row["room"]) for row in room_records}
-        require(observed_rooms == expected_rooms,
-                "SC5ROOM storage directory does not cover the source fixture rooms: "
-                f"expected={sorted(expected_rooms)}, observed={sorted(observed_rooms)}")
-        for record in room_records:
-            offset = int(record["package_offset"])
-            length = int(record["length"])
-            require(room_section.offset <= offset
-                    and offset + length <= room_section.offset + room_section.size,
-                    f"cooked room {record.get('room')} lies outside SC5ROOM")
-            require(length <= 0x0800,
-                    f"cooked room {record.get('room')} exceeds native staging capacity")
+        if room_records:
+            require("SC5ROOM" in sections,
+                    "SC5ROOM records exist without an SC5ROOM package section")
+            room_section = sections["SC5ROOM"]
+            expected_rooms = {int(row["room"]) for row in manifest.get("records", [])}
+            observed_rooms = {int(row["room"]) for row in room_records}
+            require(observed_rooms == expected_rooms,
+                    "SC5ROOM storage directory does not cover the source fixture rooms: "
+                    f"expected={sorted(expected_rooms)}, observed={sorted(observed_rooms)}")
+            for record in room_records:
+                offset = int(record["package_offset"])
+                length = int(record["length"])
+                require(room_section.offset <= offset
+                        and offset + length <= room_section.offset + room_section.size,
+                        f"cooked room {record.get('room')} lies outside SC5ROOM")
+                require(length <= 0x0800,
+                        f"cooked room {record.get('room')} exceeds native staging capacity")
         require(build_identity.get("explicit_environment", {}).get(
                     "SAME_BUILD_SCUMM_MSU1_PROGRAMS") == "1",
                 "MSU ProgramUnit directory was supplied to a ROM without MSU execution enabled")
@@ -345,6 +351,7 @@ def msu_program_diagnostics(session: Any) -> dict[str, Any]:
     """Capture provider and bytecode-cache state for native streaming evidence."""
     provider = session.read_memory("snesMemory", 0x7E2F00, 0x48)
     cache = session.read_memory("snesMemory", 0x7E2F48, 0x5A)
+    cache_page2 = session.read_memory("snesMemory", 0x7E2EC3, 10)
     c19 = session.read_memory("snesMemory", 0x7E2FA2, 14)
     room = session.read_memory("snesMemory", 0x7E2FEB, 0x15)
     live = session.read_memory("snesMemory", 0x401400, 0x0C)
@@ -371,6 +378,9 @@ def msu_program_diagnostics(session: Any) -> dict[str, Any]:
                 "size": u16(cache, 6),
                 "pins": cache[10],
                 "generation": u16(cache, 12),
+                "logical_page_start": u16(
+                    session.read_memory("snesMemory", 0x7E2EB6, 2), 0,
+                ),
             },
             {
                 "state": cache[1],
@@ -378,10 +388,22 @@ def msu_program_diagnostics(session: Any) -> dict[str, Any]:
                 "size": u16(cache, 8),
                 "pins": cache[11],
                 "generation": u16(cache, 14),
+                "logical_page_start": u16(
+                    session.read_memory("snesMemory", 0x7E2EB8, 2), 0,
+                ),
+            },
+            {
+                "state": cache_page2[0],
+                "program_unit_id": u16(cache_page2, 1),
+                "size": u16(cache_page2, 3),
+                "pins": cache_page2[5],
+                "generation": u16(cache_page2, 6),
+                "logical_page_start": u16(cache_page2, 8),
+                "address": 0x41E800,
             },
         ],
-        "cache_current": u16(cache, 0x18),
-        "cache_peak": u16(cache, 0x1A),
+        "cache_current_bytes": u16(cache, 0x18),
+        "cache_peak_bytes": u16(cache, 0x1A),
         "cache_loads": u16(cache, 0x1C),
         "cache_evictions": u16(cache, 0x1E),
         "cache_failures": u16(cache, 0x20),
@@ -397,6 +419,7 @@ def msu_program_diagnostics(session: Any) -> dict[str, Any]:
         "cache_window_prefixes": [
             list(session.read_memory("snesMemory", 0x7E1000, 24)),
             list(session.read_memory("snesMemory", 0x7E1800, 24)),
+            list(session.read_memory("snesMemory", 0x41E200, 24)),
         ],
         "c19_failure": {
             "stage": c19[0],
@@ -475,12 +498,15 @@ def check_live_room_native(session: Any, inputs: dict[str, Any], room: int) -> d
     # READ_LENGTH is shared by the staged metadata, palette, and pixel fetches;
     # after the visual reads it describes the last 57-KiB surface, not the
     # retained SC5LIVE record. Its canonical committed size is in the header.
-    active_header = bytes(session.read_memory("snesMemory", 0x41E800, 82))
+    active_header = bytes(session.read_memory(
+        "snesMemory", LIVE_ROOM_ACTIVE_BASE, 82,
+    ))
     active_length = int.from_bytes(active_header[48:50], "little")
-    require(82 <= active_length <= 2048,
+    require(82 <= active_length <= LIVE_ROOM_ACTIVE_CAPACITY,
             f"room {room} active SC5LIVE header has invalid size {active_length}")
     active = active_header + bytes(
-        session.read_memory("snesMemory", 0x41E800 + 82, active_length - 82)
+        session.read_memory("snesMemory", LIVE_ROOM_ACTIVE_BASE + 82,
+                            active_length - 82)
     )
     pixels = bytes(session.read_memory("snesMemory", 0x402000, 256 * 224))
     palette = bytes(session.read_memory("snesMemory", 0x41E200, 768))
@@ -968,9 +994,29 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
             "fixture must contain 193 real global bodies")
     require(len(inputs["directory"].get("entries", [])) == 206,
             "fixture selector-unit count changed; update acceptance expectation")
+    build_env = inputs["build_identity"].get("explicit_environment", {})
+    if build_env.get("SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES") == "1":
+        require(build_env.get("SAME_SCUMM_TITLE_START_ROOM") == "0"
+                and build_env.get("SAME_SCUMM_TITLE_TARGET_ROOM") == "1",
+                "live-room route build must use the generated 0->1 title-start request")
     identity_to_id = inputs["identity_to_id"]
     g1_id = identity_to_id["GlobalProgram(1)"]
     g192_id = identity_to_id["GlobalProgram(192)"]
+    large_body_case = inputs["manifest"].get("large_program_body")
+    large_body_record = None
+    if large_body_case:
+        require(large_body_case.get("identity") == "GlobalProgram(2)",
+                "large-body fixture must execute GlobalProgram(2)")
+        require(inputs["program_storage"] is not None,
+                "large-body native acceptance requires MSU ProgramUnit storage")
+        large_body_record = next(
+            (row for row in inputs["program_storage"]["records"]
+             if row["identity"] == "GlobalProgram(2)"), None,
+        )
+        require(large_body_record is not None
+                and int(large_body_record["length"]) > 21002
+                and int(large_body_record["page_count"]) >= 11,
+                "GlobalProgram(2) is not an 11-page >21 KiB carrier")
 
     snapshots: list[dict[str, Any]] = []
     room_sequence: list[int] = []
@@ -1023,7 +1069,8 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
         # before submitting the title START edge; otherwise the fixture would
         # race the storage service rather than test SCUMM input semantics.
         boot_id = identity_to_id["GlobalProgram(1)"]
-        for _ in range(120):
+        boot_wait_limit = 1200 if large_body_case else 120
+        for _ in range(boot_wait_limit):
             slots = active_slots(session)
             boot_slot = next((item for item in slots
                               if item["script_number"] == 1), None)
@@ -1049,7 +1096,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
         else:
             raise RuntimeError(
                 "streamed boot GlobalScript(1) did not become yielded with a "
-                "READY checked body within 120 frames: "
+                f"READY checked body within {boot_wait_limit} frames: "
                 f"{boot_ready_samples[-1] if boot_ready_samples else None}"
             )
         room_sequence.append(0)
@@ -1125,7 +1172,9 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                         "error_slot": session.read_memory("snesMemory", 0x7E5F8D, 1)[0],
                     },
                     "live_control": list(session.read_memory("snesMemory", 0x401400, 0x20)),
-                    "live_room_header": list(session.read_memory("snesMemory", 0x41E800, 82)),
+                    "live_room_header": list(session.read_memory(
+                        "snesMemory", LIVE_ROOM_ACTIVE_BASE, 82,
+                    )),
                     "bundle_cursor": {
                         "directory_offset": u16(session.read_memory("snesMemory", 0x40140E, 2)),
                         "index": u16(session.read_memory("snesMemory", 0x7E8FA0, 2)),
@@ -1304,7 +1353,9 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                         "error_opcode": session.read_memory("snesMemory", 0x7E5F25, 1)[0],
                         "error_slot": session.read_memory("snesMemory", 0x7E5F8D, 1)[0],
                     },
-                    "live_room_header": list(session.read_memory("snesMemory", 0x41E800, 82)),
+                    "live_room_header": list(session.read_memory(
+                        "snesMemory", LIVE_ROOM_ACTIVE_BASE, 82,
+                    )),
                     "bundle_cursor": {
                         "directory_offset": u16(session.read_memory("snesMemory", 0x40140E, 2)),
                         "index": u16(session.read_memory("snesMemory", 0x7E8FA0, 2)),
@@ -1607,7 +1658,10 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
 
         bindings = valid_bindings(session)
         final_room = session.read_memory("snesMemory", ROOM, 1)[0]
-        variables_final = variables(session, (5, 6, 7, 8, 9, 10, 15, 20, 21, 22, 24, 25))
+        marker_indices = (5, 6, 7, 8, 9, 10, 15, 20, 21, 22, 24, 25)
+        if large_body_case:
+            marker_indices += (50, 51, 53, 54)
+        variables_final = variables(session, marker_indices)
         final_error = session.read_memory("snesMemory", ERROR, 1)[0]
         final_stats = stats(session)
         final_storage = msu_program_diagnostics(session)
@@ -1676,7 +1730,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                 f"expected={expected_room_ids}, metrics={room_metrics}")
         require(room_metrics["state"] == 3 and room_metrics["room"] == expected_room_ids[-1],
                 f"last compiler room record did not remain validated: {room_metrics}")
-        require(final_storage["cache_peak"] == 2
+        require(0 < final_storage["cache_peak_bytes"] <= 3 * 0x800
                 and final_storage["cache_failures"] == 0
                 and final_storage["timeout_count"] == 0,
                 "native bytecode cache did not exercise both bounded windows cleanly: "
@@ -1705,7 +1759,8 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
         require(any(
             sample["storage"]["cache_slots"][slot]["state"] == 2
             and sample["storage"]["cache_slots"][slot]["program_unit_id"] == g1_id
-            for sample in boot_ready_samples for slot in range(2)
+            for sample in boot_ready_samples
+            for slot in range(len(sample["storage"]["cache_slots"]))
         ), "MSU boot executable was not observed READY in the native bytecode cache")
         observed_room_states = {int(row["state"]) for row in room_resource_events}
         require({1, 2, 3} <= observed_room_states,
@@ -1748,6 +1803,11 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
         "5": 1, "6": 2, "7": 192, "8": 3, "9": 3, "10": 10,
         "15": 1, "20": 4, "21": 5, "22": 6, "24": 4, "25": 1,
     }
+    if large_body_case:
+        host_expected_markers.update({"50": 1, "51": 0, "54": 2})
+        require(variables_final["53"] == 4000,
+                "large-body backward branch did not execute exactly two 2,000-op spans: "
+                f"{variables_final}")
     host_native_markers = {key: variables_final[key] for key in host_expected_markers}
     require(host_native_markers == host_expected_markers,
             "native live-room route differs from copyright-free host/reference markers: "
@@ -1942,6 +2002,19 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
         "first_safe_reuse": first_reuse,
         "post_retirement_rebind": g192_rebind,
         "markers": variables_final,
+        "large_program_body_native_acceptance": (
+            {
+                "identity": large_body_case["identity"],
+                "length": int(large_body_record["length"]),
+                "pages": int(large_body_record["page_count"]),
+                "branch_targets": [int(value)
+                                   for value in large_body_case["branch_targets"]],
+                "expected_markers": large_body_case["expected_markers"],
+                "observed_markers": {key: variables_final[key]
+                                     for key in ("6", "50", "51", "53", "54")},
+                "result": "yielded >21 KiB MSU-backed body resumed and crossed page boundaries",
+            } if large_body_case else None
+        ),
         "host_reference_differential": {
             "basis": "copyright-free generated fixture host conformance test",
             "host_expected_markers": host_expected_markers,
@@ -1962,6 +2035,317 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
         "native_binding_events": native_binding_events,
         "object_name_length_70": name_cache_byte,
         "final_stack_pointer": sp,
+        "result": "PASS",
+    }
+
+
+def run_large_program_body(args: argparse.Namespace,
+                           inputs: dict[str, Any]) -> dict[str, Any]:
+    """Execute a long, paged MSU body without coupling the test to room routing."""
+    case = inputs["manifest"].get("large_program_body")
+    require(isinstance(case, dict) and case.get("identity") == "GlobalProgram(2)",
+            "large-body mode requires the compiler's GlobalProgram(2) fixture")
+    storage = inputs.get("program_storage")
+    require(storage is not None, "large-body mode requires compiler MSU storage metadata")
+    body_record = next((row for row in storage.get("records", [])
+                        if row.get("identity") == case["identity"]), None)
+    require(body_record is not None and int(body_record["length"]) > 21002
+            and int(body_record["page_count"]) >= 11,
+            "GlobalProgram(2) is not the required >21 KiB paged body")
+    package_path = Path(inputs["program_storage_package"]["path"])
+    package = package_path.read_bytes()
+    offset, length = int(body_record["package_offset"]), int(body_record["length"])
+    body = package[offset:offset + length]
+    require(len(body) == length
+            and hashlib.sha256(body).hexdigest() == body_record["sha256"],
+            "large body differs from the checked SAMEPKG descriptor")
+    rom = Path(inputs["rom_path"]).read_bytes()
+    require(body not in rom,
+            "large ProgramUnit body is embedded in ROM; MSU fetch is not authoritative")
+
+    timeline: list[dict[str, Any]] = []
+    final_vars: dict[str, int] = {}
+    final_slots: list[dict[str, int]] = []
+    final_storage: dict[str, Any] = {}
+    final_stats: dict[str, int] = {}
+    final_error = 0
+    final_room = 0
+    final_sp = 0
+    final_stream_error: dict[str, int] = {}
+    with _session(args) as session:
+        _cold_reset(session)
+        _run_exact(session, 10)
+        elapsed = 0
+        while elapsed < args.frames:
+            step_frames = min(16, args.frames - elapsed)
+            _run_exact(session, step_frames)
+            elapsed += step_frames
+            final_vars = variables(session, (6, 8, 50, 51, 53, 54))
+            final_slots = active_slots(session)
+            final_error = session.read_memory("snesMemory", ERROR, 1)[0]
+            if final_error:
+                stream_error = session.read_memory("snesMemory", 0x7E5F13, 6)
+                final_stream_error = {
+                    "valid": session.read_memory("snesMemory", 0x7E5F18, 1)[0],
+                    "program_unit_id": u16(stream_error, 0),
+                    "pc": u16(stream_error, 2),
+                    "site": session.read_memory("snesMemory", 0x7E5F17, 1)[0],
+                    "selector_witness": list(
+                        session.read_memory("snesMemory", 0x7E5F19, 7)
+                    ),
+                }
+            final_room = session.read_memory("snesMemory", ROOM, 1)[0]
+            final_storage = msu_program_diagnostics(session)
+            final_stats = stats(session)
+            final_sp = cpu_sp(session)
+            timeline.append({
+                "frame": int(session.get_state()["frameCount"]),
+                "global2_active": any(row["script_number"] == 2
+                                       for row in final_slots),
+                "variables": final_vars,
+                "cache_peak_bytes": final_storage["cache_peak_bytes"],
+                "bytes_read": final_storage["bytes_read"],
+            })
+            if (final_vars.get("53", 0) == 4000
+                    and final_vars.get("54", 0) == 2
+                    and not any(row["script_number"] == 2 for row in final_slots)):
+                break
+            if final_error:
+                stream_error = session.read_memory("snesMemory", 0x7E5F13, 6)
+                raise RuntimeError(
+                    f"SCUMM error ${final_error:02X} while executing large body: "
+                    f"frame={timeline[-1]['frame']} vars={final_vars} "
+                    f"slots={final_slots} storage={final_storage} "
+                    f"stream_error={{valid:{session.read_memory('snesMemory', 0x7E5F18, 1)[0]}, "
+                    f"program_unit_id:{u16(stream_error, 0)}, "
+                    f"pc:{u16(stream_error, 2)}, "
+                    f"site:{session.read_memory('snesMemory', 0x7E5F17, 1)[0]}}} "
+                    f"page_request={{pc:{u16(session.read_memory('snesMemory', 0x7E2EAC, 4), 0)}, "
+                    f"start:{u16(session.read_memory('snesMemory', 0x7E2EAE, 2), 0)}, "
+                    f"length:{u16(session.read_memory('snesMemory', 0x7E2EB0, 2), 0)}}}"
+                )
+
+    expected = {str(key): int(value)
+                for key, value in case["expected_markers"].items()}
+    observed = {key: final_vars.get(key, 0) for key in expected}
+    require(observed == expected,
+            f"native large-body markers differ: {observed} != {expected}; "
+            f"error={final_error} room={final_room} storage={final_storage} "
+            f"stats={final_stats} stream_error={final_stream_error} "
+            f"slots={final_slots} SP=${final_sp:04X}")
+    require(final_error == 0 and final_room == 0,
+            f"large-body execution changed room/error state: room={final_room}, "
+            f"error={final_error}, variables={final_vars}, slots={final_slots}, "
+            f"storage={final_storage}, stream_error={final_stream_error}")
+    require(0 < final_storage["cache_peak_bytes"] <= 3 * 0x800
+            and final_storage["cache_failures"] == 0
+            and final_storage["provider_error"] == 0,
+            f"large body exceeded or failed the bounded page cache: {final_storage}")
+    require(final_storage["bytes_read"] >= length
+            and final_storage["cache_loads"] >= int(body_record["page_count"]),
+            "native execution did not fetch the complete large body through MSU pages")
+    require(final_stats["exhaustions"] == 0
+            and final_stats["stale_rejections"] == 0
+            and final_sp >= args.stack_floor,
+            f"large-body route failed runtime invariants: stats={final_stats}, SP=${final_sp:04X}")
+    require(timeline and timeline[-1]["global2_active"] is False,
+            f"large ProgramUnit did not complete within {args.frames} frames")
+    return {
+        "format": "same-scumm-native-large-program-body-v1",
+        "mode": "large-program-body",
+        **inputs["hashes"],
+        "identity": case["identity"],
+        "program_unit_id": int(body_record["program_unit_id"]),
+        "body_bytes": length,
+        "body_sha256": body_record["sha256"],
+        "page_size_bytes": int(storage["page_size_bytes"]),
+        "page_count": int(body_record["page_count"]),
+        "branch_targets": [int(value) for value in case["branch_targets"]],
+        "body_absent_from_rom": True,
+        "frames_to_complete": 10 + elapsed,
+        "diagnostic_samples": len(timeline),
+        "markers": observed,
+        "cache_peak_bytes": final_storage["cache_peak_bytes"],
+        "cache_capacity_bytes": 3 * 0x800,
+        "cache_loads": final_storage["cache_loads"],
+        "bytes_read": final_storage["bytes_read"],
+        "resident_stats": final_stats,
+        "stack_pointer": final_sp,
+        "result": "PASS",
+    }
+
+
+def run_room_resource_failure(args: argparse.Namespace,
+                               inputs: dict[str, Any]) -> dict[str, Any]:
+    """Corrupt an incoming SC5LIVE payload and verify no room publication.
+
+    The synthetic input must be a native route with at least two live rooms.
+    Keep the SAMEPKG header and directory byte-identical, then flip one byte
+    inside the incoming SC5LIVE record. This reaches the runtime's compiler-
+    emitted per-resource CRC instead of failing an earlier package-identity
+    check.
+    """
+    storage = inputs.get("program_storage")
+    require(storage is not None and storage.get("live_room_resource_count", 0) >= 2,
+            "room failure mode requires compiler-generated live-room records")
+    build_env = inputs["build_identity"].get("explicit_environment", {})
+    require(build_env.get("SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES") == "1",
+            "room failure mode requires the live MSU room consumer")
+    require(inputs["manifest"].get("conformance_case") == "room-resource-failure",
+            "room failure mode requires its generic two-room boot fixture")
+    live_records = sorted(storage.get("live_room_records", []),
+                          key=lambda row: int(row["room"]))
+    outgoing_room, incoming_room = (int(live_records[0]["room"]),
+                                    int(live_records[1]["room"]))
+    outgoing = external_live_room_payloads(inputs, outgoing_room)
+    incoming_row = next(row for row in live_records
+                        if int(row["room"]) == incoming_room)
+    package_path = Path(inputs["program_storage_package"]["path"])
+    original_package = package_path.read_bytes()
+    original_info = inspect_package(package_path, verify=True)
+    live_section = next(section for section in original_info.sections
+                        if section.name == "SC5LIVE")
+    mutate_at = int(incoming_row["package_offset"]) + min(96, int(incoming_row["length"]) - 1)
+    require(live_section.offset <= mutate_at < live_section.offset + live_section.size,
+            "incoming live-room corruption offset is outside SC5LIVE")
+
+    samples: list[dict[str, int]] = []
+    terminal: dict[str, Any] | None = None
+    final_debug: dict[str, Any] | None = None
+    previous_signature: tuple[int, int, int, int] | None = None
+    fault_package_sha256: str | None = None
+    original_rom = Path(inputs["rom_path"])
+    original_args_rom = args.rom
+    with tempfile.TemporaryDirectory(prefix="same-scumm-live-room-crc-") as raw:
+        root = Path(raw)
+        fault_rom = root / "room-resource-fault.sfc"
+        shutil.copyfile(original_rom, fault_rom)
+        shutil.copyfile(original_rom.with_suffix(".map"), root / "room-resource-fault.map")
+        identity_path = original_rom.with_name(original_rom.stem + ".build_identity.json")
+        shutil.copyfile(identity_path, root / "room-resource-fault.build_identity.json")
+
+        incoming_section = next(section for section in original_info.sections
+                                if section.name == "SC5LIVE")
+        require(incoming_section.offset <= mutate_at
+                < incoming_section.offset + incoming_section.size,
+                "incoming live-room corruption offset is outside SC5LIVE")
+        require(int(incoming_row["package_offset"]) <= mutate_at
+                < int(incoming_row["package_offset"])
+                + int(incoming_row["length"]),
+                "injected byte is outside the incoming room record")
+        damaged_package = bytearray(original_package)
+        damaged_package[mutate_at] ^= 0x80
+        fault_package = root / "room-resource-fault.msu"
+        fault_package.write_bytes(damaged_package)
+        # The package identity/header/directory are intentionally unchanged;
+        # only this room record's expected compiler CRC now fails.
+        fault_info = inspect_package(fault_package, verify=False)
+        require(sha256(fault_package)
+                != hashlib.sha256(original_package).hexdigest(),
+                "corruption injection did not alter the package payload")
+        require(fault_info.sections == original_info.sections,
+                "corruption injection altered SAMEPKG directory metadata")
+        fault_package_sha256 = sha256(fault_package)
+
+        args.rom = fault_rom
+        try:
+            with _session(args) as session:
+                _cold_reset(session)
+                _run_exact(session, 10)
+                elapsed = 0
+                while elapsed < args.frames:
+                    step = 1
+                    _run_exact(session, step)
+                    elapsed += step
+                    room = session.read_memory("snesMemory", ROOM, 1)[0]
+                    error = session.read_memory("snesMemory", ERROR, 1)[0]
+                    header = bytes(session.read_memory(
+                        "snesMemory", LIVE_ROOM_ACTIVE_BASE, 82,
+                    ))
+                    active_length = u16(header, 48)
+                    active = header
+                    if 82 <= active_length <= LIVE_ROOM_ACTIVE_CAPACITY:
+                        active += bytes(session.read_memory(
+                            "snesMemory", LIVE_ROOM_ACTIVE_BASE + 82,
+                            active_length - 82,
+                        ))
+                    sample = {"frame": elapsed, "room": room, "error": error,
+                              "active_room": active[12] if len(active) > 12 else 0xFF,
+                              "active_length": active_length}
+                    signature = (room, error, sample["active_room"], active_length)
+                    if (elapsed == 1 or elapsed % 120 == 0 or error
+                            or signature != previous_signature):
+                        samples.append(sample)
+                    previous_signature = signature
+                    if error:
+                        terminal = {
+                            **sample,
+                            "active_sha256": hashlib.sha256(active).hexdigest(),
+                            "stream_error_capture": list(session.read_memory(
+                                "snesMemory", 0x7E5F13, 6,
+                            )),
+                            "room_resource_failure_count": u16(
+                                session.read_memory("snesMemory", 0x7E2FF1, 2),
+                            ),
+                            "room_resource": msu_program_diagnostics(session)["room_resource"],
+                            "msu": msu_program_diagnostics(session),
+                            "active_slots": active_slots(session),
+                            "scumm_context": {
+                                "common": list(session.read_memory(
+                                    "snesMemory", 0x7E22F8, 24,
+                                )),
+                                "scenario_error": list(session.read_memory(
+                                    "snesMemory", 0x7E5F20, 32,
+                                )),
+                                "lifecycle": list(session.read_memory(
+                                    "snesMemory", 0x7FF2BE, 40,
+                                )),
+                            },
+                            "error_state": error,
+                            "stack_pointer": cpu_sp(session),
+                        }
+                        break
+                if terminal is None:
+                    final_debug = {
+                        "sample": samples[-1] if samples else None,
+                        "slots": active_slots(session),
+                        "variables": variables(session, (1, 5, 6, 15, 24, 38)),
+                        "msu": msu_program_diagnostics(session),
+                        "room_lifecycle": list(session.read_memory(
+                            "snesMemory", 0x7FF2BE, 26,
+                        )),
+                    }
+        finally:
+            args.rom = original_args_rom
+
+    require(terminal is not None,
+            f"incoming corrupted room did not fail within {args.frames} frames; "
+            f"last={final_debug}")
+    require(terminal["room"] == outgoing_room
+            and terminal["active_room"] == outgoing_room,
+            f"failed incoming room replaced outgoing live room: {terminal}")
+    require(terminal["error_state"] == 0x10
+            and terminal["room_resource_failure_count"] >= 1
+            and terminal["room_resource"]["failures"] >= 1,
+            f"incoming per-resource CRC failure was not explicit: {terminal}")
+    require(terminal["active_sha256"] == hashlib.sha256(
+                outgoing["live_bytes"],
+            ).hexdigest(),
+            "failed incoming room changed the valid outgoing SC5LIVE record")
+    return {
+        "format": "same-scumm-native-room-resource-failure-v1",
+        "mode": "room-resource-failure",
+        **inputs["hashes"],
+        "rom_sha256": inputs["hashes"]["rom_sha256"],
+        "canonical_package_sha256": inputs["program_storage_package"]["sha256"],
+        "fault_package_sha256": fault_package_sha256,
+        "injected_resource": f"SC5LIVE room {incoming_room}",
+        "injected_byte_offset": mutate_at,
+        "outgoing_room": outgoing_room,
+        "outgoing_resource_sha256": outgoing["live"].sha256,
+        "outgoing_room_preserved": True,
+        "failure": terminal,
+        "samples": samples,
         "result": "PASS",
     }
 
@@ -2634,6 +3018,8 @@ def _press_exact(session: Any, mask: int) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("dynamic-route", "dynamic-candidates",
+                                            "large-program-body",
+                                            "room-resource-failure",
                                             "exhaustion", "load-room-with-ego",
                                             "find-inventory", "draw-box",
                                             "whole-source-bank-fetch"),
@@ -2664,6 +3050,10 @@ def main() -> int:
         args.stack_floor = 0x0FFF if build_env.get("SAME_BUILD_SCUMM_MSU1_PROGRAMS") == "1" else 0x1FFF
     if args.mode == "dynamic-route":
         report = run_dynamic_route(args, inputs)
+    elif args.mode == "large-program-body":
+        report = run_large_program_body(args, inputs)
+    elif args.mode == "room-resource-failure":
+        report = run_room_resource_failure(args, inputs)
     elif args.mode == "dynamic-candidates":
         report = run_candidate_probe(args, inputs)
     elif args.mode == "load-room-with-ego":

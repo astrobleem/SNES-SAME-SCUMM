@@ -196,6 +196,13 @@ fi
 if [[ "${SAME_BUILD_RESET_DIAGNOSTICS:-1}" == "0" ]]; then
     ENGINE_SELECTION_ARGS+=(--disable-reset-diagnostics)
 fi
+if [[ "${SAME_BUILD_CAPTURE_FIRST_BRK:-0}" == "1" ]]; then
+    if [[ "${SAME_BUILD_RESET_DIAGNOSTICS:-1}" == "0" ]]; then
+        echo "First-BRK capture requires reset diagnostic storage" >&2
+        exit 1
+    fi
+    ENGINE_SELECTION_ARGS+=(--capture-first-brk)
+fi
 if [[ "${SAME_BUILD_SCUMM_M23C_CLASS_CONFORMANCE:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-m23c-class-conformance)
 fi
@@ -390,14 +397,14 @@ else
     else
     M23A_SOURCE="${SAME_FATE_ARCHIVE:?Set SAME_FATE_ARCHIVE to a user-supplied archive}"
     if [[ "${SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT:-0}" == "1" ]]; then
-        M23A_BUILD="$ROOT/build/fate-dynamic-residency"
+        M23A_BUILD="${SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR:-$ROOT/build/fate-dynamic-residency}"
     else
         M23A_BUILD="$ROOT/build/m23a-rooms"
     fi
     mkdir -p "$M23A_BUILD/authentic" "$M23A_BUILD/lifecycle" "$M23A_BUILD/segments"
     if [[ "$M25A_CONTENT_PROFILE" == "1" ]]; then
         if [[ "${SAME_BUILD_SCUMM_AUTHENTIC_STARTUP:-0}" == "1" ]]; then
-            M25A_BUILD="$ROOT/build/fate-authentic-startup"
+            M25A_BUILD="${SAME_SCUMM_AUTHENTIC_STARTUP_BUILD_DIR:-$ROOT/build/fate-authentic-startup}"
         else
             M25A_BUILD="$ROOT/build/m25a-validator/$M25A_PROFILE_CASE"
         fi
@@ -453,10 +460,6 @@ else
                     STARTUP_BASE_ROOM_SEEN["$room"]=1
                     COOKED_STARTUP_BASE_ROOMS[$index]=$room
                 done
-                if [[ -z "${STARTUP_BASE_ROOM_SEEN[42]:-}" ]]; then
-                    echo "Authentic startup base selection must retain room 42" >&2
-                    exit 1
-                fi
                 unset STARTUP_BASE_ROOM_SEEN
             fi
             COOKED_STARTUP_ROOMS=("${COOKED_STARTUP_BASE_ROOMS[@]}")
@@ -511,6 +514,32 @@ else
                     COOKED_STARTUP_ROOMS+=("$room")
                 done
                 unset FINAL_STARTUP_ROOM_SEEN
+            fi
+            STARTUP_FULL_ROOM_SEEN=()
+            if [[ -n "${SAME_SCUMM_AUTHENTIC_STARTUP_FULL_ROOMS:-}" ]]; then
+                IFS=',' read -r -a FULL_STARTUP_ROOMS <<< \
+                    "${SAME_SCUMM_AUTHENTIC_STARTUP_FULL_ROOMS}"
+                declare -A STARTUP_SELECTED_ROOM_SEEN=()
+                for room in "${COOKED_STARTUP_ROOMS[@]}"; do
+                    STARTUP_SELECTED_ROOM_SEEN["$room"]=1
+                done
+                for room in "${FULL_STARTUP_ROOMS[@]}"; do
+                    if [[ ! "$room" =~ ^[0-9]+$ ]]; then
+                        echo "Invalid full authentic startup room ID: $room" >&2
+                        exit 1
+                    fi
+                    room=$((10#$room))
+                    if (( room > 255 )) || [[ -z "${STARTUP_SELECTED_ROOM_SEEN[$room]:-}" ]]; then
+                        echo "Full authentic startup room must be selected: $room" >&2
+                        exit 1
+                    fi
+                    if [[ -n "${STARTUP_FULL_ROOM_SEEN[$room]:-}" ]]; then
+                        echo "Duplicate full authentic startup room ID: $room" >&2
+                        exit 1
+                    fi
+                    STARTUP_FULL_ROOM_SEEN["$room"]=1
+                done
+                unset STARTUP_SELECTED_ROOM_SEEN
             fi
             COOKED_STARTUP_GLOBAL_ARGS=()
             if [[ -n "${SAME_SCUMM_STARTUP_GLOBAL_SCRIPTS:-}" ]]; then
@@ -730,9 +759,18 @@ else
                 # pairs while adding locals only as execution proves them
                 # reachable, rather than bloating bank0 with whole directories.
                 for room_number in "${COOKED_STARTUP_BASE_ROOMS[@]}"; do
-                    ROOM_GENERATOR_ARGS+=(--entry-only-room "$room_number")
+                    if [[ -n "${STARTUP_FULL_ROOM_SEEN[$room_number]:-}" ]]; then
+                        ROOM_GENERATOR_ARGS+=(--executable-local-room "$room_number")
+                    else
+                        ROOM_GENERATOR_ARGS+=(--entry-only-room "$room_number")
+                    fi
                 done
-                ROOM_GENERATOR_ARGS+=(--executable-local 68:200 --executable-local 68:201
+                if [[ -z "${STARTUP_FULL_ROOM_SEEN[68]:-}" &&
+                      " ${COOKED_STARTUP_ROOMS[*]} " == *" 68 "* ]]; then
+                    ROOM_GENERATOR_ARGS+=(--executable-local 68:200 --executable-local 68:201)
+                fi
+                if [[ " ${COOKED_STARTUP_ROOMS[*]} " == *" 42 "* ]]; then
+                ROOM_GENERATOR_ARGS+=(
                                       # Retain the complete room-42 local-script cone.  The
                                       # switch/hoist sequence crosses several authored local
                                       # continuations (including 201, 202, 207, and 212); partial
@@ -751,7 +789,9 @@ else
                                       # (the hoist) as its nested continuation.
                                       --executable-local-object 42:497
                                       --executable-local-object 42:500
-                                      --far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
+                                      )
+                fi
+                ROOM_GENERATOR_ARGS+=(--far-programs --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm)
                 if [[ " ${COOKED_STARTUP_BASE_ROOMS[*]} " == *" 82 "* ]]; then
                     ROOM_GENERATOR_ARGS+=(--executable-local 82:200 --executable-local 82:201 --executable-local 82:202
                                           --executable-local 82:203 --executable-local 82:204 --executable-local 82:205)
@@ -803,7 +843,9 @@ else
                     # omitting those unrelated ambient continuations prevents
                     # their independent unreachable-actor wait from becoming
                     # a false input-readiness gate.
-                    ROOM_GENERATOR_ARGS+=(--executable-local 42:204 --executable-local 42:207)
+                    if [[ " ${COOKED_STARTUP_ROOMS[*]} " == *" 42 "* ]]; then
+                        ROOM_GENERATOR_ARGS+=(--executable-local 42:204 --executable-local 42:207)
+                    fi
                 fi
             elif [[ "$M25A_PROFILE_CASE" == "room55-movement" ]]; then
                 # Standalone copyright-free movement fixture: keep its one
@@ -937,7 +979,8 @@ else
         ROOM_GENERATOR_ARGS+=(--msu1-program-storage-dir "$MSU_PROGRAM_STORAGE_DIR"
             --msu1-program-directory-include runtime/snes/generated/scumm_v5_msu_programs.inc.pasm
             --msu1-program-directory-bank 10
-            --reserved-bank 10 --reserved-bank 11)
+            --msu1-program-page-directory-bank 12
+            --reserved-bank 10 --reserved-bank 11 --reserved-bank 12)
         if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
             ROOM_GENERATOR_ARGS+=(--msu1-live-room-resources)
         fi
