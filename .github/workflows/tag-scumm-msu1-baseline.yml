@@ -1,0 +1,73 @@
+name: Tag 2026 MSU-1 integration baseline
+
+# One-shot idempotent tag for the already CI-verified pre-README main commit.
+# Not a game release; does not build or upload proprietary assets.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/tag-scumm-msu1-baseline.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag-baseline:
+    if: github.repository == 'astrobleem/SNES-SAME-SCUMM'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Stamp the verified integration commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from urllib.error import HTTPError
+          from urllib.parse import quote
+          from urllib.request import Request, urlopen
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          if repo != 'astrobleem/SNES-SAME-SCUMM':
+              raise SystemExit(f'unexpected repository: {repo}')
+          tag = 'scumm-msu1-integration-2026-10-13'
+          target = '781061a24f6994196603771ecd8e26341c98fcd1'
+          base = f'https://api.github.com/repos/{repo}'
+          headers = {
+              'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              'User-Agent': 'same-baseline-tagger',
+          }
+
+          def api(method, suffix, payload=None, *, missing_ok=False):
+              data = None if payload is None else json.dumps(payload).encode('utf-8')
+              request = Request(base + suffix, data=data, headers=headers, method=method)
+              try:
+                  with urlopen(request, timeout=30) as response:
+                      return json.load(response)
+              except HTTPError as error:
+                  if missing_ok and error.code == 404:
+                      return None
+                  raise
+
+          commit = api('GET', '/commits/' + target)
+          if commit.get('sha') != target:
+              raise SystemExit('verified baseline commit could not be resolved')
+          endpoint = '/git/ref/tags/' + quote(tag, safe='')
+          ref = api('GET', endpoint, missing_ok=True)
+          if ref is None:
+              api('POST', '/git/refs', {'ref': 'refs/tags/' + tag, 'sha': target})
+              ref = api('GET', endpoint)
+          obj = ref['object']
+          resolved = obj['sha']
+          if obj['type'] == 'tag':
+              resolved = api('GET', '/git/tags/' + resolved)['object']['sha']
+          if resolved != target:
+              raise SystemExit(f'tag {tag} points at {resolved}, not {target}')
+          print(f'Verified refs/tags/{tag} -> {target}')
+          PY
