@@ -2250,7 +2250,7 @@ def main() -> int:
         "ScummV5_Matrix_LoadActiveRoomNames_Far:",
         ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
         "    jml ScummV5_LiveRoom_LoadNames_Far",
-        ".endif",
+        ".else",
         "    sep #$20", "    .a8", "    rep #$10", "    .i16",
         "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2291,7 +2291,7 @@ def main() -> int:
         ))
     data_lines.extend((
         "ScummV5_Matrix_LoadActiveRoomNames__done:",
-        "    sep #$20", "    .a8", "    rtl",
+        "    sep #$20", "    .a8", "    rtl", ".endif",
     ))
     name_routine_lines = data_lines[name_routine_start + 2:]
     del data_lines[name_routine_start:]
@@ -2688,7 +2688,7 @@ def main() -> int:
         "ScummV5_Verb_First_Far:",
         ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
         "    jml ScummV5_LiveRoom_VerbFirst_Far",
-        ".endif",
+        ".else",
         "; Input SAME_SCUMM_VERB_OBJECT; output verb in SAME_SCUMM_VERB_RESULT.",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2717,11 +2717,11 @@ def main() -> int:
     data_lines.extend((
         "ScummV5_Verb_First_Far__miss:", "    rep #$20", "    .a16",
         "    lda #$0000", "    sta.l SAME_SCUMM_VERB_RESULT",
-        "    sep #$20", "    .a8", "    clc", "    rtl",
+        "    sep #$20", "    .a8", "    clc", "    rtl", ".endif",
         "ScummV5_Verb_Next_Far:",
         ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
         "    jml ScummV5_LiveRoom_VerbNext_Far",
-        ".endif",
+        ".else",
         "; Input object/current verb; output next explicit authored verb, wrapping.",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2762,7 +2762,7 @@ def main() -> int:
     data_lines.extend((
         "ScummV5_Verb_Next_Far__miss:", "    rep #$20", "    .a16",
         "    lda #$0000", "    sta.l SAME_SCUMM_VERB_RESULT",
-        "    sep #$20", "    .a8", "    clc", "    rtl",
+        "    sep #$20", "    .a8", "    clc", "    rtl", ".endif",
     ))
     # Compact runtime interaction index.  The old generated verb dispatch
     # remains available to the canonical query path; these four-byte records
@@ -2914,7 +2914,7 @@ def main() -> int:
         "ScummV5_Verb_Query_Far:",
         ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
         "    jml ScummV5_LiveRoom_VerbQuery_Far",
-        ".endif",
+        ".else",
         "; Inputs object/verb scratch; output u16 OBCD-relative entry in result.",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
         "    sta.l $7E5465",
@@ -2960,13 +2960,13 @@ def main() -> int:
         data_lines.extend(lookup)
     data_lines.extend((
         "ScummV5_Verb_Query_Far__absent:", "    .a16", "    lda #$0000",
-        "    sta.l SAME_SCUMM_VERB_RESULT", "    sec", "    rtl",
+        "    sta.l SAME_SCUMM_VERB_RESULT", "    sec", "    rtl", ".endif",
     ))
     data_lines.extend((
         "ScummV5_ObjectProgram_Resolve_Far:",
         ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
         "    jml ScummV5_LiveRoom_ObjectProgramResolve_Far",
-        ".endif",
+        ".else",
         "; Inputs object/verb scratch; output A=u8 OBCD program, entry in verb result.",
         "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
         "    sta.l $7E545C",
@@ -3050,7 +3050,7 @@ def main() -> int:
                 ))
     data_lines.extend((
         "ScummV5_ObjectProgram_Resolve_Far__fail16:", "    sep #$20", "    .a8",
-        "ScummV5_ObjectProgram_Resolve_Far__fail:", "    clc", "    rtl",
+        "ScummV5_ObjectProgram_Resolve_Far__fail:", "    clc", "    rtl", ".endif",
     ))
     data_lines.extend((
         "ScummV5_SetState_Reset_Far:",

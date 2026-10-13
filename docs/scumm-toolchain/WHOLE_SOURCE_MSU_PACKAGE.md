@@ -89,3 +89,31 @@ captured `result` value; it does not promote `running` or failure evidence to a
 pass and does not fill missing observations. Native observations, reused
 hash-bound report fields, and not-captured coverage (including the room-5 PPU
 gap) remain distinct.
+
+## Full-directory native image smoke
+
+The complete 2,203-entry compiler directory also links into the feature-gated
+native resolver image. The live-room build excludes its unused ROM-backed
+verb/name lookup fallbacks at assembly time: those generated corpus-wide BRL
+dispatches were unreachable in that build personality and exceeded the 16-bit
+relative branch range. Static builds retain the ROM-backed implementation.
+The generator regression checks both conditional branches; Poppy and full
+image assembly validate the actual expansion.
+
+A bounded Nexen cold boot using the DOS-CD profile's configured boot entry
+resolved and executed `GlobalProgram(1)` (canonical ProgramUnit ID 0) through
+the full directory, then loaded room 68 through its room bundle. At 2,000
+frames, room 68 was committed, SCUMM error was zero, the checked provider had
+read 65,317 bytes in 12 requests, and the resolver had 15 resident units / a
+peak of 15, including room-68 entry, exit, locals, and callable object
+carriers. Dynamic global lookups were 5; cache failures, stale rejections, and
+selector exhaustion were zero. This is full-directory native boot and room-68
+load evidence, not a whole-game execution or the bounded room-3 route.
+
+The final 4 MiB ROM passes ROM and 21-region WRAM audits. The all-room
+readiness report still has `native_loadable: false` because 32 SC5LIVE records
+exceed the current 3,132-byte incoming staging limit. The booted room-68 record
+fits; the smoke does not certify those other rooms. The 2,144 unverified plus
+4 blocked backend units and the separate graphics, sound/iMUSE, text/font, and
+save-state gaps continue to keep release readiness `NOT_READY`. Room 5's PPU
+comparison remains `NOT_CAPTURED`.

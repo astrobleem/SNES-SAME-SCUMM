@@ -3591,5 +3591,37 @@ drift remains adjudicated and unchanged.
 - Validation: `make test` 1,126 passed, 12 skipped; `make validate` passed;
   focused package/evidence/coupling tests, Python compilation, Bash syntax,
   JSON validation, WRAM audit (21 regions, no overlaps), and `git diff --check`
-  passed. A full-directory native build/boot check and publication audit remain
-  to be completed; no gameplay route was rerun.
+  passed.
+
+### Whole-source linker/native follow-up (2026-10-12)
+
+- Corpus-sized live-room assembly initially failed on long BRL displacements
+  in five generated ROM fallback lookup routines. Live MSU builds already
+  tail-jumped to validated-room services, so those fallback bodies were dead
+  code but remained assembled. The generator now emits them in the `.else`
+  branch only; static builds remain unchanged. A regression checks the live
+  adapter and legacy fallback are placed in mutually exclusive branches.
+- The full-source image assembles with the complete 2,203 ProgramUnit
+  directory after that correction. Its 4 MiB SA-1/LoROM image has 7,610 bytes
+  free in bank 0 before the header and passes Poppy, ROM audit, and the
+  21-region WRAM overlap audit.
+- The first bounded cold boot omitted the profile-declared dynamic boot
+  global; that experiment was invalid as a boot acceptance. Rebuilding with
+  the DOS-CD profile's `boot_script_number: 1` and argument 0 produced the
+  valid smoke: GlobalProgram(1), full-directory canonical ID 0, bound at
+  ephemeral selector 208 and fetched from SAMEPKG; room 68 then committed
+  from SC5LIVE/SC5VIS. At frame 2,000: SCUMM error 0, 65,317 provider bytes,
+  12 checked reads, 15 resident bindings / peak 15, five dynamic global
+  lookups, one room bundle load, zero cache failures, stale rejections, or
+  selector exhaustion. This is a bounded boot/room-68 smoke, not a replay of
+  the established route.
+- Room 68's full cooked source record is 20,184 bytes, live metadata 768
+  bytes, and SC5VIS 60,170 bytes. Its stream is loadable with current buffers;
+  the full all-room readiness report still rejects 32 oversized SC5LIVE
+  records (largest 19,135 bytes, room 66). The room-5 PPU gap remains
+  `NOT_CAPTURED`.
+- Full-source SAMEPKG remains 13,547,228 bytes, SHA-256
+  `2ca25803f5b4cccaef1a5d25df01d78b9ccdb3a552e20e95f5c0982a387101a3`;
+  independent package runs 7 and 9 had identical 401-artifact sets and
+  contents. Whole-game readiness remains `NOT_READY`; no whole-game runtime
+  claim or FATE-specific production hook was added.
