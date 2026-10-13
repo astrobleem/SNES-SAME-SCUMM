@@ -253,3 +253,18 @@ claimed.
 - **PLANNED:** per-resource request/CRC/presentation timing records that do
   not share an overwritten timestamp; broader resource codecs and audio
   conversion; portable streamed-save migration; and physical hardware tests.
+
+## SC5LIVE validation invariants
+
+The native v4 active record is bounded by the 6,144-byte active metadata
+allocation. Its 16-bit length is checked before any record bytes are published
+to that allocation; 6,143 and 6,144 are in range, while 6,145 is rejected.
+The host decoder applies this bound to the compact v4 bytes only. Its expanded
+legacy-shaped validation view has a separate 65,535-byte format bound because
+external route rows and compact portal data can expand during normalization.
+
+Each SCUMM v5 `BOXM` route-matrix cell is either a walkbox index in
+`[0, box_count)` or `$FF`, the no-route sentinel. This remains true after raw,
+RLE, or sparse-row decoding. Sparse rows encode only actual next-hop entries,
+so `$FF` is not a valid sparse entry value. Container CRC validity authenticates
+the bytes; it does not waive these semantic bounds.

@@ -31,11 +31,25 @@ def main() -> int:
         parser.error(f"{root} is not a Git checkout")
     origin = git(root, "config", "--get", "remote.origin.url").stdout.strip().lower()
     normalized = origin.removesuffix(".git").replace(":", "/")
-    if pin["repository"] not in normalized:
+    if pin["repository"].lower() not in normalized:
         parser.error(f"Poppy origin is {origin!r}; SAME requires {pin['repository']}")
     head = git(root, "rev-parse", "HEAD").stdout.strip()
     if head != pin["commit"]:
         parser.error(f"Poppy HEAD {head} does not match pinned source {pin['commit']}")
+    pansy_root = root.parent / "pansy"
+    if not (pansy_root / ".git").exists():
+        parser.error(f"Poppy's required Pansy checkout is missing: {pansy_root}")
+    pansy_origin = git(pansy_root, "config", "--get", "remote.origin.url").stdout.strip().lower()
+    pansy_normalized = pansy_origin.removesuffix(".git").replace(":", "/")
+    if pin["pansy_repository"].lower() not in pansy_normalized:
+        parser.error(
+            f"Pansy origin is {pansy_origin!r}; SAME requires {pin['pansy_repository']}"
+        )
+    pansy_head = git(pansy_root, "rev-parse", "HEAD").stdout.strip()
+    if pansy_head != pin["pansy_commit"]:
+        parser.error(
+            f"Pansy HEAD {pansy_head} does not match pinned source {pin['pansy_commit']}"
+        )
     dll = args.dll or root / "src/Poppy.CLI/bin/Release/net10.0/poppy.dll"
     if not dll.is_file():
         parser.error(f"Poppy CLI not built: {dll}")
@@ -43,6 +57,7 @@ def main() -> int:
     if observed != pin["dll_sha256"]:
         parser.error(f"Poppy DLL {observed} does not match pinned SHA-256 {pin['dll_sha256']}")
     print(f"Poppy source OK: {head}")
+    print(f"Pansy source OK: {pansy_head}")
     print(f"Poppy DLL SHA-256: {observed}")
     print(dll)
     return 0

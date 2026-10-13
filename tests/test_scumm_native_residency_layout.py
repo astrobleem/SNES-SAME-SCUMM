@@ -12,7 +12,8 @@ import unittest
 
 from tools.validate_scumm_native_residency_nexen import (
     LIVE_ROOM_ACTIVE_BASE, LIVE_ROOM_ACTIVE_CAPACITY,
-    audit_runtime_walkbox_flags, git_identity,
+    audit_runtime_walkbox_flags, git_identity, room_metadata_probe_is_published,
+    room_metadata_probe_step,
 )
 from tools.audit_scumm_residency_wram import audit as audit_wram
 
@@ -115,6 +116,36 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         self.assertEqual(int(active["address"].replace(":", ""), 16),
                          LIVE_ROOM_ACTIVE_BASE)
         self.assertEqual(active["bytes"], LIVE_ROOM_ACTIVE_CAPACITY)
+
+    def test_live_room_length_boundary_reloads_u16_after_a8_checkpoint(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm").read_text()
+        validator = source.split("ScummV5_LiveRoom_Validate_Far:", 1)[1].split(
+            "ScummV5_LiveRoom_Validate_Far__bad:", 1,
+        )[0]
+        after_checkpoint = validator.split(
+            "lda #$C1 ; identity/schema/length checks passed", 1,
+        )[1].split("ScummV5_LiveRoom_Validate_Far__maximum_size_ok:", 1)[0]
+        self.assertIsNotNone(re.search(
+            r"rep #\$20\s+\.a16\s+.*?"
+            r"lda\.l SCUMM_LIVE_ROOM_VALIDATION_BASE\+\$30\s+"
+            r"cmp #SCUMM_LIVE_ROOM_HEADER_SIZE",
+            after_checkpoint,
+            re.S,
+        ))
+        self.assertIn("cmp #SCUMM_LIVE_ROOM_MAX_SIZE+1", after_checkpoint)
+
+    def test_room_metadata_probe_batches_transfer_then_samples_commit_seam(self) -> None:
+        self.assertEqual(room_metadata_probe_step(0, 98, 1, 98, 100), 16)
+        self.assertEqual(room_metadata_probe_step(0, 98, 4, 98, 100), 16)
+        self.assertEqual(room_metadata_probe_step(0, 98, 5, 98, 100), 1)
+        self.assertEqual(room_metadata_probe_step(98, 0, 0, 98, 100), 1)
+        self.assertEqual(room_metadata_probe_step(0, 0, 0, 98, 3), 3)
+
+    def test_room_metadata_probe_requires_matching_published_active_identity(self) -> None:
+        self.assertTrue(room_metadata_probe_is_published(98, 98, 1, 98))
+        self.assertFalse(room_metadata_probe_is_published(98, 98, 0, 68))
+        self.assertFalse(room_metadata_probe_is_published(98, 98, 1, 68))
+        self.assertFalse(room_metadata_probe_is_published(68, 98, 1, 98))
 
     def test_live_object_walk_uses_the_ten_byte_compact_row_stride(self) -> None:
         runtime = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm")

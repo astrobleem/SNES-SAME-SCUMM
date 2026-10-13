@@ -405,6 +405,8 @@ def build_program_storage(
     source_room_resources: Mapping[int, bytes] | None = None,
     live_room_resources: Mapping[int, bytes] | None = None,
     live_route_resources: Mapping[int, bytes] | None = None,
+    diagnostic_allow_invalid_live_route: bool = False,
+    diagnostic_live_route_validation_resources: Mapping[int, bytes] | None = None,
     room_visual_resources: Mapping[int, bytes] | None = None,
     rom_bank: int | None = None,
     page_directory_bank: int | None = None,
@@ -577,8 +579,17 @@ def build_program_storage(
     live_room_payload = bytearray()
     live_by_id = dict(live_room_resources or {})
     route_by_id = dict(live_route_resources or {})
+    validation_route_by_id = dict(
+        diagnostic_live_route_validation_resources
+        if diagnostic_live_route_validation_resources is not None else route_by_id
+    )
     if route_by_id and set(route_by_id) != set(live_by_id):
         raise ValueError("sectioned live-room and route resource room sets differ")
+    if validation_route_by_id and set(validation_route_by_id) != set(live_by_id):
+        raise ValueError("validated live-room and route resource room sets differ")
+    if (diagnostic_live_route_validation_resources is not None and
+            not diagnostic_allow_invalid_live_route):
+        raise ValueError("diagnostic route validation override requires explicit diagnostic mode")
     if any(isinstance(room, bool) or not 0 <= int(room) <= 255 for room in live_by_id):
         raise ValueError("live room IDs must fit u8")
     if live_by_id and LIVE_ROOM_SECTION in used_section_names:
@@ -594,7 +605,7 @@ def build_program_storage(
             route_body = (bytes(route_by_id[room_id]) if route_by_id else b"")
             decoded_live = decode_live_room(
                 body, expected_room=int(room_id), max_size=0xFFFF,
-                route_data=(route_body if route_by_id else None),
+                route_data=(validation_route_by_id[room_id] if route_by_id else None),
             )
             if len(body) > 0xFFFF:
                 raise ValueError(f"live room {room_id} exceeds directory length field")

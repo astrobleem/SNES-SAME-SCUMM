@@ -274,6 +274,41 @@ def portal_table(room) -> bytes:
     return bytes(output)
 
 
+def inject_diagnostic_invalid_sparse_route_value(
+    encoded: bytes, *, room: int, row: int, pair_index: int, value: int,
+) -> bytes:
+    """Corrupt one compiler-produced sparse next-hop for native rejection tests.
+
+    This is deliberately an opt-in diagnostic transformation after semantic
+    compilation. SAMEPKG is rebuilt afterward, so package and resource CRCs
+    remain valid and native semantic validation is the layer under test.
+    """
+    raw = bytearray(encoded)
+    if len(raw) < 6 or raw[0] != 1:
+        raise ValueError(f"room {room} has no sectioned SC5ROUT record")
+    box_count = raw[1]
+    directory_bytes = int.from_bytes(raw[2:4], "little")
+    if not 0 <= row < box_count or directory_bytes > len(raw):
+        raise ValueError(f"room {room} sparse route row is outside its directory")
+    if not 0 <= value <= 0xFF:
+        raise ValueError("diagnostic route value must fit one byte")
+    mode = raw[4 + row]
+    if mode != 2:
+        raise ValueError(
+            f"room {room} route row {row} is not sparse (mode {mode})"
+        )
+    offsets_base = 4 + box_count
+    start = int.from_bytes(raw[offsets_base + row * 2:
+                                offsets_base + row * 2 + 2], "little")
+    end = int.from_bytes(raw[offsets_base + (row + 1) * 2:
+                              offsets_base + (row + 1) * 2 + 2], "little")
+    if not 0 <= pair_index < (end - start) // 2:
+        raise ValueError(f"room {room} sparse row {row} has no pair {pair_index}")
+    value_offset = directory_bytes + start + pair_index * 2 + 1
+    raw[value_offset] = value
+    return bytes(raw)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, action="append", required=True)
@@ -461,6 +496,11 @@ def main() -> int:
     parser.add_argument(
         "--msu1-live-room-resources", action="store_true",
         help="package compiler-owned room tables and visuals for live MSU consumers",
+    )
+    parser.add_argument(
+        "--diagnostic-invalid-live-route-cell", metavar="ROOM:ROW:PAIR:VALUE",
+        help=("test only: corrupt one compiled sparse next-hop after semantic "
+              "lowering, then regenerate valid package/resource CRCs"),
     )
     parser.add_argument(
         "--msu1-include-source-room-records", action="store_true",
@@ -1618,6 +1658,7 @@ def main() -> int:
         })
         live_room_resources = {}
         live_route_resources = {}
+        diagnostic_live_route_validation_resources = None
         room_visual_resources = {}
         if args.msu1_live_room_resources:
             missing_visuals = [int(record["room"]) for record in records
@@ -1632,6 +1673,27 @@ def main() -> int:
                 live_room_resources[room_id], live_route_resources[room_id] = (
                     encode_live_room_sections(
                         record, program_units=programs,
+                    )
+                )
+            if args.diagnostic_invalid_live_route_cell:
+                diagnostic_live_route_validation_resources = dict(live_route_resources)
+            if args.diagnostic_invalid_live_route_cell:
+                try:
+                    room_id, row, pair, value = map(
+                        int, args.diagnostic_invalid_live_route_cell.split(":"),
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "diagnostic invalid route must be ROOM:ROW:PAIR:VALUE"
+                    ) from exc
+                if room_id not in live_route_resources:
+                    raise ValueError(
+                        f"diagnostic invalid route names absent room {room_id}"
+                    )
+                live_route_resources[room_id] = (
+                    inject_diagnostic_invalid_sparse_route_value(
+                        live_route_resources[room_id], room=room_id, row=row,
+                        pair_index=pair, value=value,
                     )
                 )
             room_visual_resources = {
@@ -1656,6 +1718,12 @@ def main() -> int:
             source_room_resources=source_room_resources,
             live_room_resources=live_room_resources,
             live_route_resources=live_route_resources,
+            diagnostic_allow_invalid_live_route=(
+                args.diagnostic_invalid_live_route_cell is not None
+            ),
+            diagnostic_live_route_validation_resources=(
+                diagnostic_live_route_validation_resources
+            ),
             room_visual_resources=room_visual_resources,
             rom_bank=args.msu1_program_directory_bank,
             page_directory_bank=(

@@ -25,6 +25,7 @@ def chunk(tag: bytes, payload: bytes) -> bytes:
 
 def object_chunks(object_id: int = 70, *, passive_count: int = 1,
                   named: bool = False,
+                  name_padding_bytes: int = 0,
                   marker_vars: tuple[int, int] = (9, 10)) -> tuple[bytes, ...]:
     """One two-verb carrier plus passive records, optionally named."""
     def cdhd(object_id: int) -> bytes:
@@ -42,13 +43,28 @@ def object_chunks(object_id: int = 70, *, passive_count: int = 1,
         0x1A, second_marker & 0xFF, second_marker >> 8, 10, 0, 0xA0,
     ))
     carrier_children = cdhd(object_id) + chunk(b"VERB", verbs)
+    names = []
     if named:
-        carrier_children += chunk(b"OBNA", f"Fixture carrier {object_id:03d}".encode())
+        names.append((object_id, f"Fixture carrier {object_id:03d}".encode()))
+        names.extend(
+            (passive_id, f"Fixture object {passive_id:03d}".encode())
+            for passive_id in range(object_id + 1, object_id + passive_count)
+        )
+        remaining_padding = name_padding_bytes
+        padded_names = []
+        for name_id, name in names:
+            padding = min(remaining_padding, 32 - len(name))
+            padded_names.append((name_id, name + b"x" * padding))
+            remaining_padding -= padding
+        if remaining_padding:
+            raise ValueError("requested object-name padding exceeds the 32-byte row limits")
+        names = padded_names
+        carrier_children += chunk(b"OBNA", names[0][1])
     records = [chunk(b"OBCD", carrier_children)]
     for passive_id in range(object_id + 1, object_id + passive_count):
         children = cdhd(passive_id)
         if named:
-            children += chunk(b"OBNA", f"Fixture object {passive_id:03d}".encode())
+            children += chunk(b"OBNA", dict(names)[passive_id])
         records.append(chunk(b"OBCD", children))
     return tuple(records)
 
@@ -56,7 +72,8 @@ def object_chunks(object_id: int = 70, *, passive_count: int = 1,
 def raw_room(room: int, *, load_room_with_ego: bool = False,
              draw_box: bool = False,
              room_resource_failure: bool = False,
-             large_live_room: bool = False) -> bytes:
+             large_live_room: bool = False,
+             large_live_room_name_padding_bytes: int = 0) -> bytes:
     palette = bytes(value for index in range(256) for value in (index, index, index))
     smap = chunk(b"SMAP", struct.pack("<I", 12) + bytes((1,)) + bytes(range(16)))
     rmim = chunk(b"RMIM", chunk(b"RMIH", b"\0\0") + chunk(b"IM00", smap))
@@ -156,6 +173,7 @@ def raw_room(room: int, *, load_room_with_ego: bool = False,
                        0xFF, 0xA0))
     if large:
         objects = object_chunks(70, passive_count=36, named=True,
+                                name_padding_bytes=large_live_room_name_padding_bytes,
                                 marker_vars=(202, 203))
     elif load_room_with_ego and room in (1, 2):
         objects = object_chunks(70 if room == 1 else 72)
@@ -266,6 +284,10 @@ def main() -> int:
         help="make room 1 a large live-room stress record; requires --live-room-resources",
     )
     parser.add_argument(
+        "--large-live-room-name-padding-bytes", type=int, default=0,
+        help="append bounded bytes to generated object names for exact native record-size tests",
+    )
+    parser.add_argument(
         "--large-program-body", action="store_true",
         help="make GlobalProgram(2) a >21 KiB yielding branch/page conformance body",
     )
@@ -285,6 +307,10 @@ def main() -> int:
     if args.large_live_room and any((args.load_room_with_ego, args.find_inventory,
                                      args.draw_box, args.room_resource_failure)):
         parser.error("--large-live-room is for the default live-room route fixture")
+    if args.large_live_room_name_padding_bytes and not args.large_live_room:
+        parser.error("--large-live-room-name-padding-bytes requires --large-live-room")
+    if not 0 <= args.large_live_room_name_padding_bytes <= 512:
+        parser.error("--large-live-room-name-padding-bytes must be in 0..512")
     out = args.output_dir.resolve()
     out.mkdir(parents=True, exist_ok=True)
     ids = {
@@ -302,6 +328,7 @@ def main() -> int:
             draw_box=args.draw_box,
             room_resource_failure=args.room_resource_failure,
             large_live_room=args.large_live_room,
+            large_live_room_name_padding_bytes=args.large_live_room_name_padding_bytes,
         )
         compiled = compile_room_payload(
             payload, room_number=room,
@@ -528,6 +555,7 @@ def main() -> int:
             "named_object_ids": list(range(70, 106)),
             "minimum_expanded_bytes": 19136,
             "minimum_active_bytes": 6082,
+            "active_name_padding_bytes": args.large_live_room_name_padding_bytes,
             "passive_object_ids": list(range(71, 106)),
         } if args.large_live_room else None),
         "records": records,

@@ -1358,7 +1358,15 @@ ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_destination_ok:
     bne ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_value_ok
     jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
 ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_value_ok:
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
     rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    and #$00FF
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_value_in_range
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_value_in_range:
     .a16
     lda.l SCUMM_LIVE_ROOM_TEMP4
     cmp #$FFFF
@@ -1702,6 +1710,9 @@ ScummV5_LiveRoom_Validate_Far__length_ok:
     sta.l SCUMM_LIVE_ROOM_VALIDATE_CHECKPOINT
     rep #$20
     .a16
+    ; The checkpoint write above leaves A=$00C1 after REP. Reload the
+    ; validated u16 length before applying either allocation-bound check.
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$30
     cmp #SCUMM_LIVE_ROOM_HEADER_SIZE
     bcs ScummV5_LiveRoom_Validate_Far__minimum_size_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad

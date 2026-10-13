@@ -63,6 +63,28 @@ def _checked_u16(value: int, what: str) -> int:
     return value
 
 
+def _validate_route_values(routes: bytes, box_count: int, *, room: int) -> None:
+    """SCUMM BOXM cells are walkbox indices; 0xFF means no route."""
+    if len(routes) != box_count * box_count:
+        raise ResourceError(f"room {room} movement matrix is not square")
+    if box_count == 0:
+        return
+    for index in range(0, len(routes), box_count):
+        source = index // box_count
+        _validate_route_row(
+            routes[index:index + box_count], box_count, room=room, source=source,
+        )
+
+
+def _validate_route_row(routes: bytes, box_count: int, *, room: int, source: int) -> None:
+    for index, value in enumerate(routes):
+        if value != 0xFF and value >= box_count:
+            raise ResourceError(
+                f"room {room} BOXM route {source}->{index} names "
+                f"walkbox {value}, outside 0..{box_count - 1}"
+            )
+
+
 def _encode_portal_directory(dense: bytes, box_count: int, room: int) -> bytes:
     """Encode v3 sorted sparse pairs and deduplicated portal descriptors."""
     pair_count = box_count * box_count
@@ -97,8 +119,7 @@ def _encode_portal_directory(dense: bytes, box_count: int, room: int) -> bytes:
 
 def _encode_route_rows(dense: bytes, box_count: int, room: int) -> bytes:
     """Encode each BOXM row using its smallest lossless native representation."""
-    if len(dense) != box_count * box_count:
-        raise ResourceError(f"room {room} movement matrix is not square")
+    _validate_route_values(dense, box_count, room=room)
     modes = bytearray()
     row_offsets = [0]
     payload = bytearray()
@@ -299,8 +320,7 @@ def encode_live_room(
     if len(geometry) != box_count * 18:
         raise ResourceError(f"room {room} walkbox geometry count differs")
     routes = bytes(record["box_routes"])
-    if len(routes) != box_count * box_count:
-        raise ResourceError(f"room {room} movement matrix is not square")
+    _validate_route_values(routes, box_count, room=room)
     portals = _encode_portal_directory(bytes(record["portals"]), box_count, room)
 
     verbs = bytearray()
@@ -414,6 +434,10 @@ def decode_live_room(
             raise ResourceError(f"live room {name} table is out of bounds or noncanonical")
         decoded_offsets[name] = offset
         expected += length
+    _validate_route_values(
+        bytes(data[offsets_raw[2]:offsets_raw[2] + lengths[2]]),
+        box_count, room=room,
+    )
 
     portals_offset, objects_offset = offsets_raw[3:5]
     if portals_offset != expected or objects_offset > total_size:
@@ -666,6 +690,7 @@ def _decode_sectioned_live_room(
             raise ResourceError("sectioned live room route row mode is unknown")
         if len(row) != box_count:
             raise ResourceError("sectioned live room route row expands to the wrong width")
+        _validate_route_row(row, box_count, room=room, source=source)
         route_matrix.extend(row)
 
     # Validate the remaining active tables by rebuilding the canonical v3
@@ -716,6 +741,11 @@ def _decode_sectioned_live_room(
         ("locals", active_sections["locals"]),
         ("bundles", active_sections["bundles"]),
     )
+    if HEADER.size + sum(len(payload) for _name, payload in sections) > MAX_SOURCE_RECORD_BYTES:
+        raise ResourceError(
+            "sectioned live room normalized representation exceeds the bounded "
+            f"{MAX_SOURCE_RECORD_BYTES}-byte host validation limit"
+        )
     normalized = bytearray(HEADER.size)
     normalized_offsets: dict[str, int] = {}
     for name, payload in sections:
@@ -727,7 +757,13 @@ def _decode_sectioned_live_room(
         *(normalized_offsets[name] for name, _payload in sections), len(normalized), source_hash,
     )
     normalized[:HEADER.size] = header
-    decoded = decode_live_room(bytes(normalized), expected_room=room, max_size=max_size)
+    # max_size constrains the compact v4 active buffer above. The normalized
+    # host projection is a separate, bounded source-era representation and may
+    # legitimately be larger (for example, sparse routes expand to a matrix).
+    decoded = decode_live_room(
+        bytes(normalized), expected_room=room,
+        max_size=MAX_SOURCE_RECORD_BYTES,
+    )
     return LiveRoomRecord(
         decoded.room, decoded.flags, decoded.box_count, decoded.object_count,
         decoded.verb_count, decoded.local_count, decoded.bundle_count,

@@ -11,7 +11,7 @@ from same.msu1 import (
     CheckedPackageReader, FileDataPort, Msu1ReadError, ReadStatus,
     trusted_package,
 )
-from same.package import build_package
+from same.package import build_package, inspect_package
 from same.engines.scumm_v5.live_room_resources import (
     HEADER, MAX_ACTIVE_BYTES, MAX_PENDING_BYTES, MAX_SOURCE_RECORD_BYTES, OBJECT_WALK,
     decode_live_room, encode_live_room, encode_live_room_sections,
@@ -20,6 +20,9 @@ from same.engines.scumm_v5.room_visual import decode_room_visual, encode_room_vi
 from same.engines.scumm_v5.room import decode_room
 from tools.generate_snes_carrier import generate as generate_carrier
 from tools.build_scumm_native_residency_fixture import raw_room
+from tools.generate_snes_cooked_rooms import (
+    inject_diagnostic_invalid_sparse_route_value,
+)
 from tools.validate_scumm_native_residency_nexen import (
     live_room_ppu_generation_ready, read_active_route_matrix,
 )
@@ -117,6 +120,178 @@ class LiveRoomResourceTests(unittest.TestCase):
         decoded = decode_live_room(active, expected_room=4, route_data=routes)
         self.assertEqual(decoded.route_matrix, bytes(matrix))
 
+    def test_route_values_are_walkbox_indices_or_ff_in_every_host_representation(self) -> None:
+        record, units = self.source_record()
+        invalid = dict(record, box_routes=b"\x00\x02\xff\x00")
+        with self.assertRaisesRegex(Exception, "outside 0\\.\\.1"):
+            encode_live_room(invalid, program_units=units)
+        with self.assertRaisesRegex(Exception, "outside 0\\.\\.1"):
+            encode_live_room_sections(invalid, program_units=units)
+
+        valid_v3 = bytearray(encode_live_room(record, program_units=units))
+        route_offset = HEADER.unpack_from(valid_v3)[14]
+        valid_v3[route_offset + 1] = 2
+        with self.assertRaisesRegex(Exception, "outside 0\\.\\.1"):
+            decode_live_room(bytes(valid_v3))
+
+        record["walkbox_flags"] = bytes(8)
+        record["walkbox_geometry"] = bytes(8 * 18)
+        record["portals"] = bytes(8 * 8 * 7)
+        for expected_mode, row in (
+            (0, bytes(index & 1 for index in range(8))),
+            (1, bytes([2] * 8)),
+            (2, bytes((0xFF, 0xFF, 3, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF))),
+        ):
+            matrix = bytearray([0xFF] * 64)
+            matrix[:8] = row
+            record["box_routes"] = bytes(matrix)
+            active, routes = encode_live_room_sections(record, program_units=units)
+            directory_size = struct.unpack_from("<H", routes, 2)[0]
+            self.assertEqual(routes[4], expected_mode)
+            malformed = bytearray(routes)
+            malformed[directory_size + (1 if expected_mode else 0)] = 8
+            with self.assertRaisesRegex(Exception, "outside 0\\.\\.7"):
+                decode_live_room(active, route_data=bytes(malformed))
+
+    def test_valid_package_crc_does_not_bypass_sparse_route_semantic_validation(self) -> None:
+        record, units = self.source_record()
+        box_count = 8
+        record["walkbox_flags"] = bytes(box_count)
+        record["walkbox_geometry"] = bytes(box_count * 18)
+        route_matrix = bytearray([0xFF] * (box_count * box_count))
+        route_matrix[0] = 0
+        record["box_routes"] = bytes(route_matrix)
+        record["portals"] = bytes(box_count * box_count * 7)
+        active, routes = encode_live_room_sections(record, program_units=units)
+        directory_size = struct.unpack_from("<H", routes, 2)[0]
+        self.assertEqual(routes[4], 2)  # sparse rows
+        malformed = bytearray(routes)
+        malformed[directory_size + 1] = box_count
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "active.bin").write_bytes(active)
+            (root / "routes.bin").write_bytes(malformed)
+            manifest = {
+                "same_package": 1,
+                "sections": [
+                    {"name": "LIVE", "kind": "SCVL", "path": "active.bin",
+                     "flags": ["streamable", "read_only"]},
+                    {"name": "ROUTES", "kind": "SCRT", "path": "routes.bin",
+                     "flags": ["streamable", "read_only"]},
+                ],
+            }
+            (root / "package.json").write_text(json.dumps(manifest))
+            package_path = root / "routes.samepkg"
+            info = build_package(root / "package.json", package_path)
+            verified = inspect_package(package_path, verify=True)
+            self.assertEqual(verified.crc32, info.crc32)
+            self.assertEqual(len(verified.sections), 2)
+
+        with self.assertRaisesRegex(Exception, "outside 0\\.\\.7"):
+            decode_live_room(active, route_data=bytes(malformed))
+
+    def test_diagnostic_sparse_route_mutation_preserves_directory_and_is_explicit(self) -> None:
+        record, units = self.source_record()
+        box_count = 8
+        record["walkbox_flags"] = bytes(box_count)
+        record["walkbox_geometry"] = bytes(box_count * 18)
+        route_matrix = bytearray([0xFF] * (box_count * box_count))
+        route_matrix[0] = 0
+        record["box_routes"] = bytes(route_matrix)
+        record["portals"] = bytes(box_count * box_count * 7)
+        active, routes = encode_live_room_sections(record, program_units=units)
+        malformed = inject_diagnostic_invalid_sparse_route_value(
+            routes, room=4, row=0, pair_index=0, value=box_count,
+        )
+        self.assertEqual(len(malformed), len(routes))
+        directory_size = struct.unpack_from("<H", routes, 2)[0]
+        changed_at = directory_size + 1
+        self.assertEqual(malformed[changed_at], box_count)
+        self.assertEqual(
+            malformed[:changed_at] + malformed[changed_at + 1:],
+            routes[:changed_at] + routes[changed_at + 1:],
+        )
+        with self.assertRaisesRegex(Exception, "outside 0\\.\\.7"):
+            decode_live_room(active, route_data=malformed)
+        with self.assertRaisesRegex(ValueError, "no pair"):
+            inject_diagnostic_invalid_sparse_route_value(
+                routes, room=4, row=1, pair_index=0, value=box_count,
+            )
+
+    def test_v4_compact_active_limit_is_independent_of_normalized_host_size(self) -> None:
+        record, units = self.source_record()
+        box_count = 64
+        record["walkbox_flags"] = bytes(box_count)
+        record["walkbox_geometry"] = bytes(box_count * 18)
+        record["box_routes"] = bytes([0xFF] * (box_count * box_count))
+        record["portals"] = bytes(box_count * box_count * 7)
+        object_ids = tuple(range(22, 39))
+        record["objects"] = b"".join(
+            struct.pack("<HhhhhB", object_id, 0, 0, 1, 1, 0)
+            for object_id in object_ids
+        )
+        record["object_walk"] = b"".join(
+            struct.pack("<HhhBhhB", object_id, 0, 0, 0, 0, 0, 0)
+            for object_id in object_ids
+        )
+        record["object_names"] = tuple((object_id, b"n" * 32)
+                                        for object_id in object_ids)
+        active, routes = encode_live_room_sections(record, program_units=units)
+        decoded = decode_live_room(active, expected_room=4, route_data=routes)
+        self.assertLessEqual(len(active), MAX_ACTIVE_BYTES)
+        self.assertGreater(sum(decoded.section_sizes.values()), MAX_ACTIVE_BYTES)
+        bounded = decode_live_room(
+            active, expected_room=4, max_size=MAX_ACTIVE_BYTES, route_data=routes,
+        )
+        self.assertEqual(bounded.route_matrix, record["box_routes"])
+
+    def test_v4_active_records_at_allocation_boundary_are_bounded(self) -> None:
+        record, units = self.source_record()
+
+        def build_exact(target: int) -> tuple[bytes, bytes]:
+            for count in range(1, 256):
+                object_ids = tuple(22 + index for index in range(count))
+                candidate = dict(record)
+                candidate["objects"] = b"".join(
+                    struct.pack("<HhhhhB", object_id, 0, 0, 1, 1, 0)
+                    for object_id in object_ids
+                )
+                candidate["object_walk"] = b"".join(
+                    struct.pack("<HhhBhhB", object_id, 0, 0, 0, 0, 0, 0)
+                    for object_id in object_ids
+                )
+                candidate["object_names"] = tuple((object_id, b"")
+                                                   for object_id in object_ids)
+                empty_active, _empty_routes = encode_live_room_sections(
+                    candidate, program_units=units,
+                )
+                extra = target - len(empty_active)
+                if 0 <= extra <= count * 32:
+                    names = []
+                    for object_id in object_ids:
+                        take = min(extra, 32)
+                        names.append((object_id, b"n" * take))
+                        extra -= take
+                    candidate["object_names"] = tuple(names)
+                    active, routes = encode_live_room_sections(
+                        candidate, program_units=units, max_active_size=target,
+                    )
+                    if len(active) == target:
+                        return active, routes
+            self.fail(f"could not construct a valid {target}-byte SC5LIVE v4 record")
+
+        for size in (6143, 6144):
+            active, routes = build_exact(size)
+            decoded = decode_live_room(
+                active, max_size=MAX_ACTIVE_BYTES, route_data=routes,
+            )
+            self.assertEqual(len(decoded.payload), size)
+
+        active, routes = build_exact(6145)
+        with self.assertRaisesRegex(Exception, "length exceeds"):
+            decode_live_room(active, max_size=MAX_ACTIVE_BYTES, route_data=routes)
+
     def test_native_sparse_routes_accept_sorted_pairs_and_rle_no_route_sentinel(self) -> None:
         source = (Path(__file__).resolve().parents[1]
                   / "runtime/snes/engines/scumm_v5_msu_live_room.pasm").read_text()
@@ -126,6 +301,13 @@ class LiveRoomResourceTests(unittest.TestCase):
             "ScummV5_LiveRoom_ValidateRouteDirectory_Far__row_done:", 1,
         )[0]
         self.assertIn("cmp #$FFFF", sparse)
+        self.assertIn("sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE", sparse)
+        self.assertRegex(
+            sparse,
+            r"lda\.l SCUMM_LIVE_ROOM_ROUTE_VALUE\s+and #\$00FF\s+"
+            r"cmp\.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT\s+"
+            r"bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_value_in_range",
+        )
         self.assertIn(
             "cmp.l SCUMM_LIVE_ROOM_TEMP4\n"
             "    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad\n"
@@ -177,6 +359,16 @@ class LiveRoomResourceTests(unittest.TestCase):
         self.assertTrue(all(item.parent == 0 for item in decoded.objects))
         self.assertEqual(decoded.box_routes[0][1], 1)
         self.assertEqual(decoded.box_routes[1][0], 0)
+        padded = decode_room(
+            raw_room(1, large_live_room=True,
+                     large_live_room_name_padding_bytes=27),
+            key="fixture.large-live-room-boundary",
+        )
+        self.assertEqual(
+            sum(len(item.object_name) for item in padded.objects)
+            - sum(len(item.object_name) for item in decoded.objects),
+            27,
+        )
 
     def test_large_sectioned_record_exceeds_legacy_window_without_large_active_allocation(self) -> None:
         box_count = 64

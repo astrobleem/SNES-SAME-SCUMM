@@ -17,6 +17,7 @@ from same.engines.scumm_v5.program_storage import (
 )
 from same.engines.scumm_v5.live_room_resources import (
     MAX_PENDING_BYTES, OBJECT, SOURCE_OBJECT_WALK, decode_live_room, encode_live_room,
+    encode_live_room_sections,
 )
 from same.engines.scumm_v5.room_compiler import compile_room_payload, decode_script
 from same.engines.scumm_v5.room_visual import decode_room_visual, encode_room_visual
@@ -218,6 +219,66 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
             self.assertIn("ScummV5_MsuVisualRecords:", include)
             self.assertEqual(result["live_room_resource_count"], 1)
             self.assertEqual(result["visual_resource_count"], 1)
+
+    def test_explicit_route_failure_package_keeps_valid_crcs_for_native_semantic_test(self) -> None:
+        directory = self.directory()
+        bodies = {
+            "GlobalProgram(4)": b"\0",
+            "RoomEntryProgram(2)": b"\xa0",
+            "ObjectProgram(room=2,object=9)": b"\0",
+        }
+        box_count = 8
+        room = {
+            "room": 2, "raw": b"copyright-free diagnostic room",
+            "entry": 1, "exit": 0xFFFF, "walkbox_flags": bytes(box_count),
+            "walkbox_geometry": bytes(box_count * 18),
+            "box_routes": bytes([0] + [0xFF] * (box_count * box_count - 1)),
+            "portals": bytes(box_count * box_count * 7),
+            "objects": b"", "object_names": (), "object_walk": b"",
+            "object_programs": (), "executable_locals": (),
+        }
+        units = [
+            {"id": 1, "room": 2, "unit_identity": "RoomEntryProgram(2)"},
+            {"id": 2, "room": 2,
+             "unit_identity": "ObjectProgram(room=2,object=9)"},
+        ]
+        active, valid_route = encode_live_room_sections(room, program_units=units)
+        malformed_route = bytearray(valid_route)
+        directory_size = int.from_bytes(valid_route[2:4], "little")
+        self.assertEqual(valid_route[4], 2)
+        malformed_route[directory_size + 1] = box_count
+        malformed_route = bytes(malformed_route)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(Exception, "outside 0\\.\\.7"):
+                build_program_storage(
+                    directory, bodies, root / "strict",
+                    live_room_resources={2: active},
+                    live_route_resources={2: malformed_route},
+                )
+            result = build_program_storage(
+                directory, bodies, root / "diagnostic",
+                live_room_resources={2: active},
+                live_route_resources={2: malformed_route},
+                diagnostic_allow_invalid_live_route=True,
+                diagnostic_live_route_validation_resources={2: valid_route},
+            )
+            package_path = root / "diagnostic" / "scumm-programs.msu"
+            package = inspect_package(package_path, verify=True)
+            package_bytes = package_path.read_bytes()
+            route_row = result["live_route_records"][0]
+            route_bytes = package_bytes[
+                int(route_row["package_offset"]):
+                int(route_row["package_offset"]) + int(route_row["length"])
+            ]
+            self.assertEqual(route_bytes, malformed_route)
+            self.assertEqual(result["package_sha256"], hashlib.sha256(
+                package_bytes,
+            ).hexdigest())
+            self.assertIn("SC5ROUT", {section.name for section in package.sections})
+            with self.assertRaisesRegex(Exception, "outside 0\\.\\.7"):
+                decode_live_room(active, route_data=route_bytes)
 
     def test_package_chunks_large_compact_live_room_records(self) -> None:
         directory = self.directory()

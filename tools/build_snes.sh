@@ -1026,6 +1026,12 @@ else
             ROOM_GENERATOR_ARGS+=(--banked-room-directory-data)
         fi
     fi
+    if [[ -n "${SAME_SCUMM_DIAGNOSTIC_INVALID_LIVE_ROUTE_CELL:-}" ]]; then
+        ROOM_GENERATOR_ARGS+=(
+            --diagnostic-invalid-live-route-cell
+            "$SAME_SCUMM_DIAGNOSTIC_INVALID_LIVE_ROUTE_CELL"
+        )
+    fi
     "$PYTHON" tools/generate_snes_cooked_rooms.py \
         "${ROOM_MANIFESTS[@]}" \
         --output runtime/snes/generated/scumm_v5_rooms.inc.pasm \
