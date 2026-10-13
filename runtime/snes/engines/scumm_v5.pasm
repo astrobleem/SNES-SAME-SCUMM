@@ -9,6 +9,7 @@ SCUMM_V5_MAX_SCRIPT_SLOTS = $0019
 SCUMM_VM_RUNNING = $01
 SCUMM_VM_YIELDED = $02
 SCUMM_VM_DELAYED = $03
+SCUMM_VM_WAIT_RESOURCE = $05
 SCUMM_VM_STOPPED = $04
 SCUMM_VM_ERROR   = $FF
 SCUMM_WIO_INVENTORY = $00
@@ -619,6 +620,9 @@ ScummV5_Engine_Boot__clear_object_name_lengths:
     .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
     jsl ScummV5_Resident_Reset_Far
     .endif
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_Reset_Far
+    .endif
     .endif
     sep #$20
     .a8
@@ -724,6 +728,20 @@ ScummV5_Engine_Frame:
     rep #$30
     .a16
     .i16
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; SAME storage advances independently after this frame returns. Do not run
+    ; any script until package identity validation has completed.
+    jsl ScummV5_MsuProgram_FrameReady_Far
+    bcs ScummV5_Engine_Frame__msu_ready
+ScummV5_Engine_Frame__msu_not_ready:
+    plp
+    clc
+    rts
+ScummV5_Engine_Frame__msu_ready:
+    rep #$30
+    .a16
+    .i16
+    .endif
     sep #$20
     .a8
     lda #$10
@@ -1213,6 +1231,17 @@ ScummV5_Engine_Frame__m23a_rehydrate:
     sta.l SAME_SCUMM_C4_SLOT_STATUS
     jmp ScummV5_Engine_Frame__complete_success
 ScummV5_Engine_Frame__m23a_room_runnable:
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; The preceding program-size comparison is 16-bit. The direct-call flag
+    ; and tail-entry adapter are byte state, so make the processor width
+    ; explicit before touching them.
+    sep #$20
+    .a8
+    ; This is a tail-call into the interpreter. Mark the call shape so a
+    ; pending checked read can unwind the engine frame correctly.
+    lda #$01
+    sta.l SAME_SCUMM_MSU_DIRECT_ROOM_CALL
+.endif
     jmp ScummV5_Engine_RunSelected
 ScummV5_Engine_Frame__m23a_driver:
     .a8
@@ -1781,6 +1810,158 @@ ScummV5_Engine_Frame__single_fixture:
     lda #$00
     sta.l SAME_SCUMM_RETURN_MODE
 ScummV5_Engine_RunSelected:
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; Resolve before entering the existing interpreter. Its terminal/error
+    ; paths unwind the engine frame nonlocally, so this adapter must tail-enter
+    ; rather than wrap execution in a conventional JSR frame.
+    php
+    rep #$30
+    .a16
+    .i16
+    phx
+    phy
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    sta.l SAME_SCUMM_MSU_LAST_SELECTOR
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_RESOLVE_CALLS
+    inc
+    sta.l SAME_SCUMM_MSU_RESOLVE_CALLS
+    sep #$20
+    .a8
+    jsl ScummV5_MsuProgram_EnsureSelected_Far
+    bcs ScummV5_Engine_RunSelected__msu_ready
+    rep #$20
+    .a16
+    cmp #$FFFF
+    beq ScummV5_Engine_RunSelected__msu_failed
+    sep #$20
+    .a8
+    lda #SCUMM_VM_WAIT_RESOURCE
+    sta.l SAME_SCUMM_STATUS
+    bra ScummV5_Engine_RunSelected__msu_pending_return
+ScummV5_Engine_RunSelected__msu_failed:
+    sep #$20
+    .a8
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_STATUS
+    bra ScummV5_Engine_RunSelected__msu_resource_return
+ScummV5_Engine_RunSelected__msu_pending_return:
+    bra ScummV5_Engine_RunSelected__msu_resource_return
+ScummV5_Engine_RunSelected__msu_resource_return:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MSU_DIRECT_ROOM_CALL
+    beq ScummV5_Engine_RunSelected__msu_restore_caller
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_C4_SLOT_PC
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_STATUS
+    sta.l SAME_SCUMM_C4_SLOT_STATUS
+ScummV5_Engine_RunSelected__msu_restore_caller:
+    .a8
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    plp
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MSU_DIRECT_ROOM_CALL
+    beq ScummV5_Engine_RunSelected__msu_regular_return
+    lda #$00
+    sta.l SAME_SCUMM_MSU_DIRECT_ROOM_CALL
+    plp ; Engine_Frame's status saved before its tail-call.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_STATUS
+    cmp #SCUMM_VM_ERROR
+    beq ScummV5_Engine_RunSelected__msu_direct_error
+    clc
+    rts
+ScummV5_Engine_RunSelected__msu_direct_error:
+    sec
+    rts
+ScummV5_Engine_RunSelected__msu_regular_return:
+    .a8
+    lda.l SAME_SCUMM_STATUS
+    cmp #SCUMM_VM_ERROR
+    beq ScummV5_Engine_RunSelected__msu_regular_error
+    clc
+    rts
+ScummV5_Engine_RunSelected__msu_regular_error:
+    sec
+    rts
+ScummV5_Engine_RunSelected__msu_ready:
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_MSU_CACHE_TEMP
+    lda.l SAME_SCUMM_MSU_EXEC_DEPTH
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcc ScummV5_Engine_RunSelected__msu_depth_ok
+    sep #$20
+    .a8
+    lda #SCUMM_ERR_RESIDENCY_EXHAUSTED
+    jsr ScummV5_SetError
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_STATUS
+    bra ScummV5_Engine_RunSelected__msu_resource_return
+ScummV5_Engine_RunSelected__msu_depth_ok:
+    tax
+    lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    sta.l SAME_SCUMM_MSU_EXEC_PREV_SLOT,x
+    lda.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
+    sta.l SAME_SCUMM_MSU_EXEC_PREV_SELECTOR,x
+    lda.l SAME_SCUMM_MSU_EXEC_DEPTH
+    inc
+    sta.l SAME_SCUMM_MSU_EXEC_DEPTH
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    sta.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
+    lda.l SAME_SCUMM_MSU_CACHE_TEMP
+    sta.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    beq ScummV5_Engine_RunSelected__msu_select0
+    lda.l SAME_SCUMM_MSU_CACHE_PINS1
+    inc
+    sta.l SAME_SCUMM_MSU_CACHE_PINS1
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_ID1
+    sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_ID
+    lda.l SAME_SCUMM_MSU_CACHE_GENERATION1
+    sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
+    bra ScummV5_Engine_RunSelected__msu_enter
+ScummV5_Engine_RunSelected__msu_select0:
+    lda.l SAME_SCUMM_MSU_CACHE_PINS0
+    inc
+    sta.l SAME_SCUMM_MSU_CACHE_PINS0
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_ID0
+    sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_ID
+    lda.l SAME_SCUMM_MSU_CACHE_GENERATION0
+    sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
+ScummV5_Engine_RunSelected__msu_enter:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_MSU_DIRECT_ROOM_CALL
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    plp
+    jmp ScummV5_Engine_RunSelected__execute
+.else
+    jmp ScummV5_Engine_RunSelected__execute
+.endif
+ScummV5_Engine_RunSelected__execute:
     .if SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE
     sep #$20
     .a8
@@ -2738,6 +2919,9 @@ ScummV5_Engine_Frame__budget_error:
     jsr ScummV5_SetError
 
 ScummV5_Engine_Frame__error:
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_Leave_Far
+    .endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_C18_NESTED
@@ -2762,6 +2946,11 @@ ScummV5_Engine_Frame__outer_error:
     sec
     rts
 ScummV5_Engine_Frame__complete_success:
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; The shared return also handles nested StartScript; restore its parent
+    ; bytecode context before the existing C18 return path resumes it.
+    jsl ScummV5_MsuProgram_Leave_Far
+    .endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_C18_NESTED
@@ -2793,6 +2982,8 @@ ScummV5_Engine_Frame__outer_complete_success:
     bne ScummV5_Engine_Frame__room_exit_yield_done
     lda.l SAME_SCUMM_STATUS
     cmp #SCUMM_VM_RUNNING
+    beq ScummV5_Engine_Frame__room_exit_yield_done
+    cmp #SCUMM_VM_WAIT_RESOURCE
     beq ScummV5_Engine_Frame__room_exit_yield_done
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_EndRoomScript_FarEntry
@@ -2842,6 +3033,13 @@ ScummV5_Engine_Frame__return_success:
     clc
     rts
 ScummV5_Engine_Frame__outer_return_success:
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; A terminal stop can return through the frame's final path instead of the
+    ; opcode-yield completion path. Balance any body context acquired by this
+    ; invocation; Leave is depth-guarded, so an already-balanced frame is a
+    ; no-op.
+    jsl ScummV5_MsuProgram_Leave_Far
+.endif
 .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
     ; Diagnostic-only: snapshot the exact native return frame before the
     ; engine restores its entry status and returns to Same_ActiveEngine_Frame.
@@ -2979,6 +3177,23 @@ ScummV5_C4_ResetState__loop:
     inx
     cpx #SAME_SCUMM_C4_STATE_SIZE
     bcc ScummV5_C4_ResetState__loop
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    sep #$10
+    .i8
+    ldx #$00
+    sep #$20
+    .a8
+ScummV5_C4_ResetState__msu_pending:
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    inx
+    cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcc ScummV5_C4_ResetState__msu_pending
+    rep #$10
+    .i16
+    .endif
     sep #$20
     .a8
     rts
@@ -3198,6 +3413,56 @@ ScummV5_C4_Scheduler_Frame__freeze_trace_done:
     jmp ScummV5_C4_Scheduler_Frame__advance
 ScummV5_C4_Scheduler_Frame__eligible:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; A parent whose nested StartScript child could not fetch its first body
+    ; remains parked until that exact child selector has run or failed.
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    sta.l SAME_SCUMM_C4_SCAN_SLOT
+    tax
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    beq ScummV5_C4_Scheduler_Frame__msu_pending_done
+    dec
+    sta.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    sta.l SAME_SCUMM_MSU_CACHE_TEMP
+    lda.l SAME_SCUMM_C4_SCAN_SLOT
+    tax
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    cmp.l SAME_SCUMM_MSU_CACHE_TEMP
+    bne ScummV5_C4_Scheduler_Frame__msu_pending_clear
+    lda.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    cmp #SCUMM_VM_WAIT_RESOURCE
+    beq ScummV5_C4_Scheduler_Frame__msu_pending_wait
+    cmp #SCUMM_VM_ERROR
+    beq ScummV5_C4_Scheduler_Frame__msu_pending_error
+ScummV5_C4_Scheduler_Frame__msu_pending_clear:
+    .a8
+    lda.l SAME_SCUMM_C4_SCAN_SLOT
+    tax
+    lda #$00
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    bra ScummV5_C4_Scheduler_Frame__msu_pending_done
+ScummV5_C4_Scheduler_Frame__msu_pending_error:
+    .a8
+    lda.l SAME_SCUMM_C4_SCAN_SLOT
+    tax
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_C4_SLOT_STATUS,x
+    lda #$00
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    jmp ScummV5_C4_Scheduler_Frame__advance
+ScummV5_C4_Scheduler_Frame__msu_pending_wait:
+    jmp ScummV5_C4_Scheduler_Frame__advance
+ScummV5_C4_Scheduler_Frame__msu_pending_done:
+    .a8
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    tax
+    .endif
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     lda.l SAME_SCUMM_C4_SCHED_SLOT
     cmp.l SAME_SCUMM_SCENARIO_SENTENCE_SLOT
@@ -3623,6 +3888,10 @@ ScummV5_C4_RetireStoppedSlot:
     sta.l SAME_SCUMM_C4_SLOT_FREEZE_RESISTANT,x
     sta.l SAME_SCUMM_C4_SLOT_RECURSIVE,x
     sta.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    .endif
     lda.l SAME_SCUMM_C4_ACTIVE_COUNT
     beq ScummV5_C4_RetireStoppedSlot__done
     dec
@@ -3687,6 +3956,12 @@ ScummV5_C4_RunNestedChild:
     lda.l SAME_SCUMM_FRAME_OPS
     sta.l SAME_SCUMM_C4_PARENT_OPS
     jsr ScummV5_C4_SaveCurrentSlot
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; The parent PC and source selector are durable in C4. Release only its
+    ; transient code-window pin while the child runs; revalidate/refetch the
+    ; parent before any later source-PC fetch.
+    jsl ScummV5_MsuProgram_SuspendActive_Far
+    .endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_C4_LAST_ALLOCATED
@@ -3714,6 +3989,47 @@ ScummV5_C4_RunNestedChild:
     jsr ScummV5_Engine_RunSelected
     php
     jsr ScummV5_C4_SaveCurrentSlot
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; If the nested child is waiting for its first checked body fetch, keep the
+    ; caller parked at the post-StartScript PC until that child gets a turn.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_STATUS
+    cmp #SCUMM_VM_WAIT_RESOURCE
+    bne ScummV5_C4_RunNestedChild__msu_child_not_waiting
+    lda.l SAME_SCUMM_C4_PARENT_SLOT
+    tax
+    lda.l SAME_SCUMM_C4_LAST_ALLOCATED
+    inc
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    lda.l SAME_SCUMM_C4_LAST_ALLOCATED
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    sta.l SAME_SCUMM_MSU_CACHE_TEMP
+    lda.l SAME_SCUMM_C4_PARENT_SLOT
+    tax
+    lda.l SAME_SCUMM_MSU_CACHE_TEMP
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    lda #SCUMM_VM_WAIT_RESOURCE
+    sta.l SAME_SCUMM_STATUS
+    lda #$01
+    sta.l SAME_SCUMM_MSU_CACHE_RETURN_P
+    bra ScummV5_C4_RunNestedChild__msu_child_ready
+ScummV5_C4_RunNestedChild__msu_child_not_waiting:
+    .a8
+    lda.l SAME_SCUMM_STATUS
+    cmp #SCUMM_VM_ERROR
+    beq ScummV5_C4_RunNestedChild__msu_child_error
+    lda #$00
+    sta.l SAME_SCUMM_MSU_CACHE_RETURN_P
+    bra ScummV5_C4_RunNestedChild__msu_child_ready
+ScummV5_C4_RunNestedChild__msu_child_error:
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_MSU_CACHE_RETURN_P
+ScummV5_C4_RunNestedChild__msu_child_ready:
+    .a8
+    .endif
     rep #$20
     .a16
     lda.l SAME_SCUMM_FRAME_OPS
@@ -3727,6 +4043,49 @@ ScummV5_C4_RunNestedChild:
     tax
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
     sta.l SAME_SCUMM_STATUS
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    beq ScummV5_C4_RunNestedChild__msu_parent_restored
+    lda #SCUMM_VM_WAIT_RESOURCE
+    sta.l SAME_SCUMM_STATUS
+ScummV5_C4_RunNestedChild__msu_parent_restored:
+    .a8
+    lda.l SAME_SCUMM_MSU_CACHE_RETURN_P
+    cmp #$00
+    bne ScummV5_C4_RunNestedChild__msu_return_state_ready
+    ; A child may have replaced this unpinned parent window. Resolve the
+    ; canonical selector again before allowing the parent's logical PC to run.
+    rep #$30
+    .a16
+    .i16
+    jsl ScummV5_MsuProgram_ResumeActive_Far
+    bcs ScummV5_C4_RunNestedChild__msu_parent_reloaded
+    sep #$20
+    .a8
+    cmp #$02
+    beq ScummV5_C4_RunNestedChild__msu_parent_reload_failed
+    lda #SCUMM_VM_WAIT_RESOURCE
+    sta.l SAME_SCUMM_STATUS
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    tax
+    lda #SCUMM_VM_WAIT_RESOURCE
+    sta.l SAME_SCUMM_C4_SLOT_STATUS,x
+    lda #$01
+    sta.l SAME_SCUMM_MSU_CACHE_RETURN_P
+    bra ScummV5_C4_RunNestedChild__msu_return_state_ready
+ScummV5_C4_RunNestedChild__msu_parent_reload_failed:
+    .a8
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_STATUS
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    tax
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_C4_SLOT_STATUS,x
+ScummV5_C4_RunNestedChild__msu_parent_reloaded:
+    .a8
+ScummV5_C4_RunNestedChild__msu_return_state_ready:
+    .a8
+    .endif
     lda.l SAME_SCUMM_C4_PARENT_RETURN_MODE
     sta.l SAME_SCUMM_RETURN_MODE
     lda.l SAME_SCUMM_C4_PARENT_PROGRAM
@@ -3742,6 +4101,15 @@ ScummV5_C4_RunNestedChild:
     lda #$00
     sta.l SAME_SCUMM_C18_NESTED
     plp
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MSU_CACHE_RETURN_P
+    cmp #$01
+    beq ScummV5_C4_RunNestedChild__msu_wait_return
+    cmp #$02
+    beq ScummV5_C4_RunNestedChild__msu_error_return
+    .endif
     bcc ScummV5_C4_RunNestedChild__success
     sep #$20
     .a8
@@ -3749,6 +4117,18 @@ ScummV5_C4_RunNestedChild:
     sta.l SAME_SCUMM_STATUS
     sec
     rts
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+ScummV5_C4_RunNestedChild__msu_wait_return:
+    .a8
+    clc
+    rts
+ScummV5_C4_RunNestedChild__msu_error_return:
+    .a8
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_STATUS
+    sec
+    rts
+.endif
 ScummV5_C4_RunNestedChild__success:
     clc
     rts
@@ -7403,6 +7783,10 @@ ScummV5_Op_Cutscene__next_argument:
     .a8
     jsr ScummV5_FetchByte
     bcc ScummV5_Op_Cutscene__selector_ok
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda #$01
+    sta.l SAME_SCUMM_MSU_C19_ERROR_STAGE
+    .endif
     jmp ScummV5_C19_Error
 ScummV5_Op_Cutscene__selector_ok:
     .a8
@@ -7416,12 +7800,20 @@ ScummV5_Op_Cutscene__not_end:
     lda.l SAME_SCUMM_C4_ARG_COUNT
     cmp #SAME_SCUMM_LOCAL_COUNT
     bcc ScummV5_Op_Cutscene__argument_room
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda #$02
+    sta.l SAME_SCUMM_MSU_C19_ERROR_STAGE
+    .endif
     jmp ScummV5_C19_Error
 ScummV5_Op_Cutscene__argument_room:
     sep #$20
     .a8
     jsr ScummV5_FetchWord
     bcc ScummV5_Op_Cutscene__word_ok
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda #$03
+    sta.l SAME_SCUMM_MSU_C19_ERROR_STAGE
+    .endif
     jmp ScummV5_C19_Error
 ScummV5_Op_Cutscene__word_ok:
     rep #$20
@@ -7437,6 +7829,10 @@ ScummV5_Op_Cutscene__word_ok:
     lda.l SAME_SCUMM_OPERAND
     jsr ScummV5_ReadVariableReference
     bcc ScummV5_Op_Cutscene__variable_ok
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda #$04
+    sta.l SAME_SCUMM_MSU_C19_ERROR_STAGE
+    .endif
     jmp ScummV5_C19_Error
 ScummV5_Op_Cutscene__variable_ok:
     .a16
@@ -7462,6 +7858,10 @@ ScummV5_Op_Cutscene__arguments_done:
     lda.l SAME_SCUMM_C19_STACK_POINTER
     cmp #$04
     bcc ScummV5_Op_Cutscene__stack_room
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda #$05
+    sta.l SAME_SCUMM_MSU_C19_ERROR_STAGE
+    .endif
     jmp ScummV5_C19_Error
 ScummV5_Op_Cutscene__stack_room:
     inc
@@ -7522,6 +7922,10 @@ ScummV5_Op_EndCutscene:
     .endif
     lda.l SAME_SCUMM_C19_STACK_POINTER
     bne ScummV5_Op_EndCutscene__active
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda #$06
+    sta.l SAME_SCUMM_MSU_C19_ERROR_STAGE
+    .endif
     jmp ScummV5_C19_Error
 ScummV5_Op_EndCutscene__active:
     lda.l SAME_SCUMM_C4_CURRENT_SLOT
@@ -7615,8 +8019,13 @@ ScummV5_Op_EndCutscene__override_done:
     jmp ScummV5_Engine_Frame__next
 
 ScummV5_Op_BeginOverride:
+    .a8
     jsr ScummV5_FetchByte
     bcc ScummV5_Op_BeginOverride__flag_ok
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda #$07
+    sta.l SAME_SCUMM_MSU_C19_ERROR_STAGE
+    .endif
     jmp ScummV5_C19_Error
 ScummV5_Op_BeginOverride__flag_ok:
     .a8
@@ -7678,11 +8087,30 @@ ScummV5_Op_BeginOverride__variable:
     sta.l SAME_SCUMM_VARIABLES+(5 * 2)
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_BeginOverride__error:
+    .a8
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda #$08
+    sta.l SAME_SCUMM_MSU_C19_ERROR_STAGE
+    .endif
     jmp ScummV5_C19_Error
 
 ScummV5_C19_Error:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda.l SAME_SCUMM_LAST_OPCODE
+    sta.l SAME_SCUMM_MSU_C19_ERROR_OPCODE
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    sta.l SAME_SCUMM_MSU_C19_ERROR_PROGRAM
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_MSU_C19_ERROR_SLOT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sta.l SAME_SCUMM_MSU_C19_ERROR_PC
+    sep #$20
+    .a8
+    .endif
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     ; Fixture-only parser evidence: retain the exact cutscene operands and
     ; stack state that caused the guard, without touching VM state.
@@ -15452,6 +15880,10 @@ ScummV5_Op_Stop:
     .a8
     lda.l SAME_SCUMM_C19_SLOT_DEPTH,x
     beq ScummV5_Op_Stop__cutscene_clear
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda #$09
+    sta.l SAME_SCUMM_MSU_C19_ERROR_STAGE
+    .endif
     jmp ScummV5_C19_Error
 ScummV5_Op_Stop__cutscene_clear:
     .a8
@@ -15484,7 +15916,15 @@ ScummV5_Op_Stop__m23a_exit_commit_ok:
     beq ScummV5_Op_Stop__m23a_no_return_near
     jmp ScummV5_Op_Stop__m23a_restore_return
 ScummV5_Op_Stop__m23a_exit_room_ready:
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; CommitRoom has installed the incoming ENCD in slot zero.  The current
+    ; interpreter invocation still owns the outgoing EXCD cache context, so
+    ; it must return through the common frame boundary (which releases that
+    ; cache pin) before the next frame resolves/fetches the incoming body.
+    jmp ScummV5_Engine_Frame__complete_success
+.else
     jmp ScummV5_Engine_Frame__next
+.endif
 ScummV5_Op_Stop__m23a_entry_complete:
     .a8
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
@@ -16678,6 +17118,14 @@ ScummV5_Op_StartScript__run_nested:
 ScummV5_Op_StartScript__nested_ok:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda.l SAME_SCUMM_STATUS
+    cmp #SCUMM_VM_WAIT_RESOURCE
+    bne ScummV5_Op_StartScript__nested_resource_ready
+    jmp ScummV5_Engine_Frame__complete_success
+ScummV5_Op_StartScript__nested_resource_ready:
+    .a8
+    .endif
     .if SAME_BUILD_SCUMM_ROOM_SERVICE && SCUMM_V5_HOLD_AFTER_STARTED_GLOBAL_ENABLED
     lda.l SAME_SCUMM_C4_LAST_ALLOCATED
     tax
@@ -19067,6 +19515,18 @@ ScummV5_FetchSelectedByteAtX:
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; In the streamed personality the cache adapter is the sole executable
+    ; byte source.  The ROM room directory still supplies bounds/metadata, but
+    ; no ROM body fallback is permitted after a checked MSU cache miss/failure.
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcc ScummV5_FetchSelectedByteAtX__m23a
+    lda #SCUMM_ERR_RESOURCE
+    jsr ScummV5_SetError
+    lda #$00
+    sec
+    rts
+.else
     jsr ScummV5_M23A_FetchProgramByte
     bcc ScummV5_FetchSelectedByteAtX__m23a
     .if SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS == 0
@@ -19080,6 +19540,7 @@ ScummV5_FetchSelectedByteAtX:
     sep #$20
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
+.endif
     .endif
     cmp #SCUMM_C2_FIXTURE_EXTENDED
     bne ScummV5_FetchSelectedByteAtX__unknown

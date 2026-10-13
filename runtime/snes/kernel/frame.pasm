@@ -21,6 +21,18 @@ Same_Frame_Run:
     rep #$30
     .a16
     .i16
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda.l SAME_SCUMM_MSU_FRAME_ENTRIES
+    inc
+    sta.l SAME_SCUMM_MSU_FRAME_ENTRIES
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_MSU_FRAME_STAGE
+    rep #$30
+    .a16
+    .i16
+.endif
 .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
     sep #$20
     .a8
@@ -102,6 +114,40 @@ Same_Frame_Run__sp_ok_02:
     .i16
 .endif
     jsr Same_Engine_Frame
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    php ; Preserve the engine's carry/error result while recording return.
+    rep #$20
+    .a16
+    pha
+    lda.l SAME_SCUMM_MSU_ENGINE_RETURNS
+    inc
+    sta.l SAME_SCUMM_MSU_ENGINE_RETURNS
+    sep #$20
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_MSU_FRAME_STAGE
+    rep #$20
+    .a16
+    pla
+    plp
+.endif
+.if SAME_BUILD_MSU1_STORAGE
+    jsr Same_Storage_Process
+.endif
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    php
+    rep #$20
+    .a16
+    pha
+    sep #$20
+    .a8
+    lda #$03
+    sta.l SAME_SCUMM_MSU_FRAME_STAGE
+    rep #$20
+    .a16
+    pla
+    plp
+.endif
 .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
     php
     rep #$20
@@ -235,7 +281,7 @@ Same_Frame_Run__sp_ok_08:
     .if SAME_BUILD_SCUMM_ROOM_VISUAL && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl ScummV5_Visual_Frame_Far
     .endif
-    .if !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+    .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE == 0
     jsr Same_Audio_Process
 .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
     php

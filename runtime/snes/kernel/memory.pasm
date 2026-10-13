@@ -20,6 +20,11 @@ SAME_INPUT_TALK_OWNED_SEQUENCE = $7E220A ; u16 edge sequence captured by active 
 SAME_INPUT_TALK_OWNED_VALID = $7E220C ; u8 token survives polls until controller consumes it
 SAME_FRAME_COUNTER           = $7E2210
 SAME_VIDEO_BACKDROP_SHADOW   = $7E2212
+SAME_VIDEO_BG1_CONFIG_VALID  = $7E2249 ; NMI-owned PPU register shadow
+SAME_VIDEO_BG1_MODE          = $7E224A ; u8 BGMODE
+SAME_VIDEO_BG1_SCREEN        = $7E224B ; u8 BG1SC
+SAME_VIDEO_BG1_CHARS         = $7E224C ; u8 BG12NBA
+SAME_VIDEO_MAIN_LAYERS       = $7E224D ; u8 TM shadow
 SAME_AUDIO_LAST_OPCODE       = $7E2214
 SAME_AUDIO_LAST_ARG0         = $7E2216
 SAME_AUDIO_LAST_ARG1         = $7E221A
@@ -52,6 +57,157 @@ SAME_TAD_REJECTED             = $7E225C ; non-dropping queue-full count
 SAME_TAD_PROBE_REQUEST        = $7E225D ; debugger requests real sound id
 SAME_TAD_DEFERRED_SONG        = $7E225E ; M20 backend follow-up after blank
 SAME_TAD_READY                = $7E225F ; driver playing/paused state reached
+
+; Generic SAME checked-read provider state. The single MSU-1 data cursor and
+; request state are service-owned; callers supply their own destination. This
+; 72-byte record lives in the audited gap before the SCUMM C8 table at $7E3000.
+SAME_MSU1_STATE               = $7E2F00
+SAME_MSU1_STATUS              = $7E2F00 ; u8 provider/init/read state
+SAME_MSU1_ERROR               = $7E2F01 ; u8 explicit provider error
+SAME_MSU1_FLAGS               = $7E2F02 ; u8 stream/ring flags
+SAME_MSU1_INIT_INDEX          = $7E2F03 ; u8 initialization phase
+SAME_MSU1_REQUEST_OFFSET      = $7E2F04 ; u32 package byte offset
+SAME_MSU1_REQUEST_LENGTH      = $7E2F08 ; u32 requested bytes
+SAME_MSU1_DESTINATION         = $7E2F0C ; 24-bit WRAM address
+SAME_MSU1_DEST_CAPACITY       = $7E2F0F ; u16 caller-owned capacity
+SAME_MSU1_EXPECTED_CRC        = $7E2F11 ; u32 request CRC32
+SAME_MSU1_REMAINING            = $7E2F15 ; u32 untransferred bytes
+SAME_MSU1_DEST_INDEX           = $7E2F19 ; u16 destination/ring cursor
+SAME_MSU1_CRC_STATE            = $7E2F1B ; u32 reflected CRC state
+SAME_MSU1_STEP_REMAINING       = $7E2F1F ; u16 per-frame transfer budget
+SAME_MSU1_BYTE_SCRATCH         = $7E2F21 ; u8 data byte
+SAME_MSU1_TIMEOUT              = $7E2F22 ; u8 bounded status poll budget
+SAME_MSU1_PREFIX_INDEX         = $7E2F23 ; u16 trusted metadata cursor
+SAME_MSU1_END_OFFSET           = $7E2F25 ; u32 overflow-checked exclusive end
+SAME_MSU1_CRC_LSB              = $7E2F29 ; u8 CRC polynomial scratch
+SAME_MSU1_CRC_BITS             = $7E2F2A ; u8 CRC bit count
+SAME_MSU1_SEEK_COUNT           = $7E2F2B ; u16 diagnostic seeks
+SAME_MSU1_BYTES_READ           = $7E2F2D ; u32 diagnostic transfer count
+SAME_MSU1_READ_COUNT           = $7E2F31 ; u16 completed/failed request count
+SAME_MSU1_TIMEOUT_COUNT        = $7E2F33 ; u16 bounded timeout count
+SAME_MSU1_RANGE_REJECT_COUNT   = $7E2F35 ; u16 range/capacity rejects
+SAME_MSU1_VERIFY_COUNT         = $7E2F37 ; u16 accepted metadata identities
+SAME_MSU1_LAST_OFFSET          = $7E2F39 ; u32 last request offset
+SAME_MSU1_LAST_LENGTH          = $7E2F3D ; u32 last request length
+SAME_MSU1_AUDIO_TRACK          = $7E2F41 ; u16 selected PCM track
+SAME_MSU1_AUDIO_FLAGS          = $7E2F43 ; u16 play flags
+SAME_MSU1_AUDIO_LAST_STATUS    = $7E2F45 ; u8 latest MSU status snapshot
+SAME_MSU1_SECTION_TEMP         = $7E2F46 ; u16 generated-section index math
+SAME_MSU1_STATE_END            = $7E2F48 ; exclusive
+
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+; Two bounded executable-body windows. In this feature personality the native
+; stack ends below $7E1000 and the kernel event queue begins at $7E2000.
+SAME_SCUMM_MSU_PROGRAM_CACHE_BASE       = $7E1000
+SAME_SCUMM_MSU_PROGRAM_CACHE_SLOT_SIZE = $0800
+SAME_SCUMM_MSU_PROGRAM_CACHE0           = $7E1000
+SAME_SCUMM_MSU_PROGRAM_CACHE1           = $7E1800
+SAME_SCUMM_MSU_PROGRAM_CACHE_END        = $7E2000
+; Cache metadata stays in the provider's audited WRAM gap.
+SAME_SCUMM_MSU_CACHE_STATE0              = $7E2F48
+SAME_SCUMM_MSU_CACHE_STATE1              = $7E2F49
+SAME_SCUMM_MSU_CACHE_ID0                 = $7E2F4A
+SAME_SCUMM_MSU_CACHE_ID1                 = $7E2F4C
+SAME_SCUMM_MSU_CACHE_SIZE0               = $7E2F4E
+SAME_SCUMM_MSU_CACHE_SIZE1               = $7E2F50
+SAME_SCUMM_MSU_CACHE_PINS0               = $7E2F52
+SAME_SCUMM_MSU_CACHE_PINS1               = $7E2F53
+SAME_SCUMM_MSU_CACHE_GENERATION0         = $7E2F54
+SAME_SCUMM_MSU_CACHE_GENERATION1         = $7E2F56
+SAME_SCUMM_MSU_CACHE_REQUEST_ID          = $7E2F58
+SAME_SCUMM_MSU_CACHE_REQUEST_SLOT        = $7E2F5A
+SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT          = $7E2F5B
+SAME_SCUMM_MSU_CACHE_ACTIVE_ID           = $7E2F5C
+SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION   = $7E2F5E
+SAME_SCUMM_MSU_CACHE_CURRENT_COUNT       = $7E2F60
+SAME_SCUMM_MSU_CACHE_PEAK_COUNT          = $7E2F62
+SAME_SCUMM_MSU_CACHE_LOADS               = $7E2F64
+SAME_SCUMM_MSU_CACHE_EVICTIONS            = $7E2F66
+SAME_SCUMM_MSU_CACHE_FAILURES             = $7E2F68
+SAME_SCUMM_MSU_CACHE_TABLE_INDEX          = $7E2F6A ; u16 indexed 10-byte record
+SAME_SCUMM_MSU_CACHE_TEMP                 = $7E2F6C ; u16 multiply scratch
+SAME_SCUMM_MSU_CACHE_RETURN_P             = $7E2F6E ; u8 saved interpreter P
+SAME_SCUMM_MSU_ACTIVE_SELECTOR             = $7E2F6F ; ephemeral selector owning active fetch
+SAME_SCUMM_MSU_PENDING_CHILD_SLOT         = $7E2F70 ; 25 u8, slot+1 or zero
+SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM      = $7E2F89 ; 25 u8 selector identity
+SAME_SCUMM_MSU_C19_ERROR_STAGE             = $7E2FA2 ; u8 C19 failure call-site
+SAME_SCUMM_MSU_C19_ERROR_OPCODE            = $7E2FA3 ; u8 last decoded opcode
+SAME_SCUMM_MSU_C19_ERROR_PROGRAM           = $7E2FA4 ; u8 ephemeral selector
+SAME_SCUMM_MSU_C19_ERROR_PC                = $7E2FA5 ; u16 logical body PC
+SAME_SCUMM_MSU_C19_ERROR_SLOT              = $7E2FA7 ; u8 C4 owner
+SAME_SCUMM_MSU_PROCESS_TURNS               = $7E2FA8 ; u16 storage frame turns
+SAME_SCUMM_MSU_PROCESS_LAST_STATUS         = $7E2FAA ; u8 state at last turn
+SAME_SCUMM_MSU_FRAME_ENTRIES               = $7E2FAB ; u16 logical kernel frame entries
+SAME_SCUMM_MSU_ENGINE_RETURNS              = $7E2FAD ; u16 SCUMM engine frame returns
+SAME_SCUMM_MSU_FRAME_STAGE                 = $7E2FAF ; u8 last frame boundary
+; Bounded interpreter-entry stack. The VM's existing common completion paths
+; call Leave to release a body pin and restore a nested caller's cache context.
+; The 25-entry limit matches C4's activation ceiling; source PCs remain in the
+; existing C4 logical-PC tables, never as cache pointers.
+SAME_SCUMM_MSU_EXEC_DEPTH                  = $7E2FB0 ; u8 active interpreter entries
+SAME_SCUMM_MSU_EXEC_PREV_SLOT              = $7E2FB1 ; 25 u8 parent cache slot/FF
+SAME_SCUMM_MSU_EXEC_PREV_SELECTOR          = $7E2FCA ; 25 u8 parent selector/FF
+SAME_SCUMM_MSU_DIRECT_ROOM_CALL            = $7E2FE3 ; u8 Engine_Frame tail-call marker
+SAME_SCUMM_MSU_RESOLVE_CALLS               = $7E2FE4 ; u16 resolver adapter entries
+SAME_SCUMM_MSU_LAST_SELECTOR               = $7E2FE6 ; u8 most recent adapter selector
+SAME_SCUMM_MSU_CACHE_END                   = $7E2FEB ; end of executable-cache metadata
+; Incoming cooked-room preflight reuses one unpinned ProgramUnit window. It is
+; not published as executable; the checked room directory/header is validated
+; before M23A is allowed to run EXCD or retire the current room.
+SAME_SCUMM_MSU_ROOM_STATE                  = $7E2FEB ; 0 idle, 1 requested, 2 reading, 3 validated, FF failed
+SAME_SCUMM_MSU_ROOM_ID                     = $7E2FEC ; requested logical room
+SAME_SCUMM_MSU_ROOM_REQUESTS               = $7E2FED ; u16
+SAME_SCUMM_MSU_ROOM_VALIDATIONS            = $7E2FEF ; u16
+SAME_SCUMM_MSU_ROOM_FAILURES               = $7E2FF1 ; u16
+SAME_SCUMM_MSU_MAX_FETCH_LATENCY            = $7E2FF3 ; u16 transfer-to-validated frames, code or room
+SAME_SCUMM_MSU_ROOM_START_FRAME            = $7E2FF5 ; u16
+SAME_SCUMM_MSU_ROOM_LAST_LENGTH            = $7E2FF7 ; u16
+SAME_SCUMM_MSU_ROOM_SCRIPT_COUNT            = $7E2FF9 ; u16 parse scratch/result
+SAME_SCUMM_MSU_ROOM_DATA_OFFSET             = $7E2FFB ; u16 cooked SC5ROOM payload offset
+SAME_SCUMM_MSU_ROOM_TEMP                    = $7E2FFD ; u16 arithmetic scratch
+SAME_SCUMM_MSU_ROOM_CACHE_SLOT              = $7E2FFF ; u8 staging window owner
+SAME_SCUMM_MSU_ROOM_STATE_END               = $7E3000
+.endif
+
+.if SAME_BUILD_WINSTON_IO
+; Diagnostic-client staging only. It is not provider state and is deliberately
+; unavailable to SCUMM builds, whose object-name cache owns $7E9000-$7F1000.
+.if SAME_BUILD_SCUMM_M19
+    .error "Winston IO staging cannot share the SCUMM engine personality"
+.endif
+SAME_WINSTON_IO_STAGE          = $7E6000 ; 20,480-byte image/staging buffer
+SAME_WINSTON_IO_STAGE_SIZE     = $5000
+SAME_WINSTON_IO_RING            = $7EB000 ; 256-byte rolling test read window
+SAME_WINSTON_IO_RING_SIZE       = $0100
+SAME_WINSTON_IO_GUARD           = $7EB100 ; canaries and frame/result state
+SAME_WINSTON_IO_STATE_END       = $7EB200
+SAME_WINSTON_IO_STATUS          = $7EB100 ; u8 0=init, 1=cases, 2=pass, $FF=fail
+SAME_WINSTON_IO_CASE_INDEX      = $7EB101 ; u8 current generated read case
+SAME_WINSTON_IO_CASES_PASSED    = $7EB102 ; u16 completed positive/reject checks
+SAME_WINSTON_IO_CASES_EXPECTED  = $7EB104 ; u16 generated native oracle count
+SAME_WINSTON_IO_FAILED_CASE     = $7EB106 ; u16 first failure, $FFFF means none
+SAME_WINSTON_IO_AUDIO_STARTED   = $7EB108 ; u8 background track is active
+SAME_WINSTON_IO_DEST_MODE       = $7EB109 ; u8 0=stage, 1=rolling ring
+SAME_WINSTON_IO_SAMPLE_LENGTH   = $7EB10A ; u8 generated prefix sample length
+SAME_WINSTON_IO_COMPARE_INDEX   = $7EB10B ; u8 sample cursor
+SAME_WINSTON_IO_GUARD_BEFORE    = $7EB10C ; u8 rolling-buffer canary
+SAME_WINSTON_IO_GUARD_AFTER     = $7EB10D ; u8 rolling-buffer canary
+SAME_WINSTON_IO_TOTAL_READS     = $7EB10E ; u16 requests begun
+SAME_WINSTON_IO_REJECTS         = $7EB110 ; u16 expected range rejects observed
+SAME_WINSTON_IO_EXPECTED_STATUS = $7EB112 ; u8 generated status expectation
+SAME_WINSTON_IO_TEMP            = $7EB114 ; u16 case-table arithmetic scratch
+SAME_WINSTON_IO_ASSET_STAGE     = $7EB116 ; u8 visual-demo state machine
+SAME_WINSTON_IO_TILE_OFFSET     = $7EB118 ; u16 staged tile DMA cursor
+SAME_WINSTON_IO_SCENE_ID        = $7EB11A ; u8 0=hidden, 1=closed, 2=open, 3=verge, 4=slate
+SAME_WINSTON_IO_ASSET_SUBSTATE  = $7EB11B ; u8 0=read, 1=queue, 2=DMA pending
+SAME_WINSTON_IO_ASSET_SECTION   = $7EB11C ; u16 last generated section index
+SAME_WINSTON_IO_ASSET_SIZE      = $7EB11E ; u16 last validated resource size
+SAME_WINSTON_IO_ASSET_READS     = $7EB120 ; u16 validated visual-section reads
+SAME_WINSTON_IO_ASSET_CRC_OK    = $7EB122 ; u8 last checked read passed CRC
+SAME_WINSTON_IO_ASSET_FAILURE   = $7EB123 ; u8 explicit visual/demo failure class
+SAME_WINSTON_IO_TILE_DMA_COUNT  = $7EB124 ; u16 accepted tile DMA chunks
+SAME_WINSTON_IO_AUDIO_CHECK_FRAMES = $7EB126 ; u16 track-2 loop observation frames
+.endif
 ; Kernel-owned DMA request staging and queue.  A descriptor contains no
 ; hardware channel field: channel 7 is an implementation detail of the SNES
 ; commit backend.  Slots are marked active only after every other field lands.
@@ -882,7 +1038,10 @@ SAME_SCUMM_CONTROLLER_DIAG                = $7E5FEC ; fixture-only gate breadcru
 SAME_SCUMM_CONTROLLER_DIAG_ROOM           = $7E5FED
 SAME_SCUMM_CONTROLLER_DIAG_PHASE          = $7E5FEE
 SAME_SCUMM_CONTROLLER_DIAG_INPUT          = $7E5FEF
-SAME_SCUMM_OWNER_INDEX                     = $7E101E ; u16 setOwner scratch
+; setOwner scratch used to overlap the hardware stack window. The explicit
+; MSU program-cache layout requires it to live in this audited gap.
+SAME_SCUMM_OWNER_INDEX                     = $7E2B28 ; u16 setOwner scratch
+SAME_SCUMM_OWNER_INDEX_END                 = $7E2B2A
 SAME_SCUMM_SETSTATE_OBJECT                = $7E5FF2 ; u16 operand/trace
 SAME_SCUMM_SETSTATE_VALUE                 = $7E5FF4 ; u8 operand/trace
 SAME_SCUMM_SETSTATE_LOCAL_FOUND           = $7E5FF5 ; u8

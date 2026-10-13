@@ -9,6 +9,12 @@ Same_Video_Reset:
     .a8
     lda #$80
     sta.l SAME_VIDEO_DISPLAY_SHADOW
+    lda #$00
+    sta.l SAME_VIDEO_BG1_CONFIG_VALID
+    sta.l SAME_VIDEO_BG1_MODE
+    sta.l SAME_VIDEO_BG1_SCREEN
+    sta.l SAME_VIDEO_BG1_CHARS
+    sta.l SAME_VIDEO_MAIN_LAYERS
 .include "../generated/video_backend_reset.inc.pasm"
 .include "../generated/video_overlay_reset.inc.pasm"
     plp
@@ -21,11 +27,63 @@ Same_Video_Commit:
     jsr Same_Dma_ProcessQueue
     sep #$20
     .a8
+    lda.l SAME_VIDEO_BG1_CONFIG_VALID
+    beq Same_Video_Commit__palette
+    lda.l SAME_VIDEO_BG1_MODE
+    sta BGMODE
+    lda.l SAME_VIDEO_BG1_SCREEN
+    sta BG1SC
+    lda.l SAME_VIDEO_BG1_CHARS
+    sta BG12NBA
+    lda.l SAME_VIDEO_MAIN_LAYERS
+    sta TM
+Same_Video_Commit__palette:
+    lda.l SAME_VIDEO_DISPLAY_SHADOW
+    sta INIDISP
     stz CGADD
     lda.l SAME_VIDEO_BACKDROP_SHADOW
     sta CGDATA
     lda.l SAME_VIDEO_BACKDROP_SHADOW+1
     sta CGDATA
+    plp
+    rts
+
+; NMI-owned BG1 setup request. A16 packs BGMODE in the low byte and BG1SC in
+; the high byte; X16 packs BG12NBA low and TM high. The caller never touches
+; PPU registers directly. The shadows are applied by Same_Video_Commit.
+Same_Video_ConfigureBg1:
+    php
+    rep #$30
+    .a16
+    .i16
+    sta.l SAME_VIDEO_BG1_MODE
+    txa
+    sta.l SAME_VIDEO_BG1_CHARS
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_VIDEO_BG1_CONFIG_VALID
+    plp
+    rts
+
+; Generic BGR555 backdrop/palette-zero shadow request. Useful when a loaded
+; palette owns color zero; the NMI commit keeps CGRAM entry 0 consistent.
+Same_Video_SetBackdrop:
+    php
+    rep #$20
+    .a16
+    and #$7FFF
+    sta.l SAME_VIDEO_BACKDROP_SHADOW
+    plp
+    rts
+
+; NMI-owned display request. Clients change only the shadow; Same_Video_Commit
+; applies INIDISP in the kernel's PPU commit window.
+Same_Video_SetDisplay:
+    php
+    sep #$20
+    .a8
+    sta.l SAME_VIDEO_DISPLAY_SHADOW
     plp
     rts
 

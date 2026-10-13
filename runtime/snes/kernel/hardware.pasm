@@ -34,6 +34,25 @@ APUIO1           = $2141
 APUIO2           = $2142
 APUIO3           = $2143
 
+; MSU-1 is accessed only by SAME's storage/audio services. Engine, SCUMM and
+; video consumers use service calls and never name these registers directly.
+MSU1_STATUS       = $2000 ; bit 7=data busy; bit 6=audio busy; bit 3=track error
+MSU1_DATA         = $2001 ; serialized auto-incrementing data port
+MSU1_ID0          = $2002 ; read-only "S-MSU1" identity bytes
+MSU1_ID1          = $2003
+MSU1_ID2          = $2004
+MSU1_ID3          = $2005
+MSU1_ID4          = $2006
+MSU1_ID5          = $2007
+MSU1_SEEK0        = $2000 ; writes: offset byte 0..3; byte 3 commits seek
+MSU1_SEEK1        = $2001
+MSU1_SEEK2        = $2002
+MSU1_SEEK3        = $2003
+MSU1_TRACK_LO     = $2004 ; writes: low then high commits track selection
+MSU1_TRACK_HI     = $2005
+MSU1_VOLUME       = $2006
+MSU1_CONTROL      = $2007 ; bit 0 play; bit 1 repeat
+
 ; DMA channel 7 is reserved by the kernel commit queue.  Clients describe a
 ; transfer; only runtime/snes/kernel/dma.pasm programs these registers.
 DMAP7            = $4370

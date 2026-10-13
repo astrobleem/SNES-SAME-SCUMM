@@ -15,6 +15,9 @@ from same.engines.scumm_v5.cooked_room import HEADER, decode_cooked_room
 from same.engines.scumm_v5.native_residency import (
     NativeProgramDirectory, canonical_unit_identity, directory_assembly,
 )
+from same.engines.scumm_v5.program_storage import (
+    build_program_storage, read_package_prefix_sections,
+)
 from same.engines.scumm_v5.room import decode_room
 
 
@@ -430,6 +433,26 @@ def main() -> int:
         help="emit canonical ProgramUnit directories for the experimental native resolver",
     )
     parser.add_argument(
+        "--msu1-program-storage-dir", type=Path,
+        help="pack generated canonical ProgramUnit bodies into one SAMEPKG SC5CODE section",
+    )
+    parser.add_argument(
+        "--msu1-program-prefix-package", type=Path,
+        help="validated SAMEPKG v1 source for optional sections placed before SC5CODE",
+    )
+    parser.add_argument(
+        "--msu1-program-prefix-section", action="append", default=[],
+        metavar="SECTION",
+        help="copy this validated source-package section before SC5CODE (repeatable)",
+    )
+    parser.add_argument(
+        "--msu1-program-prefix-all-sections", action="store_true",
+        help="copy all validated sections from the supplied SAMEPKG before SC5CODE",
+    )
+    parser.add_argument("--msu1-program-directory-include", type=Path)
+    parser.add_argument("--msu1-program-directory-bank", type=int, default=10)
+    parser.add_argument("--msu1-program-cache-bytes", type=lambda value: int(value, 0), default=0x0800)
+    parser.add_argument(
         "--pack-source-tables", action="store_true",
         help="pack generated per-room metadata tables into bank-bounded pages",
     )
@@ -446,6 +469,26 @@ def main() -> int:
     args = parser.parse_args()
     if args.dynamic_program_residency and not args.far_programs:
         parser.error("--dynamic-program-residency requires --far-programs")
+    if args.msu1_program_storage_dir and not args.dynamic_program_residency:
+        parser.error("--msu1-program-storage-dir requires --dynamic-program-residency")
+    if args.msu1_program_storage_dir and not args.msu1_program_directory_include:
+        parser.error("MSU ProgramUnit storage requires --msu1-program-directory-include")
+    if args.msu1_program_prefix_all_sections and args.msu1_program_prefix_section:
+        parser.error("choose either --msu1-program-prefix-all-sections or named prefix sections")
+    prefix_requested = bool(args.msu1_program_prefix_all_sections or args.msu1_program_prefix_section)
+    if bool(args.msu1_program_prefix_package) != prefix_requested:
+        parser.error("MSU prefix sections require both --msu1-program-prefix-package and a prefix selection")
+    if args.msu1_program_prefix_section and not args.msu1_program_storage_dir:
+        parser.error("MSU prefix sections require --msu1-program-storage-dir")
+    if args.msu1_program_storage_dir and (
+        not 0 <= args.msu1_program_directory_bank <= 0xFF
+        or not 0 < args.msu1_program_cache_bytes <= 0x800
+    ):
+        parser.error("MSU ProgramUnit bank/cache size is outside the native ABI")
+    if args.msu1_program_storage_dir and (
+        args.share_room_program_bodies or args.share_room_directory_prefixes
+    ):
+        parser.error("MSU ProgramUnit storage cannot be combined with ROM program-body aliases")
     if args.share_room_program_bodies and not args.far_programs:
         parser.error("--share-room-program-bodies requires --far-programs")
     if args.share_room_directory_prefixes and not args.far_programs:
@@ -457,7 +500,7 @@ def main() -> int:
     for output_path in (
         args.output, args.data_output, args.report, args.native_directory_output,
         args.native_directory_include, args.backend_directory_output,
-        args.far_validator_output,
+        args.far_validator_output, args.msu1_program_directory_include,
     ):
         if output_path is not None:
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1452,6 +1495,35 @@ def main() -> int:
                 if item["kind_name"] == "EXCD" and item["id"] is not None
             ), 0xFFFF)
 
+    program_storage = None
+    if args.msu1_program_storage_dir is not None:
+        if native_directory is None:
+            raise RuntimeError("MSU ProgramUnit storage requires a canonical native directory")
+        storage_bodies = {
+            str(item["unit_identity"]): bytes(item["program"])
+            for item in programs if item["executable"]
+        }
+        room_resources = {
+            int(record["room"]): bytes(record["raw"])
+            for record in records
+        }
+        prefix_sections = read_package_prefix_sections(
+            args.msu1_program_prefix_package,
+            None if args.msu1_program_prefix_all_sections
+            else tuple(args.msu1_program_prefix_section),
+        ) if args.msu1_program_prefix_package else ()
+        program_storage = build_program_storage(
+            native_directory.document, storage_bodies, args.msu1_program_storage_dir,
+            max_cached_body_bytes=args.msu1_program_cache_bytes,
+            prefix_sections=prefix_sections,
+            room_resources=room_resources,
+            rom_bank=args.msu1_program_directory_bank,
+        )
+        args.msu1_program_directory_include.parent.mkdir(parents=True, exist_ok=True)
+        args.msu1_program_directory_include.write_bytes(
+            (args.msu1_program_storage_dir / "scumm_msu1_programs.inc.pasm").read_bytes()
+        )
+
     if global_states is None:
         global_states = bytes(4096)
     if global_owners is None:
@@ -1641,6 +1713,11 @@ def main() -> int:
         separate_program_bytes = 0
         for item in programs:
             if item["executable"]:
+                if args.msu1_program_storage_dir is not None:
+                    item["storage_kind"] = "SAMEPKG_MSU1_PROGRAM_BODY"
+                    item["shared_storage"] = False
+                    item["storage_payload_match_verified"] = True
+                    continue
                 shared = None
                 if args.share_room_program_bodies and item.get("kind_name") != "GLOBAL":
                     source = item.get("source")
@@ -1742,19 +1819,26 @@ def main() -> int:
                 int(item["length"])
                 for item in sorted(programs, key=lambda item: int(item["id"]))
             ]) or "    .word $0000",
-            "ScummV5_M23A_ProgramPointers:",
-            "    .long " + ",".join(
-                f"ScummV5_M23A_Program_{program_label_id(item['id'], dynamic=True)}"
-                for item in sorted(programs, key=lambda item: int(item["id"]))
-            ) if programs else "    .long $000000",
         ))
+        if args.msu1_program_storage_dir is None:
+            data_lines.extend((
+                "ScummV5_M23A_ProgramPointers:",
+                "    .long " + ",".join(
+                    f"ScummV5_M23A_Program_{program_label_id(item['id'], dynamic=True)}"
+                    for item in sorted(programs, key=lambda item: int(item["id"]))
+                ) if programs else "    .long $000000",
+            ))
         table_placement_map.append({
-            "label": "ScummV5_M23A_ProgramLengths+ProgramPointers",
+            "label": ("ScummV5_M23A_ProgramLengths" if args.msu1_program_storage_dir
+                      else "ScummV5_M23A_ProgramLengths+ProgramPointers"),
             "source_identity": "ProgramUnitPointerDirectory",
-            "consumer": "native dynamic ProgramUnit byte-fetch resolver",
-            "payload_bytes": len(programs) * 5,
+            "consumer": ("native MSU ProgramUnit cache bounds" if args.msu1_program_storage_dir
+                         else "native dynamic ProgramUnit byte-fetch resolver"),
+            "payload_bytes": len(programs) * (2 if args.msu1_program_storage_dir else 5),
             "rom_bank": pointer_bank, "bank_offset": 0,
-            "representation": "u16 program lengths followed by u24 relocated body pointers",
+            "representation": ("u16 program lengths; bodies are SAMEPKG-addressed"
+                               if args.msu1_program_storage_dir else
+                               "u16 program lengths followed by u24 relocated body pointers"),
             "source_sha256": None, "payload_sha256": None,
             "resolver_table": True,
         })
@@ -3102,7 +3186,12 @@ def main() -> int:
         "    php", "    rep #$10", "    .i16", "    phy", "    phx",
         "    sep #$20", "    .a8",
     ]
-    if args.dynamic_program_residency:
+    if args.msu1_program_storage_dir is not None:
+        fetch_program_lines = [
+            "ScummV5_M23A_FetchProgramByte_Far:",
+            "    jsl ScummV5_MsuProgram_FetchByte_Far", "    rtl",
+        ]
+    elif args.dynamic_program_residency:
         fetch_program_lines.extend((
             "    sta.l SAME_SCUMM_RESIDENT_SELECTOR",
             ".if SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP",
@@ -3407,11 +3496,38 @@ def main() -> int:
         "generated_table_payload_bytes": sum(int(item["payload_bytes"]) for item in table_placement_map),
         "resolver_table_bytes": sum(int(item["payload_bytes"]) for item in table_placement_map
                                      if item.get("resolver_table")),
-        "program_pointer_directory_bytes": len(programs) * 5 if args.dynamic_program_residency else 0,
+        "program_pointer_directory_bytes": (
+            len(programs) * (2 if args.msu1_program_storage_dir else 5)
+            if args.dynamic_program_residency else 0
+        ),
         "room_segment_manifest": room_segment_map,
     }
     if native_directory is not None:
         report["native_program_directory_sha256"] = native_directory.sha256
+        if program_storage is not None:
+            report["msu1_program_storage"] = {
+                "package": str(args.msu1_program_storage_dir / "scumm-programs.msu"),
+                "program_count": program_storage["program_count"],
+                "body_bytes": program_storage["program_body_bytes"],
+                "room_resource_count": program_storage["room_resource_count"],
+                "room_resource_bytes": program_storage["room_resource_bytes"],
+                "room_section": program_storage["room_section"],
+                "room_records": program_storage["room_records"],
+                "package_sha256": program_storage["package_sha256"],
+                "directory_records_bytes": int(program_storage["program_count"]) * 10,
+                "rom_directory_bank": args.msu1_program_directory_bank,
+                "rom_bodies_emitted": False,
+                "prefix_source_package_sha256": (
+                    hashlib.sha256(args.msu1_program_prefix_package.read_bytes()).hexdigest()
+                    if args.msu1_program_prefix_package else None
+                ),
+                "prefix_sections": [
+                    {"name": name, "kind": kind, "payload_bytes": len(data),
+                     "alignment": alignment,
+                     "payload_sha256": hashlib.sha256(data).hexdigest()}
+                    for name, kind, data, alignment in prefix_sections
+                ],
+            }
         directory_output = args.native_directory_output or args.output.with_name(
             "scumm_v5_native_program_directory.json"
         )

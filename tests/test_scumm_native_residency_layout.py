@@ -29,6 +29,31 @@ def symbols() -> dict[str, int]:
 
 
 class NativeResidencyLayoutTests(unittest.TestCase):
+    def test_rom_backed_build_emits_inert_msu_program_include(self) -> None:
+        build = (ROOT / "tools/build_snes.sh").read_text(encoding="utf-8")
+        main = (ROOT / "runtime/snes/main.pasm").read_text(encoding="utf-8")
+        self.assertIn(
+            "Generated empty SCUMM ProgramUnit directory (MSU programs disabled).",
+            build,
+        )
+        self.assertIn(
+            '> runtime/snes/generated/scumm_v5_msu_programs.inc.pasm',
+            build,
+        )
+        self.assertIn(
+            '.include "generated/scumm_v5_msu_programs.inc.pasm"',
+            main,
+        )
+
+    def test_winston_storage_personality_keeps_its_generated_package_directory(self) -> None:
+        source = (ROOT / "runtime/snes/main.pasm").read_text()
+        self.assertIn(".if SAME_BUILD_MSU1_STORAGE\n", source)
+        self.assertEqual(source.count('.include "generated/msu1_package.inc.pasm"'), 1)
+        self.assertIn(
+            "; both diagnostic and streamed-SCUMM personalities",
+            source,
+        )
+
     def test_resolver_coexists_with_controller_names_save_validator_and_vm_state(self) -> None:
         report = audit_wram()
         self.assertEqual(report["result"], "pass")
@@ -36,6 +61,7 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         self.assertEqual(report["features_coexist"], [
             "resolver", "controller/input", "name cache", "save validator",
             "C4", "C19", "room lifecycle",
+            "bounded streamed-program execution context",
         ])
         resolver = next(row for row in report["regions"]
                         if row["owner"] == "resident_resolver")
