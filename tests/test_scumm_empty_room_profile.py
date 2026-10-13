@@ -40,7 +40,36 @@ class EmptyRoomProfileTests(unittest.TestCase):
             self.assertIn("ScummV5_M23A_ResolveGlobalScript_Far:", data)
             self.assertEqual(report["rooms"], [])
             self.assertEqual(report["programs"], 0)
-            self.assertEqual(list((output / "segments").iterdir()), [])
+            self.assertEqual(
+                {path.name for path in (output / "segments").iterdir()},
+                {".same-generated-segments.json"},
+            )
+
+    def test_empty_far_room_profile_defines_shared_empty_verb_table(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            command = [
+                sys.executable,
+                str(ROOT / "tools/generate_snes_cooked_rooms.py"),
+                "--manifest", str(ROOT / "examples/resources/scumm_v5/empty_cooked_rooms.json"),
+                "--output", str(output / "rooms.inc.pasm"),
+                "--data-output", str(output / "room-data.inc.pasm"),
+                "--binary-dir", str(output / "segments"),
+                "--report", str(output / "report.json"),
+                "--far-programs",
+                "--far-validator-output", str(output / "room-validator-far.inc.pasm"),
+                "--reserved-bank", "9", "--reserved-bank", "83",
+            ]
+            subprocess.run(command, cwd=ROOT, check=True, capture_output=True, text=True)
+
+            data = (output / "room-data.inc.pasm").read_text()
+            self.assertNotIn("\n.bank 9\n", data)
+            self.assertIn("ScummV5_Verb_Record_0_Count = $0000", data)
+            self.assertIn("ScummV5_Verb_Record_0_Entries_Address =", data)
+            self.assertIn(
+                "lda.l ScummV5_Verb_Record_0_Entries_Address",
+                data,
+            )
 
 
 if __name__ == "__main__":

@@ -71,6 +71,7 @@ def main() -> int:
         ROOT / "runtime/snes/generated/scumm_v5_room_visuals.inc.pasm",
         ROOT / "runtime/snes/generated/scumm_v5_actor_sprite.inc.pasm",
         ROOT / "runtime/snes/generated/scumm_v5_object_sprite.inc.pasm",
+        args.rom.with_suffix(".poppy-inputs.json").resolve(),
         args.carrier_manifest.resolve(),
         args.video_backend_manifest.resolve(),
         args.video_overlay_manifest.resolve(),

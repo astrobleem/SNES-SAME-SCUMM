@@ -23,6 +23,20 @@ Same_Engine_Reset:
     php
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    ; This is the cold kernel/engine reset boundary. The SCUMM active-engine
+    ; boot may be re-entered after a resource-less room transition, so reset
+    ; the scenario root latch and boot counter here rather than on every
+    ; ScummV5_Engine_Boot call.
+    lda #$00
+    sta.l SAME_SCUMM_ENGINE_BOOT_COUNT
+    sta.l SAME_SCUMM_SCENARIO_FIXTURE_REQUESTED
+    sta.l SAME_SCUMM_SCENARIO_FIXTURE_READY
+    .endif
+    .if SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP
+    lda #$00
+    sta.l SAME_SCUMM_AUTHENTIC_BOOTSTRAP_STARTED
+    .endif
     lda #SAME_ACTIVE_ENGINE_ID
     sta.l SAME_ENGINE_ID
     lda #SAME_ENGINE_CREATED
@@ -123,7 +137,35 @@ Same_Engine_Frame__running:
     .i16
     lda #$0000
     sta.l SAME_ENGINE_FRAME_OPS
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    ; Capture S without perturbing A, X, or the current status/carry.
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    tsc
+    clc
+    adc #$0003
+    sta.l SAME_RESET_DIAG_SP_BEFORE_ACTIVE
+    pla
+    plp
+.endif
     jsr Same_ActiveEngine_Frame
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    ; Keep the active-frame result flags intact across the diagnostic sample.
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    tsc
+    clc
+    adc #$0003
+    sta.l SAME_RESET_DIAG_SP_AFTER_ACTIVE
+    pla
+    plp
+.endif
     php
     sep #$20
     .a8

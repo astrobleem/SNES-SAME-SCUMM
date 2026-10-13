@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -10,6 +11,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ScummV5ControllerFixtureTests(unittest.TestCase):
+    def test_far_fixture_aliases_preserve_the_data_bank(self) -> None:
+        import sys
+        sys.path.insert(0, str(ROOT / "tools"))
+        try:
+            from generate_engine_fixtures import far_fixture_include
+        finally:
+            sys.path.pop(0)
+
+        far = far_fixture_include("ScummV5_C2_Program_c19_cutscene:\n    .byte $18\n")
+        self.assertIn(
+            "ScummV5_C2_Program_c19_cutscene = $090000+ScummV5_Far_C2_Program_c19_cutscene",
+            far,
+        )
+
     def test_controller_uses_production_sentence_tuple_and_supports_secondary_object(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         self.assertGreaterEqual(source.count("sta.l SAME_SCUMM_SENTENCE_API_PENDING"), 2)
@@ -61,6 +76,22 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         self.assertNotIn("#$00F1", selection)
         self.assertNotIn("#$004C", selection)
 
+    def test_empty_room_click_starts_canonical_ego_walk_not_a_sentence(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        selection = source.split(
+            "ScummV5_Controller_Frame__mode_select_fallback:", 1
+        )[1].split("ScummV5_Controller_Frame__select_verb:", 1)[0]
+        miss = selection.split(
+            "ScummV5_Controller_Frame__walk_miss_done:", 1
+        )[0]
+        self.assertIn("SAME_SCUMM_M23B_VARIABLES+2 ; VAR_EGO", miss)
+        self.assertIn("SAME_SCUMM_C14_A_PRESENT", miss)
+        self.assertIn("SAME_SCUMM_C14_A_ROOM", miss)
+        self.assertIn("ScummV5_PutActor_Adjust_Far", miss)
+        self.assertIn("ScummV5_Movement_StartNormalized_Far", miss)
+        self.assertIn("SAME_SCUMM_MOVE_QUERY_DIR", miss)
+        self.assertNotIn("SAME_SCUMM_SENTENCE_API_PENDING", miss)
+
     def test_controller_cycles_authored_verbs_and_uses_selected_object(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         cycle = source.split("ScummV5_Controller_Frame__select_verb:", 1)[1].split(
@@ -73,6 +104,39 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         )[0]
         self.assertIn("SAME_SCUMM_SENTENCE_API_OBJECT1", submit)
         self.assertNotIn("#$EA", submit)
+
+    def test_semantic_sentence_submit_is_not_gated_by_hud_render_status(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        submit = source.split(
+            "ScummV5_Controller_Frame__select_verb_a_pressed:", 1
+        )[1].split("ScummV5_Controller_Frame__action_pending:", 1)[0]
+        self.assertNotIn("SAME_SCUMM_TALK_VISUAL_STATUS", submit)
+        # Active authored dialogue still owns the normal controller gate;
+        # only an inactive overlay's presentation failure is non-semantic.
+        active_talk_gate = source.split(
+            "ScummV5_Controller_Frame__stack_ok:", 1
+        )[1].split("ScummV5_Controller_Frame__talk_ok:", 1)[0]
+        self.assertIn("SAME_SCUMM_TALK_ACTIVE", active_talk_gate)
+
+    def test_talk_owned_input_edge_cannot_reach_generic_controller_after_talk(self) -> None:
+        controller = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        generic = controller.split(
+            "ScummV5_Controller_Frame__generic_ready:", 1
+        )[1].split("ScummV5_Controller_Frame__stack_ok:", 1)[0]
+        self.assertIn("SAME_INPUT_TALK_OWNED_VALID", generic)
+        self.assertIn("SAME_INPUT_EDGE_SEQUENCE", generic)
+        self.assertLess(
+            generic.index("SAME_INPUT_TALK_OWNED_VALID"),
+            generic.index("SAME_SCUMM_CONTROLLER_ROOM_READY"),
+        )
+        input_service = (ROOT / "runtime/snes/services/input.pasm").read_text()
+        poll = input_service.split("Same_Input_Poll:", 1)[1]
+        self.assertIn("SAME_INPUT_EDGE_SEQUENCE", poll)
+        self.assertIn("SAME_SCUMM_TALK_ACTIVE", poll)
+        self.assertIn("sta.l SAME_INPUT_TALK_OWNED_SEQUENCE", poll)
+        self.assertIn("sta.l SAME_INPUT_TALK_OWNED_VALID", poll)
+        memory = (ROOT / "runtime/snes/kernel/memory.pasm").read_text()
+        self.assertIn("SAME_INPUT_EDGE_SEQUENCE    = $7E2208", memory)
 
     def test_generated_room_metadata_exports_generic_hit_and_verb_services(self) -> None:
         source = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
@@ -359,7 +423,56 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
             self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE = $01", config)
             self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = $01", config)
             self.assertIn("SAME_BUILD_M24RB = $00", config)
+            self.assertIn(
+                "SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE_NO_ROOT_ROOM = $00", config
+            )
+            self.assertIn("SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE = $00", config)
 
+            no_room_output = Path(tmp) / "no-room-active_engine.inc.pasm"
+            subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--scumm-controller-conformance",
+                    "--scumm-controller-conformance-no-root-room",
+                    "--output", str(no_room_output),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            no_room_config = no_room_output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn(
+                "SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE_NO_ROOT_ROOM = $01",
+                no_room_config,
+            )
+
+            native_fixture_output = Path(tmp) / "c19-active_engine.inc.pasm"
+            subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--scumm-controller-conformance",
+                    "--scumm-controller-conformance-no-root-room",
+                    "--scumm-c19-native-fixture",
+                    "--output", str(native_fixture_output),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            native_fixture_config = native_fixture_output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn("SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE = $01", native_fixture_config)
+
+            invalid_no_room = subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--scumm-controller-conformance-no-root-room",
+                    "--output", str(no_room_output),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(invalid_no_room.returncode, 0)
+            self.assertIn("requires SCUMM v5 controller conformance", invalid_no_room.stderr)
             output_m24rb = Path(tmp) / "m24rb-active_engine.inc.pasm"
             subprocess.run(
                 [
@@ -372,6 +485,42 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
             )
             config_m24rb = output_m24rb.with_name("build_config.inc.pasm").read_text()
             self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = $01", config_m24rb)
+
+    def test_title_start_routing_is_disabled_unless_both_rooms_are_explicit(self) -> None:
+        generator = ROOT / "tools/generate_snes_engine_selection.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "default.inc.pasm"
+            subprocess.run(
+                ["python3", str(generator), "--engine", "scumm_v5", "--output", str(output)],
+                check=True, capture_output=True, text=True,
+            )
+            default_config = output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn("SAME_BUILD_SCUMM_TITLE_START = $00", default_config)
+
+            output = Path(tmp) / "explicit.inc.pasm"
+            subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--scumm-title-start-room", "75",
+                    "--scumm-title-target-room", "49",
+                    "--output", str(output),
+                ],
+                check=True, capture_output=True, text=True,
+            )
+            explicit_config = output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn("SAME_BUILD_SCUMM_TITLE_START = $01", explicit_config)
+            self.assertIn("SCUMM_V5_TITLE_START_ROOM = $4B", explicit_config)
+            self.assertIn("SCUMM_V5_TITLE_TARGET_ROOM = $31", explicit_config)
+
+            rejected = subprocess.run(
+                [
+                    "python3", str(generator), "--engine", "scumm_v5",
+                    "--scumm-title-start-room", "0", "--output", str(output),
+                ],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("requires both start-room and target-room", rejected.stderr)
 
     def test_video_overlay_non_overlay_packets_reach_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -392,6 +541,24 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
             self.assertNotIn("sta.l SAME_OVERLAY_ERROR_COUNT", service)
             self.assertNotIn("SAME_OVERLAY_STATE", service.split(
                 "Same_Video_Handle__overlay_not_handled:", 1)[1])
+
+    def test_indexed_surface_service_is_independent_of_overlay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "generated"
+            manifest = Path(tmp) / "manifest.json"
+            subprocess.run(
+                [
+                    "python3", str(ROOT / "tools/generate_snes_video_overlay.py"),
+                    "--overlay", "none", "--carrier", "sa1_bwram",
+                    "--backend", "mode3_surface", "--surface-available",
+                    "--output-dir", str(output), "--manifest", str(manifest),
+                ], check=True, cwd=ROOT, capture_output=True, text=True,
+            )
+            include = (output / "video_overlay_constants.inc.pasm").read_text()
+            metadata = json.loads(manifest.read_text())
+            self.assertIn("SAME_VIDEO_SURFACE_AVAILABLE = $01", include)
+            self.assertIn("SAME_VIDEO_OVERLAY_BG2 = $00", include)
+            self.assertTrue(metadata["surface_available"])
 
     def test_dirty_present_publishes_full_surface_origin(self) -> None:
         source = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()

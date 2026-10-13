@@ -119,8 +119,8 @@ def main() -> int:
             observed["video_frame"] = session.get_state()["frameCount"]
             report["terminal"] = observed
             expected = {
-                "pc": 80, "status": 2, "error": 0, "last_opcode": 0x80,
-                "frame_count": 1, "frame_ops": 14, "total_ops": 14,
+                "pc": 82, "status": 2, "error": 0, "last_opcode": 0x80,
+                "frame_count": 1, "frame_ops": 15, "total_ops": 15,
                 "fixture_active": FIXTURE_ID, "program_select": FIXTURE_ID,
             }
             for key, value in expected.items():

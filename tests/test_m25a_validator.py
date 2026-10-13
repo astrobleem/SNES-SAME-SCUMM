@@ -23,15 +23,17 @@ from tools.build_m25a_validator_room import (
 
 
 class M25AValidatorFixtureTests(unittest.TestCase):
-    def test_startup42_build_uses_its_unbound_bootstrap_record(self) -> None:
+    def test_authentic_startup_omits_the_synthetic_carrier_record(self) -> None:
         root = Path(__file__).resolve().parents[1]
         build = (root / "tools/build_snes.sh").read_text()
         self.assertIn(
-            "ENGINE_SELECTION_ARGS+=(--scumm-scenario-start-room 254)", build,
+            "ENGINE_SELECTION_ARGS+=(--scumm-authentic-boot-script 1 --scumm-authentic-boot-argument=-7873)",
+            build,
         )
         self.assertIn(
             'M25A_FIXTURE_ROOM_ARGS+=(--fixture-room 254)', build,
         )
+        self.assertIn('M25A_FIXTURE_ROOM_ARGS+=(--omit-fixture-room)', build)
 
     def test_synthetic_startup_room_must_be_absent_from_authored_namespace(self) -> None:
         require_fixture_room_is_unbound(254, {1, 42, 49, 75, 98})
@@ -200,7 +202,7 @@ class M25AValidatorFixtureTests(unittest.TestCase):
         self.assertEqual(entry, bytes((0x0A, 75, 0x00, 0, 0, 0xFF, 0x00)))
         self.assertEqual(body[:5], bytes((0x28, 0x00, 0x40, 12, 0)))
         self.assertIn(bytes((0x0A, 75, 0x00, 0xEF, 0xBE, 0xFF)), body)
-        self.assertIn(bytes((0x1A, 11, 0, 0xAD, 0xDE)), body)
+        self.assertIn(bytes((0x1A, 14, 0, 0xAD, 0xDE)), body)
         self.assertTrue(body.endswith(bytes((0x9A, 10, 0, 0, 0x40, 0x80, 0x00))))
 
         # The SAME host remains a separate semantic oracle for this fixture;
@@ -212,7 +214,7 @@ class M25AValidatorFixtureTests(unittest.TestCase):
         host.tick()
         variables = host.engine.inspect_state()["variables"]
         self.assertEqual(variables.get("10"), -0x4111)
-        self.assertEqual(variables.get("11", 0), 0)
+        self.assertEqual(variables.get("14", 0), 0)
 
     def test_actor_position_error_fixtures_isolate_result_and_selector_failures(self) -> None:
         from build_m25a_validator_room import (

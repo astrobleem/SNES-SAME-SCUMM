@@ -6,12 +6,13 @@ import subprocess
 import struct
 import sys
 import tempfile
+import re
 
 from generate_snes_cooked_rooms import (
     OVERFLOW_PROGRAM_IDS, PRIMARY_PROGRAM_IDS, ProgramIdAllocator,
-    reserved_program_ids,
+    cpu_visible_rom_bank, cpu_visible_rom_symbol, reserved_program_ids,
 )
-from same.engines.scumm_v5.cooked_room import ScriptChunkInput, encode_cooked_room
+from same.engines.scumm_v5.cooked_room import HEADER, ScriptChunkInput, encode_cooked_room
 
 
 def _chunk(tag, payload):
@@ -36,6 +37,20 @@ def _raw_room(locals_):
         _chunk(b"ENCD", b"\x00"), _chunk(b"EXCD", b"\x00"),
         *(_chunk(b"LSCR", bytes((number,)) + b"\xa0") for number in locals_),
     ))
+
+
+def _raw_room_with_object(object_id, locals_=()):
+    raw = bytearray(_raw_room(locals_))
+    # RMHD starts at byte zero; its third little-endian word is object count.
+    raw[12:14] = (1).to_bytes(2, 'little')
+    cdhd = _chunk(
+        b'CDHD', struct.pack('<HBBBBBBhhB', object_id, 1, 1, 1, 1, 0, 0, 1, 1, 0)
+    )
+    # VERB's table points at its final STOP byte. The object is a minimal
+    # copyright-free OBCD fixture, sufficient to test generated dispatch.
+    verb_payload = bytes((3,)) + (12).to_bytes(2, 'little') + bytes((0, 0xA0))
+    raw.extend(_chunk(b'OBCD', cdhd + _chunk(b'VERB', verb_payload)))
+    return bytes(raw)
 
 
 def _cooked_room(room, payload):
@@ -138,10 +153,223 @@ class ProgramIdOverflowTests(unittest.TestCase):
                 self.assertIn(block, after)
             self.assertIn('cmp #$31\n    bne ScummV5_M23A_ResolveGlobalScript_Far__next_CF\n    lda #$CF', after)
             self.assertIn('cmp #$CF\n    bne ScummV5_M23A_GetProgramSize__next_CF\n    rep #$20\n    .a16\n    lda #$0001\n    sec', after)
-            self.assertIn('cmp #$CF\n    bne ScummV5_M23A_FetchProgramByte__next_CF\n    lda.l ScummV5_M23A_Program_CF,x\n    clc', near)
+            self.assertIn(
+                'ScummV5_M23A_FetchProgramByte:\n'
+                '    jsl ScummV5_M23A_FetchProgramByte_Far_Address\n'
+                '    rts', near,
+            )
+            self.assertIn(
+                'cmp #$CF\n'
+                '    bne ScummV5_M23A_FetchProgramByte__next_CF\n'
+                '    lda.l ScummV5_M23A_Program_CF,x\n'
+                '    clc\n'
+                '    rtl', after,
+            )
+            self.assertIn(
+                'ScummV5_M23A_FetchProgramByte_Far_Address = ', after,
+            )
             self.assertIn('PROGRAM_COUNT = $31', near)
             self.assertIn('PROGRAM_MIN = $CF', near)
             self.assertIn('PROGRAM_IDS_IN_ALLOCATION_ORDER', near)
+
+    def test_appended_executable_object_preserves_existing_program_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'stop.bin').write_bytes(b'\xa0')
+            cooked = root / 'room-42.cooked'
+            cooked.write_bytes(_cooked_room(42, _raw_room_with_object(61)))
+            manifest = root / 'manifest.json'
+            manifest.write_text(json.dumps({
+                'schema': 'same_scumm_v5_cooked_rooms_v1',
+                'num_global_scripts': 200,
+                'records': [{'room': 42, 'output': cooked.name}],
+                'global_scripts': [{'number': 1, 'output': 'stop.bin', 'length': 1}],
+            }))
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+
+            def generate(name, append_object=False):
+                output, data = root / f'{name}.pasm', root / f'{name}-data.pasm'
+                command = [
+                    sys.executable, str(generator), '--manifest', str(manifest),
+                    '--output', str(output), '--data-output', str(data),
+                    '--binary-dir', str(root / f'{name}-bin'), '--far-programs',
+                    '--entry-only-room', '42',
+                ]
+                if append_object:
+                    command.extend(('--append-executable-local-object', '42:61'))
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode:
+                    self.fail(result.stderr + result.stdout)
+                return json.loads(result.stdout), output.read_text(), data.read_text()
+
+            before_report, before_output, before_data = generate('before')
+            after_report, _, after_data = generate('after', append_object=True)
+            routine_label = 'ScummV5_Matrix_LoadActiveRoomNames_Far:'
+            address_label = 'ScummV5_Matrix_LoadActiveRoomNames_Far_Address'
+            self.assertIn(f'jsl {address_label}', before_data)
+            helper_bank = int(re.findall(
+                r'^\.bank (\d+)$', before_data, re.MULTILINE
+            )[-1])
+            for label in (
+                'ScummV5_Matrix_LoadActiveRoomNames_Far',
+                'ScummV5_M23A_GetProgramSize_Far',
+                'ScummV5_M23A_ResolveGlobalScript_Far',
+            ):
+                self.assertIn(
+                    f'{label}_Address = ' + cpu_visible_rom_symbol(
+                        helper_bank, label, sa1_aliases=False,
+                    ),
+                    before_data,
+                )
+            self.assertIn(
+                'jsl ScummV5_M23A_GetProgramSize_Far_Address', before_output
+            )
+            self.assertIn(
+                'jsl ScummV5_M23A_ResolveGlobalScript_Far_Address', before_output
+            )
+            self.assertNotIn(
+                'jsl ScummV5_M23A_GetProgramSize_Far\n', before_output
+            )
+            before_ids = {item['identity']: item['id'] for item in before_report['program_map']}
+            after_ids = {item['identity']: item['id'] for item in after_report['program_map']}
+            self.assertEqual(after_report['programs'], before_report['programs'] + 1)
+            for identity, program_id in before_ids.items():
+                self.assertEqual(after_ids[identity], program_id)
+            object_mapping = next(
+                item for item in after_report['program_map']
+                if item['identity'] == 'room.42/object.61/OBCD'
+            )
+            self.assertEqual(object_mapping['id'], max(before_ids.values()) + 1)
+            self.assertIn(
+                f'    cmp #$003D\n    beq ScummV5_ObjectProgram_Resolve_Far__object_{object_mapping["id"]:02X}',
+                after_data,
+            )
+            self.assertIn(
+                f'ScummV5_ObjectProgram_Resolve_Far__object_{object_mapping["id"]:02X}:',
+                after_data,
+            )
+
+    def test_final_appended_local_preserves_existing_object_and_script_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'stop.bin').write_bytes(b'\xa0')
+            cooked = root / 'room-42.cooked'
+            cooked.write_bytes(_cooked_room(
+                42, _raw_room_with_object(61, locals_=(200, 202)),
+            ))
+            manifest = root / 'manifest.json'
+            manifest.write_text(json.dumps({
+                'schema': 'same_scumm_v5_cooked_rooms_v1',
+                'num_global_scripts': 200,
+                'records': [{'room': 42, 'output': cooked.name}],
+                'global_scripts': [
+                    {'number': 1, 'output': 'stop.bin', 'length': 1},
+                    {'number': 2, 'output': 'stop.bin', 'length': 1, 'append_after_rooms': True},
+                ],
+            }))
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+
+            def generate(name, include_final=False):
+                output, data = root / f'{name}.pasm', root / f'{name}-data.pasm'
+                contents = json.loads(manifest.read_text())
+                if include_final:
+                    contents['global_scripts'].append(
+                        {'number': 3, 'output': 'stop.bin', 'length': 1}
+                    )
+                manifest.write_text(json.dumps(contents))
+                command = [
+                    sys.executable, str(generator), '--manifest', str(manifest),
+                    '--output', str(output), '--data-output', str(data),
+                    '--binary-dir', str(root / f'{name}-bin'), '--far-programs',
+                    '--entry-only-room', '42',
+                    '--append-executable-local-object', '42:61',
+                    '--append-late-global-script', '2',
+                ]
+                if include_final:
+                    command.extend((
+                        '--append-final-executable-local', '42:202',
+                        '--append-final-global-script', '3',
+                    ))
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode:
+                    self.fail(result.stderr + result.stdout)
+                return json.loads(result.stdout), output.read_text(), data.read_text()
+
+            before, _, _ = generate('before')
+            after, output, data = generate('after', include_final=True)
+            before_ids = {item['identity']: item['id'] for item in before['program_map']}
+            after_ids = {item['identity']: item['id'] for item in after['program_map']}
+            self.assertEqual(after['programs'], before['programs'] + 2)
+            for identity, program_id in before_ids.items():
+                self.assertEqual(after_ids[identity], program_id, identity)
+            new_local, new_global = after['program_map'][-2:]
+            self.assertEqual(new_local['identity'], 'room.42/LSCR.202')
+            self.assertEqual(new_global['identity'], 'script.3')
+            self.assertIn(f'ScummV5_M23A_Program_{new_local["id"]:02X}:', data)
+            self.assertIn(
+                'ScummV5_M23A_RoomLocalPrograms_0:\n'
+                f'    .byte ${new_local["id"]:02X}', output,
+            )
+            self.assertIn(f'ScummV5_M23A_Program_{new_global["id"]:02X}:', data)
+
+    def test_post_terminal_global_preserves_terminal_object_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'stop.bin').write_bytes(b'\xa0')
+            cooked = root / 'room-42.cooked'
+            cooked.write_bytes(_cooked_room(42, _raw_room_with_object(61)))
+            manifest = root / 'manifest.json'
+            manifest.write_text(json.dumps({
+                'schema': 'same_scumm_v5_cooked_rooms_v1',
+                'num_global_scripts': 200,
+                'records': [{'room': 42, 'output': cooked.name}],
+                'global_scripts': [
+                    {'number': 1, 'output': 'stop.bin', 'length': 1},
+                    {'number': 2, 'output': 'stop.bin', 'length': 1},
+                ],
+            }))
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+
+            def generate(name, add_later_global=False):
+                output, data = root / f'{name}.pasm', root / f'{name}-data.pasm'
+                contents = json.loads(manifest.read_text())
+                if add_later_global:
+                    contents['global_scripts'].append(
+                        {'number': 3, 'output': 'stop.bin', 'length': 1}
+                    )
+                manifest.write_text(json.dumps(contents))
+                command = [
+                    sys.executable, str(generator), '--manifest', str(manifest),
+                    '--output', str(output), '--data-output', str(data),
+                    '--binary-dir', str(root / f'{name}-bin'), '--far-programs',
+                    '--entry-only-room', '42',
+                    '--append-terminal-global-script', '2',
+                    '--append-terminal-executable-local-object', '42:61',
+                ]
+                if add_later_global:
+                    command.append('--append-post-terminal-global-script')
+                    command.append('3')
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode:
+                    self.fail(result.stderr + result.stdout)
+                return json.loads(result.stdout), output.read_text(), data.read_text()
+
+            before, _, _ = generate('before')
+            after, output, data = generate('after', add_later_global=True)
+            before_ids = {item['identity']: item['id'] for item in before['program_map']}
+            after_ids = {item['identity']: item['id'] for item in after['program_map']}
+            self.assertEqual(after['programs'], before['programs'] + 1)
+            for identity, program_id in before_ids.items():
+                self.assertEqual(after_ids[identity], program_id, identity)
+            self.assertEqual(after['program_map'][-1]['identity'], 'script.3')
+            self.assertIn(
+                f'ScummV5_M23A_Program_{after_ids["script.3"]:02X}:', data,
+            )
+            self.assertIn(
+                f'cmp #$03\n    bne ScummV5_M23A_ResolveGlobalScript_Far__next_'
+                f'{after_ids["script.3"]:02X}',
+                data,
+            )
 
     def test_append_local_order_and_preserved_prefix(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -219,6 +447,12 @@ class ProgramIdOverflowTests(unittest.TestCase):
             self.assertIn('ScummV5_M23A_RoomLocalNumbers_1:\n    .byte $CA', generated)
             self.assertIn('ScummV5_M23A_RoomLocalPrograms_1:\n    .byte $D8', generated)
             resolver_start = data.index('ScummV5_M23A_ResolveLocalScript_Far:')
+            self.assertIn(
+                'ScummV5_M23A_ResolveLocalScript_Far_Address = ', data
+            )
+            self.assertIn(
+                'jsl ScummV5_M23A_ResolveLocalScript_Far_Address', generated
+            )
             room42_arm_start = data.index('ScummV5_M23A_ResolveLocalScript__record_0:', resolver_start)
             room75_arm_start = data.index('ScummV5_M23A_ResolveLocalScript__record_1:', room42_arm_start)
             dispatch = data[resolver_start:room42_arm_start]
@@ -266,6 +500,55 @@ class ProgramIdOverflowTests(unittest.TestCase):
             check=True, capture_output=True, text=True,
         )
         self.assertIn('--append-executable-local', result.stdout)
+        self.assertIn('--append-final-executable-local', result.stdout)
+        self.assertIn('--append-final-global-script', result.stdout)
+        self.assertIn('--append-terminal-global-script', result.stdout)
+
+    def test_expected_room_directories_move_to_a_bounded_bank(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            short_room = _raw_room(()) + _chunk(b'LSCR', bytes((200, 0xA0)))
+            short_cooked = _cooked_room(42, short_room)
+            target_size = 0x7F80
+            body = bytes((0xA0,)) * (1 + target_size - len(short_cooked))
+            raw = _raw_room(()) + _chunk(b'LSCR', bytes((200,)) + body)
+            cooked = _cooked_room(42, raw)
+            self.assertEqual(len(cooked), target_size)
+            directory_size = HEADER.size + 3 * 96
+            self.assertGreater(target_size + directory_size, 0x8000)
+            (root / 'room-42.cooked').write_bytes(cooked)
+            manifest = root / 'manifest.json'
+            manifest.write_text(json.dumps({
+                'schema': 'same_scumm_v5_cooked_rooms_v1',
+                'num_global_scripts': 200,
+                'records': [{'room': 42, 'output': 'room-42.cooked'}],
+                'global_scripts': [],
+            }))
+            output, data = root / 'rooms.pasm', root / 'data.pasm'
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+            result = subprocess.run([
+                sys.executable, str(generator), '--manifest', str(manifest),
+                '--output', str(output), '--data-output', str(data),
+                '--binary-dir', str(root / 'segments'), '--far-programs',
+            ], capture_output=True, text=True)
+            if result.returncode:
+                self.fail(result.stderr + result.stdout)
+
+            generated = data.read_text()
+            self.assertIn(
+                '.bank 3\n.org $8000\nScummV5_M23A_Record_0_Segment_0:',
+                generated,
+            )
+            self.assertIn(
+                '.bank 4\n.org $8000\nScummV5_M23A_Record_0_ExpectedDirectory:',
+                generated,
+            )
+            self.assertNotIn(
+                'ScummV5_M23A_Record_0_Segment_0:\n'
+                f'    .incbin "{(root / "segments/record-0-segment-0.bin").resolve()}"\n'
+                'ScummV5_M23A_Record_0_ExpectedDirectory:',
+                generated,
+            )
 
     def test_late_appended_local_follows_late_global_without_renumbering(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -323,7 +606,7 @@ class ProgramIdOverflowTests(unittest.TestCase):
             (root / 'stop.bin').write_bytes(b'\xa0')
             room42 = root / 'room-42.cooked'
             room49 = root / 'room-49.cooked'
-            room42.write_bytes(_cooked_room(42, _raw_room((200,))))
+            room42.write_bytes(_cooked_room(42, _raw_room((200, 202))))
             room49.write_bytes(_cooked_room(49, _raw_room((200,))))
             manifest = root / 'manifest.json'
             generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
@@ -422,3 +705,336 @@ class ProgramIdOverflowTests(unittest.TestCase):
             self.assertEqual(identities['script.2'], 0xD5)
             self.assertIn('ScummV5_M23A_RoomEntryPrograms:\n    .byte $D2,$D0', generated)
             self.assertIn('ScummV5_M23A_RoomExitPrograms:\n    .byte $D3,$D1', generated)
+
+    def test_entry_only_room_omits_unselected_object_verb_dispatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            room42 = root / 'room-42.cooked'
+            room74 = root / 'room-74.cooked'
+            room42.write_bytes(_cooked_room(42, _raw_room(())))
+            room74.write_bytes(_cooked_room(74, _raw_room_with_object(61)))
+            manifest = root / 'manifest.json'
+            manifest.write_text(json.dumps({
+                'schema': 'same_scumm_v5_cooked_rooms_v1',
+                'num_global_scripts': 200,
+                'records': [
+                    {'room': 42, 'output': room42.name},
+                    {'room': 74, 'output': room74.name},
+                ],
+                'global_scripts': [],
+            }))
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+
+            def generate(name, *, select_object):
+                output = root / f'{name}.pasm'
+                data = root / f'{name}-data.pasm'
+                report = root / f'{name}.json'
+                command = [
+                    sys.executable, str(generator), '--manifest', str(manifest),
+                    '--output', str(output), '--data-output', str(data),
+                    '--binary-dir', str(root / f'{name}-bin'), '--far-programs',
+                    '--entry-only-room', '42', '--entry-only-room', '74',
+                    '--append-terminal-room-entry-exit', '74', '--report', str(report),
+                ]
+                if select_object:
+                    command.extend(('--append-terminal-executable-local-object', '74:61'))
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode:
+                    self.fail(result.stderr + result.stdout)
+                return data.read_text(), json.loads(report.read_text())
+
+            unselected_data, unselected_report = generate('unselected', select_object=False)
+            unselected_count = re.search(
+                r'ScummV5_Verb_Record_1_Count = \$(\w+)', unselected_data,
+            )
+            self.assertIsNotNone(unselected_count)
+            self.assertEqual(int(unselected_count.group(1), 16), 0)
+            self.assertNotIn('room.74/object.61/OBCD', {
+                item['identity'] for item in unselected_report['program_map']
+            })
+
+            selected_data, selected_report = generate('selected', select_object=True)
+            selected_count = re.search(
+                r'ScummV5_Verb_Record_1_Count = \$(\w+)', selected_data,
+            )
+            self.assertIsNotNone(selected_count)
+            self.assertGreater(int(selected_count.group(1), 16), 0)
+            self.assertIn('room.74/object.61/OBCD', {
+                item['identity'] for item in selected_report['program_map']
+            })
+
+    def test_last_append_phase_preserves_terminal_profile_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'stop.bin').write_bytes(b'\xa0')
+            room42 = root / 'room-42.cooked'
+            room75 = root / 'room-75.cooked'
+            room74 = root / 'room-74.cooked'
+            room42.write_bytes(_cooked_room(42, _raw_room((200,))))
+            room75.write_bytes(_cooked_room(75, _raw_room_with_object(62, (200, 201))))
+            room74.write_bytes(_cooked_room(74, _raw_room_with_object(61, (200, 201))))
+            manifest = root / 'manifest.json'
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+
+            def generate(name, *, include_room74):
+                records = [
+                    {'room': 42, 'output': room42.name},
+                    {'room': 75, 'output': room75.name},
+                ]
+                if include_room74:
+                    records.append({'room': 74, 'output': room74.name})
+                manifest.write_text(json.dumps({
+                    'schema': 'same_scumm_v5_cooked_rooms_v1',
+                    'num_global_scripts': 200,
+                    'records': records,
+                    'global_scripts': [
+                        {'number': 1, 'output': 'stop.bin', 'length': 1},
+                        {'number': 3, 'output': 'stop.bin', 'length': 1},
+                    ],
+                }))
+                report = root / f'{name}.json'
+                command = [
+                    sys.executable, str(generator), '--manifest', str(manifest),
+                    '--output', str(root / f'{name}.pasm'),
+                    '--data-output', str(root / f'{name}-data.pasm'),
+                    '--binary-dir', str(root / f'{name}-bin'), '--far-programs',
+                    '--entry-only-room', '42', '--entry-only-room', '75',
+                    '--executable-local', '42:200',
+                    '--append-terminal-room-entry-exit', '75',
+                    '--append-terminal-executable-local', '75:200',
+                    '--append-post-terminal-executable-local', '75:201',
+                    '--append-terminal-executable-local-object', '75:62',
+                    '--append-post-terminal-global-script', '3',
+                    '--report', str(report),
+                ]
+                if include_room74:
+                    command.extend((
+                        '--entry-only-room', '74',
+                        '--append-last-room-entry-exit', '74',
+                        '--append-last-executable-local', '74:200',
+                        '--append-last-executable-local', '74:201',
+                        '--append-last-executable-local-object', '74:61',
+                    ))
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode:
+                    self.fail(result.stderr + result.stdout)
+                return json.loads(report.read_text())
+
+            base = generate('base', include_room74=False)
+            extended = generate('extended', include_room74=True)
+            base_ids = {item['identity']: item['id'] for item in base['program_map']}
+            extended_ids = {item['identity']: item['id'] for item in extended['program_map']}
+            for identity, program_id in base_ids.items():
+                self.assertEqual(extended_ids.get(identity), program_id, identity)
+            self.assertEqual(extended['programs'], base['programs'] + 5)
+            self.assertEqual(
+                [item['identity'] for item in extended['program_map'][-5:]],
+                [
+                    'room.74/ENCD', 'room.74/EXCD',
+                    'room.74/LSCR.200', 'room.74/LSCR.201',
+                    'room.74/object.61/OBCD',
+                ],
+            )
+
+    def test_terminal_room_closure_preserves_every_established_program_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'stop.bin').write_bytes(b'\xa0')
+            room42 = root / 'room-42.cooked'
+            room74 = root / 'room-74.cooked'
+            room42.write_bytes(_cooked_room(42, _raw_room((200, 202))))
+            room74.write_bytes(_cooked_room(
+                74, _raw_room_with_object(61, (200, 201, 202)),
+            ))
+            manifest = root / 'manifest.json'
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+
+            def generate(name, *, include_room74, include_terminal_global=False):
+                records = [{'room': 42, 'output': room42.name}]
+                if include_room74:
+                    records.append({'room': 74, 'output': room74.name})
+                global_scripts = [
+                    {'number': 1, 'output': 'stop.bin', 'length': 1},
+                ]
+                if include_terminal_global:
+                    global_scripts.append(
+                        {'number': 3, 'output': 'stop.bin', 'length': 1}
+                    )
+                manifest.write_text(json.dumps({
+                    'schema': 'same_scumm_v5_cooked_rooms_v1',
+                    'num_global_scripts': 200,
+                    'records': records,
+                    'global_scripts': global_scripts,
+                }))
+                output, data, report = (
+                    root / f'{name}.pasm', root / f'{name}-data.pasm',
+                    root / f'{name}.json',
+                )
+                command = [
+                    sys.executable, str(generator), '--manifest', str(manifest),
+                    '--output', str(output), '--data-output', str(data),
+                    '--binary-dir', str(root / f'{name}-bin'), '--far-programs',
+                    '--entry-only-room', '42', '--executable-local', '42:200',
+                    '--append-final-executable-local', '42:202', '--report', str(report),
+                ]
+                if include_room74:
+                    command.extend((
+                        '--entry-only-room', '74',
+                        '--append-terminal-room-entry-exit', '74',
+                        '--append-terminal-executable-local', '74:200',
+                        '--append-terminal-executable-local', '74:201',
+                        '--append-post-terminal-executable-local', '74:202',
+                        '--append-terminal-executable-local-object', '74:61',
+                    ))
+                if include_terminal_global:
+                    command.extend(('--append-terminal-global-script', '3'))
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode:
+                    self.fail(result.stderr + result.stdout)
+                return json.loads(report.read_text())
+
+            base = generate('base', include_room74=False)
+            extended = generate(
+                'extended', include_room74=True, include_terminal_global=True
+            )
+            base_ids = {item['identity']: item['id'] for item in base['program_map']}
+            extended_ids = {item['identity']: item['id'] for item in extended['program_map']}
+            for identity, program_id in base_ids.items():
+                self.assertEqual(extended_ids[identity], program_id, identity)
+            self.assertEqual(extended['programs'], base['programs'] + 7)
+            new_entries = [
+                item['identity'] for item in extended['program_map'][-7:]
+            ]
+            self.assertEqual(new_entries, [
+                'room.74/ENCD', 'room.74/EXCD',
+                'room.74/LSCR.200', 'room.74/LSCR.201', 'script.3',
+                'room.74/LSCR.202',
+                'room.74/object.61/OBCD',
+            ])
+            allocator = ProgramIdAllocator()
+            for _ in range(base['programs']):
+                allocator.allocate()
+            expected_new_ids = [allocator.allocate() for _ in range(7)]
+            self.assertEqual(
+                [item['id'] for item in extended['program_map'][-7:]],
+                expected_new_ids,
+            )
+
+    def test_ultimate_local_append_preserves_last_global_and_object_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'stop.bin').write_bytes(b'\xa0')
+            cooked = root / 'room-42.cooked'
+            cooked.write_bytes(_cooked_room(
+                42, _raw_room_with_object(61, locals_=(200, 202, 203)),
+            ))
+            manifest = root / 'manifest.json'
+            manifest.write_text(json.dumps({
+                'schema': 'same_scumm_v5_cooked_rooms_v1',
+                'num_global_scripts': 200,
+                'records': [{'room': 42, 'output': cooked.name}],
+                'global_scripts': [
+                    {'number': 1, 'output': 'stop.bin', 'length': 1},
+                    {'number': 2, 'output': 'stop.bin', 'length': 1},
+                ],
+            }))
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+
+            def generate(name, include_ultimate=False):
+                output, data, report = (
+                    root / f'{name}.pasm', root / f'{name}-data.pasm',
+                    root / f'{name}.json',
+                )
+                command = [
+                    sys.executable, str(generator), '--manifest', str(manifest),
+                    '--output', str(output), '--data-output', str(data),
+                    '--binary-dir', str(root / f'{name}-bin'), '--far-programs',
+                    '--entry-only-room', '42', '--executable-local', '42:200',
+                    '--append-last-executable-local', '42:202',
+                    '--append-last-executable-local-object', '42:61',
+                    '--append-last-global-script', '2', '--report', str(report),
+                ]
+                if include_ultimate:
+                    command.extend((
+                        '--append-ultimate-executable-local', '42:203',
+                    ))
+                result = subprocess.run(command, capture_output=True, text=True)
+                if result.returncode:
+                    self.fail(result.stderr + result.stdout)
+                return json.loads(report.read_text()), data.read_text()
+
+            before, _ = generate('before')
+            after, data = generate('after', include_ultimate=True)
+            before_ids = {
+                item['identity']: item['id'] for item in before['program_map']
+            }
+            after_ids = {
+                item['identity']: item['id'] for item in after['program_map']
+            }
+            self.assertEqual(after['programs'], before['programs'] + 1)
+            for identity, program_id in before_ids.items():
+                self.assertEqual(after_ids[identity], program_id, identity)
+            appended = after['program_map'][-1]
+            self.assertEqual(appended['identity'], 'room.42/LSCR.203')
+            self.assertEqual(appended['id'], max(before_ids.values()) + 1)
+            self.assertIn(
+                f'ScummV5_M23A_Program_{appended["id"]:02X}:', data,
+            )
+
+    def test_dynamic_residency_directory_exceeds_selector_pool_without_room_overflow(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'stop.bin').write_bytes(b'\x00')
+            records = []
+            for room in (1, 2, 3, 4):
+                cooked = root / f'room-{room}.sc5c'
+                cooked.write_bytes(_cooked_room(
+                    room, _raw_room(tuple(range(200, 250))),
+                ))
+                records.append({'room': room, 'output': cooked.name})
+            manifest = root / 'manifest.json'
+            manifest.write_text(json.dumps({
+                'schema': 'same_scumm_v5_cooked_rooms_v1',
+                'num_global_scripts': 200,
+                'records': records,
+                'global_scripts': [{'number': 1, 'output': 'stop.bin', 'length': 1}],
+            }))
+            generator = Path(__file__).resolve().parents[1] / 'tools/generate_snes_cooked_rooms.py'
+            output, data, report = root / 'rooms.pasm', root / 'data.pasm', root / 'report.json'
+            result = subprocess.run([
+                sys.executable, str(generator), '--manifest', str(manifest),
+                '--output', str(output), '--data-output', str(data),
+                '--binary-dir', str(root / 'segments'), '--far-programs',
+                '--dynamic-program-residency', '--executable-local-room', '1',
+                '--executable-local-room', '2', '--executable-local-room', '3',
+                '--executable-local-room', '4', '--report', str(report),
+            ], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            generated = json.loads(report.read_text())
+            self.assertEqual(generated['program_id_namespace'], 'canonical_program_unit_id')
+            self.assertEqual(generated['programs'], 209)
+            self.assertEqual(len(generated['program_map']), 209)
+            self.assertFalse(Path(generated['native_program_directory']).is_absolute())
+            directory_path = Path(generated['native_program_directory'])
+            if not directory_path.is_absolute():
+                directory_path = report.parent / directory_path
+            directory_bytes = directory_path.read_bytes()
+            directory_doc = json.loads(directory_bytes)
+            self.assertEqual(hashlib.sha256(directory_bytes).hexdigest(),
+                             generated['native_program_directory_sha256'])
+            self.assertEqual(len(directory_doc['entries']), 209)
+            self.assertFalse(directory_doc['selector_values_emitted'])
+            self.assertIn('ScummV5_M23A_ProgramPointers:', data.read_text())
+            self.assertIn('ScummV5_M23A_ProgramLengths:', data.read_text())
+            generated_output = output.read_text()
+            self.assertIn('ScummV5_Resident_RoomBundleUnitIds:', generated_output)
+            self.assertIn('ScummV5_M23A_RoomEntryProgramUnitIds:', generated_output)
+            self.assertNotIn('ScummV5_M23A_RoomEntryPrograms:', generated_output)
+            self.assertNotIn('ScummV5_M23A_RoomExitPrograms:', generated_output)
+            self.assertNotIn('ScummV5_M23A_RoomLocalPrograms_0:', generated_output)
+            generated_data = data.read_text()
+            self.assertIn(
+                'cmp #$00\n    bne ScummV5_M23A_GetProgramSize__resident\n'
+                '    rep #$20\n    .a16\n    lda #$0000\n    sec\n    rtl',
+                generated_data,
+            )

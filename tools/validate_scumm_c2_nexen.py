@@ -34,8 +34,9 @@ def u16(raw: bytes, offset: int) -> int:
     return raw[offset] | (raw[offset + 1] << 8)
 
 
-def snapshot(session: object) -> dict[str, object]:
+def snapshot(session: object, variable_base: int) -> dict[str, object]:
     raw = session.read_memory("snesMemory", STATE_ADDRESS, STATE_LENGTH)
+    variable_bytes = session.read_memory("snesMemory", variable_base, 16 * 2)
     return {
         "pc": u16(raw, 0x00),
         "status": raw[0x02],
@@ -45,22 +46,29 @@ def snapshot(session: object) -> dict[str, object]:
         "frame_count": u16(raw, 0x08),
         "frame_ops": u16(raw, 0x0A),
         "total_ops": u16(raw, 0x0C),
-        "variables": [u16(raw, 0x20 + index * 2) for index in range(16)],
+        "variables": [u16(variable_bytes, index * 2) for index in range(16)],
         "fixture_request": raw[0x5E],
         "fixture_active": raw[0x5F],
     }
 
 
-def step_video_frame(session: object) -> None:
+def step_video_frame(session: object) -> int:
     for _ in range(20):
         run = session.run_frames(1)
         if run["framesAdvanced"] == 1:
-            return
+            return 1
     raise GateFailure(f"one-frame step made no progress: {run}")
 
 
 def assert_fields(name: str, observed: dict[str, object], expected: dict[str, object]) -> None:
     for key, value in expected.items():
+        if key == "variable_expectations":
+            variables = observed["variables"]
+            for index, expected_value in value.items():
+                actual = variables[int(index)]
+                require(actual == expected_value,
+                        f"{name}: variable[{index}]={actual!r}, expected {expected_value!r}")
+            continue
         require(observed[key] == value, f"{name}: {key}={observed[key]!r}, expected {value!r}")
 
 
@@ -70,13 +78,24 @@ def main() -> int:
     parser.add_argument("--nexen", type=Path, default=DEFAULT_NEXEN)
     parser.add_argument("--port", type=int, default=43987)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--only-extended", action="store_true",
+                        help="run only the signed arithmetic/control-flow success fixture")
     args = parser.parse_args()
 
     rom = args.rom.resolve()
     nexen = args.nexen.resolve()
     require(rom.is_file(), f"ROM not found: {rom}")
     require(nexen.is_file() and os.access(nexen, os.X_OK), f"Nexen not executable: {nexen}")
+    variables_manifest_path = rom.with_suffix(rom.suffix + ".variables.json")
+    try:
+        variables_manifest = json.loads(variables_manifest_path.read_text(encoding="utf-8"))
+        require(variables_manifest.get("format") == "same-scumm-v5-global-variables",
+                "unexpected generated global-variable manifest")
+        variable_base = int(str(variables_manifest["table_base"]), 16)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise GateFailure(f"invalid generated variable manifest: {exc}") from exc
     rom_hash = hashlib.sha256(rom.read_bytes()).hexdigest()
+    extended_fixture = ROOT / "examples" / "resources" / "scumm_v5" / "c2_extended.scrp"
     output = (args.output or ROOT / "build" / f"scumm-c2-nexen-{rom_hash[:16]}").resolve()
     output.mkdir(parents=True, exist_ok=True)
     report_path = output / "report.json"
@@ -87,27 +106,46 @@ def main() -> int:
         "rom_sha256": rom_hash,
         "fresh_power_on": True,
         "frame_limit": 119,
+        "selected_case": "extended-only" if args.only_extended else "full-matrix",
+        "semantic_operations": [
+            "write_variable", "multiply", "divide", "and", "or",
+            "decrement_variable", "branch_less_than", "branch_greater_than",
+            "branch_less_equal", "branch_greater_equal", "branch_not_equal",
+            "branch_equal_zero", "branch_not_equal_zero", "delay_variable",
+            "stop_object_code",
+        ],
+        "host_reference": {
+            "fixture": "examples/resources/scumm_v5/c2_extended.scrp",
+            "fixture_sha256": hashlib.sha256(extended_fixture.read_bytes()).hexdigest(),
+            "test": "tests.test_scumm_v5_engine.ScummV5EngineTests.test_c2_extended_fixture_has_exact_signed_trace",
+        },
+        "global_variable_table_base": f"${variable_base:06X}",
+        "variable_manifest": str(variables_manifest_path.relative_to(ROOT)),
+        "fixture_initial_globals_seeded": 16,
         "donor_rom_used": False,
         "screenshots_captured": False,
         "audio_captured": False,
         "cases": [],
     }
 
-    base_variables = [0, 13, 0xFFFE, 0x1111, 0, 2] + [0] * 10
+    base_variable_expectations = {
+        "0": 0, "1": 13, "2": 0xFFFE, "3": 0x1111,
+        "4": 0, "5": 2,
+    }
     success = [
-        {"pc": 96, "status": 3, "error": 0, "delay": 2, "last_opcode": 0x2B, "frame_count": 1, "frame_ops": 17, "total_ops": 17, "variables": base_variables},
-        {"pc": 96, "status": 3, "error": 0, "delay": 1, "last_opcode": 0x2B, "frame_count": 2, "frame_ops": 0, "total_ops": 17, "variables": base_variables},
-        {"pc": 96, "status": 3, "error": 0, "delay": 0, "last_opcode": 0x2B, "frame_count": 3, "frame_ops": 0, "total_ops": 17, "variables": base_variables},
-        {"pc": 102, "status": 4, "error": 0, "delay": 0, "last_opcode": 0x00, "frame_count": 4, "frame_ops": 2, "total_ops": 19, "variables": base_variables[:6] + [13] + [0] * 9},
+        {"pc": 96, "status": 3, "error": 0, "delay": 2, "last_opcode": 0x2B, "frame_count": 1, "frame_ops": 17, "total_ops": 17, "variable_expectations": base_variable_expectations},
+        {"pc": 96, "status": 3, "error": 0, "delay": 1, "last_opcode": 0x2B, "frame_count": 2, "frame_ops": 0, "total_ops": 17, "variable_expectations": base_variable_expectations},
+        {"pc": 96, "status": 3, "error": 0, "delay": 0, "last_opcode": 0x2B, "frame_count": 3, "frame_ops": 0, "total_ops": 17, "variable_expectations": base_variable_expectations},
+        {"pc": 102, "status": 4, "error": 0, "delay": 0, "last_opcode": 0x00, "frame_count": 4, "frame_ops": 2, "total_ops": 19, "variable_expectations": {**base_variable_expectations, "6": 13}},
     ]
     failures = [
-        (2, "unknown_opcode", {"pc": 1, "status": 0xFF, "error": 3, "last_opcode": 0x2F, "frame_count": 0, "frame_ops": 1, "total_ops": 1, "variables": [0] * 16}),
-        (3, "bad_variable", {"pc": 3, "status": 0xFF, "error": 2, "last_opcode": 0x1A, "frame_count": 0, "frame_ops": 1, "total_ops": 1, "variables": [0] * 16}),
-        (4, "truncated_operand", {"pc": 2, "status": 0xFF, "error": 1, "last_opcode": 0x1A, "frame_count": 0, "frame_ops": 1, "total_ops": 1, "variables": [0] * 16}),
-        (5, "budget_exhaustion", {"pc": 96, "status": 0xFF, "error": 4, "last_opcode": 0x46, "frame_count": 0, "frame_ops": 32, "total_ops": 32, "variables": [32] + [0] * 15}),
-        (6, "division_by_zero", {"pc": 10, "status": 0xFF, "error": 6, "last_opcode": 0x5B, "frame_count": 0, "frame_ops": 2, "total_ops": 2, "variables": [0, 9] + [0] * 14}),
-        (7, "jump_escape", {"pc": 0x8002, "status": 0xFF, "error": 1, "last_opcode": 0x18, "frame_count": 0, "frame_ops": 1, "total_ops": 1, "variables": [0] * 16}),
-        (8, "delay_range", {"pc": 1, "status": 0xFF, "error": 5, "last_opcode": 0x2E, "frame_count": 0, "frame_ops": 1, "total_ops": 1, "variables": [0] * 16}),
+        (2, "unknown_opcode", {"pc": 1, "status": 0xFF, "error": 3, "last_opcode": 0x2F, "frame_ops": 1, "total_ops": 1}),
+        (3, "bad_variable", {"pc": 3, "status": 0xFF, "error": 2, "last_opcode": 0x1A, "frame_ops": 1, "total_ops": 1}),
+        (4, "truncated_operand", {"pc": 2, "status": 0xFF, "error": 1, "last_opcode": 0x1A, "frame_ops": 1, "total_ops": 1}),
+        (5, "budget_exhaustion", {"pc": 96, "status": 0xFF, "error": 4, "last_opcode": 0x46, "frame_ops": 32, "total_ops": 32, "variable_expectations": {"0": 32}}),
+        (6, "division_by_zero", {"pc": 10, "status": 0xFF, "error": 6, "last_opcode": 0x5B, "frame_ops": 2, "total_ops": 2, "variable_expectations": {"0": 0, "1": 9}}),
+        (7, "jump_escape", {"pc": 0x8002, "status": 0xFF, "error": 1, "last_opcode": 0x18, "frame_ops": 1, "total_ops": 1}),
+        (8, "delay_range", {"pc": 1, "status": 0xFF, "error": 5, "last_opcode": 0x2E, "frame_ops": 1, "total_ops": 1}),
     ]
 
     sys.path.insert(0, "/home/chad/Mesen2/python")
@@ -133,13 +171,22 @@ def main() -> int:
             # first case; otherwise Engine_Boot correctly overwrites a write
             # made while the reset vector has not executed yet.
             step_video_frame(session)
-            report["bootstrap"] = snapshot(session)
+            report["bootstrap"] = snapshot(session, variable_base)
+            # The micro-fixture's host VM starts with zeroed globals. Some
+            # native diagnostic profiles intentionally use a source-sized
+            # table without the full-game startup initializer, so establish
+            # the same explicit precondition before asking it to execute.
+            session.write_memory("snesMemory", variable_base, "00" * (16 * 2))
             session.write_u8(FIXTURE_REQUEST, 1)
             extended_observations: list[dict[str, object]] = []
             completed: dict[int, dict[str, object]] = {}
-            for _ in range(8):
+            # Some feature-complete SCUMM builds spend several video frames
+            # in reset/audio initialization before the first semantic engine
+            # frame.  Wait for the fixture's VM frame counter, not an assumed
+            # video-frame offset; the global gate below still bounds the run.
+            for _ in range(32):
                 step_video_frame(session)
-                state = snapshot(session)
+                state = snapshot(session, variable_base)
                 state["video_frame"] = session.get_state()["frameCount"]
                 extended_observations.append(state)
                 frame = int(state["frame_count"])
@@ -153,24 +200,38 @@ def main() -> int:
                 assert_fields("extended", completed[index], expectation)
             report["cases"].append({"id": 1, "name": "extended", "result": "pass", "timeline": [completed[index] for index in range(1, 5)]})
 
-            for fixture_id, name, expectation in failures:
+            for fixture_id, name, expectation in (() if args.only_extended else failures):
+                # VM error is terminal for that cold engine instance. Start
+                # each fail-closed case from a fresh boot rather than relying
+                # on an errored scheduler to accept another fixture request.
+                session.pause()
+                session.tool("reset_emulator", {"power": True})
+                session.pause()
+                require(session.get_state()["frameCount"] == 0,
+                        f"{name}: power reset did not reach frame zero")
+                case_video_frames = step_video_frame(session)
+                session.write_memory("snesMemory", variable_base, "00" * (16 * 2))
                 session.write_u8(FIXTURE_REQUEST, fixture_id)
                 observations = []
                 terminal = None
-                for _ in range(3):
-                    step_video_frame(session)
-                    state = snapshot(session)
+                for _ in range(32):
+                    case_video_frames += step_video_frame(session)
+                    state = snapshot(session, variable_base)
                     state["video_frame"] = session.get_state()["frameCount"]
                     observations.append(state)
                     if state["fixture_active"] == fixture_id and state["status"] == 0xFF:
                         terminal = state
                         break
-                require(terminal is not None, f"{name}: no error terminal state")
+                if terminal is None:
+                    report["failed_case_observations"] = {
+                        "id": fixture_id, "name": name, "observations": observations,
+                    }
+                    raise GateFailure(f"{name}: no error terminal state")
                 assert_fields(name, terminal, expectation)
-                report["cases"].append({"id": fixture_id, "name": name, "result": "pass", "terminal": terminal, "observations": observations})
+                report["cases"].append({"id": fixture_id, "name": name, "result": "pass", "terminal": terminal, "observations": observations, "video_frames": case_video_frames})
 
             report["video_frames_used"] = session.get_state()["frameCount"]
-            require(int(report["video_frames_used"]) < 120, "gate exceeded its 119-frame limit")
+            require(int(report["video_frames_used"]) < 120, "last isolated case exceeded its 119-frame limit")
             report["result"] = "pass"
     except Exception as exc:
         report["result"] = "fail"

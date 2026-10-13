@@ -1,13 +1,14 @@
 """Raw LucasArts SCUMM v5 resources exposed through SAME stable keys.
 
-The adapter understands only the container/directory layer needed to locate
-rooms, global scripts, and sounds.  It deliberately does not interpret room,
-script, or audio semantics; those remain engine/adaptor responsibilities.
+The adapter understands the container and resource-directory layer needed to
+locate rooms, scripts, and media. It deliberately does not interpret their
+semantics; those remain front-end/compiler responsibilities.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from io import BytesIO
 import struct
 from typing import BinaryIO
@@ -20,6 +21,10 @@ from .policy import ScummV5GamePolicy
 _XOR_KEY = 0x69
 _DIRECTORY_TAGS = ("DSCR", "DSOU", "DCOS", "DCHR")
 _REQUIRED_DIRECTORY_TAGS = ("DSCR", "DSOU")
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +249,137 @@ class LucasartsScummV5ResourceProvider:
     def global_script_count(self) -> int:
         """Return the authoritative v5 global/local script namespace boundary."""
         return len(self._directories["DSCR"].rooms)
+
+    def source_location(self, key: str) -> dict[str, int | str]:
+        """Return original member-relative chunk/body offsets for a derived key.
+
+        Offsets refer to the decoded resource container.  The raw v5 archive
+        uses bytewise XOR encryption, so offsets are unchanged in the
+        corresponding external member.  The caller supplies the archive
+        member name; this provider only knows the profile resource key. Rooms,
+        scripts, sounds, costumes, and charsets share this coordinate contract.
+        """
+        try:
+            kind, number = self._derived[key]
+        except KeyError as exc:
+            raise ResourceError(f"resource {key!r} has no raw SCUMM source location") from exc
+        if kind == "ROOM":
+            lflf = self._rooms[number]
+            room = next(
+                (item for item in _chunks(lflf.payload, owner=f"room {number} LFLF")
+                 if item.tag == "ROOM"),
+                None,
+            )
+            if room is None:
+                raise ResourceError(f"raw SCUMM room {number} has no ROOM chunk")
+            chunk_offset = lflf.offset + 8 + room.offset
+            return {
+                "resource_key": key,
+                "kind": "ROOM",
+                "number": number,
+                "container_offset": lflf.offset,
+                "chunk_offset": chunk_offset,
+                "payload_offset": chunk_offset + 8,
+            }
+        directory_tags = {"SCRP": "DSCR", "SOUN": "DSOU", "COST": "DCOS", "CHAR": "DCHR"}
+        if kind in directory_tags:
+            directory = self._directories[directory_tags[kind]]
+            source_room = directory.rooms[number]
+            lflf = self._rooms[source_room]
+            chunk_offset = lflf.offset + 8 + directory.offsets[number]
+            return {
+                "resource_key": key,
+                "kind": kind,
+                "number": number,
+                "source_room": source_room,
+                "container_offset": lflf.offset,
+                "chunk_offset": chunk_offset,
+                "payload_offset": chunk_offset + 8,
+            }
+        raise ResourceError(f"resource {key!r} has no source location")
+
+    def source_catalog(self) -> tuple[dict[str, object], ...]:
+        """Enumerate source resources, including unavailable directory slots.
+
+        This is a front-end inventory API. It preserves source/member-relative
+        offsets and reports stale/empty directory entries without advertising
+        them as readable resources.
+        """
+        result: list[dict[str, object]] = []
+        for item in _chunks(self._index, owner=self.policy.index_key):
+            category = "global-object-table" if item.tag == "DOBJ" else "resource-directory"
+            row: dict[str, object] = {
+                "identity": ("GlobalObjectTable" if item.tag == "DOBJ"
+                             else f"IndexDirectory({item.tag})"),
+                "category": category, "kind": item.tag, "status": "PARSED",
+                "chunk_offset": item.offset, "payload_offset": item.offset + 8,
+                "payload_length": len(item.payload),
+                "payload_sha256": _sha256(item.payload),
+            }
+            if item.tag == "DOBJ" and len(item.payload) >= 2:
+                row["object_count"] = struct.unpack_from("<H", item.payload, 0)[0]
+            result.append(row)
+        for room_number in sorted(self._rooms):
+            key = self.policy.room_key_template.format(room=room_number)
+            payload = self._read_derived(key)
+            location = self.source_location(key)
+            result.append({
+                "identity": f"RoomResource({room_number})",
+                "category": "room", "kind": "ROOM", "number": room_number,
+                "status": "PARSED", "resource_key": key,
+                "source_room": room_number,
+                "container_offset": location["container_offset"],
+                "chunk_offset": location["chunk_offset"],
+                "payload_offset": location["payload_offset"],
+                "payload_length": len(payload),
+                "payload_sha256": _sha256(payload),
+            })
+
+        directory_specs = (
+            ("DSCR", "SCRP", "global-script", self.policy.script_key_template, "script"),
+            ("DSOU", "SOUN", "sound", self.policy.sound_key_template, "sound"),
+            ("DCOS", "COST", "costume", self.policy.costume_key_template, "costume"),
+            ("DCHR", "CHAR", "charset", self.policy.charset_key_template, "charset"),
+        )
+        for directory_tag, chunk_kind, category, template, placeholder in directory_specs:
+            directory = self._directories.get(directory_tag)
+            if directory is None:
+                continue
+            for number, source_room in enumerate(directory.rooms):
+                key = template.format(**{placeholder: number})
+                identity = (f"ScriptResource({number})" if category == "global-script"
+                            else f"{category.title().replace('-', '')}({number})")
+                row: dict[str, object] = {
+                    "identity": identity,
+                    "category": category, "kind": chunk_kind, "number": number,
+                    "resource_key": key, "source_room": source_room,
+                    "directory_tag": directory_tag,
+                    "directory_offset": directory.offsets[number],
+                    "status": "UNRESOLVED",
+                }
+                if source_room == 0:
+                    row["status"] = "UNAVAILABLE"
+                    row["reason"] = "directory entry has no source room"
+                elif source_room not in self._rooms:
+                    row["reason"] = "directory entry references an absent room"
+                else:
+                    try:
+                        payload = self._directory_payload(directory_tag, number, chunk_kind)
+                        lflf = self._rooms[source_room]
+                        chunk_offset = lflf.offset + 8 + directory.offsets[number]
+                        row.update({
+                            "status": "INVENTORIED",
+                            "container_offset": lflf.offset,
+                            "chunk_offset": chunk_offset,
+                            "payload_offset": chunk_offset + 8,
+                            "payload_length": len(payload),
+                            "payload_sha256": _sha256(payload),
+                        })
+                    except ResourceError as exc:
+                        row["reason"] = str(exc)
+                result.append(row)
+        return tuple(sorted(result, key=lambda item: (
+            str(item["category"]), int(item.get("number", -1)), str(item["identity"]))))
 
     def _add_key(self, key: str, kind: str, number: int) -> None:
         if key in self._derived or self.backing.contains(key):

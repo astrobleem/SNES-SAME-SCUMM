@@ -26,6 +26,7 @@ class ControllerConformanceFixtureTests(unittest.TestCase):
             self.assertEqual(room.objects[0].object_name, b"test console")
             self.assertEqual(room.objects[0].authored_verbs, (3,))
             self.assertNotEqual(room.objects[0].verb_entrypoint(3), 0)
+            self.assertIn(bytes.fromhex("D8 0F 54 00"), room.objects[0].obcd)
             self.assertEqual(room.objects[1].object_id, 8)
             self.assertEqual(room.objects[1].object_name, b"test panel")
             self.assertEqual(room.objects[1].authored_verbs, ())

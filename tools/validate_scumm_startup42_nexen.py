@@ -14,6 +14,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 COMMON = 0x7E2300
 ROOM = 0x7FF2BE
+RESET_DIAG_BASE = 0x7FF46B
 SLOTS_STATUS = 0x7E2380
 SLOTS_NUMBER = 0x7E2399
 SLOTS_PROGRAM = 0x7E23B2
@@ -219,8 +220,8 @@ def snap(s):
         "talk": {"active": talk[0], "have_msg": talk[1],
                  "raw_length": talk[8], "keep_text": talk[0xA6]},
         # The frame phase is the final byte of the reset-diagnostic block:
-        # SAME_RESET_DIAG_ENGINE_PHASE = $7E103C.  $7E1024 is unrelated.
-        "diag_stage": s.read_memory("snesMemory", 0x7E103C, 1)[0],
+        # SAME_RESET_DIAG_ENGINE_PHASE = $7FF487.  $7E1024 is unrelated.
+        "diag_stage": s.read_memory("snesMemory", RESET_DIAG_BASE + 0x1C, 1)[0],
         "engine_lifecycle": s.read_memory("snesMemory", 0x7E2221, 1)[0],
         # M23A lifecycle trace is an engine-owned diagnostic ring.  Keep this
         # in the validator snapshot so room-script completion can be compared
@@ -237,7 +238,7 @@ def snap(s):
             "status": s.read_memory("snesMemory", 0x7E57B7, 1)[0],
             "error": s.read_memory("snesMemory", 0x7E57B8, 1)[0],
         },
-        "reset_diag": list(s.read_memory("snesMemory", 0x7E1020, 0x20)),
+        "reset_diag": list(s.read_memory("snesMemory", RESET_DIAG_BASE, 0x20)),
         "m25a_trace": list(s.read_memory("snesMemory", 0x7E5000, 0x80)),
         "start_trace": list(s.read_memory("snesMemory", 0x7E7ED7, 0x41)),
         "alloc_trace": list(s.read_memory("snesMemory", 0x7E5900, 0x81)),
@@ -423,7 +424,7 @@ def snap_light(s):
         # Same_Frame_Run writes 1 on entry, 2 immediately before
         # Same_Engine_Frame, and 3 only after the engine returns.  This is a
         # coherent end-of-observation diagnostic, not a backend hook state.
-        "engine_phase": s.read_memory("snesMemory", 0x7E103C, 1)[0],
+        "engine_phase": s.read_memory("snesMemory", RESET_DIAG_BASE + 0x1C, 1)[0],
         "actor1_position": [u16(actor_pos), u16(actor_pos, 2)],
         "actor1_moving": actor_moving,
         "actor1_walkbox": actor_walkbox,
@@ -531,7 +532,7 @@ def snap_light(s):
                       "active_count": s.read_memory("snesMemory", 0x7E2A8A, 1)[0],
                       "sentence_fetch_count": s.read_memory("snesMemory", 0x7E562A, 1)[0],
                       "sentence_fetch_pc": u16(s.read_memory("snesMemory", 0x7E562B, 2)),
-                      "nmi_count": u16(s.read_memory("snesMemory", 0x7E102E, 2)),
+                      "nmi_count": u16(s.read_memory("snesMemory", RESET_DIAG_BASE + 0x0E, 2)),
                       "sentence_fetch_opcode": s.read_memory("snesMemory", 0x7E562D, 1)[0]},
         "slots": slots,
     }
@@ -575,7 +576,7 @@ def coherent_service_snapshot(s, state):
         "scumm_pc": u16(s.read_memory("snesMemory", 0x7E2300, 2)),
         "engine_frame_busy": s.read_memory("snesMemory", 0x7E2231, 1)[0],
         "engine_lifecycle": s.read_memory("snesMemory", 0x7E2221, 1)[0],
-        "nmi_counter": int.from_bytes(s.read_memory("snesMemory", 0x7E102E, 2), "little"),
+        "nmi_counter": int.from_bytes(s.read_memory("snesMemory", RESET_DIAG_BASE + 0x0E, 2), "little"),
         "pending_visual": surface[0x26],
         "pending_room": surface[0x27],
         "pending_room_generation": int.from_bytes(surface[0x28:0x2A], "little"),
@@ -644,7 +645,7 @@ def snap_detail(s):
         "engine_lifecycle": s.read_memory("snesMemory", 0x7E2221, 1)[0],
         "c1_hold_after": s.read_memory("snesMemory", 0x7E2364, 1)[0],
         "m23a_hold": s.read_memory("snesMemory", 0x7FF2C4, 1)[0],
-        "engine_stage": s.read_memory("snesMemory", 0x7E103C, 1)[0],
+        "engine_stage": s.read_memory("snesMemory", RESET_DIAG_BASE + 0x1C, 1)[0],
         "setstate_trace": setstate_trace,
         "camera": list(s.read_memory("snesMemory", 0x7F5F0A, 2)),
         "room42_object_state": {str(i): s.read_memory("snesMemory", 0x7E6000 + i, 1)[0]
@@ -685,7 +686,7 @@ def snap_detail(s):
         "locals_by_slot": locals_by_slot,
         "pc": u16(c), "opcode": c[6], "error": c[3], "program": c[0x62],
         "last_opcode": s.read_memory("snesMemory", 0x7E2306, 1)[0],
-        "reset_diag": list(s.read_memory("snesMemory", 0x7E1020, 0x20)),
+        "reset_diag": list(s.read_memory("snesMemory", RESET_DIAG_BASE, 0x20)),
         "error_site": s.read_memory("snesMemory", 0x7E5F08, 1)[0],
         "error_setter": list(s.read_memory("snesMemory", 0x7E5F20, 32)),
         "c16_diag": list(s.read_memory("snesMemory", 0x7F6F10, 12)),
@@ -867,7 +868,7 @@ def main() -> int:
         # The reset counter write is an exact WRAM event (unlike a bank-local
         # execution address), so retain it for the atomic flight recorder.
         reset_count_write_handle = (None if not observe_hooks else
-                                    session.add_write_hook(0x7E1020))
+                                    session.add_write_hook(RESET_DIAG_BASE))
         # Narrow late control-flow probes.  These are deliberately external
         # execution hooks with no memory reads, so they cannot perturb the
         # SCUMM VM and remain cheap enough for frame-granular stepping.
@@ -897,7 +898,7 @@ def main() -> int:
                 (0x401014, "surface_lock_write"),
             ):
                 video_state_write_handles[session.add_write_hook(address)] = label
-            engine_phase_write_handle = session.add_write_hook(0x7E103C)
+            engine_phase_write_handle = session.add_write_hook(RESET_DIAG_BASE + 0x1C)
         else:
             engine_phase_write_handle = None
         # Optional service/control-flow trace. Hooks are observational; the
@@ -1097,6 +1098,7 @@ def main() -> int:
         start_sent = False
         title_ack = False
         start_input_observation = None
+        title_ack_observation = None
         sentence_sent = False
         sentence2_sent = False
         sentence2_frame = None
@@ -1125,10 +1127,21 @@ def main() -> int:
                 # Room68 is a valid authored title/input boundary. Waiting
                 # specifically for room75 can deadlock the observer before it
                 # sends the input that advances the title lifecycle.
-                session.set_input(session.BTN_START | session.BTN_A, 40)
+                # set_input(frames=...) advances by wall-clock time. Under
+                # max-speed execution that can run well past the requested
+                # hold, so set the controller level without advancing and let
+                # the frame-counted loop below own its exact lifetime.
+                input_start_frame = session.get_state()["frameCount"]
+                session.tool("set_input", {
+                    "port": 0,
+                    "buttons": session.BTN_START | session.BTN_A,
+                    "hold": True,
+                    "frames": 0,
+                })
                 start_sent = True
                 start_input_observation = {
                     "frame": elapsed,
+                    "emulator_frame": input_start_frame,
                     "room": pre.get("room"),
                     "room_phase": pre.get("room_phase"),
                     "error": pre.get("error"),
@@ -1138,8 +1151,21 @@ def main() -> int:
                 start_release_frame = elapsed + 40
             elif (start_sent and not title_ack and pre["room"] == 68
                   and pre.get("talk_lifetime", {}).get("active", 0)):
-                session.set_input(session.BTN_A, 2)
+                session.tool("set_input", {
+                    "port": 0, "buttons": session.BTN_A,
+                    "hold": True, "frames": 0,
+                })
                 title_ack = True
+                start_release_frame = elapsed + 2
+                title_ack_observation = {
+                    "frame": elapsed,
+                    "emulator_frame": session.get_state()["frameCount"],
+                    "room": pre.get("room"),
+                    "room_phase": pre.get("room_phase"),
+                    "talk_lifetime": pre.get("talk_lifetime"),
+                    "buttons": ["A"],
+                    "hold_frames": 2,
+                }
             if start_release_frame is not None and elapsed >= start_release_frame:
                 session.set_input(0, 1)
                 start_release_frame = None
@@ -1263,7 +1289,7 @@ def main() -> int:
                     "payload": list(session.read_memory("snesMemory", 0x7FD3A6, 6)),
                     "c20_count": session.read_memory("snesMemory", 0x7FD380, 1)[0],
                     "c20_records": list(session.read_memory("snesMemory", 0x7FD382, 36)),
-                    "engine_stage": session.read_memory("snesMemory", 0x7E103C, 1)[0],
+                    "engine_stage": session.read_memory("snesMemory", RESET_DIAG_BASE + 0x1C, 1)[0],
                     "engine_lifecycle": session.read_memory("snesMemory", 0x7E2221, 1)[0],
                     "engine_frame_busy": session.read_memory("snesMemory", 0x7E2231, 1)[0],
                     "scumm_error_set_count": int.from_bytes(session.read_memory("snesMemory", 0x7E5500, 2), "little"),
@@ -1274,7 +1300,7 @@ def main() -> int:
                     "m23a_phase": session.read_memory("snesMemory", 0x7FF2C2, 1)[0],
                     "m23a_hold": session.read_memory("snesMemory", 0x7FF2C4, 1)[0],
                     "frame_count": int.from_bytes(session.read_memory("snesMemory", 0x7E2308, 2), "little"),
-                    "nmi_count": int.from_bytes(session.read_memory("snesMemory", 0x7E102E, 2), "little"),
+                    "nmi_count": int.from_bytes(session.read_memory("snesMemory", RESET_DIAG_BASE + 0x0E, 2), "little"),
                     "cpu": session.get_cpu_state("Snes"),
                     "frame_stage": session.read_memory("snesMemory", 0x7E567D, 1)[0],
                     "sentence_slot": session.read_memory("snesMemory", 0x7E5617, 1)[0],
@@ -1419,6 +1445,11 @@ def main() -> int:
             # bootstrap snapshot.
             if args.atomic_reset and not args.exact_reset_stop and elapsed >= 840:
                 batch = 1
+            if start_release_frame is not None:
+                # Do not let any observation batching cross the input edge.
+                # The subsequent loop iteration releases the held level at
+                # this exact completed-frame boundary.
+                batch = min(batch, max(1, start_release_frame - elapsed))
             # Nexen returns paused at each completed observation boundary.
             # Explicitly resume before every requested step so a host video
             # frame cannot advance while the S-CPU remains parked in WAI.
@@ -1534,7 +1565,7 @@ def main() -> int:
                     "address": run_result.get("address"),
                     "cpu": session.get_cpu_state("Snes"),
                     "trace": session.tool("trace_log", {"count": 1000, "cpuType": "Snes"}),
-                    "diag": list(session.read_memory("snesMemory", 0x7E1020, 0x20)),
+                    "diag": list(session.read_memory("snesMemory", RESET_DIAG_BASE, 0x20)),
                     "stack_1f00": list(session.read_memory("snesMemory", 0x1F00, 0x100)),
                 }
                 if args.exact_flight:
@@ -1646,7 +1677,7 @@ def main() -> int:
                             # reset counter has advanced; otherwise it is an
                             # ordinary far-bank entry (not a reset event).
                             candidate_count = int.from_bytes(
-                                session.read_memory("snesMemory", 0x7E1020, 2),
+                                session.read_memory("snesMemory", RESET_DIAG_BASE, 2),
                                 "little")
                             if candidate_count != reset_baseline:
                                 # Stop at the notification boundary.  Let the
@@ -1668,7 +1699,7 @@ def main() -> int:
                             "address": address,
                             "cpu": session.get_cpu_state("Snes"),
                             "stack_1f00": list(session.read_memory("snesMemory", 0x1F00, 0x100)),
-                            "diag": list(session.read_memory("snesMemory", 0x7E1020, 0x20)),
+                            "diag": list(session.read_memory("snesMemory", RESET_DIAG_BASE, 0x20)),
                             "entry_stack_window": list(session.read_memory("snesMemory", 0x7E5520, 0x20)),
                             "scumm": list(session.read_memory("snesMemory", 0x7E5F00, 0x30)),
                             })
@@ -1680,7 +1711,7 @@ def main() -> int:
                             "address": address,
                             "cpu": session.get_cpu_state("Snes"),
                             "trace": session.tool("trace_log", {"count": 1000, "cpuType": "Snes"}),
-                            "diag": list(session.read_memory("snesMemory", 0x7E1020, 0x20)),
+                            "diag": list(session.read_memory("snesMemory", RESET_DIAG_BASE, 0x20)),
                             "stack_1f00": list(session.read_memory("snesMemory", 0x1F00, 0x100)),
                         }
                     if handle in lifecycle_hooks:
@@ -1760,7 +1791,7 @@ def main() -> int:
                             "value": params.get("value"),
                             "cpu": session.get_cpu_state("Snes"),
                             "stack_1f00": list(session.read_memory("snesMemory", 0x1F00, 0x100)),
-                            "diag": list(session.read_memory("snesMemory", 0x7E1020, 0x20)),
+                            "diag": list(session.read_memory("snesMemory", RESET_DIAG_BASE, 0x20)),
                             "entry_stack_window": list(session.read_memory("snesMemory", 0x7E5520, 0x20)),
                             "trace": session.tool("trace_log", {"count": 1000, "cpuType": "Snes"}),
                         })
@@ -1954,6 +1985,7 @@ def main() -> int:
               "sentence_frame": sentence_frame,
               "start_sent": start_sent,
               "start_input_observation": start_input_observation,
+              "title_ack_observation": title_ack_observation,
               "title_ack": title_ack,
               "sentence2_sent": sentence2_sent,
               "sentence2_frame": sentence2_frame,

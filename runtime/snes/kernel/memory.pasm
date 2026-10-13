@@ -15,6 +15,9 @@ SAME_INPUT_HELD              = $7E2200
 SAME_INPUT_PREVIOUS          = $7E2202
 SAME_INPUT_PRESSED           = $7E2204
 SAME_INPUT_RELEASED          = $7E2206
+SAME_INPUT_EDGE_SEQUENCE    = $7E2208 ; u16, advances once per newly sampled edge
+SAME_INPUT_TALK_OWNED_SEQUENCE = $7E220A ; u16 edge sequence captured by active talk
+SAME_INPUT_TALK_OWNED_VALID = $7E220C ; u8 token survives polls until controller consumes it
 SAME_FRAME_COUNTER           = $7E2210
 SAME_VIDEO_BACKDROP_SHADOW   = $7E2212
 SAME_AUDIO_LAST_OPCODE       = $7E2214
@@ -89,6 +92,14 @@ SAME_SCUMM_TOTAL_OPS          = $7E230C ; u16 operations since boot
 .if SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_PHASE6LA1D
 SAME_SCUMM_VARIABLES          = $7FF500 ; 512-word authored table
 SAME_SCUMM_VARIABLES_BOOTSTRAP_RESERVED = $7E2320 ; historical window
+.elseif SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+; The resolver prototype is an engine integration build, not a 16-variable
+; micro-fixture. Keep authored variables out of the interpreter scratch window
+; so high-numbered synthetic sentinels remain real SCUMM variables.
+SAME_SCUMM_VARIABLES          = $7FF500 ; 512-word authored table
+SAME_SCUMM_RESIDENCY_VARIABLES_BASE = $7FF500
+SAME_SCUMM_RESIDENCY_VARIABLES_END = $7FF900 ; exclusive table end
+SAME_SCUMM_VARIABLES_BOOTSTRAP_RESERVED = $7E2320 ; historical window
 .else
 SAME_SCUMM_VARIABLES          = $7E2320 ; historical bootstrap allocation
 .endif
@@ -122,6 +133,9 @@ SAME_SCUMM_C1_HOLD_AFTER      = $7E2364 ; debugger-only committed-frame hold
 SAME_SCUMM_CONTROL_END        = $7E2365
 .if SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_PHASE6LA1D
 ; Count/base/extent come from generated/scumm_v5_variables.inc.pasm.
+SAME_SCUMM_MAX_OPS_PER_FRAME  = $1000
+.elseif SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+SAME_SCUMM_VARIABLE_COUNT     = $0200 ; authored residency-fixture variable table
 SAME_SCUMM_MAX_OPS_PER_FRAME  = $1000
 .elseif SAME_BUILD_SCUMM_M23B
 SAME_SCUMM_VARIABLE_COUNT     = $0200 ; bounded Fate demo profile closure
@@ -256,6 +270,7 @@ SAME_SCUMM_C10_PARAM1             = $7F34F2 ; u16 operand scratch
 SAME_SCUMM_C10_PARAM2             = $7F34F4 ; u16 operand scratch
 SAME_SCUMM_C10_PARAM3             = $7F34F6 ; u16 operand scratch
 SAME_SCUMM_C10_PARAM4             = $7F34F8 ; u16 operand scratch
+SAME_SCUMM_C10_PARAM5             = $7F34FA ; u16 far-handler continuation scratch
 SAME_SCUMM_C10_STATE_END          = $7F3500
 SAME_SCUMM_C10_STATE_SIZE         = $0500
 
@@ -527,18 +542,22 @@ SAME_SCUMM_C23_WORK                     = $7FD449 ; 11-byte transient style
 SAME_SCUMM_C23_ACTOR                    = $7FD454
 SAME_SCUMM_C23_SELECTOR                 = $7FD455
 SAME_SCUMM_C23_SLOT_OFFSET              = $7FD456 ; u16
+; The high byte is otherwise zero for all four transient print-slot offsets.
+; Reuse it only while one encoded print message is being consumed.
+SAME_SCUMM_C23_TEXT_TRUNCATED           = $7FD457 ; u8, compact talk payload overflow
 SAME_SCUMM_C23_RAW_INDEX                = $7FD458 ; bounded decoder cursor
 SAME_SCUMM_C23_STATE_END                = $7FD459
 SAME_SCUMM_C23_STATE_SIZE               = $0051
 
-; C25 canonical v5 soundKludge queue. Each bounded record stores its word
-; count followed by up to 32 signed words; command -1 flushes queued records.
+; C25 canonical v5 soundKludge queue. Each packed record stores a byte word
+; count followed by up to 32 signed words. The queue budget is the original
+; 256-word iMUSE queue (one count word plus each argument per command).
 SAME_SCUMM_C25_QUEUE_COUNT               = $7FD459 ; u8
-SAME_SCUMM_C25_QUEUE                     = $7FD45A ; 16 x 65-byte records
-SAME_SCUMM_C25_MAX_COMMANDS              = $0010
+SAME_SCUMM_C25_QUEUE                     = $7FD45A ; packed records, max $0200 bytes
 SAME_SCUMM_C25_MAX_WORDS                 = $0020
-SAME_SCUMM_C25_RECORD_STRIDE             = $0041
-SAME_SCUMM_C25_QUEUE_END                 = $7FD86A
+SAME_SCUMM_C25_MAX_QUEUE_WORDS           = $0100
+SAME_SCUMM_C25_QUEUE_CAPACITY_BYTES      = $0200
+SAME_SCUMM_C25_QUEUE_END                 = $7FD65A
 SAME_SCUMM_C25_LAST_COUNT                = $7FD86A ; u8
 SAME_SCUMM_C25_LAST_WORDS                = $7FD86B ; 32 x s16
 SAME_SCUMM_C25_FLUSH_COUNT               = $7FD8AB ; u8
@@ -548,8 +567,9 @@ SAME_SCUMM_C25_COMMAND_INDEX             = $7FD8ED ; u8 scratch
 SAME_SCUMM_C25_SELECTOR                  = $7FD8EE ; u8 scratch
 SAME_SCUMM_C25_RECORD_OFFSET             = $7FD8EF ; u16 scratch
 SAME_SCUMM_C25_WORD_INDEX                = $7FD8F1 ; u8 scratch
-SAME_SCUMM_C25_STATE_END                 = $7FD8F2
-SAME_SCUMM_C25_STATE_SIZE                = $0499
+SAME_SCUMM_C25_QUEUE_WORDS_USED          = $7FD8F2 ; u16, includes each record count word
+SAME_SCUMM_C25_STATE_END                 = $7FD8F4
+SAME_SCUMM_C25_STATE_SIZE                = $049B
 
 ; C26 canonical saveRestoreVerbs storage. Active verbs remain dense in the
 ; C17 table; saved banks need independent physical slots because an active
@@ -685,6 +705,7 @@ SAME_SCUMM_M23A_SLOT_ROOMS               = $7FF2E7 ; 25 room-owner bytes
 SAME_SCUMM_M23A_STATE_END                = $7FF300
 SAME_SCUMM_M23A_STATE_SIZE               = $0042
 SAME_SAVE_STAGING                        = $7FF300 ; complete versioned save record
+SAME_SAVE_STAGING_MAX_END                 = $7FF454 ; max M21+M22 record end
 .if SAME_BUILD_SCUMM_M21
 .if SAME_BUILD_SCUMM_M22
 SAME_SAVE_RECORD_SIZE                    = $0154
@@ -725,6 +746,7 @@ SAME_SCUMM_M23A_RETURN_VALID             = $7FF467 ; u8 one-shot continuation va
 SAME_SCUMM_M23A_RETURN_SLOT              = $7FF468 ; u8 surviving C4 activation owner
 SAME_SCUMM_M23A_RETURN_MODE              = $7FF469 ; u8 saved scheduler return mode
 SAME_SCUMM_M23A_REQUEST_API_ACTIVE       = $7FF46A ; u8 API request origin during dispatch
+SAME_SCUMM_M23A_REQUEST_API_ACTIVE_END   = $7FF46B ; exclusive continuation-state end
 .if SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_PHASE6LA1D
 SAME_SCUMM_M23B_VARIABLES                = SAME_SCUMM_VARIABLES ; compatibility name only
 SAME_SCUMM_M23B_VARIABLES_END            = SAME_SCUMM_VARIABLE_END
@@ -850,6 +872,11 @@ SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0    = $7E5E30 ; u16 union top
 SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1    = $7E5E32 ; u16 union right
 SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1    = $7E5E34 ; u16 union bottom
 SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_ACTIVE = $7E5E36 ; u8 bounded restore
+; Scenario-fixture witness for bytecode executed during outgoing room phase 1.
+; Eight circular records: program, source PC, opcode. The video diagnostic
+; block ends at $7E5EC7, leaving this interval available.
+SAME_SCUMM_SCENARIO_PHASE1_TRACE_COUNT    = $7E5EC7 ; u8 circular write count
+SAME_SCUMM_SCENARIO_PHASE1_TRACE         = $7E5EC8 ; 8 x 4-byte records
 SAME_SCUMM_CONTROLLER_STATE_END           = $7E5FEC
 SAME_SCUMM_CONTROLLER_DIAG                = $7E5FEC ; fixture-only gate breadcrumb
 SAME_SCUMM_CONTROLLER_DIAG_ROOM           = $7E5FED
@@ -867,36 +894,121 @@ SAME_SCUMM_SETSTATE_LOCAL_COUNT           = $7E5FFC ; u8
 SAME_SCUMM_SETSTATE_DIRTY_COUNT           = $7E5FFD ; u8
 SAME_SCUMM_SETSTATE_LOCAL_OFFSET          = $7E5FFE ; u16 scratch
 
-; Dedicated reset/control-flow diagnostics.  The complete block is reserved
-; in the validator-only gap immediately before scenario state.  The lower
-; $7E10xx area is ordinary engine memory in some profiles and is not safe.
-SAME_RESET_DIAG_BASE                      = $7E1020
-SAME_RESET_DIAG_COUNT                     = $7E1020 ; u16 reset-entry count
-SAME_RESET_DIAG_FRAME                     = $7E1022 ; u16 last frame
-SAME_RESET_DIAG_STAGE                     = $7E1024 ; u8 last stage breadcrumb
-SAME_RESET_DIAG_LAST_PBR                  = $7E1025 ; u8 production PBR hint
-SAME_RESET_DIAG_LAST_PC                   = $7E1026 ; u16 production PC hint
-SAME_RESET_DIAG_LAST_S                    = $7E1028 ; u16 S at reset entry
-SAME_RESET_DIAG_LAST_P                    = $7E102A ; u8 P at reset entry
-SAME_RESET_DIAG_LAST_DBR                  = $7E102B ; u8 DBR at reset entry
-SAME_RESET_DIAG_LAST_D                    = $7E102C ; u16 D at reset entry
-SAME_RESET_DIAG_NMI                       = $7E102E ; u16 NMI entries
-SAME_RESET_DIAG_IRQ                       = $7E1030 ; u16 IRQ entries
-SAME_RESET_DIAG_BRK                       = $7E1032 ; u16 BRK entries
-SAME_RESET_DIAG_COP                       = $7E1034 ; u16 COP entries
-SAME_RESET_DIAG_ROOM                      = $7E1036 ; u8 room breadcrumb
-SAME_RESET_DIAG_PROGRAM                   = $7E1037 ; u8 program breadcrumb
-SAME_RESET_DIAG_SLOT                      = $7E1038 ; u8 slot breadcrumb
-SAME_RESET_DIAG_SCRIPT_PC                 = $7E1039 ; u16 script PC breadcrumb
-SAME_RESET_DIAG_LIFECYCLE                 = $7E103B ; u8 room lifecycle
-SAME_RESET_DIAG_ENGINE_PHASE              = $7E103C ; u8 frame phase
-SAME_RESET_DIAG_COOKIE                    = $7E103D ; u16 reserved signature
+; Dedicated reset/control-flow diagnostics.  A low-WRAM diagnostic address
+; can overlap profile-owned global-variable storage in larger profiles.  This
+; 96-byte validator-only block occupies the audited gap after M23A return
+; metadata and before the optional $7FF500 variable table; its end remains
+; below that table in both low- and high-WRAM profiles.
+SAME_RESET_DIAG_BASE                      = $7FF46B
+SAME_RESET_DIAG_SIZE                      = $0068
+SAME_RESET_DIAG_END                       = SAME_RESET_DIAG_BASE+SAME_RESET_DIAG_SIZE
+SAME_RESET_DIAG_COUNT                     = SAME_RESET_DIAG_BASE ; u16 reset-entry count
+SAME_RESET_DIAG_FRAME                     = SAME_RESET_DIAG_BASE+$02 ; u16 last frame
+SAME_RESET_DIAG_STAGE                     = SAME_RESET_DIAG_BASE+$04 ; u8 last stage breadcrumb
+SAME_RESET_DIAG_LAST_PBR                  = SAME_RESET_DIAG_BASE+$05 ; u8 production PBR hint
+SAME_RESET_DIAG_LAST_PC                   = SAME_RESET_DIAG_BASE+$06 ; u16 production PC hint
+SAME_RESET_DIAG_LAST_S                    = SAME_RESET_DIAG_BASE+$08 ; u16 S at reset entry
+SAME_RESET_DIAG_LAST_P                    = SAME_RESET_DIAG_BASE+$0A ; u8 P at reset entry
+SAME_RESET_DIAG_LAST_DBR                  = SAME_RESET_DIAG_BASE+$0B ; u8 DBR at reset entry
+SAME_RESET_DIAG_LAST_D                    = SAME_RESET_DIAG_BASE+$0C ; u16 D at reset entry
+SAME_RESET_DIAG_NMI                       = SAME_RESET_DIAG_BASE+$0E ; u16 NMI entries
+SAME_RESET_DIAG_IRQ                       = SAME_RESET_DIAG_BASE+$10 ; u16 IRQ entries
+SAME_RESET_DIAG_BRK                       = SAME_RESET_DIAG_BASE+$12 ; u16 BRK entries
+SAME_RESET_DIAG_COP                       = SAME_RESET_DIAG_BASE+$14 ; u16 COP entries
+SAME_RESET_DIAG_ROOM                      = SAME_RESET_DIAG_BASE+$16 ; u8 room breadcrumb
+SAME_RESET_DIAG_PROGRAM                   = SAME_RESET_DIAG_BASE+$17 ; u8 program breadcrumb
+SAME_RESET_DIAG_SLOT                      = SAME_RESET_DIAG_BASE+$18 ; u8 slot breadcrumb
+SAME_RESET_DIAG_SCRIPT_PC                 = SAME_RESET_DIAG_BASE+$19 ; u16 script PC breadcrumb
+SAME_RESET_DIAG_LIFECYCLE                 = SAME_RESET_DIAG_BASE+$1B ; u8 room lifecycle
+SAME_RESET_DIAG_ENGINE_PHASE              = SAME_RESET_DIAG_BASE+$1C ; u8 frame phase
+SAME_RESET_DIAG_COOKIE                    = SAME_RESET_DIAG_BASE+$1D ; u16 reserved signature
+SAME_RESET_DIAG_LAST_A                    = SAME_RESET_DIAG_BASE+$20 ; u16 captured at BRK entry
+SAME_RESET_DIAG_LAST_X                    = SAME_RESET_DIAG_BASE+$22 ; u16 captured at BRK entry
+SAME_RESET_DIAG_LAST_Y                    = SAME_RESET_DIAG_BASE+$24 ; u16 captured at BRK entry
+SAME_RESET_DIAG_STACK                     = SAME_RESET_DIAG_BASE+$26 ; 24 bytes from native S+1
+SAME_RESET_DIAG_STACK_SIZE                = $0018
+SAME_RESET_DIAG_STACK_SOURCE              = SAME_RESET_DIAG_BASE+$3E ; u16 source offset in bank 0
+SAME_RESET_DIAG_SP_ENTRY                  = SAME_RESET_DIAG_BASE+$40 ; u16 per-frame entry S
+SAME_RESET_DIAG_SP_CURRENT                = SAME_RESET_DIAG_BASE+$42 ; u16 sampled S
+SAME_RESET_DIAG_SP_STAGE                  = SAME_RESET_DIAG_BASE+$44 ; u16 zero=baseline, else checkpoint
+SAME_RESET_DIAG_SP_FAILURES               = SAME_RESET_DIAG_BASE+$46 ; u16 imbalance count
+SAME_RESET_DIAG_INPUT_SP_ENTRY            = SAME_RESET_DIAG_BASE+$48 ; u16 Same_Input_Poll entry S
+SAME_RESET_DIAG_INPUT_SP_CURRENT          = SAME_RESET_DIAG_BASE+$4A ; u16 sampled input S
+SAME_RESET_DIAG_INPUT_SP_STAGE            = SAME_RESET_DIAG_BASE+$4C ; u16 zero=baseline, else checkpoint
+SAME_RESET_DIAG_INPUT_SP_FAILURES         = SAME_RESET_DIAG_BASE+$4E ; u16 input imbalance count
+SAME_RESET_DIAG_FRAME_PRE_INPUT_S         = SAME_RESET_DIAG_BASE+$50 ; u16 caller S before input poll
+SAME_RESET_DIAG_FRAME_POST_INPUT_S        = SAME_RESET_DIAG_BASE+$52 ; u16 caller S after input poll
+SAME_RESET_DIAG_FRAME_POST_INPUT_CHECK_S  = SAME_RESET_DIAG_BASE+$54 ; u16 caller S before stack checker
+SAME_RESET_DIAG_FRAME_RETURN_SP           = SAME_RESET_DIAG_BASE+$56 ; u16 S before engine PLP/RTS
+SAME_RESET_DIAG_FRAME_RETURN_BYTES        = SAME_RESET_DIAG_BASE+$58 ; u6 status + return frame bytes
+SAME_RESET_DIAG_SP_BEFORE_ACTIVE          = SAME_RESET_DIAG_BASE+$60 ; u16 S before host JSR active engine
+SAME_RESET_DIAG_SP_AFTER_ACTIVE           = SAME_RESET_DIAG_BASE+$62 ; u16 S after active engine returns
+SAME_RESET_DIAG_SP_BEFORE_SCUMM            = SAME_RESET_DIAG_BASE+$64 ; u16 S before active JSR SCUMM frame
+SAME_RESET_DIAG_SP_AFTER_SCUMM             = SAME_RESET_DIAG_BASE+$66 ; u16 S after SCUMM frame returns
 SAME_SCUMM_OBJECT_STATES                  = $7E6000 ; 4096 u8 global states
 SAME_SCUMM_OBJECT_OWNERS                  = $7E8000 ; 2048 u8 mutable owner table
 ; Runtime names established by canonical $54/$D4 setObjectName.  A compact
 ; fixed record is sufficient for the target-neutral controller HUD while
 ; retaining the authored encoded bytes (including controls) until display.
-SAME_SCUMM_OBJECT_NAME_LENGTH             = $7E8800 ; 2048 u8 bounded lengths
+; The controller name-length cache is 1024 entries (the payload cache itself
+; is capped at SAME_SCUMM_OBJECT_NAME_COUNT). Keep it live in all runtime
+; personalities: room object parsing writes these entries even when the
+; controller presentation layer is absent.
+SAME_SCUMM_OBJECT_NAME_LENGTH             = $7E8800 ; 1024 u8 bounded lengths
+.if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+; Explicit ownership boundary: the always-live name-length cache ends at
+; $7E8C00; resolver state owns $7E8C00-$7E8FBF; $7E8FC0-$7E8FFF is reserved
+; padding; encoded names begin at $7E9000. Controller/input, C4, C19, room
+; lifecycle, and save-validation ranges are independently declared and checked
+; by tools/audit_scumm_residency_wram.py.
+SAME_SCUMM_RESIDENT_WRAM_BASE              = $7E8C00
+SAME_SCUMM_RESIDENT_UNIT_IDS              = $7E8C00 ; 178 x u16 canonical IDs
+SAME_SCUMM_RESIDENT_GENERATIONS           = $7E8D64 ; 178 x u16 binding generations
+SAME_SCUMM_RESIDENT_FLAGS                 = $7E8EC8 ; 178 x u8 VALID/BUNDLE/MANUAL pins
+SAME_SCUMM_RESIDENT_REQUEST_ID            = $7E8F7A ; u16 resolver input
+SAME_SCUMM_RESIDENT_SELECTOR              = $7E8F7C ; u8 result/candidate
+SAME_SCUMM_RESIDENT_POOL_INDEX            = $7E8F7D ; u16 pool index
+SAME_SCUMM_RESIDENT_CURRENT_COUNT         = $7E8F7F ; u16 diagnostics
+SAME_SCUMM_RESIDENT_PEAK_COUNT            = $7E8F81 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_PINNED_COUNT          = $7E8F83 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_PEAK_PINNED           = $7E8F85 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_BIND_COUNT            = $7E8F87 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_REUSE_COUNT            = $7E8F89 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_BUNDLE_LOADS           = $7E8F8B ; u16 diagnostics
+SAME_SCUMM_RESIDENT_BUNDLE_RELEASES        = $7E8F8D ; u16 diagnostics
+SAME_SCUMM_RESIDENT_DYNAMIC_LOOKUPS        = $7E8F8F ; u16 diagnostics
+SAME_SCUMM_RESIDENT_EXHAUSTIONS             = $7E8F91 ; u16 diagnostics
+SAME_SCUMM_RESIDENT_SCAN_SLOT               = $7E8F93 ; u8 C4 scan cursor
+SAME_SCUMM_RESIDENT_SCAN_STATUS             = $7E8F94 ; u8 scratch
+SAME_SCUMM_RESIDENT_FLAGS_SCRATCH           = $7E8F95 ; u8 scratch
+SAME_SCUMM_RESIDENT_COUNT_SCRATCH           = $7E8F96 ; u16 scratch
+SAME_SCUMM_RESIDENT_EXPECTED_ID              = $7E8F98 ; u16 stale-reference check
+SAME_SCUMM_RESIDENT_EXPECTED_GENERATION      = $7E8F9A ; u16 stale-reference check
+SAME_SCUMM_RESIDENT_STALE_COUNT               = $7E8F9C ; u16 stale-generation diagnostics
+SAME_SCUMM_RESIDENT_BUNDLE_RECORD            = $7E8F9E ; u8 active room-bundle index
+SAME_SCUMM_RESIDENT_BUNDLE_REMAINING          = $7E8F9F ; u8 load/release loop
+SAME_SCUMM_RESIDENT_BUNDLE_OFFSET             = $7E8FA0 ; u16 bundle directory index
+SAME_SCUMM_RESIDENT_LOCAL_SCRIPT              = $7E8FA2 ; u8 local lookup input
+SAME_SCUMM_RESIDENT_LOCAL_REMAINING           = $7E8FA3 ; u8 local lookup loop
+SAME_SCUMM_RESIDENT_LOCAL_OFFSET              = $7E8FA4 ; u16 local directory index
+SAME_SCUMM_RESIDENT_PINNED_SCRATCH            = $7E8FA6 ; u16 diagnostic accumulator
+SAME_SCUMM_RESIDENT_GLOBAL_SCRIPT             = $7E8FA8 ; u8 dynamic global number
+SAME_SCUMM_RESIDENT_LOOKUP_INDEX              = $7E8FA9 ; u16 table cursor
+SAME_SCUMM_RESIDENT_BUNDLE_FAILURE            = $7E8FAB ; u8 last binding/bundle error site
+SAME_SCUMM_RESIDENT_SELECTOR_CALLER            = $7E8FAC ; u8 diagnostic: selector lookup caller
+SAME_SCUMM_RESIDENT_DIAG_STATUS                = $7E8FB0 ; u8 diagnostic pass/fail code
+SAME_SCUMM_RESIDENT_DIAG_EXHAUSTION_ERROR       = $7E8FB1 ; u8 expected $20
+SAME_SCUMM_RESIDENT_DIAG_STALE_REJECTED         = $7E8FB2 ; u8 boolean
+SAME_SCUMM_RESIDENT_DIAG_REBOUND_SELECTOR       = $7E8FB3 ; u8
+SAME_SCUMM_RESIDENT_DIAG_REBOUND_GENERATION     = $7E8FB4 ; u16
+SAME_SCUMM_RESIDENT_DIAG_TABLE_UNCHANGED        = $7E8FB6 ; u8 boolean
+SAME_SCUMM_RESIDENT_DIAG_INDEX                 = $7E8FB8 ; u16 loop scratch
+SAME_SCUMM_RESIDENT_DIAG_POOL_INDEX            = $7E8FBA ; u16 loop scratch
+SAME_SCUMM_RESIDENT_DIAG_SCRATCH               = $7E8FBC ; u16 scratch
+SAME_SCUMM_RESIDENT_DIAG_RETURNED              = $7E8FBE ; u8 caller-return sentinel
+SAME_SCUMM_RESIDENT_DIAG_STAGE                 = $7E8FBF ; u8 bounded-control progress
+SAME_SCUMM_RESIDENT_WRAM_END                   = $7E8FC0 ; exclusive resolver end
+.endif
 ; The target-neutral name cache is bounded to the contiguous gap before C10.
 ; $7E9000 + 1024*$20 = $7F1000, leaving C10/C17 and all later state intact.
 ; Authored $54 names outside this cache are still decoded/consumed, but are
@@ -1173,6 +1285,15 @@ SAME_SCUMM_START_OBJECT_CALLER_RETURN_SP      = $7E7FE0 ; u16 after JSL/RTL
 SAME_SCUMM_START_OBJECT_SLOT_INDEX             = $7E7FE2 ; u16 X at descriptor access
 SAME_SCUMM_START_OBJECT_FRAME_OPS              = $7E7FE4 ; u16 live count at handoff
 SAME_SCUMM_START_OBJECT_NATIVE_DIAG_END        = $7E7FE6
+; Synchronous target-neutral indexed rectangle request shared by the SCUMM
+; producer and video-surface service. This uses the measured gap before the
+; global object-owner table; the service consumes it before returning.
+SAME_VIDEO_DRAW_RECT_X0                       = $7E7FE6 ; u16 viewport x
+SAME_VIDEO_DRAW_RECT_Y0                       = $7E7FE8 ; u16 viewport y
+SAME_VIDEO_DRAW_RECT_X1                       = $7E7FEA ; u16 inclusive viewport x
+SAME_VIDEO_DRAW_RECT_Y1                       = $7E7FEC ; u16 inclusive viewport y
+SAME_VIDEO_DRAW_RECT_COLOR                    = $7E7FEE ; u8 INDEX8 color
+SAME_VIDEO_DRAW_RECT_END                      = $7E7FEF
 SAME_SCUMM_LOAD_EGO_STATE_SIZE              = $000E
 
 ; Movement-observer scratch is outside the M23B nested-program vector
@@ -1180,6 +1301,18 @@ SAME_SCUMM_LOAD_EGO_STATE_SIZE              = $000E
 ; work ring ($54FE+). The bounded 50-byte probe ends at $54B1.
 SAME_SCUMM_MOVE_DIAG_BASE                  = $7E5480
 SAME_SCUMM_MOVE_DIAG_END                   = $7E54B2
+SAME_SCUMM_ENGINE_BOOT_COUNT               = $7E5451 ; u8 diagnostic; increments on each engine boot
+
+; The room-root fixture can be built without the M25A validator personality.
+; Keep its two lifecycle bytes available to that lean diagnostic profile.
+SAME_SCUMM_SCENARIO_FIXTURE_REQUESTED     = $7E5600 ; u8 one-shot root request
+SAME_SCUMM_SCENARIO_FIXTURE_READY         = $7E5601 ; u8 accepted room checkpoint
+; Dedicated diagnostic latch for a synthetic cold-start carrier. 5672 is the
+; otherwise unused byte between the scenario evidence fields at 5670-5671 and
+; 5674; it survives active-engine reinitialization and is reset only by the
+; CPU reset vector.
+SAME_SCUMM_SYNTHETIC_BOOTSTRAP_REQUESTED   = $7E5672 ; u8 one-shot bootstrap
+SAME_SCUMM_AUTHENTIC_BOOTSTRAP_STARTED     = $7E5673 ; u8 one-shot top-level boot global
 
 .if SAME_BUILD_SCUMM_M25A_VALIDATOR
 ; Dedicated copyright-free validator evidence. This region is not part of a
@@ -1195,8 +1328,6 @@ SAME_SCUMM_M25A_TRACE_STRIDE              = $0008
 SAME_SCUMM_M25A_TRACE_CAPACITY            = $0080
 SAME_SCUMM_M25A_TRACE_END                 = $7E5410
 SAME_SCUMM_M25A_STATE_SIZE                = $0410
-SAME_SCUMM_SCENARIO_FIXTURE_REQUESTED     = $7E5600 ; u8 engine-owned fixture boot gate
-SAME_SCUMM_SCENARIO_FIXTURE_READY         = $7E5601 ; u8 accepted room checkpoint
 SAME_SCUMM_SCENARIO_SENTENCE_CALLS        = $7E5602 ; u8 fixture breadcrumb
 SAME_SCUMM_SCENARIO_SENTENCE_RETURNS      = $7E5603 ; u8 fixture breadcrumb
 SAME_SCUMM_SCENARIO_SENTENCE_LAST_COUNT   = $7E5604 ; u8 fixture breadcrumb
@@ -1285,6 +1416,15 @@ SAME_SCUMM_SCENARIO_LAST_OP_OPCODE         = $7E5F03 ; u8, persistent breadcrumb
 SAME_SCUMM_M25A_QUERY_SP_BEFORE            = $7E56A0 ; u16
 SAME_SCUMM_M25A_QUERY_SP_AFTER             = $7E56A2 ; u16
 SAME_SCUMM_M25A_QUERY_RETURNED             = $7E56A4 ; u8
+; Isolated C19 native-control witnesses; never read by production execution.
+SAME_SCUMM_C19_NATIVE_STACK_ENTRY          = $7E56B0 ; u16 after helper PHP
+SAME_SCUMM_C19_NATIVE_STACK_PRE_RTL        = $7E56B2 ; u16 before RTL
+SAME_SCUMM_C19_NATIVE_STACK_CALLER         = $7E56B4 ; u16 after JSL returns
+SAME_SCUMM_C19_NATIVE_SKIP_SAMPLE          = $7E56B6 ; u16 logical X edge at gate
+SAME_SCUMM_C19_NATIVE_SELECTED_SLOT        = $7E56B8 ; u8 selected C4 slot
+SAME_SCUMM_C19_NATIVE_SELECTED_PROGRAM     = $7E56B9 ; u8 selected program
+SAME_SCUMM_C19_NATIVE_SELECTED_PC          = $7E56BA ; u16 PC at LoadSlot handoff
+SAME_SCUMM_C19_NATIVE_SELECTION_COUNT      = $7E56BC ; u8 selected activations
 SAME_SCUMM_SCENARIO_C25_ERROR_LAST_PROGRAM = $7E5F04 ; u8, snapshot at C25 error
 SAME_SCUMM_SCENARIO_C25_ERROR_LAST_PC      = $7E5F05 ; u16, snapshot at C25 error
 SAME_SCUMM_SCENARIO_C25_ERROR_LAST_OPCODE  = $7E5F07 ; u8, snapshot at C25 error
@@ -1313,6 +1453,8 @@ SAME_SCUMM_SCENARIO_ERROR_STACK             = $7E5F30 ; 8 bytes at SetError
 SAME_SCUMM_SCENARIO_ERROR_LHS               = $7E5F38 ; u16 decoder reference
 SAME_SCUMM_SCENARIO_ERROR_OPERAND           = $7E5F3A ; u16 decoded operand
 SAME_SCUMM_SCENARIO_ERROR_RESULT            = $7E5F3C ; u16 resolved result
+SAME_SCUMM_SCENARIO_ERROR_C14_ACTOR         = $7E5F3E ; u8 actor at SetError
+SAME_SCUMM_SCENARIO_ERROR_C14_SUBOP         = $7E5F3F ; u8 actor sub-op at SetError
 SAME_SCUMM_SCENARIO_C25_OBS_PENDING         = $7E5F40 ; u8 parser count
 SAME_SCUMM_SCENARIO_C25_OBS_WORDS           = $7E5F41 ; 8 bytes parser words
 SAME_SCUMM_SCENARIO_C25_OBS_FLUSH_COUNT     = $7E5F49 ; u8 copied record count
@@ -1332,6 +1474,7 @@ SAME_SCUMM_SCENARIO_SAVE_SLOT_PROGRAM      = $7E5F87 ; u8
 SAME_SCUMM_SCENARIO_SAVE_SLOT              = $7E5F88 ; u8
 SAME_SCUMM_SCENARIO_SAVE_SHARED_PC         = $7E5F89 ; u16
 SAME_SCUMM_SCENARIO_SAVE_SLOT_PC           = $7E5F8B ; u16
+SAME_SCUMM_SCENARIO_ERROR_SLOT             = $7E5F8D ; u8 current C4 slot at SetError
 ; Scheduler handoff trace for the currently published sentence slot.  This is
 ; fixture-only observation; it deliberately lives after the error evidence
 ; and before the generated object table.
@@ -1444,13 +1587,13 @@ SAME_M24RA_STATE_END                      = $7FFA30
 SAME_M24RA_STATE_SIZE                     = $0030
 SAME_M24RB_STATE                          = $7FFA30
 SAME_M24RB_LOGICAL82_STATE                = $7FFA30 ; 0 absent,1 deferred,2 active,3 fading,4 stopped
-SAME_M24RB_TRIGGER_MARKER                 = $7FFA31
 SAME_M24RB_DEFERRED_COUNT                 = $7FFA32
 SAME_M24RB_MARKER_COUNT                   = $7FFA33
 SAME_M24RB_FADE_COMPLETE_COUNT            = $7FFA34
 SAME_M24RB_LSCR_SCHEDULED                 = $7FFA35
 SAME_M24RB_FRAME_END_FLUSHES              = $7FFA36
 SAME_M24RB_FRAME_END_ACTIVE               = $7FFA37
+SAME_M24RB_TRIGGER_MARKER                 = $7FFA38 ; u16 SCUMM/iMUSE marker word
 SAME_M24RB_STATE_END                      = $7FFA40
 
 ; Canonical v5 mutable walkbox flags. Geometry and BOXM routes remain immutable
@@ -1468,6 +1611,18 @@ SAME_SCUMM_MATRIX_TRACE_STRIDE            = $0008
 SAME_SCUMM_MATRIX_TRACE_CAPACITY          = $0004
 SAME_SCUMM_MATRIX_STATE_END               = $7FFB65
 SAME_SCUMM_MATRIX_STATE_SIZE              = $0125
+; SCUMM v5 createBoxMatrix uses a 64-box routing domain. Keep its two 64x64
+; byte tables in the audited gap after object-name storage and before C10.
+; The C10 state tail byte at $34FA is outside all named fields/parameters and
+; holds only the active-room validity flag; room commit/reset owns its lifetime.
+SAME_SCUMM_MATRIX_DISTANCE                 = $7F1000 ; 64 x 64 u8 distances
+SAME_SCUMM_MATRIX_DYNAMIC_ROUTES           = $7F2000 ; 64 x 64 u8 next hops
+SAME_SCUMM_MATRIX_DYNAMIC_VALID            = $7F34FA ; C10 free tail, active-room validity
+SAME_SCUMM_MATRIX_BUILD_I                   = SAME_SCUMM_C10_PARAM0 ; u16 scratch
+SAME_SCUMM_MATRIX_BUILD_J                   = SAME_SCUMM_C10_PARAM1 ; u16 scratch
+SAME_SCUMM_MATRIX_BUILD_K                   = SAME_SCUMM_C10_PARAM2 ; u16 scratch
+SAME_SCUMM_MATRIX_BUILD_OFFSET_IK          = SAME_SCUMM_C10_PARAM3 ; u16 scratch
+SAME_SCUMM_MATRIX_BUILD_OFFSET_KJ          = SAME_SCUMM_C10_PARAM4 ; u16 scratch
 
 ; Canonical v5 putActor placement state.  Immutable active-room BOXD geometry
 ; is copied from profile-generated data; this is not a pathfinding graph.

@@ -52,6 +52,7 @@ ScummV5_Controller_ResetInteractionOnRoomInstall_Far:
     sep #$20
     .a8
     lda #$00
+    sta.l SAME_INPUT_TALK_OWNED_VALID
     sta.l SAME_SCUMM_CONTROLLER_ROOM_READY
     sta.l SAME_SCUMM_CONTROLLER_MODE
     sta.l SAME_SCUMM_CONTROLLER_VERB
@@ -159,6 +160,44 @@ ScummV5_Controller_Frame__room68_request:
     jsl ScummV5_M23A_RequestRoom_FarEntry
     jmp ScummV5_Controller_Frame__done
 ScummV5_Controller_Frame__generic_ready:
+    sep #$20
+    .a8
+    ; Input_Poll tags every edge sampled while dialogue is active. Keep the
+    ; token while talk remains active; after Talk_Stop, consume and drop the
+    ; same edge before it can act on a retained selection. A newer edge has
+    ; a different sequence and remains eligible.
+    lda.l SAME_INPUT_TALK_OWNED_VALID
+    beq ScummV5_Controller_Frame__talk_edge_unowned
+    rep #$20
+    .a16
+    lda.l SAME_INPUT_EDGE_SEQUENCE
+    cmp.l SAME_INPUT_TALK_OWNED_SEQUENCE
+    sep #$20
+    .a8
+    bne ScummV5_Controller_Frame__talk_edge_superseded
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    beq ScummV5_Controller_Frame__talk_edge_talk_stopped
+    jmp ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__talk_edge_talk_stopped:
+    .a8
+    lda #$00
+    sta.l SAME_INPUT_TALK_OWNED_VALID
+    jmp ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__talk_edge_superseded:
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    beq ScummV5_Controller_Frame__talk_edge_after_stop
+    rep #$20
+    .a16
+    lda.l SAME_INPUT_EDGE_SEQUENCE
+    sta.l SAME_INPUT_TALK_OWNED_SEQUENCE
+    sep #$20
+    .a8
+    jmp ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__talk_edge_after_stop:
+    .a8
+    lda #$00
+    sta.l SAME_INPUT_TALK_OWNED_VALID
+ScummV5_Controller_Frame__talk_edge_unowned:
     sep #$20
     .a8
     .if SAME_BUILD_SCUMM_CONTROLLER
@@ -475,7 +514,96 @@ ScummV5_Controller_Frame__cursor_x_low_ok:
     sbc #$0064 ; v5 room viewport origin; vertical camera is not scrolled
     sta.l SAME_SCUMM_INTERACTION_Y
     jsl ScummV5_Generic_Object_HitTest_Far
-    bcs ScummV5_Controller_Frame__hit_ok
+    bcc ScummV5_Controller_Frame__walk_miss
+    brl ScummV5_Controller_Frame__hit_ok
+ScummV5_Controller_Frame__walk_miss:
+    ; A primary click on empty room space is the ordinary SCUMM walk command.
+    ; It is deliberately separate from the sentence mailbox: object verbs
+    ; still require an authored hit/verb, while a blank-room click starts the
+    ; current ego's canonical box-routed movement request.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_MODE
+    beq ScummV5_Controller_Frame__walk_mode_ready
+    brl ScummV5_Controller_Frame__walk_miss_done
+ScummV5_Controller_Frame__walk_mode_ready:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_M23B_VARIABLES+2 ; VAR_EGO
+    and #$00FF
+    cmp #$0020
+    bcc ScummV5_Controller_Frame__walk_actor_in_range
+    brl ScummV5_Controller_Frame__walk_miss_done
+ScummV5_Controller_Frame__walk_actor_in_range:
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_MOVE_ACTOR
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax                             ; ego actor * 64-byte C14 record
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_PRESENT,x
+    beq ScummV5_Controller_Frame__walk_miss_done
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ROOM,x
+    cmp.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    bne ScummV5_Controller_Frame__walk_miss_done
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_INTERACTION_X
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
+    lda.l SAME_SCUMM_INTERACTION_Y
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    ; Match the canonical walkActorTo opcode: actors that ignore boxes use a
+    ; direct leg; ordinary actors resolve the point against active BOXD.
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_IGNORE_BOXES,x
+    beq ScummV5_Controller_Frame__walk_follow_boxes
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_X
+    lda.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_Y
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_BOX
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    tax
+    lda #$FF
+    sta.l SAME_SCUMM_PUT_ACTOR_WALKBOX,x
+    bra ScummV5_Controller_Frame__walk_start
+ScummV5_Controller_Frame__walk_follow_boxes:
+    jsl ScummV5_PutActor_Adjust_Far
+ScummV5_Controller_Frame__walk_start:
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_MOVE_QUERY_DIR
+    jsr ScummV5_Movement_StartNormalized_Far
+ScummV5_Controller_Frame__walk_miss_done:
     sep #$20
     .a8
     lda #$32
@@ -573,11 +701,9 @@ ScummV5_Controller_Frame__select_verb_a:
     bne ScummV5_Controller_Frame__select_verb_a_pressed
     jmp ScummV5_Controller_Frame__hud
 ScummV5_Controller_Frame__select_verb_a_pressed:
-    ; C17 owns the display name and may be populated asynchronously by the
-    ; authored startup graph. Retain semantic selection but wait for a usable
-    ; runtime text record before submitting an action edge.
-    lda.l SAME_SCUMM_TALK_VISUAL_STATUS
-    bne ScummV5_Controller_Frame__select_verb_a_wait_text
+    ; This is a semantic controller action. Authored talk ownership is gated
+    ; before selection above; a failed/stale HUD presentation must not consume
+    ; or suppress the user's sentence once that talk has ended.
     sep #$20
     .a8
     lda #$00
@@ -602,12 +728,6 @@ ScummV5_Controller_Frame__select_verb_a_pressed:
     sta.l SAME_SCUMM_CONTROLLER_LAST_ACTION
     lda #$02
     sta.l SAME_SCUMM_CONTROLLER_MODE
-    lda #$01
-    sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
-    jmp ScummV5_Controller_Frame__hud
-ScummV5_Controller_Frame__select_verb_a_wait_text:
-    sep #$20
-    .a8
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
     jmp ScummV5_Controller_Frame__hud
@@ -700,6 +820,11 @@ ScummV5_Controller_RefreshSelection_Far:
     ; coordinates with the selected object's lifecycle.
     jsl ScummV5_Generic_Object_ValidateSelected_Far
     bcc ScummV5_Controller_RefreshSelection__clear
+    ; ValidateSelected returns A8 on success.  Keep its carry result above,
+    ; then restore the word width before copying the selected object ID and
+    ; clearing the secondary-object word.
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_CONTROLLER_OBJECT
     sta.l SAME_SCUMM_VERB_OBJECT
     lda #$0000

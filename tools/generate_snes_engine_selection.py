@@ -24,21 +24,50 @@ def main() -> int:
     parser.add_argument("--scumm-m21", action="store_true")
     parser.add_argument("--scumm-m22", action="store_true")
     parser.add_argument("--scumm-m23a", action="store_true")
+    parser.add_argument(
+        "--scumm-disable-embedded-test-programs",
+        action="store_true",
+        help="omit ROM-resident C1/C2 conformance bytecode; source misses remain errors",
+    )
+    parser.add_argument(
+        "--scumm-dynamic-program-residency", action="store_true",
+        help="enable the experimental canonical ProgramUnit resident resolver",
+    )
+    parser.add_argument(
+        "--scumm-residency-diagnostic", action="store_true",
+        help="run the bounded native pin/exhaustion/stale-generation control and halt",
+    )
     parser.add_argument("--scumm-m23b", action="store_true")
     parser.add_argument("--scumm-m23b-negative", action="store_true")
     parser.add_argument("--scumm-m25a-validator", action="store_true")
     parser.add_argument("--scumm-m25a-pending-only", action="store_true")
     parser.add_argument("--scumm-scenario-fixture", action="store_true")
     parser.add_argument("--scumm-scenario-start-room", type=int, default=49)
+    parser.add_argument("--scumm-synthetic-bootstrap-room", type=int,
+                        help="request a clearly synthetic, one-shot bootstrap room without enabling scenario-fixture state overlays")
+    parser.add_argument("--scumm-authentic-boot-script", type=int,
+                        help="diagnostic cold root: schedule this mapped authentic global as the top-level boot activation")
+    parser.add_argument("--scumm-authentic-boot-argument", type=int, default=0,
+                        help="signed 16-bit local0 argument for --scumm-authentic-boot-script")
     parser.add_argument("--scumm-scenario-source-actor-state", action="store_true")
     parser.add_argument("--scumm-m25-movement", action="store_true")
     parser.add_argument("--scumm-phase6hb", action="store_true")
     parser.add_argument("--scumm-phase6la1d", action="store_true")
-    parser.add_argument("--scumm-title-start-room", type=int, default=0)
-    parser.add_argument("--scumm-title-target-room", type=int, default=0)
+    parser.add_argument("--scumm-title-start-room", type=int)
+    parser.add_argument("--scumm-title-target-room", type=int)
     parser.add_argument("--scumm-room-visual", action="store_true")
     parser.add_argument("--scumm-controller", action="store_true")
     parser.add_argument("--scumm-controller-conformance", action="store_true")
+    parser.add_argument(
+        "--scumm-controller-conformance-no-root-room",
+        action="store_true",
+        help="omit the synthetic controller root room for a bounded standalone native fixture",
+    )
+    parser.add_argument(
+        "--scumm-c19-native-fixture",
+        action="store_true",
+        help="run the C19 cutscene fixture directly from the conformance boot profile",
+    )
     parser.add_argument("--scumm-controller-fixture", action="store_true")
     parser.add_argument("--scumm-controller-behavior-mask", type=lambda value: int(value, 0), default=7)
     parser.add_argument("--scumm-controller-witness", action="store_true")
@@ -49,6 +78,8 @@ def main() -> int:
     parser.add_argument("--scumm-m23c-class-conformance", action="store_true")
     parser.add_argument("--m24ra", action="store_true")
     parser.add_argument("--m24rb", action="store_true")
+    parser.add_argument("--disable-reset-diagnostics", action="store_true",
+                        help="omit reset/interrupt breadcrumbs from constrained diagnostic ROMs")
     parser.add_argument("--m24rb-phase-delay", type=int, default=125)
     parser.add_argument("--m24rb-local-script", type=int, default=208)
     parser.add_argument("--m24rb-primary-sound", type=int, default=80)
@@ -66,6 +97,56 @@ def main() -> int:
         parser.error("--scumm-m25a-pending-only requires --scumm-m25a-validator")
     if args.scumm_m25a_pending_only and args.engine != "scumm_v5":
         parser.error("--scumm-m25a-pending-only is only valid for scumm_v5")
+    if args.scumm_controller_conformance_no_root_room and (
+        args.engine != "scumm_v5" or not args.scumm_controller_conformance
+    ):
+        parser.error(
+            "--scumm-controller-conformance-no-root-room requires SCUMM v5 "
+            "controller conformance"
+        )
+    if args.scumm_c19_native_fixture and (
+        args.engine != "scumm_v5"
+        or not args.scumm_controller_conformance
+        or not args.scumm_controller_conformance_no_root_room
+    ):
+        parser.error(
+            "--scumm-c19-native-fixture requires SCUMM controller conformance "
+            "with the synthetic root-room request disabled"
+        )
+    if args.scumm_synthetic_bootstrap_room is not None:
+        if args.engine != "scumm_v5" or not args.scumm_m23a:
+            parser.error("--scumm-synthetic-bootstrap-room requires SCUMM v5 room services")
+        if not 0 <= args.scumm_synthetic_bootstrap_room <= 0xFF:
+            parser.error("--scumm-synthetic-bootstrap-room must be in 0..255")
+    if args.scumm_dynamic_program_residency and (
+        args.engine != "scumm_v5" or not args.scumm_m23a or not args.m24rb
+    ):
+        parser.error(
+            "--scumm-dynamic-program-residency requires SCUMM v5 M23A and M24RB room services"
+        )
+    if args.scumm_disable_embedded_test_programs and (
+        args.engine != "scumm_v5" or not args.scumm_m23a
+    ):
+        parser.error(
+            "--scumm-disable-embedded-test-programs requires SCUMM v5 M23A source programs"
+        )
+    if args.scumm_residency_diagnostic and not args.scumm_dynamic_program_residency:
+        parser.error("--scumm-residency-diagnostic requires --scumm-dynamic-program-residency")
+    if args.scumm_authentic_boot_script is not None:
+        if args.engine != "scumm_v5" or not args.scumm_m23a:
+            parser.error("--scumm-authentic-boot-script requires SCUMM v5 room services")
+        if not 0 <= args.scumm_authentic_boot_script <= 0xFF:
+            parser.error("--scumm-authentic-boot-script must be in 0..255")
+        if not -0x8000 <= args.scumm_authentic_boot_argument <= 0x7FFF:
+            parser.error("--scumm-authentic-boot-argument must fit signed 16-bit local0")
+    if (args.scumm_title_start_room is None) != (args.scumm_title_target_room is None):
+        parser.error("title START routing requires both start-room and target-room")
+    for option, value in (
+        ("--scumm-title-start-room", args.scumm_title_start_room),
+        ("--scumm-title-target-room", args.scumm_title_target_room),
+    ):
+        if value is not None and not 0 <= value <= 0xFF:
+            parser.error(f"{option} must be in 0..255")
     text = (
         "; Generated by tools/generate_snes_engine_selection.py.\n"
         f"; active engine: {args.engine}\n"
@@ -82,8 +163,12 @@ def main() -> int:
         f"SAME_BUILD_SCUMM_M21 = ${1 if args.engine == 'scumm_v5' and args.scumm_m21 else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M22 = ${1 if args.engine == 'scumm_v5' and args.scumm_m22 else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23A = ${1 if args.engine == 'scumm_v5' and args.scumm_m23a else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS = ${1 if args.engine == 'scumm_v5' and not args.scumm_disable_embedded_test_programs else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY = ${1 if args.engine == 'scumm_v5' and args.scumm_dynamic_program_residency else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC = ${1 if args.engine == 'scumm_v5' and args.scumm_residency_diagnostic else 0:02X}\n"
         f"SAME_BUILD_SCUMM_ROOM_SERVICE = ${1 if args.engine == 'scumm_v5' and (args.scumm_m23a or args.scumm_controller_conformance) else 0:02X}\n"
         f"SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = ${1 if args.engine == 'scumm_v5' and (args.m24rb or args.scumm_controller_conformance) else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_FAR_ROOM_VALIDATOR = ${1 if args.engine == 'scumm_v5' and args.scumm_dynamic_program_residency else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23B = ${1 if args.engine == 'scumm_v5' and args.scumm_m23b else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M23B_NEGATIVE = ${1 if args.engine == 'scumm_v5' and args.scumm_m23b_negative else 0:02X}\n"
         f"SAME_BUILD_SCUMM_PHASE6HB = ${1 if args.engine == 'scumm_v5' and args.scumm_phase6hb else 0:02X}\n"
@@ -91,11 +176,19 @@ def main() -> int:
         f"SAME_BUILD_SCUMM_M25A_VALIDATOR = ${1 if args.engine == 'scumm_v5' and args.scumm_m25a_validator else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M25A_PENDING_ONLY = ${1 if args.engine == 'scumm_v5' and args.scumm_m25a_pending_only else 0:02X}\n"
         f"SAME_BUILD_SCUMM_SCENARIO_FIXTURE = ${1 if args.engine == 'scumm_v5' and args.scumm_scenario_fixture else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP = ${1 if args.engine == 'scumm_v5' and args.scumm_synthetic_bootstrap_room is not None else 0:02X}\n"
+        f"SCUMM_V5_SYNTHETIC_BOOTSTRAP_ROOM = ${args.scumm_synthetic_bootstrap_room or 0:02X}\n"
+        f"SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP = ${1 if args.engine == 'scumm_v5' and args.scumm_authentic_boot_script is not None else 0:02X}\n"
+        f"SCUMM_V5_AUTHENTIC_BOOT_SCRIPT = ${args.scumm_authentic_boot_script or 0:02X}\n"
+        f"SCUMM_V5_AUTHENTIC_BOOT_ARGUMENT = ${args.scumm_authentic_boot_argument & 0xFFFF:04X}\n"
+        f"SAME_BUILD_SCUMM_TITLE_START = ${1 if args.engine == 'scumm_v5' and args.scumm_title_start_room is not None else 0:02X}\n"
         f"SAME_SCUMM_SCENARIO_SOURCE_ACTOR_STATE = ${1 if args.engine == 'scumm_v5' and args.scumm_scenario_source_actor_state else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M25_MOVEMENT = ${1 if args.engine == 'scumm_v5' and args.scumm_m25_movement else 0:02X}\n"
         f"SAME_BUILD_SCUMM_ROOM_VISUAL = ${1 if args.engine == 'scumm_v5' and args.scumm_room_visual else 0:02X}\n"
         f"SAME_BUILD_SCUMM_CONTROLLER = ${1 if args.engine == 'scumm_v5' and (args.scumm_controller or args.scumm_controller_fixture) else 0:02X}\n"
         f"SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_conformance else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE_NO_ROOT_ROOM = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_conformance_no_root_room else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE = ${1 if args.engine == 'scumm_v5' and args.scumm_c19_native_fixture else 0:02X}\n"
         f"SAME_BUILD_SCUMM_CONTROLLER_FIXTURE = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_fixture else 0:02X}\n"
         f"SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK = ${args.scumm_controller_behavior_mask & 0x07:02X}\n"
         f"SAME_SCUMM_CONTROLLER_WITNESS = ${1 if args.engine == 'scumm_v5' and args.scumm_controller_witness else 0:02X}\n"
@@ -106,6 +199,7 @@ def main() -> int:
         f"SAME_BUILD_SCUMM_M23C_CLASS_CONFORMANCE = ${1 if args.engine == 'scumm_v5' and args.scumm_m23c_class_conformance else 0:02X}\n"
         f"SAME_BUILD_M24RA = ${1 if (args.engine == 'm24ra_conformance' and args.m24ra) or (args.m24rb and args.engine in ('m24rb_conformance', 'scumm_v5')) else 0:02X}\n"
         f"SAME_BUILD_M24RB = ${1 if args.m24rb and args.engine in ('m24rb_conformance', 'scumm_v5') else 0:02X}\n"
+        f"SAME_BUILD_RESET_DIAGNOSTICS = ${0 if args.disable_reset_diagnostics else 1:02X}\n"
         f"SAME_M24RB_PHASE_DELAY = ${args.m24rb_phase_delay & 0xffff:04X}\n"
         f"SAME_M24RB_LOCAL_SCRIPT = ${args.m24rb_local_script & 0xff:02X}\n"
         f"SAME_M24RB_PRIMARY_SOUND = ${args.m24rb_primary_sound & 0xff:02X}\n"
@@ -115,8 +209,8 @@ def main() -> int:
         f"SCUMM_M23C_SOURCE_ROOM = ${args.scumm_m23c_source_room & 0xff:02X}\n"
         f"SCUMM_M23C_TARGET_ROOM = ${args.scumm_m23c_target_room & 0xff:02X}\n"
         f"SCUMM_M23C_GLOBAL_SCRIPT = ${args.scumm_m23c_global_script & 0xff:02X}\n"
-        f"SCUMM_V5_TITLE_START_ROOM = ${args.scumm_title_start_room & 0xff:02X}\n"
-        f"SCUMM_V5_TITLE_TARGET_ROOM = ${args.scumm_title_target_room & 0xff:02X}\n"
+        f"SCUMM_V5_TITLE_START_ROOM = ${(args.scumm_title_start_room or 0) & 0xff:02X}\n"
+        f"SCUMM_V5_TITLE_TARGET_ROOM = ${(args.scumm_title_target_room or 0) & 0xff:02X}\n"
         f"SCUMM_V5_SCENARIO_START_ROOM = ${args.scumm_scenario_start_room & 0xff:02X}\n",
         encoding="utf-8",
     )

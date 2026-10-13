@@ -98,7 +98,7 @@ def scumm_c2_fixtures() -> list[tuple[str, bytes]]:
         ("c3_operands", scumm_c3_operand_script()),
         ("c3_scheduler", bytes([0x00])),
         ("c3_slot0", bytes([0x2E, 0x02, 0x00, 0x00, 0x46, 0x0A, 0x00, 0x80, 0x18, 0xF9, 0xFF])),
-        ("c3_slot1", bytes([0x46, 0x0B, 0x00, 0x80, 0x18, 0xF9, 0xFF])),
+        ("c3_slot1", bytes([0x46, 0x14, 0x00, 0x80, 0x18, 0xF9, 0xFF])),
         ("c3_bit_variable", bytes([0x1A, 0x00, 0x80, 0x01, 0x00, 0x00])),
         ("c4_lifecycle", scumm_c4_lifecycle_script()),
         ("c4_child2", bytes([0x9A, 0x01, 0x00, 0x00, 0x40, 0x46, 0x00, 0x40, 0x80])),
@@ -108,8 +108,8 @@ def scumm_c2_fixtures() -> list[tuple[str, bytes]]:
         ("c4_capacity", bytes([0x2A, 0x02, 0xFF])),
         ("c5_scheduler", scumm_c5_scheduler_script()),
         ("c5_child5", bytes([0x46, 0x0A, 0x00, 0x80, 0x18, 0xF9, 0xFF])),
-        ("c5_child6", bytes([0x46, 0x0B, 0x00, 0x80, 0x18, 0xF9, 0xFF])),
-        ("c5_child7", bytes([0x46, 0x0C, 0x00, 0x80, 0x18, 0xF9, 0xFF])),
+        ("c5_child6", bytes([0x46, 0x14, 0x00, 0x80, 0x18, 0xF9, 0xFF])),
+        ("c5_child7", bytes([0x46, 0x15, 0x00, 0x80, 0x18, 0xF9, 0xFF])),
         ("c6_scheduler", scumm_c6_scheduler_script()),
         ("c6_chain10", bytes([0x9A, 0x00, 0x00, 0x00, 0x40,
                                0x42, 0x0C, 0x80, 0x00, 0x40, 0xFF,
@@ -375,6 +375,7 @@ def scumm_c8_string_ops_script() -> bytes:
             0x27, 0x04, 0x06, 0x00, 0x06, 0x03,        # v6 = control code 4
             0x27, 0x05, 0x07, 0x04,                    # create(7, 4)
             0x27, 0x02, 0x07, 0x08,                    # copy missing 8 -> nukes 7
+            0x27, 0x20,                                # reserved selector -> v5 no-op
             0x80,
         ]
     )
@@ -516,6 +517,11 @@ def scumm_c14_actor_ops_script() -> bytes:
             0x14,                           # ignore boxes
             0x08,                           # Actor::initActor(0)
             0xFF, 0x80,
+            0x71, 4, 0, 1,                  # v4 = getActorCostume(actor 1)
+            0xF1, 5, 0, 0, 0,              # v5 = getActorCostume(v0 / actor 2)
+            0x6C, 6, 0, 1,                  # v6 = getActorWidth(actor 1)
+            0xEC, 7, 0, 0, 0,              # v7 = getActorWidth(v0 / actor 2)
+            0x80,
         ]
     )
 
@@ -642,21 +648,30 @@ def scumm_c18_expression_script() -> bytes:
 
 
 def scumm_c19_cutscene_script() -> bytes:
-    """Nested cutscenes plus canonical begin/end override markers."""
-    return bytes(
+    """Nested cutscenes; hold in a yield loop until skip, above $00FF."""
+    body = bytes(
         [
             0x1A, 0, 0, 7, 0,                 # v0 = 7
+            0x1A, 4, 0, 0, 0,                 # v4 = 0
+            0x1A, 6, 0, 0, 0,                 # v6 = 0; skip-only marker
             0x40, 0x01, 0x34, 0x12, 0xFF,     # cutscene([0x1234])
             0x40, 0x81, 0, 0, 0xFF,           # cutscene([v0])
-            0x58, 0x01, 0x18, 0x08, 0x00,     # beginOverride; skip its jump
-            0x1A, 4, 0, 1, 0,                 # normal path v4 = 1
-            0x80,
-            0x58, 0x00,                       # endOverride
+            0x58, 0x01, 0x18, 0x04, 0x00,     # beginOverride; branch to skip-only path
+            0x80,                             # ordinary frames keep yielding here
+            0x18, 0xFC, 0xFF,                 # loop back to breakHere until skip
+            0x1A, 6, 0, 1, 0,                 # skip-only marker v6 = 1
+            0x58, 0x00,                       # endOverride on skipped path
             0xC0,                             # end inner cutscene
             0xC0,                             # end outer cutscene
             0x80,
         ]
     )
+    # Exercise the native byte-index width bug without spending an instruction
+    # per padding byte. The relative jump lands exactly at $0100; skipped bytes
+    # are never decoded, and the ordinary cutscene fixture then records its
+    # beginOverride continuation above the low-byte boundary. The normal path
+    # yields in a loop so input-sampling latency cannot consume the override.
+    return bytes((0x18, 0xFD, 0x00)) + bytes((0xEA,)) * 253 + body
 
 
 def scumm_c20_do_sentence_script() -> bytes:
@@ -751,11 +766,18 @@ def scumm_c24_override_sentinel_script() -> bytes:
 
 
 def scumm_c25_sound_kludge_script() -> bytes:
-    """Queue iMUSE stop-all command 11, then flush it on the next tick."""
+    """Queue 17 commands across ticks, then flush in source order.
+
+    Sixteen compatibility no-ops precede one stop-all command. This crosses
+    the former SNES staging limit without requiring audio assets or more than
+    four emitted audio packets.
+    """
+    command = lambda value: [0x4C, 0x00, value & 0xFF, value >> 8 & 0xFF, 0xFF]
     return bytes(
         [
-            0x4C, 0x00, 0x0B, 0x00, 0xFF, 0x80,
-            0x4C, 0x00, 0xFF, 0xFF, 0xFF, 0x80,
+            *(byte for _ in range(16) for byte in command(2)),
+            *command(11), 0x80,
+            *command(0xFFFF), 0x80,
             0x00,
         ]
     )
@@ -845,7 +867,7 @@ def scumm_c31_put_actor_in_room_script() -> bytes:
 
 
 def scumm_c32_put_actor_at_object_script() -> bytes:
-    """Place current/noncurrent actors at object walk points and v5 fallback."""
+    """Place actors at objects, then route one actor to another actor."""
     return bytes(
         [
             0x80,
@@ -855,6 +877,9 @@ def scumm_c32_put_actor_at_object_script() -> bytes:
             0x1A, 1, 0, 101, 0,
             0xCE, 0, 0, 1, 0,
             0x0E, 3, 0xE7, 0x03,
+            0x80,
+            0x2D, 2, 75,                     # target actor enters current room
+            0x0D, 1, 2, 10,                  # actor 1 stands ten pixels from actor 2
             0x80,
             0x00,
         ]
@@ -890,6 +915,10 @@ def scumm_c3_operand_script() -> bytes:
             0xB8, 0x02, 0x00, 0x02, 0x00, 0x00, 0x00,        # v2 <= v2
             0x84, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00,        # v1 >= v2
             0x46, 0x04, 0x20, 0x00, 0x20,                    # v[4+v0]++ -> 6
+            0xC8, 0x01, 0x00, 0x02, 0x00, 0x06, 0x00,        # if v1 == v2, fall through
+            0x1A, 0x08, 0x00, 0x0B, 0x00,                    # equal: v8 = 11
+            0x00,
+            0x1A, 0x08, 0x00, 0x16, 0x00,                    # unequal: v8 = 22
             0x00,
         ]
     )
@@ -979,7 +1008,9 @@ def poppy_fixture_include(c1: bytes, c2: list[tuple[str, bytes]]) -> str:
         "; Generated by tools/generate_engine_fixtures.py.\n"
         f"SCUMM_V5_CONFORMANCE_PROGRAM_SIZE = ${len(c1):04X}\n"
         "ScummV5_Conformance_Program:\n"
+        ".if SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS\n"
         f"{poppy_byte_rows(c1)}\n"
+        ".endif\n"
     ]
     matrix_names = {
         "matrix_set_box_flags", "matrix_missing", "matrix_invalid",
@@ -1013,8 +1044,11 @@ def poppy_fixture_include(c1: bytes, c2: list[tuple[str, bytes]]) -> str:
             f"SCUMM_C2_FIXTURE_{symbol} = ${index:02X}\n"
             f"SCUMM_C2_PROGRAM_{symbol}_SIZE = ${len(data):04X}\n"
             f"ScummV5_C2_Program_{name}:\n"
+            ".if SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS\n"
             f"{poppy_byte_rows(data)}\n"
+            ".endif\n"
         )
+    sections.append(".if SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS\n")
     sections.append(
         f"SCUMM_C2_FIXTURE_COUNT = ${len(c2) - len(matrix_names) + 1:02X}\n"
         ".else\n"
@@ -1033,6 +1067,7 @@ def poppy_fixture_include(c1: bytes, c2: list[tuple[str, bytes]]) -> str:
         f"SCUMM_C2_FIXTURE_COUNT = ${len(c2) + 1:02X}\n"
         ".endif\n"
     )
+    sections.append(".else\nSCUMM_C2_FIXTURE_COUNT = $00\n.endif\n")
     return "".join(sections)
 
 
@@ -1346,12 +1381,12 @@ def write_text(path: Path, data: str) -> None:
 
 
 def far_fixture_include(data: str) -> str:
-    """Place fixture data in a far bank while preserving its source labels."""
+    """Place fixture data in bank 9 with bank-qualified compatibility aliases."""
     labels = re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):", data, re.MULTILINE)
     far = data.replace("ScummV5_", "ScummV5_Far_")
     aliases = "\n; Bank-zero compatibility aliases for cold fixture fetchers.\n"
     aliases += "\n".join(
-        f"{label} = {label.replace('ScummV5_', 'ScummV5_Far_')}"
+        f"{label} = $090000+{label.replace('ScummV5_', 'ScummV5_Far_')}"
         for label in labels
     )
     return far + aliases + "\n"

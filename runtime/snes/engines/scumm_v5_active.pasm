@@ -6,7 +6,34 @@ Same_ActiveEngine_Boot:
     rts
 
 Same_ActiveEngine_Frame:
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    ; Snapshot the real near-call boundary while preserving A and status.
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    tsc
+    clc
+    adc #$0003
+    sta.l SAME_RESET_DIAG_SP_BEFORE_SCUMM
+    pla
+    plp
+.endif
     jsr ScummV5_Engine_Frame
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    tsc
+    clc
+    adc #$0003
+    sta.l SAME_RESET_DIAG_SP_AFTER_SCUMM
+    pla
+    plp
+.endif
     bcs Same_ActiveEngine_Frame__error
     rep #$20
     .a16

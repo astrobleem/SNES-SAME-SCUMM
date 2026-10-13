@@ -19,6 +19,7 @@ ACTORS_ADDRESS = 0x7F36C0
 NAME_SIZES_ADDRESS = 0x7F3EC0
 NAMES_ADDRESS = 0x7F3F00
 INITIALIZED_ADDRESS = 0x7F5F08
+VARIABLES_ADDRESS = 0x7FF500
 FIXTURE_REQUEST = 0x7E235E
 FIXTURE_ID = 38
 ACTOR_STRIDE = 64
@@ -98,6 +99,11 @@ def main() -> int:
     parser.add_argument("--nexen", type=Path, default=DEFAULT_NEXEN)
     parser.add_argument("--port", type=int, default=43999)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--variables-address", type=lambda value: int(value, 0),
+        default=VARIABLES_ADDRESS,
+        help="base of the generated global-variable table for this ROM",
+    )
     args = parser.parse_args()
     rom, nexen = args.rom.resolve(), args.nexen.resolve()
     require(rom.is_file(), f"ROM not found: {rom}")
@@ -109,7 +115,8 @@ def main() -> int:
     report: dict[str, object] = {
         "gate": "C14-actor-ops", "result": "running",
         "rom": str(rom), "rom_sha256": rom_hash, "fresh_power_on": True,
-        "frame_limit": 8, "donor_rom_used": False,
+        "frame_limit": 32, "donor_rom_used": False,
+        "variables_address": f"0x{args.variables_address:06X}",
         "screenshots_captured": False, "audio_captured": False,
     }
 
@@ -129,7 +136,7 @@ def main() -> int:
             report["bootstrap"] = snapshot(session)
             session.write_u8(FIXTURE_REQUEST, FIXTURE_ID)
             first = snapshot(session)
-            for _ in range(6):
+            for _ in range(16):
                 step_video_frame(session)
                 first = snapshot(session)
                 if first["fixture_active"] == FIXTURE_ID and first["pc"] == 89:
@@ -137,12 +144,16 @@ def main() -> int:
             first["video_frame"] = session.get_state()["frameCount"]
             report["first_tick"] = first
             terminal = snapshot(session)
-            for _ in range(3):
+            for _ in range(8):
                 step_video_frame(session)
                 terminal = snapshot(session)
-                if terminal["pc"] == 115:
+                if terminal["pc"] == 134:
                     break
             terminal["video_frame"] = session.get_state()["frameCount"]
+            terminal["query_results"] = [
+                u16(session.read_memory("snesMemory", args.variables_address + index * 2, 2))
+                for index in (4, 5, 6, 7)
+            ]
             report["terminal"] = terminal
 
             expected_actor1 = {
@@ -164,15 +175,16 @@ def main() -> int:
             require(first["pc"] == 89, f"first pc={first['pc']!r}, expected 89")
             require(first["actors"] == {"1": expected_actor1}, f"first actors={first['actors']!r}")
             expected_terminal = {
-                "pc": 115, "status": 2, "error": 0, "last_opcode": 0x80,
-                "frame_count": 2, "frame_ops": 2, "total_ops": 8,
+                "pc": 134, "status": 2, "error": 0, "last_opcode": 0x80,
+                "frame_count": 3, "frame_ops": 5, "total_ops": 13,
                 "fixture_active": FIXTURE_ID, "program_select": FIXTURE_ID,
                 "actor_state_initialized": True,
                 "actors": {"1": expected_actor1, "2": expected_actor2},
+                "query_results": [7, 55, 35, 24],
             }
             for key, value in expected_terminal.items():
                 require(terminal[key] == value, f"{key}={terminal[key]!r}, expected {value!r}")
-            require(terminal["video_frame"] <= 8, "gate exceeded eight video frames")
+            require(terminal["video_frame"] <= 32, "gate exceeded bounded startup/query frame limit")
             report["result"] = "pass"
     except Exception as exc:
         report["result"] = "fail"
@@ -182,7 +194,7 @@ def main() -> int:
         print(report_path)
         return 1
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print("C14 SCUMM actorOps: PASS (full header, variables, defaults, names, palette, clipping)")
+    print("C14 SCUMM actor queries: PASS (actorOps width direct/variable queries included)")
     print(report_path)
     return 0
 

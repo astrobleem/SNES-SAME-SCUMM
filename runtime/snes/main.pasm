@@ -20,11 +20,61 @@
 .bank 0
 .org $8000
 reset:
+    ; Establish native-mode accumulator/index widths before any 16-bit
+    ; immediate or reset diagnostic runs. The CPU enters from the reset vector
+    ; in emulation mode, where REP #$20 cannot switch the accumulator width.
+    sei
+    clc
+    xce
+    .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    ; Temporary diagnostic trap: on a second reset-entry pass, stop before
+    ; TCS erases the incoming stack/mode evidence. This is confined to the
+    ; synthetic-bootstrap investigation build and is not production behavior.
+    sep #$20
+    .a8
+    php
+    pla
+    sta.l SAME_RESET_DIAG_LAST_P
+    rep #$30
+    .a16
+    .i16
+    tsc
+    sta.l SAME_RESET_DIAG_LAST_S
+    sep #$20
+    .a8
+    lda #$FE
+    sta.l SAME_RESET_DIAG_STAGE
+    rep #$20
+    .a16
+    lda.l SAME_RESET_DIAG_COOKIE
+    cmp #$A55A
+    bne reset__diagnostic_continue
+    lda.l SAME_RESET_DIAG_COUNT
+    cmp #$0001
+    bne reset__diagnostic_continue
+    stp
+reset__diagnostic_continue:
+    .endif
+    rep #$30
+    .a16
+    .i16
+    lda #$1FFF
+    tcs
+
     ; Persistent reset-vector diagnostic; this runs before kernel/engine state
     ; is initialized and therefore distinguishes a CPU reset from room 0.
     ; The diagnostic region is outside all engine state and clear ranges.
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    lda #$00
+    sta.l SAME_SCUMM_SYNTHETIC_BOOTSTRAP_REQUESTED
+    .endif
+    .if SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP
+    lda #$00
+    sta.l SAME_SCUMM_AUTHENTIC_BOOTSTRAP_STARTED
+    .endif
+.if SAME_BUILD_RESET_DIAGNOSTICS
     php
     pla
     sta.l SAME_RESET_DIAG_LAST_P
@@ -83,14 +133,7 @@ reset_diag_valid:
     .a16
     lda.l SAME_SCUMM_PC
     sta.l SAME_RESET_DIAG_SCRIPT_PC
-    sei
-    clc
-    xce
-    rep #$30
-    .a16
-    .i16
-    lda #$1FFF
-    tcs
+.endif
 
     sep #$20
     .a8
@@ -109,6 +152,19 @@ reset_diag_valid:
 
     jsr Same_Kernel_Init
     jsr Same_Engine_Boot
+.if SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC
+    ; Dedicated control ROM: run allocator safety assertions before the first
+    ; semantic frame, then stop so no gameplay fixture can obscure the result.
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_RESIDENT_DIAG_RETURNED
+    jsl ScummV5_Resident_RunAcceptanceControl_Far
+    lda #$A5
+    sta.l SAME_SCUMM_RESIDENT_DIAG_RETURNED
+Same_Scumm_Residency_Diagnostic_Halt:
+    bra Same_Scumm_Residency_Diagnostic_Halt
+.endif
 .if SAME_BUILD_SCUMM_M25A_PENDING_ONLY
     ; Copyright-free near-route transaction control. Boot the synthetic source
     ; room through the production near RequestRoom and Storage event path; the
@@ -128,7 +184,7 @@ reset_diag_valid:
     lda #$31
     jsr ScummV5_RequestRoom
 .endif
-.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
+.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE_NO_ROOT_ROOM
     ; Standalone conformance root: enter the normal room-request lifecycle
     ; after engine state is initialized, without writing active-room state.
     sep #$20
@@ -193,6 +249,67 @@ Same_Main_Loop:
     jsr Same_Frame_Run
     bra Same_Main_Loop
 
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+; Compare stack depth at equivalent call boundaries in the synthetic startup
+; diagnostic only. This does not touch production execution personalities.
+Same_Reset_Diag_CheckStack:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    lda.l SAME_RESET_DIAG_SP_STAGE
+    bne Same_Reset_Diag_CheckStack__compare
+    lda.l SAME_RESET_DIAG_SP_CURRENT
+    sta.l SAME_RESET_DIAG_SP_ENTRY
+    bra Same_Reset_Diag_CheckStack__balanced
+Same_Reset_Diag_CheckStack__compare:
+    lda.l SAME_RESET_DIAG_SP_ENTRY
+    cmp.l SAME_RESET_DIAG_SP_CURRENT
+    beq Same_Reset_Diag_CheckStack__balanced
+    lda.l SAME_RESET_DIAG_SP_FAILURES
+    inc
+    sta.l SAME_RESET_DIAG_SP_FAILURES
+    pla
+    plp
+    sec
+    rts
+Same_Reset_Diag_CheckStack__balanced:
+    pla
+    plp
+    clc
+    rts
+Same_Reset_Diag_CheckInputStack:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    lda.l SAME_RESET_DIAG_INPUT_SP_STAGE
+    bne Same_Reset_Diag_CheckInputStack__compare
+    lda.l SAME_RESET_DIAG_INPUT_SP_CURRENT
+    sta.l SAME_RESET_DIAG_INPUT_SP_ENTRY
+    bra Same_Reset_Diag_CheckInputStack__balanced
+Same_Reset_Diag_CheckInputStack__compare:
+    lda.l SAME_RESET_DIAG_INPUT_SP_ENTRY
+    cmp.l SAME_RESET_DIAG_INPUT_SP_CURRENT
+    beq Same_Reset_Diag_CheckInputStack__balanced
+    lda.l SAME_RESET_DIAG_INPUT_SP_FAILURES
+    inc
+    sta.l SAME_RESET_DIAG_INPUT_SP_FAILURES
+    pla
+    plp
+    sec
+    rts
+Same_Reset_Diag_CheckInputStack__balanced:
+    pla
+    plp
+    clc
+    rts
+Same_Reset_Diag_StackFailure:
+    stp
+.endif
+
 nmi_handler:
     php
     rep #$30
@@ -206,9 +323,13 @@ nmi_handler:
     plb
     sep #$20
     .a8
+.if SAME_BUILD_NMI_DIAGNOSTIC_COUNTER
+.if SAME_BUILD_RESET_DIAGNOSTICS
     lda.l SAME_RESET_DIAG_NMI
     inc
     sta.l SAME_RESET_DIAG_NMI
+.endif
+.endif
     lda RDNMI
     rep #$20
     .a16
@@ -230,9 +351,11 @@ irq_handler:
     pha
     sep #$20
     .a8
+.if SAME_BUILD_RESET_DIAGNOSTICS
     lda.l SAME_RESET_DIAG_IRQ
     inc
     sta.l SAME_RESET_DIAG_IRQ
+.endif
     rep #$20
     .a16
     pla
@@ -245,24 +368,86 @@ cop_handler:
     pha
     sep #$20
     .a8
+.if SAME_BUILD_RESET_DIAGNOSTICS
     lda.l SAME_RESET_DIAG_COP
     inc
     sta.l SAME_RESET_DIAG_COP
+.endif
     rep #$20
     .a16
     pla
     plp
     rti
 brk_handler:
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    ; Capture the native interrupt frame before changing S, then freeze. These
+    ; fields are diagnostic-only in the synthetic-bootstrap personality.
+    rep #$30
+    .a16
+    .i16
+    sta.l SAME_RESET_DIAG_LAST_A
+    txa
+    sta.l SAME_RESET_DIAG_LAST_X
+    tya
+    sta.l SAME_RESET_DIAG_LAST_Y
+    tsc
+    sta.l SAME_RESET_DIAG_LAST_S
+    tax
+    sep #$20
+    .a8
+    lda.l $000001,x
+    sta.l SAME_RESET_DIAG_LAST_P
+    lda.l $000002,x
+    sta.l SAME_RESET_DIAG_LAST_PC
+    lda.l $000003,x
+    sta.l SAME_RESET_DIAG_LAST_PC+1
+    lda.l $000004,x
+    sta.l SAME_RESET_DIAG_LAST_PBR
+    ; Copy the hardware frame and caller stack bytes while the interrupt S is
+    ; still live. Use two long pointers because 65816 has no long,Y store.
+    rep #$20
+    .a16
+    tsc
+    inc
+    sta.l SAME_RESET_DIAG_STACK_SOURCE
+    lda #$0000
+    tcd
+    lda.l SAME_RESET_DIAG_STACK_SOURCE
+    sta $00
+    lda #$0000
+    sta $02
+    ; Keep the copied frame beside the reset diagnostic record. This pointer
+    ; must track SAME_RESET_DIAG_STACK when the reserved high-WRAM block moves.
+    lda #$F491
+    sta $04
+    sep #$20
+    .a8
+    lda #$7F
+    sta $06
+    ldy #$0000
+.i16
+brk_handler__capture_stack:
+    .a8
+    .i16
+    lda [$00],y
+    sta [$04],y
+    iny
+    cpy #SAME_RESET_DIAG_STACK_SIZE
+    bcc brk_handler__capture_stack
+    stp
+.endif
     php
     rep #$30
     .a16
+    .i16
     pha
     sep #$20
     .a8
+.if SAME_BUILD_RESET_DIAGNOSTICS
     lda.l SAME_RESET_DIAG_BRK
     inc
     sta.l SAME_RESET_DIAG_BRK
+.endif
     rep #$20
     .a16
     pla
@@ -353,11 +538,14 @@ Same_Tad_BlankSong:
 .include "generated/scumm_v5_conformance_far.inc.pasm"
 .endif
 .endif
-.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR || SAME_BUILD_SCUMM_PHASE6HB
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR || SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_FAR_ROOM_VALIDATOR
 .include "generated/scumm_v5_room_validator_far.inc.pasm"
 .endif
 .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 .include "engines/scumm_v5_m24rb_far.pasm"
+.endif
+.if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+.include "engines/scumm_v5_object_name_cache_far.pasm"
 .endif
 .if SAME_BUILD_SCUMM_CONTROLLER
 .include "engines/scumm_v5_controller_far.pasm"
@@ -366,6 +554,9 @@ Same_Tad_BlankSong:
 ; room data in that data bank. Either placement keeps the cold handler out of
 ; bank 0 without duplicating its source include.
 .include "engines/scumm_v5_matrix_far.pasm"
+.if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+.include "engines/scumm_v5_resident_resolver.pasm"
+.endif
 .include "engines/scumm_v5_camera_far.pasm"
 .if SAME_VIDEO_BACKEND_LEGACY
 .include "services/video_k1_far.pasm"

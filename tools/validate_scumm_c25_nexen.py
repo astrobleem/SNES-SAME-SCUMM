@@ -36,7 +36,7 @@ def u16(raw: bytes, offset: int = 0) -> int:
 
 def snapshot(session: object) -> dict[str, object]:
     common = session.read_memory("snesMemory", COMMON_ADDRESS, 0x64)
-    sound = session.read_memory("snesMemory", C25_ADDRESS, 0x453)
+    sound = session.read_memory("snesMemory", C25_ADDRESS, 0x49B)
     trace = session.read_memory("snesMemory", AUDIO_TRACE_ADDRESS, 0x3A)
     count = min(trace[0], 8)
     packets = [
@@ -58,7 +58,8 @@ def snapshot(session: object) -> dict[str, object]:
         "first_words": [u16(sound, 2 + index * 2) for index in range(min(sound[1], 32))],
         "last_count": sound[0x411],
         "last_words": [u16(sound, 0x412 + index * 2) for index in range(min(sound[0x411], 32))],
-        "flush_count": sound[0x452], "audio_packets": packets,
+        "flush_count": sound[0x452], "command_index": sound[0x494],
+        "queue_words_used": u16(sound, 0x499), "audio_packets": packets,
     }
 
 
@@ -105,7 +106,7 @@ def main() -> int:
             report["bootstrap"] = snapshot(session)
             session.write_u8(FIXTURE_REQUEST, FIXTURE_ID)
             observed = []
-            for expected_pc in (6, 12, 13):
+            for expected_pc in (86, 91, 92):
                 current = snapshot(session)
                 for _ in range(4):
                     step_video_frame(session)
@@ -116,11 +117,14 @@ def main() -> int:
             queued, flushed, halted = observed
             report["checkpoints"] = observed
             require(queued["status"] == 2 and queued["error"] == 0, "queue tick failed")
-            require(queued["last_opcode"] == 0x80 and queued["frame_ops"] == 2, "queue trace differs")
-            require(queued["queue_count"] == 1 and queued["first_count"] == 1,
-                    "command 11 was not retained")
-            require(queued["first_words"] == [11] and queued["audio_packets"] == [],
-                    "queued command executed before flush")
+            require(queued["last_opcode"] == 0x80 and queued["frame_ops"] == 18, "queue trace differs")
+            require(queued["queue_count"] == 17 and queued["queue_words_used"] == 34,
+                    "17 commands did not fit and account against the canonical word budget")
+            require(queued["first_count"] == 1 and queued["first_words"] == [2],
+                    "first packed compatibility record differs")
+            require(queued["last_count"] == 1 and queued["last_words"] == [11],
+                    "last packed stop-all record differs")
+            require(queued["audio_packets"] == [], "queued commands executed before flush")
             require(flushed["status"] == 2 and flushed["error"] == 0, "flush tick failed")
             require(flushed["last_opcode"] == 0x80 and flushed["frame_ops"] == 2,
                     "flush trace differs")
@@ -128,17 +132,19 @@ def main() -> int:
                     "flush did not drain and record the command")
             require(flushed["last_words"] == [11] and flushed["flush_count"] == 1,
                     "flush history differs")
+            require(flushed["command_index"] == 17 and flushed["queue_words_used"] == 0,
+                    "flush did not traverse all 17 packed records")
             require(flushed["audio_packets"] == [
                 {"opcode": 1, "source": 6, "destination": 4, "arg0": 0, "arg1": 0},
                 {"opcode": 3, "source": 6, "destination": 4, "arg0": 0xFFFF, "arg1": 0},
                 {"opcode": 10, "source": 6, "destination": 4, "arg0": 0, "arg1": 0},
                 {"opcode": 8, "source": 6, "destination": 4, "arg0": 0, "arg1": 0},
             ], "normalized stop-all/flush packets differ")
-            require(halted["pc"] == 13 and halted["status"] == 4 and halted["error"] == 0,
+            require(halted["pc"] == 92 and halted["status"] == 4 and halted["error"] == 0,
                     "fixture did not halt cleanly")
             require(halted["last_opcode"] == 0 and halted["frame_ops"] == 1,
                     "halt trace differs")
-            require(halted["total_ops"] == 5, "total operation count differs")
+            require(halted["total_ops"] == 21, "total operation count differs")
             report["result"] = "pass"
     except Exception as exc:
         report["result"] = "fail"
@@ -148,7 +154,7 @@ def main() -> int:
         print(report_path)
         return 1
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print("C25 SCUMM soundKludge: PASS (queue persistence, command 11, flush packets)")
+    print("C25 SCUMM soundKludge: PASS (17 packed records, 256-word budget, ordered flush)")
     print(report_path)
     return 0
 

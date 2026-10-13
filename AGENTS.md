@@ -1,8 +1,10 @@
 # Continuation gate
 
-This repository is in a persistent engineering campaign.  Intermediate
-diagnosis, a passing build, a validator result, tool synchronization, a new
-frontier, or a player-choice boundary is **not** permission to end work.
+This repository supports persistent engineering campaigns, but continuation
+must remain bounded and evidence-driven.  Intermediate diagnosis, a passing
+build, a validator result, or tool synchronization alone does not complete an
+active objective; conversely, player-choice boundaries do not require endless
+branch exploration.
 
 Before sending a final response, perform and state internally a `STOP-GATE`:
 
@@ -12,9 +14,18 @@ Before sending a final response, perform and state internally a `STOP-GATE`:
    - a genuinely major subsystem or hardware/capacity redesign is required;
    - an unresolved semantic contradiction remains after substantial tracing;
    - or the user explicitly asks for a status-only response or to stop.
-3. If neither is true, do **not** send a final response. Continue from the
-   current checkpoint, improve tooling if needed, and update
-   `session_checkpoint.md` at milestones instead.
+3. If neither is true, continue only with an experiment that changes a
+   hypothesis, observation, implementation, or controlled input. Record
+   successful interactions as reusable replay steps and record known setup
+   and input procedures once, then reuse them instead of relearning them.
+4. Two equivalent UI attempts that produce no new evidence end UI retries.
+   Switch to instrumentation or report the concrete blocker. A failed
+   regression blocks further gameplay until it is fixed or its failure is
+   explained by a justified expectation change. Do not ignore red tests to
+   pursue another room or branch.
+5. A bounded, evidenced no-progress stop is valid. Do not explore every
+   player-choice branch unless the active objective specifically requires it.
+   Update `session_checkpoint.md` at meaningful milestones.
 
 ## Repository engineering constraints
 
@@ -48,6 +59,7 @@ selection input. An engine extraction is not complete based only on one game:
 retain synthetic semantic tests, save/load coverage, and a second profile or
 resource set where applicable.
 
-For the current Fate/SCUMM work, player choices invoke branch exploration;
-they are not stop conditions.  Do not substitute a report for the next
-authorized engineering step.
+For Fate/SCUMM work, keep one repeatable input prefix and instrument the next
+specified boundary. At a choice boundary, investigate only the action needed
+for the current objective; do not launch an open-ended playthrough. Preserve
+the distinction between synthetic fixtures and authentic game resources.

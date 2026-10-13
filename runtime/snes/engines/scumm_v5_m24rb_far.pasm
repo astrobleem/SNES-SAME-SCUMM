@@ -344,6 +344,25 @@ ScummV5_M24RB_Far_CommitNullRoom__next:
     inx
     cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
     bcc ScummV5_M24RB_Far_CommitNullRoom__retire
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; Room-owned activations are retired before their bundle pins are removed.
+    ; Persistent global C4 owners keep their own selector bindings alive.
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    cmp #$FF
+    beq ScummV5_M24RB_Far_CommitNullRoom__bundle_released
+    jsl ScummV5_Resident_ReleaseRoomBundle_Far
+    bcs ScummV5_M24RB_Far_CommitNullRoom__bundle_released
+    lda #SCUMM_ERR_RESIDENCY_ID
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitNullRoom__bundle_released:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
+    sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    .endif
     sep #$20
     .a8
     lda #$00
@@ -354,6 +373,7 @@ ScummV5_M24RB_Far_CommitNullRoom__next:
     sta.l SAME_SCUMM_M23A_SLOT_ROOMS
     sta.l SAME_SCUMM_M23A_PENDING_RECORD
     sta.l SAME_SCUMM_M23A_ACTIVE_ROOM
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_VALID
     sta.l SAME_SCUMM_C22_CURRENT_ROOM
     lda #$FF
     sta.l SAME_SCUMM_M23A_ACTIVE_RECORD
@@ -504,7 +524,15 @@ ScummV5_M24RB_Far_RequestRoom__return_valid:
     bne ScummV5_M24RB_Far_RequestRoom__queue
     lda #$FF
     sta.l SAME_SCUMM_M23A_PENDING_RECORD
+    ; ResourceReady may synchronously begin the outgoing room's EXCD and set
+    ; RETURN_MODE for that new outer room-script context.  The loadRoom
+    ; opcode that called RequestRoom still has to unwind using the mode of
+    ; its own invocation (notably mode 1 when called from C4 RunSelected).
+    lda.l SAME_SCUMM_RETURN_MODE
+    pha
     jsr ScummV5_M24RB_Far_ResourceReady
+    pla
+    sta.l SAME_SCUMM_RETURN_MODE
     clc
     rts
 ScummV5_M24RB_Far_RequestRoom__queue:
@@ -820,6 +848,35 @@ ScummV5_M24RB_Far_CommitRoom__retire_next:
     bcc ScummV5_M24RB_Far_CommitRoom__retire
     lda #$04
     jsr ScummV5_M24RB_Far_Trace
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; Preserve the outgoing room bundle through EXCD, then retire its owner
+    ; pins before releasing the bundle. Global activations keep their binding.
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    cmp #$FF
+    beq ScummV5_M24RB_Far_CommitRoom__old_bundle_released
+    jsl ScummV5_Resident_ReleaseRoomBundle_Far
+    bcs ScummV5_M24RB_Far_CommitRoom__old_bundle_released
+    lda #SCUMM_ERR_RESIDENCY_ID
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitRoom__old_bundle_released:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
+    sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    lda.l SAME_SCUMM_M23A_PENDING_RECORD
+    jsl ScummV5_Resident_LoadRoomBundle_Far
+    bcs ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded
+    lda.l SAME_SCUMM_ERROR
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded:
+    sep #$20
+    .a8
+    .endif
     lda.l SAME_SCUMM_M23A_PENDING_RECORD
     sta.l SAME_SCUMM_M23A_ACTIVE_RECORD
     jsl ScummV5_Matrix_LoadActiveRoom_Far
@@ -1023,7 +1080,9 @@ ScummV5_M24RB_Far_CommitRoom__source_actor_ready_done:
     ; Complete the source-neutral loadRoomWithEgo installation before ENCD.
     ; The decoded request survives retirement of its room-local caller.
     lda.l SAME_SCUMM_LOAD_EGO_ACTIVE
-    beq ScummV5_M24RB_Far_CommitRoom__load_ego_done
+    bne ScummV5_M24RB_Far_CommitRoom__load_ego_install
+    brl ScummV5_M24RB_Far_CommitRoom__load_ego_done
+ScummV5_M24RB_Far_CommitRoom__load_ego_install:
     rep #$20
     .a16
     lda.l SAME_SCUMM_LOAD_EGO_OBJECT
@@ -1042,11 +1101,45 @@ ScummV5_M24RB_Far_CommitRoom__source_actor_ready_done:
     asl
     asl
     asl
+    sta.l SAME_SCUMM_C14_BASE
+    sep #$20
+    .a8
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C14_BASE
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_PRESENT,x
+    bne ScummV5_M24RB_Far_CommitRoom__load_ego_actor_ready
+    jsl ScummV5_PutActor_FarCall_DefaultActor
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C14_BASE
+    tax
+    sep #$20
+    .a8
+ScummV5_M24RB_Far_CommitRoom__load_ego_actor_ready:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C14_BASE
     tax
     sep #$20
     .a8
     lda.l SAME_SCUMM_LOAD_EGO_ROOM
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ROOM,x
+    beq ScummV5_M24RB_Far_CommitRoom__load_ego_actor_hidden
+    lda #$01
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_VISIBLE,x
+    bra ScummV5_M24RB_Far_CommitRoom__load_ego_actor_visibility_done
+ScummV5_M24RB_Far_CommitRoom__load_ego_actor_hidden:
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_VISIBLE,x
+ScummV5_M24RB_Far_CommitRoom__load_ego_actor_visibility_done:
     jsl ScummV5_Movement_ObjectWalk_Far
     bcc ScummV5_M24RB_Far_CommitRoom__load_ego_done
     rep #$20
@@ -1092,10 +1185,65 @@ ScummV5_M24RB_Far_CommitRoom__load_ego_done:
     sta.l SAME_SCUMM_M23A_REGISTER_COUNT
     lda.l ScummV5_M23A_RoomLocalCounts,x
     sta.l SAME_SCUMM_M23A_LOCAL_COUNT
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; The generated room lifecycle table stores canonical ProgramUnit IDs.
+    ; Resolve them only after the incoming bundle is pinned, then publish the
+    ; ephemeral selector expected by the unchanged M23A/C4 runtime ABI.
+    txa
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    tax
+    lda.l ScummV5_M23A_RoomEntryProgramUnitIds,x
+    cmp #$FFFF
+    beq ScummV5_M24RB_Far_CommitRoom__no_dynamic_entry
+    jsl ScummV5_Resident_ResolveProgramUnit_Far
+    bcs ScummV5_M24RB_Far_CommitRoom__dynamic_entry_ready
+    lda.l SAME_SCUMM_ERROR
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitRoom__no_dynamic_entry:
+    sep #$20
+    .a8
+    lda #$00
+ScummV5_M24RB_Far_CommitRoom__dynamic_entry_ready:
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    rep #$20
+    .a16
+    and #$00FF
+    asl
+    tax
+    lda.l ScummV5_M23A_RoomExitProgramUnitIds,x
+    cmp #$FFFF
+    beq ScummV5_M24RB_Far_CommitRoom__no_dynamic_exit
+    jsl ScummV5_Resident_ResolveProgramUnit_Far
+    bcs ScummV5_M24RB_Far_CommitRoom__dynamic_exit_ready
+    lda.l SAME_SCUMM_ERROR
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitRoom__no_dynamic_exit:
+    sep #$20
+    .a8
+    lda #$00
+ScummV5_M24RB_Far_CommitRoom__dynamic_exit_ready:
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD
+    tax
+    lda.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    .else
     lda.l ScummV5_M23A_RoomEntryPrograms,x
     sta.l SAME_SCUMM_M23A_ENTRY_PROGRAM
     lda.l ScummV5_M23A_RoomExitPrograms,x
     sta.l SAME_SCUMM_M23A_EXIT_PROGRAM
+    .endif
     sta.l SAME_SCUMM_FETCH_BYTE
     txa
     rep #$20
@@ -1251,7 +1399,7 @@ ScummV5_M23A_Trace_FarEntry:
     jsr ScummV5_M24RB_Far_Trace
     rtl
 ScummV5_M23C_Driver_FarEntry:
-.if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE && !SAME_BUILD_SCUMM_M23C
+.if SAME_BUILD_SCUMM_M23C == 0
     clc
     rtl
 .else

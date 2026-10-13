@@ -60,6 +60,7 @@ class StartScriptReplacementTests(unittest.TestCase):
             'SAME_SCUMM_C4_SLOT_DELAY': {2: 0},
             'SAME_SCUMM_STATUS': 4,
             'SAME_SCUMM_PC': 0x2D,
+            'SAME_SCUMM_RETURN_MODE': 0,
         }
         a = x = 0
         a_width = 16
@@ -103,6 +104,14 @@ class StartScriptReplacementTests(unittest.TestCase):
                 a &= mask if a_width == 16 else (0xFF00 | (mask & 0xFF))
             elif op == 'asl':
                 a = (a << 1) & (0xFFFF if a_width == 16 else 0xFF)
+            elif op == 'lda':
+                operand = parts[1]
+                if not operand.startswith('#$'):
+                    self.fail(f'unmodelled immediate-load operand: {line}')
+                value = int(operand[2:], 16)
+                a = value if a_width == 16 else (a & 0xFF00) | (value & 0xFF)
+            elif op == 'pha':
+                pass  # This source model stops at RunSelected; native tests cover stack behavior.
             else:
                 self.fail(f'unmodelled no-parent instruction: {line}')
         self.assertEqual(memory['SAME_SCUMM_PROGRAM_SELECT'], program)

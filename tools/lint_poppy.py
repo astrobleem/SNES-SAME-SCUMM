@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from bisect import bisect_left
 from pathlib import Path
 import re
 import sys
@@ -40,6 +41,11 @@ REQUIRED_LABELS = {
     "Same_Engine_Frame",
     "Same_Engine_Shutdown",
 }
+
+
+def line_index_at(newline_offsets: list[int], character_offset: int) -> int:
+    """Return the zero-based source line without rescanning a text prefix."""
+    return bisect_left(newline_offsets, character_offset)
 
 
 def _conditional_value(expression: str, symbols: dict[str, int | None]) -> bool | None:
@@ -217,19 +223,20 @@ def main() -> int:
     for path in files:
         text = path.read_text(encoding="utf-8")
         source_lines = text.splitlines()
+        newline_offsets = [match.start() for match in re.finditer("\n", text)]
         combined.append(text)
         for branch in re.finditer(r"\b(?:bcc|bcs|beq|bne|bmi|bpl|bvc|bvs|bra|brl|jmp|jml)\s+([A-Za-z_][A-Za-z0-9_]*)", text, re.IGNORECASE):
             branch_targets.add(branch.group(1))
         for pattern, message in FORBIDDEN:
             for match in pattern.finditer(text):
-                line = text.count("\n", 0, match.start()) + 1
+                line = line_index_at(newline_offsets, match.start()) + 1
                 errors.append(f"{path}:{line}: {message}")
         for match in re.finditer(r"^([A-Za-z_][A-Za-z0-9_]*):", text, re.MULTILINE):
             label = match.group(1)
             if label in labels:
                 errors.append(f"{path}: duplicate global label {label}")
             labels.add(label)
-            line_index = text.count("\n", 0, match.start())
+            line_index = line_index_at(newline_offsets, match.start())
             label_locations[label] = (path, source_lines, line_index)
     width_immediate = re.compile(r"^(?:lda|ldx|ldy|cmp|cpx|cpy|and|ora|eor|adc|sbc|bit)\s+#", re.IGNORECASE)
     for target in sorted(branch_targets):

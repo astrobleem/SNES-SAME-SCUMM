@@ -21,7 +21,16 @@ from same.profile import load_profile
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "examples/profiles/m25a_nested_conformance.json"
-FATE_ARCHIVE = Path(os.environ.get("SAME_FATE_DEMO_ARCHIVE", "/home/chad/fatedemo-box.zip"))
+FATE_ARCHIVE = Path(os.environ.get(
+    "SAME_FATE_ARCHIVE",
+    os.environ.get("SAME_FATE_DEMO_ARCHIVE", "/home/chad/ATLANTIS.zip"),
+))
+FATE_PROFILE = Path(os.environ.get(
+    "SAME_FATE_PROFILE",
+    "examples/profiles/templates/fate_of_atlantis_demo.json",
+))
+if not FATE_PROFILE.is_absolute():
+    FATE_PROFILE = ROOT / FATE_PROFILE
 
 
 def source_member(bundle: zipfile.ZipFile, suffix: str) -> str:
@@ -33,6 +42,29 @@ def source_member(bundle: zipfile.ZipFile, suffix: str) -> str:
 
 def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def source_body_provenance(
+    *, number: int, room_number: int, archive_member: str,
+    member_offset: int, encoded_body: bytes, decoded_body: bytes,
+    program: bytes,
+) -> dict[str, object]:
+    """Validate and label a DSCR body at its exact uncompressed member offset."""
+    if decoded_body != program or bytes(value ^ 0x69 for value in encoded_body) != program:
+        raise RuntimeError(f"DSCR script {number} source slice does not match its body")
+    if len(encoded_body) != len(program):
+        raise RuntimeError(f"DSCR script {number} source slice has the wrong size")
+    return {
+        "classification": "authentic external game resource",
+        "archive_member": archive_member,
+        "container": f"LFLF room {room_number}/DSCR[{number}]",
+        "member_offset": member_offset,
+        "member_offset_basis": "uncompressed ZIP member byte offset",
+        "source_encoding": "LucasArts XOR 0x69",
+        "encoded_body_sha256": sha(encoded_body),
+        "decoded_body_sha256": sha(program),
+        "decoded_body_size": len(program),
+    }
 
 
 def selected_corpus_identity(archive: Path) -> dict[str, object]:
@@ -182,7 +214,9 @@ def startscript_replacement_scripts() -> tuple[bytes, bytes]:
     # local0=$BEEF. Its old continuation writes V11 and must never execute.
     # The replacement takes the false branch, copies its local into V10,
     # yields once, and then stops on the following scheduler tick.
-    retired_tail = start_script(75, (0xBEEF,)) + set_word(11, 0xDEAD) + b"\x00"
+    # V11 is TMR_1 and advances before each engine tick; use an ordinary
+    # non-timer global so the retired-tail sentinel is isolated from timing.
+    retired_tail = start_script(75, (0xBEEF,)) + set_word(14, 0xDEAD) + b"\x00"
     replacement_tail = bytes((0x9A, 10, 0, 0x00, 0x40, 0x80, 0x00))
     branch = bytes((0x28, 0x00, 0x40, len(retired_tail), 0x00))
     body = branch + retired_tail + replacement_tail
@@ -391,11 +425,11 @@ def scheduler_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...]]:
     """Copyright-free integrated-pass oracle for yielded room-local slots."""
     parent = b"".join((
         set_word(0x4000, 0xA0A0), set_word(10, 0x000A),
-        start_script(201), set_word(12, 0x000D), bytes((0x80,)),
-        set_word(13, 0x000F), bytes((0x00,)),
+        start_script(201), set_word(16, 0x000D), bytes((0x80,)),
+        set_word(17, 0x000F), bytes((0x00,)),
     ))
     child = b"".join((
-        set_word(0x4000, 0xB0B0), set_word(11, 0x000B), bytes((0x80,)),
+        set_word(0x4000, 0xB0B0), set_word(15, 0x000B), bytes((0x80,)),
         set_word(14, 0x000E), bytes((0x00,)),
     ))
     repeated = b"".join((
@@ -533,8 +567,7 @@ def authored_room49_objects(object_ids: tuple[int, ...]) -> tuple[bytes, ...]:
             "game.index": bundle.read(source_member(bundle, ".000")),
             "game.data": bundle.read(source_member(bundle, ".001")),
         }
-    profile = load_profile(ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
-                           verify_resources=False)
+    profile = load_profile(FATE_PROFILE, verify_resources=False)
     provider = LucasartsScummV5ResourceProvider(
         MemoryResourceProvider(raw), parse_game_policy(profile))
     source_room = decode_room(provider.read("room.49"), key="room.49")
@@ -578,19 +611,47 @@ def authored_room49_objects(object_ids: tuple[int, ...]) -> tuple[bytes, ...]:
 
 def _authored_global_script(number: int) -> bytes:
     """Read an authored global script from the supplied Fate resources."""
+    return _authored_global_script_with_provenance(number)[0]
+
+
+def _authored_global_script_with_provenance(
+    number: int,
+) -> tuple[bytes, dict[str, object]]:
+    """Return decoded source bytes plus their exact archive/container origin."""
     if not FATE_ARCHIVE.is_file():
         raise RuntimeError(f"missing supplied Fate archive: {FATE_ARCHIVE}")
     with zipfile.ZipFile(FATE_ARCHIVE) as bundle:
+        data_member = source_member(bundle, ".001")
+        encoded_data = bundle.read(data_member)
         raw = {
             "game.index": bundle.read(source_member(bundle, ".000")),
-            "game.data": bundle.read(source_member(bundle, ".001")),
+            "game.data": encoded_data,
         }
-    profile = load_profile(ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
-                           verify_resources=False)
+    profile = load_profile(FATE_PROFILE, verify_resources=False)
     provider = LucasartsScummV5ResourceProvider(
         MemoryResourceProvider(raw), parse_game_policy(profile)
     )
-    return provider.read(f"script.{number}")
+    directory = provider._directories["DSCR"]
+    if not 0 <= number < len(directory.rooms):
+        raise RuntimeError(f"DSCR script {number} is outside the source directory")
+    room_number = directory.rooms[number]
+    try:
+        lflf = provider._rooms[room_number]
+    except KeyError as exc:
+        raise RuntimeError(
+            f"DSCR script {number} references unavailable source room {room_number}"
+        ) from exc
+    body_offset = lflf.offset + 8 + directory.offsets[number] + 8
+    program = provider.read(f"script.{number}")
+    decoded_source = provider._data[body_offset:body_offset + len(program)]
+    encoded_source = encoded_data[body_offset:body_offset + len(program)]
+    provenance = source_body_provenance(
+        number=number, room_number=room_number,
+        archive_member=data_member, member_offset=body_offset,
+        encoded_body=encoded_source, decoded_body=decoded_source,
+        program=program,
+    )
+    return program, provenance
 
 
 def _authored_global_script_numbers() -> tuple[int, ...]:
@@ -602,8 +663,7 @@ def _authored_global_script_numbers() -> tuple[int, ...]:
             "game.index": bundle.read(source_member(bundle, ".000")),
             "game.data": bundle.read(source_member(bundle, ".001")),
         }
-    profile = load_profile(ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
-                           verify_resources=False)
+    profile = load_profile(FATE_PROFILE, verify_resources=False)
     provider = LucasartsScummV5ResourceProvider(
         MemoryResourceProvider(raw), parse_game_policy(profile)
     )
@@ -623,8 +683,7 @@ def _authored_room_numbers() -> set[int]:
             "game.index": bundle.read(source_member(bundle, ".000")),
             "game.data": bundle.read(source_member(bundle, ".001")),
         }
-    profile = load_profile(ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
-                           verify_resources=False)
+    profile = load_profile(FATE_PROFILE, verify_resources=False)
     provider = LucasartsScummV5ResourceProvider(
         MemoryResourceProvider(raw), parse_game_policy(profile)
     )
@@ -644,8 +703,7 @@ def _authored_global_classes(count: int = 600) -> bytes:
             "game.index": bundle.read(source_member(bundle, ".000")),
             "game.data": bundle.read(source_member(bundle, ".001")),
         }
-    profile = load_profile(ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
-                           verify_resources=False)
+    profile = load_profile(FATE_PROFILE, verify_resources=False)
     provider = LucasartsScummV5ResourceProvider(
         MemoryResourceProvider(raw), parse_game_policy(profile)
     )
@@ -664,8 +722,7 @@ def _authored_global_table(name: str) -> bytes:
             "game.index": bundle.read(source_member(bundle, ".000")),
             "game.data": bundle.read(source_member(bundle, ".001")),
         }
-    profile = load_profile(ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
-                           verify_resources=False)
+    profile = load_profile(FATE_PROFILE, verify_resources=False)
     provider = LucasartsScummV5ResourceProvider(
         MemoryResourceProvider(raw), parse_game_policy(profile)
     )
@@ -703,13 +760,13 @@ def salvage_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...], tuple[bytes
 
 
 def startup42_scripts() -> tuple[bytes, tuple[tuple[int, bytes], ...], tuple[bytes, ...]]:
-    """Controlled root: start authentic Global1(local0=0) and Global18."""
-    # Canonical boot allocates Global1 with zeroed locals. Encode that
-    # source-observed selector explicitly, then terminate its varargs before
-    # emitting the distinct ordinary Global18 start. Global1 also reaches its
-    # authored Global18 call later; this early start is the fixture's explicit
-    # incoming verb/UI prerequisite, not a modification of either body.
-    entry = start_script(1, (0,)) + start_script(18)
+    """Synthetic carrier that delegates startup to the authentic Global1."""
+    # ScummVM's DOS-CD Indy4 startup disables the copy-protection option and
+    # supplies boot_param -7873 to the authentic bootscript (ScummEngine::init
+    # and runBootscript). Preserve that invocation contract in the synthetic
+    # carrier; Global1 starts Global18 later at its authored call site.
+    # Do not start Global18 here: that would duplicate the authored child.
+    entry = start_script(1, (-7873,))
     # Preserve the fixture's harmless actorOps terminator and ENCD STOP.
     return entry + bytes((0x13, 0x03, 0xFF, 0x00)), (), ()
 
@@ -931,6 +988,10 @@ def main() -> int:
         "--fixture-room", type=int, default=49,
         help="logical room identity for this synthetic carrier (default: 49)",
     )
+    parser.add_argument(
+        "--omit-fixture-room", action="store_true",
+        help="omit the synthetic room record while retaining selected executable bodies",
+    )
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     # Persist corpus selection before authored resource resolution so a
@@ -1038,7 +1099,8 @@ def main() -> int:
     )
     decoded = decode_cooked_room(encoded, expected_room=args.fixture_room)
     room_output = args.output_dir / f"room-{args.fixture_room}.sc5c"
-    room_output.write_bytes(encoded)
+    if not args.omit_fixture_room:
+        room_output.write_bytes(encoded)
     extra_records = []
     if args.case == "global-room-continuation":
         destination_payload = room(
@@ -1149,47 +1211,49 @@ def main() -> int:
         # startObject with a direct object and a variable entry selector;
         # local 0 is populated by the production C20 sentence launcher.
         object_id = 594 if args.case == "crate" else (595 if args.case == "fishnet" else (593 if args.case == "balloon" else 592))
-        global_program = (
+        authored_script2 = None
+        if args.case in {"fishnet", "startup42", "room55", "room55-movement"}:
+            global_program, authored_script2 = _authored_global_script_with_provenance(2)
+        else:
             # The full Fate sentence dispatcher has many unrelated branches
             # whose readiness state is not part of this focused object
             # scenario.  This is the exact source v5 startObject form used by
             # its successful sentence path: object=local1, entry=local0,
             # arguments local2 and local0.  The OBCD and all arguments remain
             # source-backed; only the reusable fixture launcher is narrowed.
-            bytes.fromhex("f7 01 40 00 40 81 02 40 81 00 40 ff 00")
-            if args.case in {"balloon", "salvage"} else (
-            _authored_global_script(2)
-            if args.case in {"fishnet", "startup42", "room55", "room55-movement"}
-            else bytes((
-                0x77, object_id & 0xFF, object_id >> 8, 0x0F, 0x00, 0xFF,
-                0x00,
-            )))
-        )
+            global_program = (
+                bytes.fromhex("f7 01 40 00 40 81 02 40 81 00 40 ff 00")
+                if args.case in {"balloon", "salvage"} else bytes((
+                    0x77, object_id & 0xFF, object_id >> 8, 0x0F, 0x00, 0xFF,
+                    0x00,
+                ))
+            )
         global_output = args.output_dir / "script-2.scrp"
         global_output.write_bytes(global_program)
-        global_scripts.append({
+        script2_record = {
             "number": 2, "resource_key": "script.2",
             "output": global_output.name, "length": len(global_program),
             "sha256": sha(global_program),
-        })
+        }
+        if authored_script2 is not None:
+            script2_record["source_provenance"] = authored_script2
+        else:
+            script2_record["source_provenance"] = {
+                "classification": "synthetic copyright-free fixture launcher",
+            }
+        global_scripts.append(script2_record)
         if args.case in {"fishnet", "balloon", "salvage"}:
             # The authored verb-11 basket branch starts the real global
             # script 10 after mutating object 595. Keep that dependency
             # source-bound as well; it is not a fixture replacement.
-            profile = load_profile(ROOT / "examples/profiles/templates/fate_of_atlantis_demo.json",
-                                   verify_resources=False)
-            with zipfile.ZipFile(FATE_ARCHIVE) as bundle:
-                raw = {"game.index": bundle.read(source_member(bundle, ".000")),
-                       "game.data": bundle.read(source_member(bundle, ".001"))}
-            provider = LucasartsScummV5ResourceProvider(
-                MemoryResourceProvider(raw), parse_game_policy(profile))
-            script10 = provider.read("script.10")
+            script10, script10_provenance = _authored_global_script_with_provenance(10)
             script10_output = args.output_dir / "script-10.scrp"
             script10_output.write_bytes(script10)
             global_scripts.append({
                 "number": 10, "resource_key": "script.10",
                 "output": script10_output.name, "length": len(script10),
-                "sha256": sha(script10), "source": "PLAYFATE script 10",
+                "sha256": sha(script10),
+                "source_provenance": script10_provenance,
             })
     if args.case in {"startup42", "room55", "room55-movement"}:
             # The root is deliberately a real startScript(1) from ENCD.  The
@@ -1206,13 +1270,14 @@ def main() -> int:
             # ENCD parked immediately after its launch opcode even though the
             # room resource itself validated successfully.
             for number in (1, 13, 14, 18, 20, 57, 74, 75, 132, 144, 145):
-                program = _authored_global_script(number)
+                program, provenance = _authored_global_script_with_provenance(number)
                 script_output = args.output_dir / f"script-{number}.scrp"
                 script_output.write_bytes(program)
                 global_scripts.append({
                     "number": number, "resource_key": f"script.{number}",
                     "output": script_output.name, "length": len(program),
-                    "sha256": sha(program), "source": f"PLAYFATE script {number}",
+                    "sha256": sha(program),
+                    "source_provenance": provenance,
                     **({"append_after_rooms": True} if number in (57, 145) else {}),
                 })
     elif args.case == "lookup":
@@ -1250,7 +1315,7 @@ def main() -> int:
             [0, 0, 2, 3] + [0] * 28
             if args.case == "getwalkbox" else [0] * 32
         ),
-        "records": [{
+        "records": [] if args.omit_fixture_room else [{
             "room": args.fixture_room, "resource_key": f"room.{args.fixture_room}",
             "output": room_output.name,
             "registration_only": False, "record_length": len(encoded),
@@ -1334,7 +1399,8 @@ def main() -> int:
     path = args.output_dir / "manifest.json"
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"case": args.case, "manifest": str(path),
-                      "record_sha256": manifest["records"][0]["record_sha256"],
+                      "record_sha256": (manifest["records"][0]["record_sha256"]
+                                        if manifest["records"] else None),
                       "locals": len(locals_)}))
     return 0
 

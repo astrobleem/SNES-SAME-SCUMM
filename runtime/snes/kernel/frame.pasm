@@ -21,6 +21,24 @@ Same_Frame_Run:
     rep #$30
     .a16
     .i16
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_RESET_DIAG_SP_FAILURES
+    sta.l SAME_RESET_DIAG_SP_FAILURES+1
+    sta.l SAME_RESET_DIAG_SP_STAGE
+    sta.l SAME_RESET_DIAG_SP_STAGE+1
+    rep #$30
+    .a16
+    .i16
+    tsc
+    sta.l SAME_RESET_DIAG_SP_CURRENT
+    jsr Same_Reset_Diag_CheckStack
+    bcc Same_Frame_Run__sp_ok_00
+    jmp Same_Reset_Diag_StackFailure
+Same_Frame_Run__sp_ok_00:
+.endif
     sep #$20
     .a8
     lda #$01
@@ -35,7 +53,26 @@ Same_Frame_Run:
     .a16
     lda.l SAME_SCUMM_PC
     sta.l SAME_RESET_DIAG_SCRIPT_PC
+    tsc
+    sta.l SAME_RESET_DIAG_FRAME_PRE_INPUT_S
     jsr Same_Input_Poll
+    tsc
+    sta.l SAME_RESET_DIAG_FRAME_POST_INPUT_S
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0101
+    sta.l SAME_RESET_DIAG_SP_STAGE
+    plp
+    tsc
+    sta.l SAME_RESET_DIAG_FRAME_POST_INPUT_CHECK_S
+    sta.l SAME_RESET_DIAG_SP_CURRENT
+    jsr Same_Reset_Diag_CheckStack
+    bcc Same_Frame_Run__sp_ok_01
+    jmp Same_Reset_Diag_StackFailure
+Same_Frame_Run__sp_ok_01:
+.endif
     sep #$20
     .a8
     lda #$02
@@ -48,11 +85,57 @@ Same_Frame_Run:
     ; behind the scheduler gate.  The later drain remains necessary for
     ; requests generated during this frame.
     jsr Same_Kernel_DrainEvents
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0102
+    sta.l SAME_RESET_DIAG_SP_STAGE
+    plp
+    tsc
+    sta.l SAME_RESET_DIAG_SP_CURRENT
+    jsr Same_Reset_Diag_CheckStack
+    bcc Same_Frame_Run__sp_ok_02
+    jmp Same_Reset_Diag_StackFailure
+Same_Frame_Run__sp_ok_02:
+    .a16
+    .i16
+.endif
     jsr Same_Engine_Frame
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0103
+    sta.l SAME_RESET_DIAG_SP_STAGE
+    plp
+    tsc
+    sta.l SAME_RESET_DIAG_SP_CURRENT
+    jsr Same_Reset_Diag_CheckStack
+    bcc Same_Frame_Run__sp_ok_03
+    jmp Same_Reset_Diag_StackFailure
+Same_Frame_Run__sp_ok_03:
+    .a16
+    .i16
+.endif
     .if SAME_BUILD_SCUMM_CONTROLLER
     ; Sample fixture input after the generic SCUMM pass and room lifecycle;
     ; the sentence API is consumed by the next engine pass.
     jsl ScummV5_Controller_Frame_Far
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0104
+    sta.l SAME_RESET_DIAG_SP_STAGE
+    plp
+    tsc
+    sta.l SAME_RESET_DIAG_SP_CURRENT
+    jsr Same_Reset_Diag_CheckStack
+    bcc Same_Frame_Run__sp_ok_04
+    jmp Same_Reset_Diag_StackFailure
+Same_Frame_Run__sp_ok_04:
+.endif
     .endif
     sep #$20
     .a8
@@ -67,11 +150,41 @@ Same_Frame_Run:
     ; of this host frame.
     jsr Same_Kernel_DrainEvents
     jsl Same_Overlay_Bg2_Step_Far
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0105
+    sta.l SAME_RESET_DIAG_SP_STAGE
+    plp
+    tsc
+    sta.l SAME_RESET_DIAG_SP_CURRENT
+    jsr Same_Reset_Diag_CheckStack
+    bcc Same_Frame_Run__sp_ok_05
+    jmp Same_Reset_Diag_StackFailure
+Same_Frame_Run__sp_ok_05:
+    .a16
+    .i16
+.endif
     .endif
     .if SAME_BUILD_SCUMM_M23A
     ; Talk expiration and FF 03 continuation are a normal once-per-logical-
     ; frame lifecycle phase, independent of which scheduler slot yielded.
     jsl ScummV5_Talk_FrameEnd_Far
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0106
+    sta.l SAME_RESET_DIAG_SP_STAGE
+    plp
+    tsc
+    sta.l SAME_RESET_DIAG_SP_CURRENT
+    jsr Same_Reset_Diag_CheckStack
+    bcc Same_Frame_Run__sp_ok_06
+    jmp Same_Reset_Diag_StackFailure
+Same_Frame_Run__sp_ok_06:
+.endif
     .endif
     .if SAME_BUILD_SCUMM_M23A
     ; Camera publication is a normal logical-frame phase after script/actor
@@ -83,8 +196,40 @@ Same_Frame_Run:
     inc
     sta.l SAME_SCUMM_CAMERA_FRAME_PHASE_COUNT
     jsr ScummV5_Camera_Update
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0107
+    sta.l SAME_RESET_DIAG_SP_STAGE
+    plp
+    tsc
+    sta.l SAME_RESET_DIAG_SP_CURRENT
+    jsr Same_Reset_Diag_CheckStack
+    bcc Same_Frame_Run__sp_ok_07
+    jmp Same_Reset_Diag_StackFailure
+Same_Frame_Run__sp_ok_07:
+    .a16
+    .i16
+.endif
     .endif
     jsr Same_Kernel_DrainEvents
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0108
+    sta.l SAME_RESET_DIAG_SP_STAGE
+    plp
+    tsc
+    sta.l SAME_RESET_DIAG_SP_CURRENT
+    jsr Same_Reset_Diag_CheckStack
+    bcc Same_Frame_Run__sp_ok_08
+    jmp Same_Reset_Diag_StackFailure
+Same_Frame_Run__sp_ok_08:
+    .a16
+    .i16
+.endif
 .include "../generated/video_overlay_frame.inc.pasm"
     .include "../generated/video_backend_frame.inc.pasm"
     .if SAME_BUILD_SCUMM_ROOM_VISUAL && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
@@ -92,6 +237,20 @@ Same_Frame_Run:
     .endif
     .if !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsr Same_Audio_Process
+.if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
+    php
+    rep #$20
+    .a16
+    lda #$0109
+    sta.l SAME_RESET_DIAG_SP_STAGE
+    plp
+    tsc
+    sta.l SAME_RESET_DIAG_SP_CURRENT
+    jsr Same_Reset_Diag_CheckStack
+    bcc Same_Frame_Run__sp_ok_09
+    jmp Same_Reset_Diag_StackFailure
+Same_Frame_Run__sp_ok_09:
+.endif
     .endif
     plp
     rts

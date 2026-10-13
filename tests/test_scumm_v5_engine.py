@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 from pathlib import Path
 import json
+import struct
 import unittest
 
+from examples.resources.scumm_v5.room_bundle_fixture import room_with_load_ego_entry
 from same.engine import EngineHost
 from same.engines import default_registry
 from same.engines.scumm_v5.engine import (
@@ -14,6 +17,7 @@ from same.engines.scumm_v5.engine import (
     RoomObjectState,
     ScriptSlot,
 )
+from same.engines.scumm_v5.cooked_room import ScriptChunkInput, encode_cooked_room
 from same.engines.scumm_v5.room import ScummV5RoomObject, ScummV5Walkbox
 from same.errors import EngineExecutionError, SaveFormatError
 from same.profile import load_profile
@@ -23,6 +27,54 @@ from same.video import HostEvidenceBackend, PresentRecord, PresentRequest, Rect
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOM = (ROOT / "examples/resources/scumm_v5/room0.sc5r").read_bytes()
+
+
+def _cooked_room_resources(room: int, payload: bytes) -> dict[str, bytes]:
+    profile_path = ROOT / "examples/profiles/scumm_v5_conformance.json"
+    profile_bytes = profile_path.read_bytes()
+    profile = load_profile(profile_path)
+    profile_sha = hashlib.sha256(profile_bytes).hexdigest()
+    game_sha = hashlib.sha256(
+        f"{profile.engine_id}\0{profile.game_id}\0{profile.variant}".encode()
+    ).hexdigest()
+    source_hashes = {
+        name: hashlib.sha256(f"copyright-free loadRoomWithEgo fixture {name}".encode()).hexdigest()
+        for name in ("archive", "index", "data")
+    }
+    scripts = []
+    offset = 0
+    while offset < len(payload):
+        tag = payload[offset:offset + 4]
+        size = struct.unpack_from(">I", payload, offset + 4)[0]
+        if tag in {b"ENCD", b"EXCD"}:
+            kind = tag.decode("ascii")
+            number = 10002 if kind == "ENCD" else 10001
+            scripts.append(ScriptChunkInput(
+                kind, number, f"room.{room}/{kind}", offset, 8, size - 8,
+            ))
+        offset += size
+    record = encode_cooked_room(
+        payload,
+        room=room,
+        flags=0,
+        original_room_file_offset=0,
+        profile_sha256=profile_sha,
+        game_identity_sha256=game_sha,
+        archive_sha256=source_hashes["archive"],
+        index_sha256=source_hashes["index"],
+        data_sha256=source_hashes["data"],
+        scripts=tuple(scripts),
+    )
+    manifest = json.dumps({
+        "schema": "same_scumm_v5_cooked_rooms_v1",
+        "profile": {"sha256": profile_sha, "identity_sha256": game_sha},
+        "source": {f"{name}_sha256": value for name, value in source_hashes.items()},
+    }, sort_keys=True).encode()
+    return {
+        f"room.{room}": payload,
+        f"cooked.room.{room}": record,
+        "cooked.rooms.manifest": manifest,
+    }
 
 
 class ScummV5EngineTests(unittest.TestCase):
@@ -43,9 +95,10 @@ class ScummV5EngineTests(unittest.TestCase):
         talk_runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
         overflow = talk_runtime.split("ScummV5_Talk_StoreTextByte_Far:", 1)[1]
         overflow = overflow.split("ScummV5_Talk_StoreTextByte_Far__space:", 1)[0]
-        self.assertIn("SAME_BUILD_SCUMM_SCENARIO_FIXTURE", overflow)
-        self.assertIn("lda.l SAME_SCUMM_C23_RAW_INDEX\n    inc\n    sta.l SAME_SCUMM_C23_RAW_INDEX", overflow)
-        self.assertNotIn("beq ScummV5_Talk_StoreTextByte_Far__full", overflow)
+        self.assertIn("SAME_SCUMM_C23_TEXT_TRUNCATED", overflow)
+        self.assertIn("cmp #$FF", overflow)
+        self.assertIn("lda.l SAME_SCUMM_C23_RAW_INDEX\n    cmp #$FF\n    beq ScummV5_Talk_StoreTextByte_Far__full\n    inc", overflow)
+        self.assertIn("ScummV5_Talk_StoreTextByte_Far__full:", talk_runtime)
         self.assertIn("SAME_SCUMM_TALK_CONTROL_COUNT", talk_runtime)
         self.assertIn("SAME_SCUMM_TALK_CONTROL_FIRST_POS", talk_runtime)
 
@@ -53,10 +106,65 @@ class ScummV5EngineTests(unittest.TestCase):
         talk_runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
         begin = talk_runtime.split("ScummV5_Talk_Begin_Far__length_nonzero:", 1)[1]
         begin = begin.split("ScummV5_Talk_Begin_Far__length_valid:", 1)[0]
-        self.assertIn("bra ScummV5_Talk_Begin_Far__length_valid", begin)
-        self.assertIn("SAME_BUILD_SCUMM_SCENARIO_FIXTURE", begin)
-        production = begin.split(".if SAME_BUILD_SCUMM_SCENARIO_FIXTURE", 1)[1]
-        self.assertIn("SAME_SCUMM_TALK_MAX_RAW", production)
+        self.assertIn("SAME_SCUMM_C23_TEXT_TRUNCATED", begin)
+        self.assertIn("SAME_SCUMM_TALK_MAX_RAW", begin)
+        self.assertIn("ScummV5_Talk_Begin_Far__not_truncated", talk_runtime)
+        self.assertIn("SAME_SCUMM_TALK_HAVE_MSG", talk_runtime)
+        self.assertIn("SAME_SCUMM_TALK_CURSOR", talk_runtime)
+        self.assertIn("ScummV5_Talk_Begin_Far__message_ready", talk_runtime)
+
+    def test_truncated_single_embedded_wait_keeps_two_segment_lifetime(self) -> None:
+        talk_runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
+        print_runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        record = talk_runtime.split("ScummV5_Talk_StoreTextByte_Far:", 1)[1]
+        record = record.split("ScummV5_Talk_StoreTextByte_Far__not_pending:", 1)[0]
+        self.assertRegex(
+            record,
+            r"lda\.l SAME_SCUMM_C23_RAW_INDEX\s+and #\$00FF\s+dec\s+"
+            r"sta\.l SAME_SCUMM_TALK_CONTROL_FIRST_POS",
+        )
+        begin = talk_runtime.split("ScummV5_Talk_Begin_Far__truncated_wait:", 1)[1]
+        begin = begin.split("ScummV5_Talk_Begin_Far__truncated_ready:", 1)[0]
+        self.assertIn("SAME_SCUMM_TALK_CONTROL_FIRST_POS", begin)
+        self.assertIn("adc #$0002", begin)
+        self.assertIn("lda #$FF\n    sta.l SAME_SCUMM_TALK_HAVE_MSG", begin)
+        continued = talk_runtime.split("ScummV5_Talk_Continue_Far:", 1)[1]
+        continued = continued.split("ScummV5_Talk_Continue_Far__scan:", 1)[0]
+        self.assertIn("SAME_SCUMM_C23_TEXT_TRUNCATED", continued)
+        self.assertIn("SAME_SCUMM_TALK_RAW_LENGTH", continued)
+        self.assertIn("ScummV5_Talk_Continue_Far__publish", continued)
+        done = print_runtime.split("ScummV5_Op_Print__text_done:", 1)[1]
+        done = done.split("ScummV5_Op_Print__text_length_supported:", 1)[0]
+        self.assertIn("cmp #$01", done)
+        self.assertIn("SAME_SCUMM_TALK_CONTROL_FIRST_POS", done)
+        self.assertIn("SAME_SCUMM_C23_RAW_INDEX", done)
+
+    def test_host_long_actor_talk_preserves_embedded_wait_after_prefix_overflow(self) -> None:
+        font = (ROOT / "examples/resources/scumm_v5/s3_font.char").read_bytes()
+        raw = b"A" * 40 + b"\xff\x03" + b"B" * 40 + b"\0"
+        print = bytes((0x14, 1, 0x0F)) + raw
+        script = print + bytes((0xAE, 0x02, 0x1A, 10, 0, 1, 0, 0))
+        host = self._host(script, resources={"charset.0": font})
+        host.engine.state.actors[1] = ActorState(room=0, visible=True)
+        host.engine.state.variables[37] = 4
+        host.tick()
+        talk = host.engine.state.talk
+        self.assertTrue(talk.active)
+        self.assertEqual(talk.have_msg, 0xFF)
+        self.assertEqual(talk.delay, 220)
+        self.assertEqual(host.engine.state.print_messages[0].raw, bytearray(b"A" * 40 + b"\0"))
+        for _ in range(55):
+            host.tick()
+        self.assertTrue(talk.active)
+        self.assertEqual(talk.have_msg, 1)
+        self.assertEqual(talk.delay, 220)
+        self.assertEqual(host.engine.state.print_messages[0].raw, bytearray(b"B" * 40 + b"\0"))
+        self.assertEqual(host.engine.state.variables[10], 0)
+        for _ in range(55):
+            host.tick()
+        self.assertFalse(talk.active)
+        host.tick()
+        self.assertEqual(host.engine.state.variables[10], 1)
 
     def test_wait_for_message_reuses_far_polling_boundary(self) -> None:
         runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
@@ -98,6 +206,24 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertIn("SAME_SCUMM_C4_PARENT_RETURN_MODE", nested)
         self.assertIn("lda #$01\n    sta.l SAME_SCUMM_RETURN_MODE", nested)
         self.assertIn("sta.l SAME_SCUMM_C18_NESTED", nested)
+
+    def test_no_parent_child_uses_local_return_mode_and_restores_caller_mode(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        helper = runtime.split("ScummV5_C4_RunAllocatedNoParent:\n", 1)[1].split(
+            "ScummV5_C4_RunAllocatedNoParent_FarEntry:", 1
+        )[0]
+        events = (
+            "sep #$20\n    .a8\n    lda.l SAME_SCUMM_RETURN_MODE\n    pha",
+            "lda #$01\n    sta.l SAME_SCUMM_RETURN_MODE",
+            "jsr ScummV5_Engine_RunSelected",
+            "php\n    jsr ScummV5_C4_SaveCurrentSlot",
+            "plp\n    ; Preserve the child's carry result while restoring the caller's mode.",
+            "pla\n    sta.l SAME_SCUMM_RETURN_MODE\n    rts",
+        )
+        # The helper must keep the native JSR frame alive across a yielding or
+        # stopping child, while preserving the child's carry result to caller.
+        positions = [helper.index(event) for event in events]
+        self.assertEqual(positions, sorted(positions))
 
     def test_scheduler_reasserts_byte_index_width_before_each_slot_scan(self) -> None:
         runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
@@ -170,6 +296,28 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertNotIn("SAME_SCUMM_PUT_ACTOR_BOXES+", runtime)
         self.assertIn("SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK", runtime)
         self.assertIn("SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK        = $7FFB65", memory)
+
+    def test_putactor_geometry_success_restores_word_accumulator_width(self) -> None:
+        generator = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5_matrix_far.pasm").read_text()
+        body = runtime.split("ScummV5_PutActor_CommitAdjusted_Far:\n", 1)[1]
+        body = body.split("ScummV5_PutActor_Trace_Far:", 1)[0]
+
+        self.assertIn(
+            '"; Input X=u16 box index; output A width=8, X width=16; carry clear"',
+            generator,
+        )
+        self.assertRegex(
+            body,
+            r"jsl ScummV5_PutActor_LoadGeometry_Far\s+"
+            r"bcs ScummV5_PutActor_CommitAdjusted_Far__scale_done\s+"
+            r"rep #\$20\s+\.a16\s+"
+            r"lda\.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK\+16",
+        )
+        self.assertRegex(
+            body,
+            r"\n\s*sep #\$20\s+\.a8\s+rtl\s*$",
+        )
 
     def test_room55_accessor_and_c25_relocation_are_bounded_contracts(self) -> None:
         generator = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
@@ -281,15 +429,219 @@ class ScummV5EngineTests(unittest.TestCase):
         host.boot()
         return host
 
+    def _assert_variables(self, state: dict, expected: dict[str, int]) -> None:
+        # Most opcode fixtures assert only their authored results.  The v5
+        # frame clock also advances TMR_1..3, so omit those engine-owned
+        # values and reset-initialized heap-space unless explicitly covered.
+        actual = dict(state["variables"])
+        for engine_default in ("9", "11", "12", "13", "40"):
+            if engine_default not in expected:
+                actual.pop(engine_default, None)
+        self.assertEqual(actual, expected)
+
+    def test_boot_initializes_scumm_v5_heapspace(self) -> None:
+        host = self._host(bytes((0x00,)))
+        self.assertEqual(host.engine.state.variables[40], 1400)
+
+    def test_boot_initializes_scumm_v5_current_lights(self) -> None:
+        host = self._host(bytes((0x00,)))
+        self.assertEqual(host.engine.state.variables[9], 0x000B)
+
+    def test_v5_debug_opcode_emits_diagnostic_without_game_state_mutation(self) -> None:
+        host = self._host(bytes((0x6B, 0x34, 0x12, 0x00)))
+        before = host.engine.inspect_state()
+        host.tick()
+        after = host.engine.inspect_state()
+        self.assertEqual(host.services.debug.log[-1], {
+            "kind": "marker", "name": "scumm_v5.script_debug", "value": 0x1234,
+        })
+        self.assertTrue(all(after["variables"].get(key) == value
+                            for key, value in before["variables"].items()))
+        self.assertEqual(after["object_states"], before["object_states"])
+
     def test_bundled_real_opcode_loop(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/boot.scrp").read_bytes()
         host = self._host(script)
         for _ in range(5):
             host.tick()
         state = host.engine.inspect_state()
-        self.assertEqual(state["variables"], {"20": 5})
+        self._assert_variables(state, {"20": 5})
         self.assertEqual(state["room"], 0)
         self.assertEqual(host.services.audio.music_track, 1)
+
+    def test_pickup_object_decodes_both_operands_and_transfers_to_ego(self) -> None:
+        # Each v5 family bit independently selects a variable form for the
+        # word object operand and byte room operand.  The following breakHere
+        # makes the saved PC prove that both operands were consumed.
+        cases = (
+            (0x25, bytes((0x58, 0, 0)), 5),  # direct object, direct room
+            (0x65, bytes((0x58, 0, 3, 0)), 6),  # direct object, variable room
+            (0xA5, bytes((2, 0, 0)), 5),  # variable object, direct room
+            (0xE5, bytes((2, 0, 3, 0)), 6),  # variable object and room
+        )
+        for opcode, operands, expected_pc in cases:
+            with self.subTest(opcode=hex(opcode)):
+                script = bytes((opcode,)) + operands + bytes((0x80,))
+                host = self._host(script)
+                slot = host.engine.state.scripts[0]
+                host.engine.state.variables[1] = 2  # VAR_EGO
+                host.engine.state.variables[2] = 88
+                host.engine.state.variables[3] = 0  # room 0 means current room
+                host.engine.state.room_objects[88] = RoomObjectState(
+                    88, 10, 10, 8, 8, 12, 14, state=1
+                )
+                owners = bytearray(host.engine._object_owners)
+                owners[88] = 0x0F  # room-owned before pickup
+                host.engine._object_owners = bytes(owners)
+                host.engine.state.object_states[88] = 0
+                host.engine.state.object_draw_queue[:] = [88, 89]
+
+                host.tick()
+
+                self.assertEqual(slot.pc, expected_pc)
+                self.assertTrue(slot.yielded)
+                self.assertEqual(host.engine._object_owners[88], 2)
+                self.assertEqual(host.engine.state.object_states[88], 1)
+                self.assertNotIn(88, host.engine.state.room_objects)
+                self.assertIn(32, host.engine.state.object_classes[88])
+                self.assertEqual(host.engine.state.object_draw_queue, [])
+
+    def test_set_owner_of_direct_variable_modes_and_save_restore(self) -> None:
+        cases = (
+            (0x29, bytes((88, 0, 2)), 5),
+            (0x69, bytes((88, 0, 3, 0)), 6),
+            (0xA9, bytes((2, 0, 2)), 5),
+            (0xE9, bytes((2, 0, 3, 0)), 6),
+        )
+        for opcode, operands, expected_pc in cases:
+            with self.subTest(opcode=f"0x{opcode:02x}"):
+                host = self._host(bytes((opcode,)) + operands + bytes((0x80,)))
+                host.engine.state.variables[2] = 88
+                host.engine.state.variables[3] = 7
+                host.tick()
+                self.assertEqual(host.engine.state.scripts[0].pc, expected_pc)
+                expected_owner = 7 if opcode & 0x40 else 2
+                self.assertEqual(host.engine._object_owners[88], expected_owner)
+                assert host.context is not None
+                payload = host.engine.save_state(host.context)
+                host.engine._object_owners = bytes(len(host.engine._object_owners))
+                host.engine.load_state(host.context, payload)
+                self.assertEqual(host.engine._object_owners[88], expected_owner)
+
+    def test_find_inventory_orders_global_object_ids_and_tracks_owner_changes(self) -> None:
+        script = bytearray()
+
+        def set_var(number: int, value: int) -> None:
+            script.extend((0x1A, number & 0xFF, number >> 8,
+                           value & 0xFF, value >> 8))
+
+        def set_owner(object_id: int, owner: int) -> None:
+            script.extend((0x29, object_id & 0xFF, object_id >> 8, owner))
+
+        def find_direct(result: int, owner: int, ordinal: int) -> None:
+            script.extend((0x3D, result & 0xFF, result >> 8, owner, ordinal))
+
+        set_var(10, 2)
+        set_var(11, 1)
+        set_var(12, 0)
+        for object_id in (70, 72, 75):
+            set_owner(object_id, 2)
+        find_direct(50, 2, 0)
+        find_direct(51, 2, 1)
+        find_direct(52, 2, 3)  # out of range returns zero
+        find_direct(53, 3, 0)  # empty owner's inventory returns zero
+        script.extend((
+            0x7D, 54, 0, 2, 11, 0,  # direct owner, variable ordinal
+            0xBD, 55, 0, 10, 0, 2,  # variable owner, direct ordinal
+        ))
+        set_owner(72, 3)
+        set_var(10, 3)
+        find_direct(56, 2, 1)
+        find_direct(57, 3, 0)
+        script.extend((0xFD, 58, 0, 10, 0, 12, 0, 0xA0))
+
+        host = self._host(bytes(script))
+        host.tick()
+        variables = host.engine.state.variables
+        self.assertEqual(
+            [variables[index] for index in range(50, 59)],
+            [70, 72, 0, 0, 72, 75, 75, 72, 72],
+        )
+        self.assertEqual(host.engine._object_owners[72], 3)
+        self.assertFalse(host.engine.state.scripts[0].active)
+
+    def test_pickup_ownership_survives_save_restore_on_fresh_host(self) -> None:
+        script = bytes((
+            0x1A, 1, 0, 2, 0,       # ego = 2
+            0x1A, 2, 0, 88, 0,      # first pickup target
+            0xA5, 2, 0, 0, 0x80,    # pickupObject(variable object, current room)
+            0x1A, 2, 0, 89, 0,
+            0xA5, 2, 0, 0,
+            0x80,
+        ))
+
+        def prepare(host: EngineHost) -> None:
+            host.engine.state.room_objects[88] = RoomObjectState(
+                88, 8, 8, 4, 4, 10, 12, state=0
+            )
+            host.engine.state.room_objects[89] = RoomObjectState(
+                89, 16, 8, 4, 4, 18, 12, state=0
+            )
+            owners = bytearray(host.engine._object_owners)
+            owners[88] = owners[89] = 0x0F
+            host.engine._object_owners = bytes(owners)
+            host.engine.state.object_draw_queue[:] = [88, 89]
+
+        host = self._host(script)
+        prepare(host)
+        host.tick()
+        self.assertEqual(host.engine._object_owners[88], 2)
+        self.assertEqual(host.engine._object_owners[89], 0x0F)
+        self.assertNotIn(88, host.engine.state.room_objects)
+        earlier = host.save(0)
+
+        host.tick()
+        self.assertEqual(host.engine._object_owners[89], 2)
+        self.assertNotIn(89, host.engine.state.room_objects)
+        host.load(0)
+        self.assertEqual(host.engine._object_owners[88], 2)
+        self.assertEqual(host.engine._object_owners[89], 0x0F)
+        self.assertIn(89, host.engine.state.room_objects)
+
+        fresh = self._host(script)
+        prepare(fresh)
+        fresh.services.saves.write(0, earlier.pack())
+        fresh.load(0)
+        self.assertEqual(fresh.engine._object_owners[88], 2)
+        self.assertEqual(fresh.engine._object_owners[89], 0x0F)
+        self.assertNotIn(88, fresh.engine.state.room_objects)
+        self.assertIn(89, fresh.engine.state.room_objects)
+        fresh.tick()
+        self.assertEqual(fresh.engine._object_owners[89], 2)
+
+    def test_old_save_defaults_new_pickup_ownership_to_archive_defaults(self) -> None:
+        import json
+
+        from same.savegame import SaveEnvelope
+
+        host = self._host(bytes((0x80,)))
+        owners = bytearray(host.engine._object_owners)
+        owners[88] = 2
+        host.engine._object_owners = bytes(owners)
+        envelope = host.save(0)
+        payload = json.loads(envelope.payload)
+        payload.pop("object_owners")
+        payload.pop("dynamic_box_routes")
+        old_schema_payload = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        old_save = SaveEnvelope(
+            envelope.engine_id, envelope.game_id, envelope.schema, old_schema_payload
+        )
+
+        fresh = self._host(bytes((0x80,)))
+        fresh.services.saves.write(0, old_save.pack())
+        fresh.load(0)
+        self.assertEqual(fresh.engine._object_owners[88], 0)
+        self.assertIsNone(fresh.engine._dynamic_box_routes)
 
     def test_c22_room_zero_is_a_resource_less_null_scene_and_saves(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/c22_null_room.scrp").read_bytes()
@@ -676,13 +1028,217 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(host.engine.state.actors[3].to_dict(), untouched)
 
         for payload in (bytes((0x14, 1, 0x0F, ord("X"))),
-                        bytes((0x14, 1, 0x0F)) + b"X" * 32 + b"\0"):
+                        bytes((0x14, 1, 0x0F)) + b"X" * 255 + b"\0"):
             candidate = self._host(payload, resources={"charset.0": font})
             candidate.engine.state.actors[1] = ActorState(room=0, visible=True)
             with self.assertRaises(EngineExecutionError):
                 candidate.tick()
             self.assertFalse(candidate.engine.state.talk.active)
             self.assertEqual(candidate.engine.state.talk.events, [])
+
+    def test_long_actor_talk_consumes_full_encoded_string(self) -> None:
+        font = (ROOT / "examples/resources/scumm_v5/s3_font.char").read_bytes()
+        raw = b"A" * 40 + b"\0"
+        script = bytes((0x14, 1, 0x0F)) + raw + bytes((0x00,))
+        host = self._host(script, resources={"charset.0": font})
+        host.engine.state.actors[1] = ActorState(room=0, visible=True)
+        host.engine.state.variables[37] = 4
+
+        host.tick()
+
+        self.assertEqual(host.engine.state.scripts[0].pc, len(script))
+        self.assertTrue(host.engine.state.talk.active)
+        self.assertEqual(host.engine.state.talk.delay, 220)
+        self.assertEqual(host.engine.state.print_messages[0].raw, bytearray(raw))
+        self.assertEqual(host.engine.state.talk.raw, bytearray(raw))
+        self.assertEqual(host.engine.state.talk.events[0].kind, "start")
+
+    def test_load_room_with_ego_places_ego_before_yielded_entry_resumes(self) -> None:
+        entry = bytes((
+            0x9A, 15, 0, 38, 0,  # preserve VAR_WALKTO_OBJ for assertion
+            0x80,                  # ENCD yields once
+            0x9A, 16, 0, 38, 0,  # resumed ENCD still sees the entry object
+            0x00,
+        ))
+        program = bytes((
+            0x24, 100, 0, 1,     # direct object and room
+            0xFF, 0xFF, 0xFF, 0xFF,  # no post-entry walk
+            0x00,
+        ))
+        host = self._host(
+            program,
+            resources=_cooked_room_resources(
+                1, room_with_load_ego_entry(entry)
+            ),
+        )
+        actor = host.engine.state.actors[1] = ActorState(
+            room=0, visible=True, position=(91, 73), facing=180
+        )
+        host.engine.state.camera_y = 19
+        host.engine.state.camera_destination_y = 23
+        host.engine.state.variables[1] = 1
+        host.engine.state.variables[38] = 77
+        host.engine.queue_sentence(4, 100)
+
+        host.tick()
+
+        self.assertEqual(host.engine.state.current_room, 1)
+        self.assertEqual(host.engine.state.variables[15], 100)
+        self.assertEqual(host.engine.state.variables[16], 0)
+        self.assertEqual(host.engine.state.variables[38], 0)
+        self.assertEqual(actor.room, 1)
+        self.assertEqual(actor.position, (4, 1))
+        self.assertEqual(actor.facing, 90)
+        self.assertEqual(actor.moving, 0)
+        self.assertTrue(actor.visible)
+        self.assertEqual(host.engine.state.camera_follow_actor, 1)
+        self.assertEqual(host.engine.state.camera_mode, 1)
+        # This tiny room clamps horizontal camera position to its legal min.
+        self.assertEqual(host.engine.state.camera_x, 160)
+        self.assertEqual(host.engine.state.camera_destination_x, 160)
+        self.assertEqual(host.engine.state.camera_y, 19)
+        self.assertEqual(host.engine.state.camera_destination_y, 23)
+        self.assertEqual(host.engine.state.sentences, [])
+        self.assertTrue(any(slot.script_kind == "ENCD" and slot.yielded
+                            for slot in host.engine.state.scripts))
+
+        host.tick()
+
+        self.assertEqual(host.engine.state.variables[16], 0)
+        self.assertEqual(host.engine.state.variables[38], 0)
+
+    def test_load_room_with_ego_preserves_global_across_exit_and_second_entry(self) -> None:
+        room1_entry = bytes((
+            0x9A, 15, 0, 38, 0,  # Entry object is visible before ENCD yields.
+            0x80,
+            0x9A, 16, 0, 38, 0,  # Entry postamble clears it before resume.
+            0x00,
+        ))
+        room2_entry = bytes((
+            0x9A, 17, 0, 38, 0,
+            0x80,
+            0x9A, 18, 0, 38, 0,
+            0x00,
+        ))
+        room1_exit = bytes((0x1A, 19, 0, 1, 0, 0x00))
+        program = bytes((
+            0x24, 100, 0, 1, 0xFF, 0xFF, 0, 0,  # direct room/object, no walk
+            0x1A, 20, 0, 101, 0,
+            0x1A, 21, 0, 2, 0,
+            0xE4, 20, 0, 21, 0, 0xFF, 0xFF, 0, 0,  # variable room/object
+            0x00,
+        ))
+        resources = {
+            **_cooked_room_resources(
+                1, room_with_load_ego_entry(
+                    room1_entry, object_id=100, exit_script=room1_exit,
+                ),
+            ),
+            **_cooked_room_resources(
+                2, room_with_load_ego_entry(room2_entry, object_id=101),
+            ),
+        }
+        host = self._host(program, resources=resources)
+        actor = host.engine.state.actors[1] = ActorState(room=0, visible=True)
+        host.engine.state.variables[1] = 1
+        host.engine.state.variables[38] = 77
+
+        for _ in range(12):
+            host.tick()
+            if (host.engine.state.current_room == 2
+                    and host.engine.state.variables[18] == 0
+                    and not host.engine.state.scripts):
+                break
+            if host.lifecycle.value != "running":
+                break
+
+        state = host.engine.inspect_state()
+        self.assertEqual(host.engine.state.current_room, 2)
+        self._assert_variables(state, {
+            "1": 1, "15": 100, "17": 101, "19": 1, "20": 101, "21": 2,
+        })
+        self.assertEqual(host.engine.state.variables[16], 0)
+        self.assertEqual(host.engine.state.variables[18], 0)
+        self.assertEqual(host.engine.state.variables[38], 0)
+        self.assertEqual(actor.room, 2)
+        self.assertEqual(actor.position, (4, 1))
+        self.assertTrue(actor.visible)
+        self.assertEqual(host.engine.state.camera_follow_actor, 1)
+        self.assertEqual(host.engine.state.camera_mode, 1)
+
+    def test_load_room_with_ego_flagged_operands_and_optional_walk(self) -> None:
+        program = bytes((
+            0xE4, 2, 0, 3, 0,  # object and room are variable operands
+            6, 0, 1, 0,       # walk destination x=6, y=1
+            0x00,
+        ))
+        host = self._host(
+            program,
+            resources=_cooked_room_resources(
+                1, room_with_load_ego_entry(b"\x00")
+            ),
+        )
+        host.engine.state.variables[1] = 1
+        host.engine.state.variables[2] = 100
+        host.engine.state.variables[3] = 1
+        host.engine.state.actors[1] = ActorState(ignore_boxes=True)
+
+        host.tick()
+
+        actor = host.engine.state.actors[1]
+        self.assertEqual(host.engine.state.current_room, 1)
+        self.assertEqual(host.engine.state.variables[38], 0)
+        self.assertEqual(actor.walk_destination, (6, 1))
+        self.assertNotEqual(actor.moving, 0)
+
+    def test_load_room_with_ego_signed_walk_coordinates_and_minus_one_sentinel(self) -> None:
+        def run(x: int, y: int) -> ActorState:
+            encoded = bytes((
+                0x24, 100, 0, 1,
+                x & 0xFF, (x >> 8) & 0xFF,
+                y & 0xFF, (y >> 8) & 0xFF,
+                0x00,
+            ))
+            host = self._host(
+                encoded,
+                resources=_cooked_room_resources(
+                    1, room_with_load_ego_entry(b"\x00")
+                ),
+            )
+            host.engine.state.variables[1] = 1
+            host.engine.state.actors[1] = ActorState(ignore_boxes=True)
+            host.tick()
+            return host.engine.state.actors[1]
+
+        negative_target = run(-2, -7)
+        self.assertEqual(negative_target.walk_destination, (-2, -7))
+        self.assertNotEqual(negative_target.moving, 0)
+
+        sentinel = run(-1, 7)
+        self.assertEqual(sentinel.moving, 0)
+
+    def test_load_room_with_ego_rejects_missing_entry_without_partial_transition(self) -> None:
+        program = bytes((
+            0x24, 101, 0, 1,
+            0xFF, 0xFF, 0xFF, 0xFF,
+            0x00,
+        ))
+        host = self._host(
+            program,
+            resources=_cooked_room_resources(
+                1, room_with_load_ego_entry(b"\x00")
+            ),
+        )
+        actor = host.engine.state.actors[1] = ActorState(
+            room=0, visible=True, position=(91, 73), facing=180
+        )
+        host.engine.state.variables[1] = 1
+        host.engine.state.variables[38] = 77
+        with self.assertRaisesRegex(EngineExecutionError, "entry object 101 is absent"):
+            host.tick()
+        self.assertEqual(host.engine.state.current_room, 0)
+        self.assertEqual((actor.room, actor.position, actor.facing), (0, (91, 73), 180))
+        self.assertEqual(host.engine.state.variables[38], 77)
 
     def test_arithmetic_subset_uses_real_opcode_numbers(self) -> None:
         script = bytes(
@@ -695,7 +1251,7 @@ class ScummV5EngineTests(unittest.TestCase):
         )
         host = self._host(script)
         host.tick()
-        self.assertEqual(host.engine.inspect_state()["variables"], {"1": 45})
+        self._assert_variables(host.engine.inspect_state(), {"1": 45})
 
     def test_independent_core_fixture_has_exact_five_frame_trace(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/core_conformance.scrp").read_bytes()
@@ -715,7 +1271,7 @@ class ScummV5EngineTests(unittest.TestCase):
             self.assertEqual(slot["delay"], delay)
             self.assertEqual(slot["active"], active)
             self.assertEqual(slot["yielded"], yielded)
-            self.assertEqual(state["variables"], variables)
+            self._assert_variables(state, variables)
             self.assertEqual(state["operations"], operations)
 
     def test_c2_extended_fixture_has_exact_signed_trace(self) -> None:
@@ -732,7 +1288,7 @@ class ScummV5EngineTests(unittest.TestCase):
             state = host.engine.inspect_state()
             slot = state["scripts"][0]
             self.assertEqual((slot["pc"], slot["delay"], slot["active"], slot["yielded"]), (pc, delay, active, yielded))
-            self.assertEqual(state["variables"], variables)
+            self._assert_variables(state, variables)
             self.assertEqual(state["operations"], operations)
 
     def test_c2_failure_fixtures_fail_closed(self) -> None:
@@ -767,15 +1323,31 @@ class ScummV5EngineTests(unittest.TestCase):
         expected = [
             (35, True, {"0": 2, "1": -32768, "2": 1, "6": 5, "7": 0x1234}, 7),
             (41, True, {"0": 2, "1": 32767, "2": 1, "6": 5, "7": 0x1234}, 9),
-            (134, False, {"0": 2, "1": 4681, "2": 1, "3": 7, "4": 255, "5": 255, "6": 6, "7": 0x1234}, 26),
+            (152, False, {"0": 2, "1": 4681, "2": 1, "3": 7, "4": 255, "5": 255, "6": 6, "7": 0x1234, "8": 22}, 28),
         ]
         for pc, active, variables, operations in expected:
             host.tick()
             state = host.engine.inspect_state()
             slot = state["scripts"][0]
             self.assertEqual((slot["pc"], slot["active"]), (pc, active))
-            self.assertEqual(state["variables"], variables)
+            self._assert_variables(state, variables)
             self.assertEqual(state["operations"], operations)
+
+    def test_compare_preserves_lhs_when_rhs_is_a_variable(self) -> None:
+        # Unequal variable operands must take the false branch.  The native
+        # ReadVariableReference helper uses LHS as scratch while resolving RHS.
+        script = bytes.fromhex(
+            "1a 00 00 0f 00 "
+            "1a 01 00 01 00 "
+            "c8 00 00 01 00 06 00 "
+            "1a 02 00 0b 00 00 "
+            "1a 02 00 16 00 00"
+        )
+        host = self._host(script)
+        host.tick()
+        state = host.engine.inspect_state()
+        self.assertEqual(state["variables"]["2"], 22)
+        self.assertEqual(state["scripts"][0]["pc"], len(script))
 
     def test_c3_bit_variable_result_is_supported(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/c3_bit_variable.scrp").read_bytes()
@@ -799,13 +1371,40 @@ class ScummV5EngineTests(unittest.TestCase):
         negative.tick()
         self.assertEqual(negative.engine.state.variables[5], 22)
 
+    def test_indexed_bit_reference_wraps_within_namespace_for_read_and_result(self) -> None:
+        # The authentic room1 ENCD uses result reference $FF00[$014C]. The
+        # namespace is carried separately from the low 12-bit address, so
+        # $0F00 + $014C addresses bit 76 after namespace-local wrapping.
+        read = self._host(bytes.fromhex(
+            "48 00 AF 4C 01 01 00 06 00 "
+            "1A 05 00 0B 00 A0 "
+            "1A 05 00 16 00 A0"
+        ))
+        read.engine.state.bit_variables[76] = True
+        read.tick()
+        state = read.engine.inspect_state()
+        self.assertEqual(state["variables"]["5"], 11)
+        self.assertEqual(state["bits"], [76])
+
+        # getVerbEntrypoint's authentic operand shape writes through the same
+        # indexed result resolver. A missing object returns zero; this remains
+        # a valid query and clears bit 76 instead of raising an error.
+        result = self._host(bytes.fromhex(
+            "0B 00 FF 4C 01 FF FF FF 07 00"
+        ))
+        result.engine.state.bit_variables[76] = True
+        result.tick()
+        result_state = result.engine.inspect_state()
+        self.assertNotIn(76, result_state["bits"])
+        self.assertEqual(result_state["scripts"][0]["pc"], 10)
+
     def test_c7_cursor_command_and_bit_variables_are_exact_and_saved(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/c7_cursor_bits.scrp").read_bytes()
         host = self._host(script)
         host.tick()
         state = host.engine.inspect_state()
         self.assertEqual(state["bits"], [5])
-        self.assertEqual(state["variables"], {"0": 1, "1": 7, "52": 1, "53": 1})
+        self._assert_variables(state, {"0": 1, "1": 7, "52": 1, "53": 1})
         self.assertEqual(
             state["cursor_command"],
             {
@@ -831,7 +1430,7 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
         state = host.engine.inspect_state()
         expected_raw = [0x41, 0x5A, 0xFF, 0x04, 0x34, 0x12, 0x43, 0x00]
-        self.assertEqual(state["variables"], {"0": 5, "1": 1, "2": 90, "3": 12, "4": 66, "5": 90, "6": 4})
+        self._assert_variables(state, {"0": 5, "1": 1, "2": 90, "3": 12, "4": 66, "5": 90, "6": 4})
         self.assertEqual(state["strings"]["5"]["raw"], expected_raw)
         self.assertEqual(state["strings"]["6"]["raw"], expected_raw)
         self.assertNotIn("7", state["strings"])
@@ -849,9 +1448,15 @@ class ScummV5EngineTests(unittest.TestCase):
         host.load(0)
         self.assertEqual(host.engine.inspect_state()["strings"]["5"]["raw"], expected_raw)
 
+    def test_c8_reserved_selector_is_a_v5_noop_and_preserves_following_opcode(self) -> None:
+        # ScummVM's v5 default arm consumes the selector only.
+        host = self._host(bytes((0x27, 0x20, 0x1A, 0, 0, 42, 0, 0x80)))
+        host.tick()
+        state = host.engine.inspect_state()
+        self._assert_variables(state, {"0": 42})
+
     def test_c8_string_ops_fail_closed_on_malformed_or_missing_state(self) -> None:
         cases = (
-            ("unknown sub-op", bytes((0x27, 0x00)), r"sub-op 0 is not implemented"),
             ("identical copy", bytes((0x27, 0x02, 5, 5)), r"source and destination are identical"),
             ("missing get", bytes((0x27, 0x04, 0, 0, 5, 0)), r"string 5 does not exist"),
             ("missing set", bytes((0x27, 0x03, 5, 0, 65)), r"string 5 does not exist"),
@@ -874,7 +1479,7 @@ class ScummV5EngineTests(unittest.TestCase):
         host = self._host(script)
         host.tick()
         state = host.engine.inspect_state()
-        self.assertEqual(state["variables"], {})
+        self._assert_variables(state, {})
         self.assertEqual(state["strings"]["5"]["raw"], [0, 0])
 
     def test_c9_set_var_range_byte_word_indexed_local_and_bits(self) -> None:
@@ -882,10 +1487,7 @@ class ScummV5EngineTests(unittest.TestCase):
         host = self._host(script)
         host.tick()
         state = host.engine.inspect_state()
-        self.assertEqual(
-            state["variables"],
-            {"0": 2, "6": 1, "7": 255, "8": 128},
-        )
+        self._assert_variables(state, {"0": 2, "6": 1, "7": 255, "8": 128})
         self.assertEqual(state["scripts"][0]["locals"][:3], [-1, 32767, -32768])
         self.assertEqual(state["bits"], [6, 7])
 
@@ -1094,6 +1696,7 @@ class ScummV5EngineTests(unittest.TestCase):
         saved = host.save(0)
 
         host.tick()
+        host.tick()
         expected = host.engine.inspect_state()
         self.assertEqual(expected["scripts"][0]["pc"], 76)
         self.assertEqual(
@@ -1107,10 +1710,12 @@ class ScummV5EngineTests(unittest.TestCase):
                 "last_object": [42, 0x1234],
             },
         )
-        host.engine.state.resource_ops.loaded["sound"].clear()
-        host.load(0)
-        host.tick()
-        replayed = host.engine.inspect_state()
+        fresh = self._host(fixture, resources=resources)
+        fresh.services.saves.write(0, saved.pack())
+        fresh.load(0)
+        fresh.tick()
+        fresh.tick()
+        replayed = fresh.engine.inspect_state()
         for key in ("resource_ops", "resource_mapper", "scripts", "operations", "frames"):
             self.assertEqual(replayed[key], expected[key])
         self.assertEqual(saved.schema, 6)
@@ -1158,6 +1763,7 @@ class ScummV5EngineTests(unittest.TestCase):
         saved = host.save(0)
 
         host.tick()
+        host.tick()
         expected = host.engine.inspect_state()
         actor2 = expected["actors"]["2"]
         self.assertEqual(actor2["costume"], 55)
@@ -1166,8 +1772,10 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(actor2["walk_speed"], [8, 2])
         self.assertEqual(actor2["frames"], [1, 2, 3, 4, 5])
         self.assertEqual((actor2["force_clip"], actor2["ignore_boxes"]), (0, False))
+        self.assertEqual(host.engine.state.variables[4:8], [7, 55, 35, 24])
         host.engine.state.actors.clear()
         host.load(0)
+        host.tick()
         host.tick()
         replayed = host.engine.inspect_state()
         for key in ("actors", "scripts", "operations", "frames"):
@@ -1196,8 +1804,8 @@ class ScummV5EngineTests(unittest.TestCase):
         cases = (
             (0x43, 0x1234, 0x0007),  # direct getActorX
             (0x23, 0x2345, 0x0007),  # direct getActorY
-            (0xC3, 0x1234, 0x000B),  # variable getActorX, Var[11] = actor 7
-            (0xA3, 0x2345, 0x000B),  # variable getActorY, Var[11] = actor 7
+            (0xC3, 0x1234, 0x0014),  # variable getActorX, Var[20] = actor 7
+            (0xA3, 0x2345, 0x0014),  # variable getActorY, Var[20] = actor 7
         )
         for opcode, expected, selector in cases:
             with self.subTest(opcode=f"${opcode:02X}"):
@@ -1205,7 +1813,7 @@ class ScummV5EngineTests(unittest.TestCase):
                 host = self._host(script)
                 host.engine.state.actors[7] = ActorState(position=(0x1234, 0x2345))
                 host.engine.state.actors[11] = ActorState(position=(0x5678, 0x6789))
-                host.engine.state.variables[11] = 7
+                host.engine.state.variables[20] = 7
                 host.tick()
 
                 self.assertEqual(host.engine.state.variables[10], expected)
@@ -1235,6 +1843,22 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
 
         self.assertEqual(host.engine.state.variables[:4], [-1, -1, -1, -1])
+        self.assertEqual(host.engine.state.scripts[0].pc, len(script))
+
+    def test_get_actor_costume_direct_variable_and_invalid_actor(self) -> None:
+        script = bytes((
+            0x71, 0, 0, 2,        # v0 = actor 2 costume, direct
+            0xF1, 1, 0, 3, 0,     # v1 = actor v3 costume, variable
+            0x71, 2, 0, 0xFF,     # invalid actor follows bounded zero policy
+            0x00,
+        ))
+        host = self._host(script)
+        host.engine.state.actors[2] = ActorState(costume=55)
+        host.engine.state.variables[3] = 2
+
+        host.tick()
+
+        self.assertEqual(host.engine.state.variables[:3], [55, 55, 0])
         self.assertEqual(host.engine.state.scripts[0].pc, len(script))
         self.assertFalse(host.engine.state.scripts[0].active)
 
@@ -1287,6 +1911,22 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
         self.assertEqual(host.engine.inspect_state()["camera_follow_actor"], 7)
         self.assertEqual(saved.schema, 6)
+
+    def test_c15_actor_follow_camera_enters_actor_room_through_room_lifecycle(self) -> None:
+        # putActorInRoom(1, 1); actorFollowCamera(1); stop. The boot/global
+        # activation survives, while the active scene changes through the
+        # normal validated room loader rather than camera state alone.
+        script = bytes((0x2D, 1, 1, 0x52, 1, 0xA0))
+        host = self._host(script, resources={"room.1": ROOM})
+        host.tick()
+
+        state = host.engine.state
+        self.assertEqual(state.current_room, 1)
+        self.assertEqual(state.actors[1].room, 1)
+        self.assertEqual(state.camera_follow_actor, 1)
+        self.assertEqual(state.camera_mode, 1)
+        self.assertFalse(state.scripts[0].active)
+        self.assertEqual(state.scripts[0].pc, len(script))
 
     def test_c15_actor_follow_camera_fails_closed(self) -> None:
         for script, message in (
@@ -1398,6 +2038,30 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(state.talk.actor, 0xFF)
         self.assertEqual(state.print_messages, [])
 
+    def test_pan_camera_to_direct_and_variable_only_updates_destination(self) -> None:
+        host = self._host(bytes((
+            0x12, 0x40, 0x01,  # panCameraTo(320)
+            0x92, 0x02, 0x00,  # panCameraTo(var[2])
+            0x00,
+        )))
+        state = host.engine.state
+        state.current_room = 1
+        state.room_ops.room_width = 640
+        state.room_ops.scroll_min_x = 160
+        state.room_ops.scroll_max_x = 480
+        state.camera_x = 160
+        state.camera_destination_x = 160
+        state.camera_last_x = 160
+        state.variables[2] = 240
+
+        host.tick()
+
+        self.assertEqual(state.camera_destination_x, 240)
+        self.assertEqual(state.camera_mode, 0)
+        self.assertTrue(state.camera_update_pending is False)
+        self.assertEqual(state.camera_x, 168)
+        self.assertEqual(state.scripts[0].pc, 7)
+
     def test_camera_lifecycle_round_trips_through_save(self) -> None:
         host = self._host(bytes((0x80,)))
         state = host.engine.state
@@ -1450,6 +2114,26 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
         self.assertEqual(host.engine.inspect_state()["object_classes"], {"300": [2, 3]})
         self.assertEqual(saved.schema, 6)
+
+    def test_set_object_name_direct_variable_control_text_and_save(self) -> None:
+        script = bytes((
+            0x1A, 0, 0, 0x34, 0x12,             # v0 = object 0x1234
+            0xD4, 0, 0,                         # setObjectName(v0, "Named")
+        )) + b"Named\xFF\x04\x34\x12\x00" + bytes((
+            0x54, 0x45, 0x23,                   # setObjectName($2345, "Direct")
+        )) + b"Direct\x00\x80\x00"
+        host = self._host(script)
+        host.tick()
+        expected = {
+            "4660": list(b"Named\xFF\x04\x34\x12\x00"),
+            "9029": list(b"Direct\x00"),
+        }
+        self.assertEqual(host.engine.inspect_state()["object_names"], expected)
+        saved = host.save(0)
+        host.engine.state.object_names.clear()
+        host.load(0)
+        self.assertEqual(host.engine.inspect_state()["object_names"], expected)
+        self.assertGreater(saved.schema, 0)
 
     def test_c16_set_class_fails_closed_on_stream_class_capacity_and_save(self) -> None:
         for script, message in (
@@ -1623,9 +2307,8 @@ class ScummV5EngineTests(unittest.TestCase):
         state = host.engine.inspect_state()
         self.assertEqual(first.operations, 6)
         self.assertEqual(state["scripts"][0]["pc"], 53)
-        self.assertEqual(
-            state["variables"],
-            {"0": 2, "1": 7, "2": -3, "3": -7, "6": -20536},
+        self._assert_variables(
+            state, {"0": 2, "1": 7, "2": -3, "3": -7, "6": -20536}
         )
         saved = host.save(0)
 
@@ -1663,14 +2346,19 @@ class ScummV5EngineTests(unittest.TestCase):
 
     def test_c19_cutscene_nested_override_and_save(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/c19_cutscene.scrp").read_bytes()
+        self.assertEqual(script[:3], bytes((0x18, 0xFD, 0x00)))
         host = self._host(script)
         host.tick()
         first = host.engine.inspect_state()
-        self.assertEqual(first["scripts"][0]["pc"], 26)
+        self.assertEqual(first["scripts"][0]["pc"], 287)
         self.assertEqual(first["scripts"][0]["cutscene_override"], 2)
         self.assertEqual(first["cutscenes"]["stack_pointer"], 2)
         self.assertEqual([item["data"] for item in first["cutscenes"]["records"]], [0x1234, 7])
-        self.assertEqual(first["cutscenes"]["records"][1]["override_pc"], 17)
+        self.assertEqual(first["cutscenes"]["records"][1]["override_pc"], 283)
+        self.assertGreater(first["cutscenes"]["records"][1]["override_pc"], 0xFF)
+        self._assert_variables(first, {"0": 7})
+        self.assertEqual(first["variables"].get("4", 0), 0)
+        self.assertEqual(first["variables"].get("6", 0), 0)
         saved = host.save(0)
         host.engine.state.cutscenes.clear()
         host.engine.state.scripts[0].cutscene_override = 0
@@ -1678,10 +2366,13 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(host.engine.inspect_state()["cutscenes"], first["cutscenes"])
         host.tick()
         terminal = host.engine.inspect_state()
-        self.assertEqual(terminal["scripts"][0]["pc"], 31)
-        self.assertEqual(terminal["scripts"][0]["cutscene_override"], 0)
-        self.assertEqual(terminal["cutscenes"]["stack_pointer"], 0)
-        self.assertEqual(terminal["variables"], {"0": 7, "4": 1})
+        self.assertEqual(terminal["scripts"][0]["pc"], 287)
+        self.assertEqual(terminal["scripts"][0]["cutscene_override"], 2)
+        self.assertEqual(terminal["cutscenes"]["stack_pointer"], 2)
+        self.assertEqual(terminal["cutscenes"]["records"][1]["override_pc"], 283)
+        self._assert_variables(terminal, {"0": 7})
+        self.assertEqual(terminal["variables"].get("4", 0), 0)
+        self.assertEqual(terminal["variables"].get("6", 0), 0)
         self.assertEqual(saved.schema, 6)
 
     def test_c19_cutscene_callbacks_and_skip_override(self) -> None:
@@ -1705,7 +2396,7 @@ class ScummV5EngineTests(unittest.TestCase):
         host = self._host(callback_main, scripts={10: start, 11: end})
         host.tick()
         state = host.engine.inspect_state()
-        self.assertEqual(state["variables"], {"1": 7, "2": 0x1234, "3": 7, "6": 0x1234, "35": 10, "36": 11})
+        self._assert_variables(state, {"1": 7, "2": 0x1234, "3": 7, "6": 0x1234, "35": 10, "36": 11})
         self.assertEqual(state["scripts"][0]["freeze_count"], 0)
         self.assertEqual(state["cutscenes"]["stack_pointer"], 0)
 
@@ -1726,7 +2417,7 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(host.engine.inspect_state()["scripts"][0]["pc"], 11)
         host.tick(input_word=0x0040)
         skipped = host.engine.inspect_state()
-        self.assertEqual(skipped["variables"], {"8": 9})
+        self._assert_variables(skipped, {"8": 9})
         self.assertEqual(skipped["cutscenes"]["stack_pointer"], 0)
         self.assertEqual(skipped["scripts"][0]["cutscene_override"], 0)
 
@@ -1762,7 +2453,7 @@ class ScummV5EngineTests(unittest.TestCase):
 
         host.tick(input_word=0x0040)
         skipped = host.engine.inspect_state()
-        self.assertEqual(skipped["variables"], {"4": 1, "5": 1, "8": 9})
+        self._assert_variables(skipped, {"4": 1, "5": 1, "8": 9})
         self.assertEqual(
             skipped["cutscenes"]["sentinel"],
             {"data": 0, "override_pc": None, "override_slot": None},
@@ -1856,7 +2547,7 @@ class ScummV5EngineTests(unittest.TestCase):
             malformed.tick()
 
     def test_m24rb_sound_queue_abi_and_encoded_dispatch_field(self) -> None:
-        # SNES ABI: u8 word count, then that many little-endian s16 words.
+        # SNES packed ABI: u8 word count, then that many little-endian s16 words.
         def record(*words: int) -> bytes:
             return bytes((len(words),)) + b"".join(
                 int(word & 0xFFFF).to_bytes(2, "little") for word in words
@@ -1891,6 +2582,69 @@ class ScummV5EngineTests(unittest.TestCase):
             post_copy.index("cmp #$0101"),
         )
         self.assertIn("cmp #(SAME_SCUMM_C25_MAX_WORDS + 1)", command_present)
+
+        queue = source.split("ScummV5_Op_SoundKludge__queue:\n", 1)[1]
+        queue = queue.split("ScummV5_Op_SoundKludge__queue_room:", 1)[0]
+        self.assertIn("SAME_SCUMM_C25_MAX_QUEUE_WORDS + 1", queue)
+        append = source.split("ScummV5_Op_SoundKludge__queue_room:", 1)[1]
+        append = append.split("ScummV5_Op_SoundKludge__copy_word:", 1)[0]
+        self.assertIn("lda.l SAME_SCUMM_C25_QUEUE_WORDS_USED", append)
+        self.assertIn("sbc.l SAME_SCUMM_OPERAND", append)
+
+        memory = (ROOT / "runtime/snes/kernel/memory.pasm").read_text()
+        self.assertIn("SAME_SCUMM_C25_QUEUE_WORDS_USED          = $7FD8F2", memory)
+        self.assertIn("SAME_SCUMM_C25_STATE_END                 = $7FD8F4", memory)
+        self.assertIn("SAME_SCUMM_C25_QUEUE_END                 = $7FD65A", memory)
+        self.assertIn("SAME_SCUMM_C25_QUEUE_CAPACITY_BYTES      = $0200", memory)
+        self.assertIn("SAME_SCUMM_C26_SAVED                     = $7FD900", memory)
+
+    def test_c25_queue_uses_canonical_256_word_budget_not_sixteen_records(self) -> None:
+        def command(*values: int) -> bytes:
+            return bytes((
+                0x4C,
+                *(byte for value in values for byte in (0, value & 0xFF, value >> 8 & 0xFF)),
+                0xFF,
+            ))
+
+        # Seventeen one-argument commands were the authentic failure case for
+        # the old fixed 16-record queue. They occupy only 34 of 256 iMUSE words.
+        host = self._host(command(11) * 17 + b"\x80")
+        host.tick()
+        state = host.engine.inspect_state()
+        self.assertEqual(len(state["sound_kludge"]["queue"]), 17)
+        self.assertEqual(state["sound_kludge"]["queue"][-1], [11])
+        self.assertEqual(state["last_opcode"], 0x80)
+
+        # Seven 32-word commands plus one 24-word command use exactly 256
+        # canonical queue words: each record consumes one count word too.
+        exact = command(*range(32)) * 7 + command(*range(24)) + b"\x80"
+        full = self._host(exact)
+        full.tick()
+        full_state = full.engine.inspect_state()
+        self.assertEqual(len(full_state["sound_kludge"]["queue"]), 8)
+        self.assertEqual(
+            sum(1 + len(record) for record in full_state["sound_kludge"]["queue"]),
+            256,
+        )
+        saved = full.save(0)
+        full.load(0)
+        self.assertEqual(
+            sum(1 + len(record) for record in full.engine.inspect_state()
+                ["sound_kludge"]["queue"]),
+            256,
+        )
+
+        # One further one-word command crosses the canonical capacity and is
+        # rejected without replacing or truncating the accepted queue.
+        overflowing = self._host(exact + command(11))
+        overflowing.tick()
+        with self.assertRaisesRegex(EngineExecutionError, "exceeds 256 iMUSE words"):
+            overflowing.tick()
+        self.assertEqual(
+            sum(1 + len(record) for record in overflowing.engine.inspect_state()
+                ["sound_kludge"]["queue"]),
+            256,
+        )
 
     def test_c25_error_path_restores_byte_accumulator_mode_before_diagnostic(self) -> None:
         # The dispatch comparisons are 16-bit.  A byte-sized diagnostic LDA
@@ -1978,7 +2732,8 @@ class ScummV5EngineTests(unittest.TestCase):
 
         valid = (
             command(0x0101, 80, 7) + command(0x0106, 80, 9)
-            + command(0x010D, 82, 0, 120) + command(0x010E, 80, 8)
+            + command(0x010D, 82, 0, 120) + command(0x010E, 80, 0x0301)
+            + command(0x010E, 81, 0x8301)
             + command(0x010F, 8, 82) + command(0xFFFF) + b"\x80"
         )
         host = self._host(valid)
@@ -1986,7 +2741,8 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
         self.assertEqual(calls, [
             ("priority", 80, 7), ("speed", 80, 9),
-            ("fade", 82, 0, 120), ("trigger", 80, 8),
+            ("fade", 82, 0, 120), ("trigger", 80, 0x0301),
+            ("trigger", 81, 0x8301),
             ("deferred", 8, 82),
         ])
 
@@ -1994,7 +2750,7 @@ class ScummV5EngineTests(unittest.TestCase):
             ((0x0101, 80), "priority/speed operands"),
             ((0x0106, 80, 9, 1), "priority/speed operands"),
             ((0x010D, 82, 128, 120), "fade operands"),
-            ((0x010E, 80, 256), "trigger operands"),
+            ((0x010E, 80), "trigger operands"),
             ((0x010F,), "deferred command is empty"),
         )
         for words, message in malformed:
@@ -2026,7 +2782,6 @@ class ScummV5EngineTests(unittest.TestCase):
             (bytes((0x4C, 0xFF)), "command is empty"),
             (command(12) + command(0xFFFF) + bytes((0x80,)), "command 12 is not implemented"),
             (bytes((0x4C, 0, 8, 0, 0xFF, 0x4C, 0, 0xFF)), "ended at offset"),
-            (command(11) * 17 + bytes((0x80,)), "queue exceeds 16 commands"),
         )
         for script, message in cases:
             with self.subTest(message=message):
@@ -2064,6 +2819,25 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
         self.assertEqual(calls, [(80, 0, 15, 0)])
         self.assertEqual(host.engine.state.sound_result, 0)
+
+    def test_imuse_hook_for_inactive_sound_is_a_result_not_vm_failure(self) -> None:
+        def command(*values: int) -> bytes:
+            return bytes((
+                0x4C,
+                *(byte for value in values for byte in (0, value & 0xFF, value >> 8 & 0xFF)),
+                0xFF,
+            ))
+
+        # Audio is deliberately absent, as in the logical-only M24R-B
+        # gameplay profile. SCUMM records a failed setHook result; it does
+        # not turn the valid command into an interpreter error.
+        host = self._host(
+            command(0x010C, 119, 0, 1) + command(0xFFFF) + b"\x80"
+        )
+        host.tick()
+        state = host.engine.inspect_state()["sound_kludge"]
+        self.assertEqual(state["history"], [[0x010C, 119, 0, 1]])
+        self.assertEqual(state["result"], -1)
 
     def test_imuse_player_rejects_noncanonical_jump_hook_channel(self) -> None:
         def command(*values: int) -> bytes:
@@ -2193,7 +2967,7 @@ class ScummV5EngineTests(unittest.TestCase):
 
         host.tick()
         state = host.engine.inspect_state()
-        self.assertEqual(state["variables"], {"0": 2, "1": 3, "2": 50, "3": 60})
+        self._assert_variables(state, {"0": 2, "1": 3, "2": 50, "3": 60})
         self.assertEqual(state["scripts"][0]["pc"], 33)
         host.tick()
         self.assertFalse(host.engine.inspect_state()["scripts"][0]["active"])
@@ -2249,9 +3023,7 @@ class ScummV5EngineTests(unittest.TestCase):
 
         host.tick()
         state = host.engine.inspect_state()
-        self.assertEqual(
-            state["variables"], {"0": 201, "1": 204, "2": 300, "3": 40}
-        )
+        self._assert_variables(state, {"0": 201, "1": 204, "2": 300, "3": 40})
         self.assertEqual(state["scripts"][0]["pc"], 29)
         host.tick()
         self.assertFalse(host.engine.inspect_state()["scripts"][0]["active"])
@@ -2310,7 +3082,7 @@ class ScummV5EngineTests(unittest.TestCase):
 
         host.tick()
         state = host.engine.inspect_state()
-        self.assertEqual(state["variables"], {"0": 2, "1": 331})
+        self._assert_variables(state, {"0": 2, "1": 331})
         self.assertEqual(state["scripts"][0]["pc"], 24)
         self.assertEqual(state["actors"]["2"]["room"], 75)
         self.assertEqual(state["actors"]["2"]["position"], [200, 80])
@@ -2594,6 +3366,46 @@ class ScummV5EngineTests(unittest.TestCase):
             [1, -1, -0x8000],
         )
 
+    def test_walk_actor_to_actor_direct_variable_and_auto_distance(self) -> None:
+        # Direct actor operands with an explicit stand-off distance.
+        host = self._host(bytes((0x0D, 1, 2, 10, 0)))
+        host.engine.state.current_room = 1
+        host.engine.state.actors[1] = ActorState(room=1, position=(100, 20))
+        host.engine.state.actors[2] = ActorState(room=1, position=(80, 50))
+        host.tick()
+        self.assertEqual(host.engine.state.actors[1].walk_destination, (90, 50))
+        self.assertTrue(host.engine.state.actors[1].moving)
+
+        # Both operands may independently be variable references.  The 0xFF
+        # distance uses the SCUMM v5 scaled-width formula from ScummVM.
+        host = self._host(bytes((0xCD, 0, 0, 1, 0, 0xFF, 0)))
+        host.engine.state.current_room = 1
+        host.engine.state.variables[:2] = [1, 2]
+        host.engine.state.actors[1] = ActorState(
+            room=1, position=(100, 20), width=20, scale=(128, 255),
+        )
+        host.engine.state.actors[2] = ActorState(
+            room=1, position=(200, 50), width=30, scale=(255, 255),
+        )
+        host.tick()
+        self.assertEqual(host.engine.state.actors[1].walk_destination, (175, 50))
+
+    def test_walk_actor_to_actor_ignores_invalid_or_nonresident_actors(self) -> None:
+        host = self._host(bytes((0x0D, 1, 255, 20, 0)))
+        host.engine.state.current_room = 1
+        host.engine.state.actors[1] = ActorState(
+            room=1, position=(10, 20), walk_destination=(30, 40),
+        )
+        host.tick()
+        self.assertEqual(host.engine.state.actors[1].walk_destination, (30, 40))
+
+        host = self._host(bytes((0x0D, 1, 2, 20, 0)))
+        host.engine.state.current_room = 1
+        host.engine.state.actors[1] = ActorState(room=1, position=(10, 20))
+        host.engine.state.actors[2] = ActorState(room=0, position=(30, 40))
+        host.tick()
+        self.assertEqual(host.engine.state.actors[1].walk_destination, (0, 0))
+
     def test_production_tick_preserves_one_scheduler_pass_per_frame(self) -> None:
         program = bytes((
             0x1A, 0, 0, 1, 0, 0x80,
@@ -2611,6 +3423,39 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
         self.assertEqual(host.engine.state.variables[:3], [1, 1, 1])
         self.assertFalse(host.engine.state.scripts[0].active)
+
+    def test_v5_game_timers_advance_by_timer_next_before_script_execution(self) -> None:
+        # V20 observes TMR_1 each pass.  A zero timer-next value is clamped to
+        # one just as SCUMM's outer loop does; a configured delta is applied
+        # before the current frame's first opcode.
+        program = bytes((
+            0x9A, 20, 0, 11, 0,  # V20 = V11
+            0x80,                # breakHere
+            0x18, 0xF7, 0xFF,    # loop to V20 = V11
+        ))
+        host = self._host(program)
+        host.engine.state.variables[19] = 4
+
+        host.tick()
+        self.assertEqual(host.engine.state.variables[11:14], [4, 4, 4])
+        self.assertEqual(host.engine.state.variables[20], 4)
+        host.tick()
+        self.assertEqual(host.engine.state.variables[11:14], [8, 8, 8])
+        self.assertEqual(host.engine.state.variables[20], 8)
+
+        host.engine.state.variables[19] = 0
+        host.tick()
+        self.assertEqual(host.engine.state.variables[11:14], [9, 9, 9])
+        self.assertEqual(host.engine.state.variables[20], 9)
+
+    def test_v5_game_timers_wrap_as_signed_words(self) -> None:
+        host = self._host(bytes((0x80,)))
+        host.engine.state.variables[19] = 4
+        host.engine.state.variables[11:14] = [0x7FFF, -1, -2]
+
+        host.tick()
+
+        self.assertEqual(host.engine.state.variables[11:14], [-32765, 3, 2])
 
     def test_production_tick_advances_actor_once_and_waiter_retries(self) -> None:
         waiter = bytes((
@@ -2719,13 +3564,16 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
         state = host.engine.inspect_state()
         self.assertEqual(state["scripts"][0]["pc"], 26)
-        self.assertEqual(state["variables"], {"0": 2, "1": 101})
+        self._assert_variables(state, {"0": 2, "1": 101})
         self.assertEqual(state["actors"]["2"]["position"], [300, 90])
         self.assertFalse(state["actors"]["2"]["visible"])
         self.assertEqual(state["actors"]["2"]["moving"], 0)
         self.assertEqual(state["actors"]["3"]["position"], [240, 120])
         self.assertFalse(state["actors"]["3"]["visible"])
         self.assertEqual(state["actors"]["3"]["moving"], 2)
+        host.tick()
+        # walkActorToActor is followed by breakHere; the continuation consumes
+        # one additional scheduler tick before the terminal opcode runs.
         host.tick()
         self.assertFalse(host.engine.inspect_state()["scripts"][0]["active"])
 
@@ -2839,9 +3687,8 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(sentence_slots[0]["locals"][:3], [5, 100, 200])
         self.assertEqual(sentence_slots[0]["pc"], 0)
         host.tick()
-        self.assertEqual(
-            host.engine.inspect_state()["variables"],
-            {"5": 5, "6": 100, "7": 200, "33": 10},
+        self._assert_variables(
+            host.engine.inspect_state(), {"5": 5, "6": 100, "7": 200, "33": 10}
         )
 
         same_object = self._host(
@@ -2875,6 +3722,64 @@ class ScummV5EngineTests(unittest.TestCase):
         payload["sentences"][0]["preposition"] = True
         with self.assertRaisesRegex(SaveFormatError, "preposition is noncanonical"):
             host.engine.load_state(host.context, json.dumps(payload).encode("utf-8"))
+
+    def test_draw_box_direct_operands_fill_inclusive_logical_rectangle(self) -> None:
+        script = bytes((
+            0x3F, 40, 0, 10, 0,       # direct left/top p16
+            0x00, 42, 0, 11, 0, 7,   # aux direct right/bottom/color
+            0x00,
+        ))
+        host = self._host(script)
+        host.tick()
+        surface = host.engine._video.logical_surface
+        self.assertIsNotNone(surface)
+        assert surface is not None
+        for y in range(10, 12):
+            for x in range(40, 43):
+                self.assertEqual(surface.pixels[y * surface.pitch + x], 7)
+        self.assertNotEqual(surface.pixels[10 * surface.pitch + 39], 7)
+        self.assertNotEqual(surface.pixels[12 * surface.pitch + 42], 7)
+
+    def test_draw_box_variable_operands_reverse_bounds_and_clip(self) -> None:
+        # $FF selects variable p16 left/top; $E0 selects variable p16
+        # right/bottom and variable p8 color in the auxiliary opcode.
+        script = bytes((
+            0xFF, 5, 0, 6, 0,
+            0xE0, 7, 0, 8, 0, 9, 0,
+            0x00,
+        ))
+        host = self._host(script)
+        host.engine.state.variables[5:10] = [42, 12, 40, 10, 13]
+        host.tick()
+        surface = host.engine._video.logical_surface
+        self.assertIsNotNone(surface)
+        assert surface is not None
+        for y in range(10, 13):
+            for x in range(40, 43):
+                self.assertEqual(surface.pixels[y * surface.pitch + x], 13)
+
+        clipped = self._host(bytes((
+            0x3F, 254, 0, 222, 0, 0x00, 4, 1, 5, 0, 19, 0x00,
+        )))
+        clipped.tick()
+        clipped_surface = clipped.engine._video.logical_surface
+        assert clipped_surface is not None
+        self.assertEqual(clipped_surface.pixels[5 * clipped_surface.pitch + 254], 19)
+        self.assertEqual(clipped_surface.pixels[199 * clipped_surface.pitch + 255], 19)
+
+    def test_get_actor_width_reads_actor_ops_width_with_direct_and_variable_ids(self) -> None:
+        # actorOps actor 1, width=37; then query actor 1 directly and actor 2
+        # through a variable. Actor 2 retains the authored v5 default width 24.
+        script = bytes((
+            0x13, 1, 0x10, 37, 0xFF,
+            0x6C, 10, 0, 1,
+            0xEC, 11, 0, 12, 0,
+            0x00,
+        ))
+        host = self._host(script)
+        host.engine.state.variables[12] = 2
+        host.tick()
+        self._assert_variables(host.engine.inspect_state(), {"10": 37, "11": 24})
 
     def test_c21_draw_object_operands_overlap_position_and_save(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/c21_draw_object.scrp").read_bytes()
@@ -2951,7 +3856,7 @@ class ScummV5EngineTests(unittest.TestCase):
             first, second = state["scripts"]
             self.assertEqual((first["pc"], first["delay"]), (slot0_pc, slot0_delay))
             self.assertEqual(second["pc"], slot1_pc)
-            self.assertEqual(state["variables"].get("11"), peer_count)
+            self.assertEqual(state["variables"].get("20"), peer_count)
             self.assertEqual(state["operations"], operations)
 
     def test_c4_script_lifecycle_locals_and_slot_reuse(self) -> None:
@@ -2976,7 +3881,7 @@ class ScummV5EngineTests(unittest.TestCase):
                 (child["number"], child["pc"], child["active"], child["locals"][0]),
                 (child_number, child_pc, child_active, local0),
             )
-            self.assertEqual(state["variables"], variables)
+            self._assert_variables(state, variables)
             self.assertEqual(state["operations"], operations)
 
     def test_c4_script_slot_capacity_fails_closed(self) -> None:
@@ -2998,10 +3903,10 @@ class ScummV5EngineTests(unittest.TestCase):
         host = self._host(main, scripts=children)
         expected = [
             (11, [0, 0], [5, 5], {"0": 1, "10": 2}, 8),
-            (31, [1, 1, 0], [5, 6, 7], {"0": 1, "1": 1, "2": 1, "10": 3, "11": 1, "12": 1}, 21),
-            (40, [1, 1, 0], [5, 6, 7], {"0": 1, "1": 1, "2": 1, "3": 1, "10": 3, "11": 1, "12": 2}, 28),
-            (51, [0, 0, 0], [5, 6, 7], {"0": 1, "1": 1, "2": 1, "3": 1, "4": 1, "10": 4, "11": 2, "12": 3}, 41),
-            (62, [0, 0, 0], [0, 0, 0], {"0": 1, "1": 1, "2": 1, "3": 1, "4": 1, "10": 4, "11": 2, "12": 3}, 46),
+            (31, [1, 1, 0], [5, 6, 7], {"0": 1, "1": 1, "2": 1, "10": 3, "20": 1, "21": 1}, 21),
+            (40, [1, 1, 0], [5, 6, 7], {"0": 1, "1": 1, "2": 1, "3": 1, "10": 3, "20": 1, "21": 2}, 28),
+            (51, [0, 0, 0], [5, 6, 7], {"0": 1, "1": 1, "2": 1, "3": 1, "4": 1, "10": 4, "20": 2, "21": 3}, 41),
+            (62, [0, 0, 0], [0, 0, 0], {"0": 1, "1": 1, "2": 1, "3": 1, "4": 1, "10": 4, "20": 2, "21": 3}, 46),
         ]
         for pc, freeze_counts, numbers, variables, operations in expected:
             host.tick()
@@ -3010,7 +3915,7 @@ class ScummV5EngineTests(unittest.TestCase):
             self.assertEqual(parent["pc"], pc)
             self.assertEqual([item["freeze_count"] for item in children_state], freeze_counts)
             self.assertEqual([item["number"] for item in children_state], numbers)
-            self.assertEqual(state["variables"], variables)
+            self._assert_variables(state, variables)
             self.assertEqual(state["operations"], operations)
             if pc == 31:
                 assert host.context is not None
@@ -3062,7 +3967,7 @@ class ScummV5EngineTests(unittest.TestCase):
             state = host.engine.inspect_state()
             parent, *children_state = state["scripts"]
             self.assertEqual(parent["pc"], parent_pc)
-            self.assertEqual(state["variables"], variables)
+            self._assert_variables(state, variables)
             self.assertEqual(state["operations"], operations)
             self.assertEqual(state["variables"].get("15", 0), 0)
             if frame == 1:
@@ -3084,6 +3989,77 @@ class ScummV5EngineTests(unittest.TestCase):
             else:
                 self.assertFalse(any(item["active"] for item in state["scripts"]))
                 self.assertEqual([item["number"] for item in state["scripts"]], [0, 0, 0])
+
+    def test_chain_script_from_room_entry_runs_local_replacement(self) -> None:
+        host = self._host(bytes((0x00,)))
+        host.tick()
+        engine = host.engine
+        assert host.context is not None
+
+        # Authentic room-entry code uses opcode $42 from the synchronous
+        # slot-zero context.  It must retire that entry and run the local
+        # replacement, just as the host's ordinary chainScript contract does.
+        engine.state.current_room = 4
+        engine._room_scripts[206] = bytes((
+            0x1A, 20, 0, 55, 0,  # global V20 = 55
+            0x80,                 # yield with the replacement live
+        ))
+        entry = ScriptSlot(
+            "room.4/ENCD",
+            bytes((0x42, 206, 0xFF)),
+            number=0,
+            room=4,
+            script_kind="ENCD",
+        )
+        engine.state.scripts.append(entry)
+        engine._tick_operations = 0
+        engine._tick_max_ops = host.profile.max_ops_per_tick
+        engine._in_tick = True
+        try:
+            engine._execute_slot(entry, host.context)
+        finally:
+            engine._in_tick = False
+
+        self.assertFalse(entry.active)
+        self.assertEqual(engine.state.variables[20], 55)
+        replacement = next(item for item in engine.state.scripts if item.number == 206)
+        self.assertEqual(replacement.resource_key, "room.4/LSCR.206")
+        self.assertTrue(replacement.active)
+        self.assertTrue(replacement.yielded)
+
+    def test_native_chain_script_is_not_gated_by_return_mode(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        chain = runtime.split("ScummV5_Op_ChainScript:", 1)[1].split(
+            "ScummV5_Op_StopScript:", 1
+        )[0]
+        self.assertNotIn("SAME_SCUMM_RETURN_MODE", chain)
+        self.assertNotIn("SCUMM_ERR_SCRIPT", chain)
+        retire = runtime.split("ScummV5_Op_StartScript__chain_retired:", 1)[0]
+        retire = retire.rsplit("    lda.l SAME_SCUMM_C4_CURRENT_SLOT", 1)[-1]
+        self.assertIn("beq ScummV5_Op_StartScript__chain_retired", retire)
+
+    def test_native_chain_retirement_zero_extends_byte_slot_index(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        cleanup = runtime.split("ScummV5_Op_StartScript__args_done:", 1)[1].split(
+            "ScummV5_Op_StartScript__normal_args_done:", 1
+        )[0]
+        self.assertRegex(
+            cleanup,
+            r"sep #\$10\s+\.i8\s+lda\.l SAME_SCUMM_C4_CURRENT_SLOT\s+tax\s+"
+            r"lda #SCUMM_VM_STOPPED\s+sta\.l SAME_SCUMM_C4_SLOT_STATUS,x",
+        )
+        retired = runtime.split("ScummV5_Op_StartScript__chain_retired:", 1)[1].split(
+            "ScummV5_Op_StartScript__chain_target:", 1
+        )[0]
+        self.assertRegex(retired, r"rep #\$10\s+\.i16\s+\.a8")
+
+        # SEP #$10 clears X's high byte on 65816; TAX in X8 then selects
+        # descriptor slot 1 even if operation accounting left X=$0300.
+        prior_x, current_slot = 0x0300, 1
+        x_after_sep = prior_x & 0x00FF
+        x_after_tax8 = (x_after_sep & 0xFF00) | current_slot
+        self.assertEqual(x_after_tax8, 1)
+        self.assertNotEqual(x_after_tax8, 0x0301)
 
     def test_start_object_modes_varargs_and_independent_object_locals(self) -> None:
         cases = (
@@ -3138,7 +4114,7 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(chained["script_kind"], "LSCR")
         self.assertEqual(chained["pc"], 1)
         self.assertFalse(any(slot["script_kind"] == "OBCD" for slot in state["scripts"]))
-        self.assertNotIn("9", state["variables"])
+        self.assertEqual(state["variables"]["9"], 0x000B)
 
         missing = self._host(bytes((0x37, 100, 0, 8, 0xFF, 0x00)))
         assert missing.engine._video.room is not None

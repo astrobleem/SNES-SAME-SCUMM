@@ -9,7 +9,7 @@ SAME_FATE_DEMO_ARCHIVE ?=
 SAME_MONKEY_ARCHIVE ?=
 
 .PHONY: all fixtures generate m24ra-audio archive-audio-unavailable test validate demo package adventure-package \
-	engine-demo audio simulate snes s5-snes h0 k1 c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 c11 c12 c13 c14 c15 c16 c17 c18 c19 c20 c21 c22 c23 c24 c25 c26 c28 c29 c30 c31 c32 c33 c34 c35 c36 c37 c38 c39 c40 c41 c42 s1 s2 s3 s4 s5 s6-preflight s6-tad s6-auditions \
+	engine-demo audio simulate snes s5-snes h0 k1 c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 c11 c12 c13 c14 c15 c16 c17 c18 c19 c19-snes c20 c21 c22 c23 c24 c25 c26 c28 c29 c30 c31 c32 c33 c34 c35 c36 c37 c38 c39 c40 c41 c42 s1 s2 s3 s4 s5 s6-preflight s6-tad s6-auditions \
 	m4 m5-build m5 m6 m7-build m7 m8-build m8 m9-build m9 m10-build m10 m10-title-audio-build m11-build m11 m12-build m12 m13-build m13 m14-build m14 m15-build m15 m16-build m16 m17-build m17 m18-build m18 m19-build m19 m20-build m20 m21-build m21 m22-build m22 m23a-build m23a m23b-build m23b m23c-build m23c m24ra-build m24ra m24rb-build m24rb m25a-validator-audio m25a-validator-build m25a-validator m25a-startscript-replacement m25a-startobject-normal m25a-startobject-control m25a-startobject-replacement m25a-startobject-long-replacement m25a-global-room-continuation m25a-local-room-continuation m25a-actor-position-errors-build m25a-actor-position-errors m25a-actor-position-success-build m25a-actor-position-success m25a-null-room-lifecycle-build m25a-null-room-lifecycle m25a-pending-room-request-build m25a-pending-room-request-near-build m25a-pending-room-request clean
 
 all: fixtures generate test validate demo
@@ -57,6 +57,7 @@ test: generate
 
 validate: generate
 	PYTHONPATH=$(PYTHONPATH) $(PYTHON) tools/lint_poppy.py runtime/snes/main.pasm
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) tools/audit_scumm_residency_wram.py
 	@set -e; for f in examples/targets/*.json; do PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m same.cli target validate "$$f" >/dev/null; done
 	@set -e; for f in \
 		examples/profiles/agi_v2_conformance.json \
@@ -122,7 +123,7 @@ s5-snes: generate validate m24ra-audio
 	SAME_TAD_PREBUILT_DIR=$(M24RA_AUDIO_DIR) \
 	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24ra/catalog.json \
 	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/tad_layout.inc.pasm \
-	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=1 \
+	SAME_SNES_ENGINE=scumm_v5 SAME_SCUMM_SYNTHETIC_VARIABLES=1 SAME_BUILD_M24RA=1 \
 	SAME_SNES_OUTPUT=build/same-scumm-v5.sfc tools/build_snes.sh
 
 h0: snes
@@ -186,7 +187,17 @@ c17: s5-snes
 c18: s5-snes
 	PYTHONPATH=/home/chad/Mesen2/python $(PYTHON) tools/validate_scumm_c18_nexen.py --rom build/same-scumm-v5.sfc
 
-c19: s5-snes
+c19-snes: generate validate m24ra-audio
+	SAME_TAD_PREBUILT_DIR=$(M24RA_AUDIO_DIR) \
+	SAME_MUSIC_CATALOG=$(CURDIR)/audio/m24ra/catalog.json \
+	SAME_TAD_LAYOUT_OUTPUT=runtime/snes/generated/tad_layout.inc.pasm \
+	SAME_SNES_ENGINE=scumm_v5 SAME_BUILD_M24RA=0 \
+	SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE=1 \
+	SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE_NO_ROOT_ROOM=1 \
+	SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE=1 \
+	SAME_SNES_OUTPUT=build/same-scumm-v5.sfc tools/build_snes.sh
+
+c19: c19-snes
 	PYTHONPATH=/home/chad/Mesen2/python $(PYTHON) tools/validate_scumm_c19_nexen.py --rom build/same-scumm-v5.sfc
 
 c20: s5-snes

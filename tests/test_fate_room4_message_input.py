@@ -1,0 +1,45 @@
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+
+from fate_replay import room4_message_ready  # noqa: E402
+
+
+class FateRoom4MessageInputTests(unittest.TestCase):
+    @staticmethod
+    def state(*, active: int = 1, have_message: int = 1,
+              delay: int = 0, generation: int = 1) -> bytes:
+        raw = bytearray(9)
+        raw[0] = active
+        raw[1] = have_message
+        raw[4:6] = delay.to_bytes(2, "little")
+        raw[6:8] = generation.to_bytes(2, "little")
+        return bytes(raw)
+
+    def test_timed_message_completion_does_not_request_synthetic_ack(self) -> None:
+        self.assertFalse(room4_message_ready(self.state(delay=1), None))
+        self.assertFalse(room4_message_ready(self.state(delay=0), None))
+
+    def test_explicit_ff03_wait_is_ready_once_after_its_delay(self) -> None:
+        self.assertFalse(room4_message_ready(self.state(generation=7), 7))
+        self.assertFalse(room4_message_ready(self.state(generation=8), 7))
+        self.assertFalse(room4_message_ready(
+            self.state(have_message=0xFF, delay=1, generation=8), 7
+        ))
+        self.assertTrue(room4_message_ready(
+            self.state(have_message=0xFF, delay=0, generation=8), 7
+        ))
+
+    def test_requires_active_message_and_complete_state(self) -> None:
+        self.assertFalse(room4_message_ready(self.state(active=0), None))
+        self.assertFalse(room4_message_ready(self.state(have_message=0), None))
+        self.assertFalse(room4_message_ready(b"\x01\x01", None))
+
+
+if __name__ == "__main__":
+    unittest.main()

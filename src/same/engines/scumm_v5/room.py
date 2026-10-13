@@ -171,6 +171,41 @@ def _v5_point_in_box_bounds(
     return dest_x, dest_y, distance
 
 
+def _walkboxes_share_portal(
+    first: "ScummV5Walkbox", second: "ScummV5Walkbox",
+) -> bool:
+    """Mirror SCUMM v5's orthogonal shared-edge adjacency predicate."""
+    for edge_a in range(4):
+        a0 = first.points[edge_a]
+        a1 = first.points[(edge_a + 1) & 3]
+        for edge_b in range(4):
+            b0 = second.points[edge_b]
+            b1 = second.points[(edge_b + 1) & 3]
+            if a0[0] == a1[0] == b0[0] == b1[0]:
+                a_low, a_high = sorted((a0[1], a1[1]))
+                b_low, b_high = sorted((b0[1], b1[1]))
+                touching_only = (
+                    (a_high == b_low or b_high == a_low)
+                    and a_low != a_high and b_low != b_high
+                )
+                if not (
+                    a_low > b_high or b_low > a_high or touching_only
+                ):
+                    return True
+            if a0[1] == a1[1] == b0[1] == b1[1]:
+                a_low, a_high = sorted((a0[0], a1[0]))
+                b_low, b_high = sorted((b0[0], b1[0]))
+                touching_only = (
+                    (a_high == b_low or b_high == a_low)
+                    and a_low != a_high and b_low != b_high
+                )
+                if not (
+                    a_low > b_high or b_low > a_high or touching_only
+                ):
+                    return True
+    return False
+
+
 @dataclass(frozen=True, slots=True)
 class ScummV5Room:
     width: int
@@ -187,6 +222,43 @@ class ScummV5Room:
     entry_script: bytes | None
     exit_script: bytes | None
     local_scripts: tuple[tuple[int, bytes], ...]
+
+    def create_box_matrix(self) -> tuple[tuple[int | None, ...], ...]:
+        """Rebuild the v5 shortest-path matrix from live BOXD flags/geometry.
+
+        ``matrixOps`` sub-op 4 (``createBoxMatrix``) intentionally rebuilds
+        the route graph rather than reusing the authored BOXM table.  In
+        particular, boxes whose invisible bit is set by an earlier matrixOps
+        instruction are not allowed as route vertices.
+        """
+        count = len(self.walkboxes)
+        distance = [[0xFF] * count for _ in range(count)]
+        routes: list[list[int | None]] = [[None] * count for _ in range(count)]
+        for source, first in enumerate(self.walkboxes):
+            for destination, second in enumerate(self.walkboxes):
+                if source == destination:
+                    distance[source][destination] = 0
+                    routes[source][destination] = destination
+                elif (first.flags & 0x80 or second.flags & 0x80):
+                    continue
+                elif _walkboxes_share_portal(first, second):
+                    distance[source][destination] = 1
+                    routes[source][destination] = destination
+
+        # Same recurrence and strict-shorter tie policy as SCUMM v5's
+        # calcItineraryMatrix: retain the first equal-length authored route.
+        for pivot in range(count):
+            for source in range(count):
+                left = distance[source][pivot]
+                if left == 0xFF:
+                    continue
+                for destination in range(count):
+                    right = distance[pivot][destination]
+                    candidate = left + right
+                    if right != 0xFF and distance[source][destination] > candidate:
+                        distance[source][destination] = candidate
+                        routes[source][destination] = routes[source][pivot]
+        return tuple(tuple(row) for row in routes)
 
     def next_box(self, source: int, destination: int) -> int | None:
         if source == destination and 0 <= source < len(self.walkboxes):
@@ -508,6 +580,30 @@ def _chunks(data: bytes, *, owner: str) -> tuple[_Chunk, ...]:
     return tuple(result)
 
 
+@dataclass(frozen=True, slots=True)
+class ScummV5Chunk:
+    """Public, offset-preserving view of one source SCUMM chunk."""
+
+    tag: str
+    offset: int
+    size: int
+    payload: bytes
+
+
+def iter_scumm_chunks(
+    data: bytes, *, owner: str = "SCUMM resource"
+) -> tuple[ScummV5Chunk, ...]:
+    """Expose the room decoder's checked chunk walk to compiler adapters.
+
+    This delegates to the canonical bounds checks so cookers and front ends
+    do not grow independent chunk parsers.
+    """
+    return tuple(
+        ScummV5Chunk(item.tag.decode("ascii"), item.offset, len(item.raw), item.payload)
+        for item in _chunks(data, owner=owner)
+    )
+
+
 def _one(chunks: tuple[_Chunk, ...], tag: bytes, *, owner: str) -> _Chunk:
     matches = tuple(chunk for chunk in chunks if chunk.tag == tag)
     name = tag.decode("ascii")
@@ -805,9 +901,14 @@ def _decode_raw(data: bytes, *, key: str) -> ScummV5Room:
     for box_index in range(walkbox_count):
         values = struct.unpack_from("<hhhhhhhhBBH", boxd.payload, 2 + box_index * 20)
         mask = values[8]
-        if mask > zplane_count:
+        # RMIH stores the number of additional ZP planes; the base room
+        # z-buffer is implicit. ScummVM's v5 loader consequently uses
+        # RMIH + 1 buffers. BOXD mask values may name that implicit buffer
+        # even when the room has no explicit ZPxx chunks.
+        if mask > zplane_count + 1:
             raise ResourceError(
-                f"{owner} BOXD box {box_index} mask {mask} exceeds {zplane_count} z-planes"
+                f"{owner} BOXD box {box_index} mask {mask} exceeds "
+                f"{zplane_count + 1} z-buffer slots"
             )
         walkboxes.append(ScummV5Walkbox(
             box_index,
@@ -1283,6 +1384,35 @@ class ScummV5RoomAdapter:
         video.fill(0)
         video.set_palette(0, self.room.palette)
         video.blit_surface(self.composition_surface)
+
+    def draw_box(self, left: int, top: int, right: int, bottom: int, color: int) -> bool:
+        """Draw an inclusive v5 box in the current logical screen viewport."""
+        if self.room is None or self.logical_surface is None:
+            return False
+        if left > right:
+            left, right = right, left
+        if top > bottom:
+            top, bottom = bottom, top
+        logical_width = self.context.profile.video.logical_width or self.context.profile.video.width
+        logical_height = self.context.profile.video.logical_height or self.context.profile.video.height
+        source_x, source_y, _dest_x, _dest_y, width, height = self._projection
+        left = max(0, left)
+        top = max(0, top)
+        right = min(logical_width - 1, right)
+        bottom = min(logical_height - 1, bottom)
+        if left > right or top > bottom:
+            return False
+        self.logical_surface.fill(
+            color,
+            Rect(
+                source_x + left,
+                source_y + top,
+                right - left + 1,
+                bottom - top + 1,
+            ),
+        )
+        self.logical_sha256 = self.logical_surface.hash()
+        return True
 
     def move_cursor(self, logical_x: int, logical_y: int) -> None:
         source_x, source_y, destination_x, destination_y, width, height = self._projection

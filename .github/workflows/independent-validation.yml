@@ -197,7 +197,7 @@ jobs:
           M24RA_TAD_DONOR_DIR: ${{ runner.temp }}/terrific-audio-driver
         run: make validate m24ra-audio
 
-      - name: Build the copyright-free large-room personality when available
+      - name: Build a copyright-free SCUMM personality supported by this source revision
         if: ${{ hashFiles('source/tools/build_scumm_native_residency_fixture.py') != '' }}
         working-directory: source
         shell: bash
@@ -207,32 +207,49 @@ jobs:
           SAME_TAD_DONOR_DIR: ${{ runner.temp }}/terrific-audio-driver
         run: |
           set -euo pipefail
-          mkdir -p build/ci-large-room
+          FIXTURE_HELP="$(python tools/build_scumm_native_residency_fixture.py --help)"
+          FIXTURE_ARGS=()
+          BUILD_LIVE_ROOM=0
+          BUILD_ROOM_VISUAL=0
+          VIDEO_BACKEND=legacy_backdrop
+          if grep -Fq -- '--live-room-resources' <<< "$FIXTURE_HELP"; then
+            FIXTURE_ARGS+=(--live-room-resources)
+            BUILD_LIVE_ROOM=1
+            BUILD_ROOM_VISUAL=1
+            VIDEO_BACKEND=mode3_surface
+            if grep -Fq -- '--large-live-room' <<< "$FIXTURE_HELP"; then
+              FIXTURE_ARGS+=(--large-live-room)
+            fi
+          fi
+          mkdir -p build/ci-scumm-fixture
           python tools/build_scumm_native_residency_fixture.py \
             --output-dir "$RUNNER_TEMP/large-room/source" \
-            --live-room-resources --large-live-room
+            "${FIXTURE_ARGS[@]}"
+          echo "Fixture live-room capability: $BUILD_LIVE_ROOM"
           env PYTHONPATH=src:tools \
             SAME_TAD_PREBUILT_DIR=build/profile-music/m24ra \
             SAME_SNES_ENGINE=scumm_v5 \
             SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 SAME_BUILD_SCUMM_M23A=1 \
             SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY=1 \
-            SAME_BUILD_SCUMM_MSU1_PROGRAMS=1 \
-            SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES=1 \
-            SAME_BUILD_SCUMM_ROOM_VISUAL=1 SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS=0 \
+            SAME_BUILD_SCUMM_MSU1_PROGRAMS="$BUILD_LIVE_ROOM" \
+            SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES="$BUILD_LIVE_ROOM" \
+            SAME_BUILD_SCUMM_ROOM_VISUAL="$BUILD_ROOM_VISUAL" \
+            SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS=0 \
             SAME_SCUMM_SYNTHETIC_VARIABLES=1 SAME_SNES_CARRIER=sa1_bwram \
-            SAME_SNES_VIDEO_BACKEND=mode3_surface \
+            SAME_SNES_VIDEO_BACKEND="$VIDEO_BACKEND" \
             SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST="$RUNNER_TEMP/large-room/source/manifest.json" \
             SAME_SCUMM_DYNAMIC_FIXTURE_BINARY_DIR="$RUNNER_TEMP/large-room/cooked/segments" \
             SAME_SCUMM_DYNAMIC_BUILD_DIR="$RUNNER_TEMP/large-room/native-build" \
             SAME_SCUMM_TITLE_START_ROOM=0 SAME_SCUMM_TITLE_TARGET_ROOM=1 \
-            SAME_SNES_OUTPUT="build/ci-large-room/large-room.sfc" \
+            SAME_SNES_OUTPUT="build/ci-scumm-fixture/scumm-fixture.sfc" \
             tools/build_snes.sh
           python tools/audit_snes_rom.py \
-            "build/ci-large-room/large-room.sfc" --carrier sa1_bwram \
-            --map "build/ci-large-room/large-room.map"
+            "build/ci-scumm-fixture/scumm-fixture.sfc" --carrier sa1_bwram \
+            --map "build/ci-scumm-fixture/scumm-fixture.map"
           {
-            echo '### Large-room hosted assembly'
-            echo '- Copyright-free MSU live-room personality assembled and ROM-audited.'
+            echo '### Copyright-free SCUMM hosted assembly'
+            echo "- Dynamic-residency fixture assembled and ROM-audited (live-room feature: $BUILD_LIVE_ROOM)."
+            echo '- The fixture options are selected from the tested source revision interface.'
             echo '- Nexen was not run; this is not native room-load acceptance.'
           } >> "$GITHUB_STEP_SUMMARY"
 

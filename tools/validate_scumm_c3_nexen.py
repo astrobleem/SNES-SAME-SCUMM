@@ -119,11 +119,11 @@ def main() -> int:
 
     operand_vars_1 = [2, 0x8000, 1, 0, 0, 0, 5, 0x1234] + [0] * 8
     operand_vars_2 = [2, 0x7FFF, 1, 0, 0, 0, 5, 0x1234] + [0] * 8
-    operand_vars_3 = [2, 4681, 1, 7, 255, 255, 6, 0x1234] + [0] * 8
+    operand_vars_3 = [2, 4681, 1, 7, 255, 255, 6, 0x1234, 22] + [0] * 7
     operand_expected = [
         {"pc": 35, "status": 2, "error": 0, "last_opcode": 0x80, "frame_count": 1, "frame_ops": 7, "total_ops": 7, "variables": operand_vars_1},
         {"pc": 41, "status": 2, "error": 0, "last_opcode": 0x80, "frame_count": 2, "frame_ops": 2, "total_ops": 9, "variables": operand_vars_2},
-        {"pc": 134, "status": 4, "error": 0, "last_opcode": 0x00, "frame_count": 3, "frame_ops": 17, "total_ops": 26, "variables": operand_vars_3},
+        {"pc": 152, "status": 4, "error": 0, "last_opcode": 0x00, "frame_count": 3, "frame_ops": 19, "total_ops": 28, "variables": operand_vars_3},
     ]
     scheduler_expected = [
         (3, 3, 4, 2, 3, 4, 1, 0),
