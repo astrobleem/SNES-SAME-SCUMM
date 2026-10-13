@@ -1,0 +1,192 @@
+name: Independent validation
+
+on:
+  push:
+    branches: [main, ci/independent-validation]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Optional repository ref to validate with this workflow
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: independent-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    name: Host tests, validation, and package reproducibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout source under test
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: 3.12.10
+
+      - name: Install declared project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Run the repository unittest suite
+        run: make test
+
+      - name: Run static and generated-source validation
+        run: make validate
+
+      - name: Compile Python, check shell syntax, and validate tracked JSON
+        shell: bash
+        run: |
+          python -m compileall -q src tools tests labs/vdp/src
+          while IFS= read -r -d '' script; do bash -n "$script"; done \
+            < <(find tools runtime -type f -name '*.sh' -print0)
+          while IFS= read -r -d '' file; do python -m json.tool "$file" >/dev/null; done \
+            < <(git ls-files -z '*.json')
+          git diff --check
+          git diff --check HEAD^ HEAD
+
+      - name: Run WRAM ownership audit when present in the tested source
+        shell: bash
+        run: |
+          if [[ -f tools/audit_scumm_residency_wram.py ]]; then
+            python tools/audit_scumm_residency_wram.py \
+              --output "$RUNNER_TEMP/scumm-residency-wram.json"
+          else
+            echo 'WRAM ownership auditor is not part of this source revision; no native residency claim is made.'
+          fi
+
+      - name: Rebuild and corrupt-check the copyright-free SAMEPKG fixture
+        run: python tools/validate_synthetic_package_ci.py
+
+      - name: Record hosted-run scope
+        run: |
+          {
+            echo '### Hosted validation scope'
+            echo '- The checks above ran in a fresh GitHub-hosted Ubuntu 24.04 checkout.'
+            echo '- Nexen was not installed or simulated; this run is not native emulator acceptance.'
+            echo '- No external commercial game archive or private workstation path is required.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  pinned-poppy-snes:
+    name: Pinned Poppy build and SNES ROM audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout source under test
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: 3.12.10
+
+      - name: Set up pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: 10.0.301
+
+      - name: Set up pinned Rust toolchain for M24R-A
+        uses: actions-rust-lang/setup-rust-toolchain@c8ff772090ab9d00f7f7bd7b388f3c3032282e3b
+        with:
+          toolchain: 1.85.1
+          cache: false
+
+      - name: Check out exact public Poppy, Pansy, and TAD sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json
+          from pathlib import Path
+          pin = json.loads(Path('tools/poppy_pin.json').read_text())
+          print('POPPY_COMMIT=' + pin['commit'])
+          print('PANSY_COMMIT=' + pin['pansy_commit'])
+          PY
+          git clone https://github.com/TheAnsarya/pansy.git /tmp/pansy
+          git -C /tmp/pansy checkout --detach "$PANSY_COMMIT"
+          git clone https://github.com/astrobleem/poppy.git /tmp/poppy-jsl-address-fix
+          git -C /tmp/poppy-jsl-address-fix checkout --detach "$POPPY_COMMIT"
+          git clone https://github.com/undisbeliever/terrific-audio-driver.git \
+            "$RUNNER_TEMP/terrific-audio-driver"
+          git -C "$RUNNER_TEMP/terrific-audio-driver" checkout --detach \
+            822164b09cb3d4750bd4c1960a430dc35b6ae04a
+
+      - name: Build and verify the pinned Poppy binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore /tmp/poppy-jsl-address-fix/src/Poppy.CLI/Poppy.CLI.csproj \
+            -p:WarningsNotAsErrors=NU1902%3BNU1903
+          dotnet build /tmp/poppy-jsl-address-fix/src/Poppy.CLI/Poppy.CLI.csproj \
+            --configuration Release --no-restore \
+            -p:ContinuousIntegrationBuild=true \
+            -p:PathMap=/tmp/poppy-jsl-address-fix=/src/poppy
+          python tools/check_poppy.py /tmp/poppy-jsl-address-fix \
+            --dll /tmp/poppy-jsl-address-fix/src/Poppy.CLI/bin/Release/net10.0/poppy.dll
+
+      - name: Build the generic SNES target and audit the ROM
+        env:
+          POPPY_ROOT: /tmp/poppy-jsl-address-fix
+          POPPY_DLL: /tmp/poppy-jsl-address-fix/src/Poppy.CLI/bin/Release/net10.0/poppy.dll
+          M24RA_TAD_DONOR_DIR: ${{ runner.temp }}/terrific-audio-driver
+        run: |
+          make snes
+          python tools/audit_snes_rom.py build/same-scumm-v5.sfc \
+            --carrier lorom --map build/same-scumm-v5.map
+
+      - name: Build the copyright-free large-room personality when available
+        if: ${{ hashFiles('tools/build_scumm_native_residency_fixture.py') != '' }}
+        shell: bash
+        env:
+          POPPY_ROOT: /tmp/poppy-jsl-address-fix
+          POPPY_DLL: /tmp/poppy-jsl-address-fix/src/Poppy.CLI/bin/Release/net10.0/poppy.dll
+          SAME_TAD_DONOR_DIR: ${{ runner.temp }}/terrific-audio-driver
+        run: |
+          set -euo pipefail
+          python tools/build_scumm_native_residency_fixture.py \
+            --output-dir "$RUNNER_TEMP/large-room/source" \
+            --live-room-resources --large-live-room
+          env PYTHONPATH=src:tools \
+            SAME_TAD_PREBUILT_DIR=build/profile-music/m24ra \
+            SAME_SNES_ENGINE=scumm_v5 \
+            SAME_BUILD_M24RA=1 SAME_BUILD_M24RB=1 SAME_BUILD_SCUMM_M23A=1 \
+            SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY=1 \
+            SAME_BUILD_SCUMM_MSU1_PROGRAMS=1 \
+            SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES=1 \
+            SAME_BUILD_SCUMM_ROOM_VISUAL=1 SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS=0 \
+            SAME_SCUMM_SYNTHETIC_VARIABLES=1 SAME_SNES_CARRIER=sa1_bwram \
+            SAME_SNES_VIDEO_BACKEND=mode3_surface \
+            SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST="$RUNNER_TEMP/large-room/source/manifest.json" \
+            SAME_SCUMM_DYNAMIC_FIXTURE_BINARY_DIR="$RUNNER_TEMP/large-room/cooked/segments" \
+            SAME_SCUMM_DYNAMIC_BUILD_DIR="$RUNNER_TEMP/large-room/native-build" \
+            SAME_SCUMM_TITLE_START_ROOM=0 SAME_SCUMM_TITLE_TARGET_ROOM=1 \
+            SAME_SNES_OUTPUT="$RUNNER_TEMP/large-room/large-room.sfc" \
+            tools/build_snes.sh
+          python tools/audit_snes_rom.py \
+            "$RUNNER_TEMP/large-room/large-room.sfc" --carrier sa1_bwram \
+            --map "$RUNNER_TEMP/large-room/large-room.map"
+          {
+            echo '### Large-room hosted assembly'
+            echo '- Copyright-free MSU live-room personality assembled and ROM-audited.'
+            echo '- Nexen was not run; this is not native room-load acceptance.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record emulator limitation when native tool is absent
+        if: ${{ hashFiles('tools/build_scumm_native_residency_fixture.py') == '' }}
+        run: echo 'Native Nexen acceptance is not part of this baseline workflow run.' >> "$GITHUB_STEP_SUMMARY"
