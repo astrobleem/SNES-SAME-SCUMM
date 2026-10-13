@@ -16,6 +16,7 @@ from same.engines.scumm_v5.cooked_room import decode_cooked_room
 from same.engines.scumm_v5.room_compiler import (
     analyze_room, compile_room_payload, decode_script,
 )
+from same.engines.scumm_v5.room_visual import encode_room_visual
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
 from same.services import HostServices
@@ -693,6 +694,66 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
             self.assertIn(
                 f"lda #${first_entry['entry_offset']:04X}", generated,
             )
+
+            # Live MSU builds route these services to validated active-room
+            # resources. Keep the large ROM-backed fallbacks assembler-excluded
+            # in that personality: their corpus-sized BRL dispatches otherwise
+            # exceed the 16-bit relative range even though runtime never calls
+            # them.
+            visual_raw = encode_room_visual(
+                room=1, width=256, height=224, pitch=256,
+                palette=bytes(256 * 3), pixels=bytes(256 * 224),
+                archive_sha256=_sha(b"archive"), index_sha256=_sha(b"index"),
+                data_sha256=_sha(b"data"), room_sha256=_sha(source_rooms()[1]),
+            )
+            (temp / "room-1.sc5v").write_bytes(visual_raw)
+            live_record = dict(record, visual={
+                "output": "room-1.sc5v", "record_sha256": _sha(visual_raw),
+            })
+            live_manifest = dict(manifest, records=[live_record])
+            live_manifest_path = temp / "live-manifest.json"
+            live_manifest_path.write_text(json.dumps(live_manifest, sort_keys=True) + "\n")
+            live_dir = temp / "live"
+            live_command = [
+                sys.executable, str(ROOT / "tools/generate_snes_cooked_rooms.py"),
+                "--manifest", str(live_manifest_path),
+                "--output", str(live_dir / "tables.pasm"),
+                "--data-output", str(live_dir / "data.pasm"),
+                "--binary-dir", str(live_dir / "segments"),
+                "--report", str(live_dir / "report.json"),
+                "--far-programs", "--dynamic-program-residency",
+                "--pack-source-tables", "--banked-room-directory-data",
+                "--msu1-program-storage-dir", str(live_dir / "storage"),
+                "--msu1-program-directory-include", str(live_dir / "storage/programs.inc.pasm"),
+                "--msu1-program-directory-bank", "10",
+                "--msu1-program-page-directory-bank", "12",
+                "--msu1-live-room-resources",
+                "--native-directory-output", str(live_dir / "storage/native.json"),
+                "--native-directory-include", str(live_dir / "storage/native.inc.pasm"),
+            ]
+            subprocess.run(live_command, cwd=ROOT, check=True, capture_output=True, text=True)
+            live_generated = (live_dir / "data.pasm").read_text()
+            for label, target, fallback in (
+                ("ScummV5_Matrix_LoadActiveRoomNames_Far", "ScummV5_LiveRoom_LoadNames_Far",
+                 "ScummV5_Matrix_LoadActiveRoomNames__copy_0_0:"),
+                ("ScummV5_Verb_First_Far", "ScummV5_LiveRoom_VerbFirst_Far",
+                 "ScummV5_Verb_First_Far__record_0:"),
+                ("ScummV5_Verb_Next_Far", "ScummV5_LiveRoom_VerbNext_Far",
+                 "ScummV5_Verb_Next_Far__record_0:"),
+                ("ScummV5_Verb_Query_Far", "ScummV5_LiveRoom_VerbQuery_Far",
+                 "ScummV5_Verb_Query_Far__match_0:"),
+                ("ScummV5_ObjectProgram_Resolve_Far",
+                 "ScummV5_LiveRoom_ObjectProgramResolve_Far",
+                 "ScummV5_ObjectProgram_Resolve_Far__record_0:"),
+            ):
+                start = live_generated.index(label + ":")
+                block = live_generated[start:]
+                self.assertIn(".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES", block)
+                conditional = block.index(".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES")
+                alternate = block.index(".else", conditional)
+                close = block.index(".endif", alternate)
+                self.assertIn("jml " + target, block[conditional:alternate])
+                self.assertIn(fallback, block[alternate:close])
 
 
 if __name__ == "__main__":

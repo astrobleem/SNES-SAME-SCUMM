@@ -385,7 +385,7 @@ else
                 echo "Whole-source manifest does not declare ALL_AVAILABLE_EXECUTABLES" >&2
                 exit 1
             fi
-            M23A_BUILD="$ROOT/build/scumm-whole-source-backend"
+            M23A_BUILD="${SAME_SCUMM_WHOLE_SOURCE_BUILD_DIR:-$ROOT/build/scumm-whole-source-backend}"
             ROOM_GENERATOR_ARGS+=(--pack-source-tables --banked-room-directory-data)
         else
             DYNAMIC_RESIDENCY_MANIFEST="${SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST:?Set SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST to a generated synthetic cooked-room manifest}"
@@ -985,6 +985,9 @@ else
             --reserved-bank 10 --reserved-bank 11 --reserved-bank 12)
         if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
             ROOM_GENERATOR_ARGS+=(--msu1-live-room-resources)
+            if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" ]]; then
+                ROOM_GENERATOR_ARGS+=(--msu1-include-source-room-records)
+            fi
         fi
         if [[ -n "${SAME_SCUMM_MSU1_PREFIX_PACKAGE:-}" ||
               -n "${SAME_SCUMM_MSU1_PREFIX_SECTION:-}" ||

@@ -85,7 +85,10 @@ def _encode_portal_directory(dense: bytes, box_count: int, room: int) -> bytes:
     return b"".join(struct.pack("<H", index) for index in indices) + bytes(records)
 
 
-def encode_live_room(record: Mapping[str, object], *, program_units: Sequence[Mapping[str, object]]) -> bytes:
+def encode_live_room(
+    record: Mapping[str, object], *, program_units: Sequence[Mapping[str, object]],
+    max_size: int = MAX_PENDING_BYTES,
+) -> bytes:
     """Serialize cooked backend tables while preserving source identities.
 
     ``program_units`` contains the room's selector-bearing carriers.  The
@@ -202,10 +205,15 @@ def encode_live_room(record: Mapping[str, object], *, program_units: Sequence[Ma
     for name, data in sections:
         offsets[name] = len(body)
         body.extend(data)
-    if len(body) > MAX_PENDING_BYTES:
+    if max_size <= 0 or max_size > 0xFFFF:
+        raise ResourceError("live-room encoding limit must fit a nonzero u16")
+    if len(body) > max_size:
+        limit_detail = (
+            f"audited pending room buffer is {max_size} bytes"
+            if max_size == MAX_PENDING_BYTES else f"selected limit is {max_size} bytes"
+        )
         raise ResourceError(
-            f"room {room} live metadata is {len(body)} bytes; audited pending room buffer "
-            f"is {MAX_PENDING_BYTES} bytes"
+            f"room {room} live metadata is {len(body)} bytes; {limit_detail}"
         )
     source_raw = bytes(record["raw"])
     source_hash = hashlib.sha256(source_raw).digest()
@@ -219,7 +227,10 @@ def encode_live_room(record: Mapping[str, object], *, program_units: Sequence[Ma
     return bytes(body)
 
 
-def decode_live_room(data: bytes, *, expected_room: int | None = None) -> LiveRoomRecord:
+def decode_live_room(
+    data: bytes, *, expected_room: int | None = None,
+    max_size: int = MAX_ACTIVE_BYTES,
+) -> LiveRoomRecord:
     if len(data) < HEADER.size:
         raise ResourceError("live room record is truncated")
     values = HEADER.unpack_from(data)
@@ -233,7 +244,9 @@ def decode_live_room(data: bytes, *, expected_room: int | None = None) -> LiveRo
     offsets_raw = tuple(int(value) for value in values[12:22])
     total_size = int(values[22])
     source_hash = values[23]
-    if total_size != len(data) or total_size > MAX_ACTIVE_BYTES:
+    if max_size <= 0 or max_size > 0xFFFF:
+        raise ResourceError("live-room validation limit must fit a nonzero u16")
+    if total_size != len(data) or total_size > max_size:
         raise ResourceError("live room length exceeds its validated active-resource range")
     if source_hash == bytes(32):
         raise ResourceError("live room provenance identity is empty")
