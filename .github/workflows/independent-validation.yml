@@ -139,6 +139,8 @@ jobs:
           dotnet build /tmp/poppy-jsl-address-fix/src/Poppy.CLI/Poppy.CLI.csproj \
             --configuration Release --no-restore \
             -p:ContinuousIntegrationBuild=true \
+            -p:Deterministic=true \
+            -p:DebugType=None -p:DebugSymbols=false \
             -p:PathMap=/tmp/poppy-jsl-address-fix=/src/poppy
           python tools/check_poppy.py /tmp/poppy-jsl-address-fix \
             --dll /tmp/poppy-jsl-address-fix/src/Poppy.CLI/bin/Release/net10.0/poppy.dll
