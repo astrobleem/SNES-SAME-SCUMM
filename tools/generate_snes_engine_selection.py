@@ -97,6 +97,10 @@ def main() -> int:
     parser.add_argument("--m24rb", action="store_true")
     parser.add_argument("--disable-reset-diagnostics", action="store_true",
                         help="omit reset/interrupt breadcrumbs from constrained diagnostic ROMs")
+    parser.add_argument(
+        "--capture-first-brk", action="store_true",
+        help="diagnostic-only: capture the first BRK frame/stack and stop the CPU",
+    )
     parser.add_argument("--m24rb-phase-delay", type=int, default=125)
     parser.add_argument("--m24rb-local-script", type=int, default=208)
     parser.add_argument("--m24rb-primary-sound", type=int, default=80)
@@ -110,6 +114,8 @@ def main() -> int:
         default=Path("runtime/snes/generated/active_engine.inc.pasm"),
     )
     args = parser.parse_args()
+    if args.capture_first_brk and args.disable_reset_diagnostics:
+        parser.error("--capture-first-brk requires reset diagnostics storage")
     if args.scumm_m25a_pending_only and not args.scumm_m25a_validator:
         parser.error("--scumm-m25a-pending-only requires --scumm-m25a-validator")
     if args.engine == "winston_io" and not args.msu1_storage:
@@ -247,6 +253,7 @@ def main() -> int:
         f"SAME_BUILD_M24RA = ${1 if (args.engine == 'm24ra_conformance' and args.m24ra) or (args.m24rb and args.engine in ('m24rb_conformance', 'scumm_v5')) else 0:02X}\n"
         f"SAME_BUILD_M24RB = ${1 if args.m24rb and args.engine in ('m24rb_conformance', 'scumm_v5') else 0:02X}\n"
         f"SAME_BUILD_RESET_DIAGNOSTICS = ${0 if args.disable_reset_diagnostics else 1:02X}\n"
+        f"SAME_BUILD_CAPTURE_FIRST_BRK = ${1 if args.capture_first_brk else 0:02X}\n"
         f"SAME_M24RB_PHASE_DELAY = ${args.m24rb_phase_delay & 0xffff:04X}\n"
         f"SAME_M24RB_LOCAL_SCRIPT = ${args.m24rb_local_script & 0xff:02X}\n"
         f"SAME_M24RB_PRIMARY_SOUND = ${args.m24rb_primary_sound & 0xff:02X}\n"

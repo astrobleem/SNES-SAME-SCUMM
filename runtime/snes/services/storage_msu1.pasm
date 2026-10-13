@@ -399,9 +399,11 @@ Same_Msu1_ReadBegin__destination_no_wrap:
     beq Same_Msu1_ReadBegin__dest_bank_ok
     cmp #$7F
     beq Same_Msu1_ReadBegin__dest_bank_ok
-    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES || SAME_BUILD_SCUMM_MSU1_PROGRAMS
     cmp #$41 ; SA-1 BW-RAM tile-shadow window, independently layout-audited
     beq Same_Msu1_ReadBegin__dest_bwram_ok
+    .endif
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     cmp #$40 ; only explicitly audited palette and pending-metadata ranges
     beq Same_Msu1_ReadBegin__dest_palette_ok
     .endif
@@ -418,18 +420,28 @@ Same_Msu1_ReadBegin__dest_bank_ok:
 Same_Msu1_ReadBegin__destination_bank_limit_ok:
     sep #$20
     .a8
-    bra Same_Msu1_ReadBegin__dest_capacity_ok
-.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    jml Same_Msu1_ReadBegin__dest_capacity_ok
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES || SAME_BUILD_SCUMM_MSU1_PROGRAMS
 Same_Msu1_ReadBegin__dest_bwram_ok:
     rep #$20
     .a16
-    ; The only large direct-read destination in this personality is the
-    ; layout-audited indexed tile shadow at 41:0000. Do not treat every $41
-    ; address as writable BWRAM or let a large read cross into CGRAM/reserved
-    ; storage.
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     lda.l SAME_MSU1_DESTINATION
     beq Same_Msu1_ReadBegin__bwram_base_ok
+    .endif
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS && SAME_CARRIER_IS_SA1_BWRAM
+    ; The cache page address is E800, while <CACHE2 is 00. Compare this
+    ; address byte in 8-bit mode; a 16-bit comparison rejects the valid page.
+    sep #$20
+    .a8
+    lda.l SAME_MSU1_DESTINATION
+    cmp #<SAME_SCUMM_MSU_PROGRAM_CACHE2
+    beq Same_Msu1_ReadBegin__bwram_cache_page_low_ok
+    rep #$20
+    .a16
+    .endif
     jml Same_Msu1_ReadBegin__capacity_error16
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
 Same_Msu1_ReadBegin__bwram_base_ok:
     .a16
     lda.l SAME_MSU1_DEST_CAPACITY
@@ -440,6 +452,26 @@ Same_Msu1_ReadBegin__dest_capacity_ok16:
     sep #$20
     .a8
     bra Same_Msu1_ReadBegin__dest_capacity_ok
+    .endif
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS && SAME_CARRIER_IS_SA1_BWRAM
+Same_Msu1_ReadBegin__bwram_cache_page_low_ok:
+    sep #$20
+    .a8
+    lda.l SAME_MSU1_DESTINATION+1
+    cmp #>SAME_SCUMM_MSU_PROGRAM_CACHE2
+    bne Same_Msu1_ReadBegin__cache_page_invalid
+    rep #$20
+    .a16
+    lda.l SAME_MSU1_DEST_CAPACITY
+    cmp #SAME_SCUMM_MSU_PROGRAM_CACHE_SLOT_SIZE+1
+    bcc Same_Msu1_ReadBegin__cache_page_capacity_ok
+Same_Msu1_ReadBegin__cache_page_invalid:
+    jml Same_Msu1_ReadBegin__capacity_error16
+Same_Msu1_ReadBegin__cache_page_capacity_ok:
+    sep #$20
+    .a8
+    bra Same_Msu1_ReadBegin__dest_capacity_ok
+    .endif
 .endif
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
 Same_Msu1_ReadBegin__dest_palette_ok:
@@ -464,7 +496,10 @@ Same_Msu1_ReadBegin__dest_pending_high_ok:
     rep #$20
     .a16
     lda.l SAME_MSU1_DEST_CAPACITY
-    cmp #$0801
+    ; The audited pending allocation is currently 0x0A00 bytes. Bind the
+    ; provider limit to the carrier layout instead of retaining the former
+    ; synthetic 2-KiB ceiling after the allocation was enlarged.
+    cmp #SAME_BWRAM_LIVE_ROOM_PENDING_SIZE+1
     bcc Same_Msu1_ReadBegin__dest_pending_capacity_ok16
     jml Same_Msu1_ReadBegin__capacity_error16
 Same_Msu1_ReadBegin__dest_pending_capacity_ok16:

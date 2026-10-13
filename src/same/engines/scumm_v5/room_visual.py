@@ -140,3 +140,74 @@ def decode_room_visual(data: bytes, *, expected_room: int | None = None) -> Cook
         archive_hash.hex(), index_hash.hex(), data_hash.hex(), room_hash.hex(),
         palette_hash.hex(), pixel_hash.hex(), _sha(data).hex(),
     )
+
+
+def project_room_visual(
+    data: bytes,
+    *,
+    target_width: int,
+    target_height: int,
+) -> tuple[bytes, dict[str, int | str]]:
+    """Project an indexed source room onto a bounded target surface.
+
+    The complete source image is aspect-fit with nearest-neighbour sampling;
+    unused target rows/columns use palette index zero.  This preserves source
+    palette indices and never invents colors.  The returned SC5VIS record
+    retains the original source provenance while its pixel digest describes
+    the deterministic target-surface projection.
+    """
+    visual = decode_room_visual(data)
+    if target_width <= 0 or target_height <= 0:
+        raise ResourceError("room visual target dimensions must be positive")
+
+    # Compare rational scale factors without floating-point rounding.
+    if target_width * visual.height <= target_height * visual.width:
+        content_width = target_width
+        content_height = max(1, visual.height * target_width // visual.width)
+    else:
+        content_height = target_height
+        content_width = max(1, visual.width * target_height // visual.height)
+    offset_x = (target_width - content_width) // 2
+    offset_y = (target_height - content_height) // 2
+
+    pixels = bytearray(target_width * target_height)
+    for out_y in range(content_height):
+        source_y = min(
+            visual.height - 1,
+            (2 * out_y + 1) * visual.height // (2 * content_height),
+        )
+        source_row = source_y * visual.pitch
+        target_row = (offset_y + out_y) * target_width + offset_x
+        for out_x in range(content_width):
+            source_x = min(
+                visual.width - 1,
+                (2 * out_x + 1) * visual.width // (2 * content_width),
+            )
+            pixels[target_row + out_x] = visual.pixels[source_row + source_x]
+
+    projected = encode_room_visual(
+        room=visual.room,
+        width=target_width,
+        height=target_height,
+        pitch=target_width,
+        palette=visual.palette,
+        pixels=bytes(pixels),
+        archive_sha256=visual.archive_sha256,
+        index_sha256=visual.index_sha256,
+        data_sha256=visual.data_sha256,
+        room_sha256=visual.room_sha256,
+    )
+    return projected, {
+        "source_width": visual.width,
+        "source_height": visual.height,
+        "source_pitch": visual.pitch,
+        "source_pixels_sha256": visual.decoded_pixels_sha256,
+        "target_width": target_width,
+        "target_height": target_height,
+        "content_width": content_width,
+        "content_height": content_height,
+        "offset_x": offset_x,
+        "offset_y": offset_y,
+        "sampling": "nearest_neighbor_aspect_fit",
+        "border_palette_index": 0,
+    }

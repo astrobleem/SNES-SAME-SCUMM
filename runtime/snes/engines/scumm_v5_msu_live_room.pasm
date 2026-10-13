@@ -6,7 +6,7 @@
 ; its conformance engine). Visual pixels and
 ; palette are fetched into their own audited BWRAM allocations.
 
-.bank 83
+.bank 84
 .org $8000
 
 SCUMM_LIVE_ROOM_DIRECTORY_OFFSET = SAME_SCUMM_LIVE_ROOM_CONTROL+$0E
@@ -90,6 +90,10 @@ ScummV5_MsuLiveRoom_Start_Far__pcm_started:
     and #$00FF
     cmp #SCUMM_MSU1_LIVE_ROOM_COUNT
     bcc ScummV5_MsuLiveRoom_Start_Far__metadata_room_ok
+    sep #$20
+    .a8
+    lda #$A5
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1E
     jmp ScummV5_MsuLiveRoom_Start_Far__invalid
 ScummV5_MsuLiveRoom_Start_Far__metadata_room_ok:
     asl
@@ -140,6 +144,10 @@ ScummV5_MsuLiveRoom_Start_Far__metadata_room_ok:
     lda.l SAME_MSU1_REQUEST_LENGTH
     cmp #SCUMM_LIVE_ROOM_MAX_SIZE+1
     bcc ScummV5_MsuLiveRoom_Start_Far__metadata_length_ok
+    sep #$20
+    .a8
+    lda #$A6
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1E
     jmp ScummV5_MsuLiveRoom_Start_Far__invalid
 ScummV5_MsuLiveRoom_Start_Far__metadata_length_ok:
     .a16
@@ -297,23 +305,38 @@ ScummV5_MsuLiveRoom_Start_Far__width_low_ok:
     inx
     lda.l ScummV5_MsuVisualRecords,x
     cmp #$01
-    bne ScummV5_MsuLiveRoom_Start_Far__invalid
+    beq ScummV5_MsuLiveRoom_Start_Far__width_high_ok
+    jmp ScummV5_MsuLiveRoom_Start_Far__invalid
+ScummV5_MsuLiveRoom_Start_Far__width_high_ok:
+    .a8
     inx
     lda.l ScummV5_MsuVisualRecords,x
     cmp #$E0
-    bne ScummV5_MsuLiveRoom_Start_Far__invalid
+    beq ScummV5_MsuLiveRoom_Start_Far__height_low_ok
+    jmp ScummV5_MsuLiveRoom_Start_Far__invalid
+ScummV5_MsuLiveRoom_Start_Far__height_low_ok:
+    .a8
     inx
     lda.l ScummV5_MsuVisualRecords,x
     cmp #$00
-    bne ScummV5_MsuLiveRoom_Start_Far__invalid
+    beq ScummV5_MsuLiveRoom_Start_Far__height_high_ok
+    jmp ScummV5_MsuLiveRoom_Start_Far__invalid
+ScummV5_MsuLiveRoom_Start_Far__height_high_ok:
+    .a8
     inx
     lda.l ScummV5_MsuVisualRecords,x
     cmp #$00
-    bne ScummV5_MsuLiveRoom_Start_Far__invalid
+    beq ScummV5_MsuLiveRoom_Start_Far__pitch_low_ok
+    jmp ScummV5_MsuLiveRoom_Start_Far__invalid
+ScummV5_MsuLiveRoom_Start_Far__pitch_low_ok:
+    .a8
     inx
     lda.l ScummV5_MsuVisualRecords,x
     cmp #$01
-    bne ScummV5_MsuLiveRoom_Start_Far__invalid
+    beq ScummV5_MsuLiveRoom_Start_Far__pitch_high_ok
+    jmp ScummV5_MsuLiveRoom_Start_Far__invalid
+ScummV5_MsuLiveRoom_Start_Far__pitch_high_ok:
+    .a8
     rep #$20
     .a16
     lda.l SAME_MSU1_REQUEST_LENGTH
@@ -345,7 +368,13 @@ ScummV5_MsuLiveRoom_Start_Far__read:
     sep #$20
     .a8
     jsl Same_Msu1_ReadBegin_FarEntry
-    bcs ScummV5_MsuLiveRoom_Start_Far__invalid
+    bcc ScummV5_MsuLiveRoom_Start_Far__read_started
+    lda #$A7
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1E
+    jmp ScummV5_MsuLiveRoom_Start_Far__invalid
+.a8
+ScummV5_MsuLiveRoom_Start_Far__read_started:
+    .a8
     lda #$FF
     sta.l SAME_SCUMM_MSU_ROOM_CACHE_SLOT
     lda #SCUMM_MSU_ROOM_READING
@@ -811,6 +840,7 @@ ScummV5_LiveRoom_LoadGeometry_Far__copy:
     pla
     sta.l SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK,x
     lda.l SCUMM_LIVE_ROOM_TEMP0
+    inc
     inc
     sta.l SCUMM_LIVE_ROOM_TEMP0
     lda.l SCUMM_LIVE_ROOM_TEMP1

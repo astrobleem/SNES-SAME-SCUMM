@@ -381,6 +381,61 @@ cop_handler:
     plp
     rti
 brk_handler:
+.if SAME_BUILD_CAPTURE_FIRST_BRK
+    ; Diagnostic-only first-BRK capture. Preserve the hardware interrupt frame
+    ; and its caller stack before the ordinary handler returns to the faulting
+    ; code. STP makes the first illegal control transfer inspectable instead
+    ; of letting repeated BRKs obscure the original return address.
+    rep #$30
+    .a16
+    .i16
+    sta.l SAME_RESET_DIAG_LAST_A
+    txa
+    sta.l SAME_RESET_DIAG_LAST_X
+    tya
+    sta.l SAME_RESET_DIAG_LAST_Y
+    tsc
+    sta.l SAME_RESET_DIAG_LAST_S
+    tax
+    sep #$20
+    .a8
+    lda.l $000001,x
+    sta.l SAME_RESET_DIAG_LAST_P
+    lda.l $000002,x
+    sta.l SAME_RESET_DIAG_LAST_PC
+    lda.l $000003,x
+    sta.l SAME_RESET_DIAG_LAST_PC+1
+    lda.l $000004,x
+    sta.l SAME_RESET_DIAG_LAST_PBR
+    rep #$20
+    .a16
+    tsc
+    inc
+    sta.l SAME_RESET_DIAG_STACK_SOURCE
+    lda #$0000
+    tcd
+    lda.l SAME_RESET_DIAG_STACK_SOURCE
+    sta $00
+    lda #$0000
+    sta $02
+    lda #$F491
+    sta $04
+    sep #$20
+    .a8
+    lda #$7F
+    sta $06
+    ldy #$0000
+    .i16
+brk_handler__capture_first_stack:
+    .a8
+    .i16
+    lda [$00],y
+    sta [$04],y
+    iny
+    cpy #SAME_RESET_DIAG_STACK_SIZE
+    bcc brk_handler__capture_first_stack
+    stp
+.endif
 .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
     ; Capture the native interrupt frame before changing S, then freeze. These
     ; fields are diagnostic-only in the synthetic-bootstrap personality.

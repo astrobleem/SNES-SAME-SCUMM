@@ -21,6 +21,8 @@ DEFAULT_NEXEN = Path(
     "/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/linux-x64/publish/Nexen"
 )
 ACTIVE_DYNAMIC_RESIDENCY = False
+ACTIVE_MSU_PROGRAMS = False
+ACTIVE_LIVE_ROOM_RESOURCES = False
 ACTIVE_PROGRAM_DIRECTORY: dict[int, dict[str, Any]] = {}
 RESIDENCY_EVENTS: list[dict[str, Any]] = []
 RESIDENCY_LAST: dict[int, dict[str, Any]] = {}
@@ -142,6 +144,11 @@ def _u16(session: Any, address: int) -> int:
     return int.from_bytes(session.read_memory("snesMemory", address, 2), "little")
 
 
+def _s16(session: Any, address: int) -> int:
+    value = _u16(session, address)
+    return value - 0x10000 if value & 0x8000 else value
+
+
 def _slots(session: Any) -> list[dict[str, int]]:
     statuses = session.read_memory("snesMemory", 0x7E2380, 24)
     numbers = session.read_memory("snesMemory", 0x7E2399, 24)
@@ -172,6 +179,8 @@ class _SnapshotReader:
 
     _BLOCKS = (
         ("snesMemory", 0x7E2200, 0x0A00),
+        ("snesMemory", 0x7E5F13, 0x0006),
+        ("snesMemory", 0x7E5F20, 0x0072),
         ("snesMemory", 0x7E5FE0, 0x0020),
         ("snesMemory", 0x7E6000, 0x0040),
         ("snesMemory", 0x7E7A20, 0x0030),
@@ -209,7 +218,7 @@ class _SnapshotReader:
         return self.read_memory("snesMemory", address, 1)[0]
 
 
-def _snapshot(session: Any) -> dict[str, Any]:
+def _snapshot(session: Any, *, include_live_room: bool = False) -> dict[str, Any]:
     from fate_replay import room4_controller_snapshot
 
     session = _SnapshotReader(session)
@@ -225,6 +234,27 @@ def _snapshot(session: Any) -> dict[str, Any]:
     room_lifecycle = session.read_memory("snesMemory", 0x7FF2BE, 8)
     actor1 = session.read_memory("snesMemory", 0x7F3700, 64)
     actor1_position = session.read_memory("snesMemory", 0x7FF1A4, 4)
+    put_actor_trace_count = min(session.read_u8(0x7FFF00), 8)
+    put_actor_trace_raw = session.read_memory(
+        "snesMemory", 0x7FFF01, put_actor_trace_count * 14
+    )
+    put_actor_trace = [
+        {
+            "actor": put_actor_trace_raw[index * 14],
+            "opcode": put_actor_trace_raw[index * 14 + 1],
+            "requested": [
+                int.from_bytes(put_actor_trace_raw[index * 14 + 2:index * 14 + 4], "little", signed=True),
+                int.from_bytes(put_actor_trace_raw[index * 14 + 4:index * 14 + 6], "little", signed=True),
+            ],
+            "adjusted": [
+                int.from_bytes(put_actor_trace_raw[index * 14 + 6:index * 14 + 8], "little", signed=True),
+                int.from_bytes(put_actor_trace_raw[index * 14 + 8:index * 14 + 10], "little", signed=True),
+            ],
+            "pc_before": int.from_bytes(put_actor_trace_raw[index * 14 + 10:index * 14 + 12], "little"),
+            "pc_after": int.from_bytes(put_actor_trace_raw[index * 14 + 12:index * 14 + 14], "little"),
+        }
+        for index in range(put_actor_trace_count)
+    ]
     slots = _slots(session)
     resident_bindings: list[dict[str, Any]] = []
     residency: dict[str, Any] = {}
@@ -317,7 +347,7 @@ def _snapshot(session: Any) -> dict[str, Any]:
         ]
     else:
         missing_live = []
-    return {
+    snapshot = {
         "frame": int(session.get_state()["frameCount"]),
         **room4_controller_snapshot(session),
         "active_record": room_lifecycle[0],
@@ -328,6 +358,10 @@ def _snapshot(session: Any) -> dict[str, Any]:
         "m23a_return_slot": session.read_u8(0x7FF468),
         "m23a_return_mode": session.read_u8(0x7FF469),
         "m23a_return_pc": _u16(session, 0x7FF2E5),
+        "m23a_phase": session.read_u8(0x7FF2C2),
+        "m23a_current_kind": session.read_u8(0x7FF2CF),
+        "m23a_chain_slot": session.read_u8(0x7FF2D8),
+        "m23a_chain_phase": session.read_u8(0x7FF2D9),
         "bit69": int(bool(bit69_byte & (1 << (69 & 7)))),
         "bit35": int(bool(bit35_byte & (1 << (35 & 7)))),
         "bit64_71": [
@@ -340,13 +374,80 @@ def _snapshot(session: Any) -> dict[str, Any]:
         "actor1_x": int.from_bytes(actor1_position[:2], "little", signed=True),
         "actor1_y": int.from_bytes(actor1_position[2:], "little", signed=True),
         "actor1_moving": session.read_u8(0x7FF221),
+        "camera": {
+            "current_x": _u16(session, 0x7E7FA8),
+            "current_y": _u16(session, 0x7E7FAA),
+            "vscreen_xstart": _u16(session, 0x7E7FB8),
+            "scroll_min": _u16(session, 0x7F3002),
+            "scroll_max": _u16(session, 0x7F3004),
+        },
+        "put_actor_trace": put_actor_trace,
         "current_slot": session.read_u8(0x7E2A88),
+        "last_allocated_slot": session.read_u8(0x7E2A89),
         "scheduler_slot": session.read_u8(0x7E2B22),
+        "allocation_scan_slot": session.read_u8(0x7E2A8B),
         "active_slot_count": session.read_u8(0x7E2A8A),
         "program_select": session.read_u8(0x7E2362),
         "entry_program": session.read_u8(0x7FF2CD),
         "exit_program": session.read_u8(0x7FF2CE),
+        "var_ego": _u16(session, 0x7FF502),
+        "load_room_with_ego": {
+            "active": session.read_u8(0x7E7FCC),
+            "object": _u16(session, 0x7E7FCD),
+            "room": session.read_u8(0x7E7FCF),
+            "x": _s16(session, 0x7E7FD0),
+            "y": _s16(session, 0x7E7FD2),
+            "pc_after": _u16(session, 0x7E7FD4),
+            "caller_slot": session.read_u8(0x7E7FD6),
+            "caller_program": session.read_u8(0x7E7FD7),
+            "previous_room": session.read_u8(0x7E7FD8),
+            "ego_actor": session.read_u8(0x7E7FD9),
+        },
         "shared_vm_pc": _u16(session, 0x7E2300),
+        "last_opcode": session.read_u8(0x7E2306),
+        "verb_query": {
+            "object": _u16(session, 0x7E7EBF),
+            "verb": _u16(session, 0x7E7EC1),
+            "result": _u16(session, 0x7E7EC3),
+            "error_object": _u16(session, 0x7E7EB5),
+            "error_verb": _u16(session, 0x7E7EB7),
+        },
+        "m23b_error_site": session.read_u8(0x7FF466),
+        "scenario_error": {
+            "request_id": _u16(session, 0x7E5F13),
+            "request_pc": _u16(session, 0x7E5F15),
+            "resource_error_site": session.read_u8(0x7E5F17),
+            "capture_valid": session.read_u8(0x7E5F18),
+            "count": session.read_u8(0x7E5F20),
+            "code": session.read_u8(0x7E5F21),
+            "selector": session.read_u8(0x7E5F22),
+            "pc": _u16(session, 0x7E5F23),
+            "opcode": session.read_u8(0x7E5F25),
+            "room": session.read_u8(0x7E5F26),
+            "slot": session.read_u8(0x7E5F8D),
+            "set_error_return": _u16(session, 0x7E5F2E),
+            "set_error_stack": session.read_memory("snesMemory", 0x7E5F30, 8).hex(),
+            "m23a_phase": session.read_u8(0x7FF2C2),
+            "m23a_hold": session.read_u8(0x7FF2C4),
+            "zero_selector_context": {
+                "selector": session.read_u8(0x7E5F19),
+                "current_slot": session.read_u8(0x7E5F1A),
+                "slot_program": session.read_u8(0x7E5F1B),
+                "slot_status": session.read_u8(0x7E5F1C),
+                "scheduler_slot": session.read_u8(0x7E5F1D),
+                "last_allocated": session.read_u8(0x7E5F1E),
+                "scan_slot": session.read_u8(0x7E5F1F),
+            },
+        },
+        "actor_ops_actor": session.read_u8(0x7F5F00),
+        "actor_ops_subop": session.read_u8(0x7F5F01),
+        "actor_ops_initialized": session.read_u8(0x7F5F08),
+        "actor_ops_actor_present": session.read_u8(0x7F36C0 + 64 + 0x1F),
+        "actor_ops_actor1_present": session.read_u8(0x7F36C0 + 64 + 0x40 + 0x1F),
+        "c7_subop": session.read_u8(0x7E2B7C),
+        "c14_last_error_site": session.read_u8(0x7E5F04),
+        "c14_last_error_pc": _u16(session, 0x7E5F05),
+        "c14_last_error_opcode": session.read_u8(0x7E5F07),
         "return_mode": session.read_u8(0x7E2363),
         "nested_depth": session.read_u8(0x7FD335),
         "talk_stop_count": session.read_u8(0x7E7A2A),
@@ -377,7 +478,113 @@ def _snapshot(session: Any) -> dict[str, Any]:
             },
             "resident_binding_violations": missing_live,
         } if ACTIVE_DYNAMIC_RESIDENCY else {}),
+        **({
+            "program_cache": {
+                "active_selector": session.read_u8(0x7E2F6F),
+                "active_slot": session.read_u8(0x7E2F5B),
+                "active_id": _u16(session, 0x7E2F5C),
+                "active_generation": _u16(session, 0x7E2F5E),
+                "current_cached_bytes": _u16(session, 0x7E2F60),
+                "peak_cached_bytes": _u16(session, 0x7E2F62),
+                "page_loads": _u16(session, 0x7E2F64),
+                "page_evictions": _u16(session, 0x7E2F66),
+                "slots": [
+                    {
+                        "slot": index,
+                        "state": session.read_u8(state),
+                        "program_unit_id": _u16(session, program_id),
+                        "size": _u16(session, size),
+                        "pins": session.read_u8(pins),
+                        "generation": _u16(session, generation),
+                        "page_start": _u16(session, page_start),
+                    }
+                    for index, state, program_id, size, pins, generation, page_start in (
+                        (0, 0x7E2F48, 0x7E2F4A, 0x7E2F4E, 0x7E2F52, 0x7E2F54, 0x7E2EB6),
+                        (1, 0x7E2F49, 0x7E2F4C, 0x7E2F50, 0x7E2F53, 0x7E2F56, 0x7E2EB8),
+                        (2, 0x7E2EC3, 0x7E2EC4, 0x7E2EC6, 0x7E2EC8, 0x7E2EC9, 0x7E2ECB),
+                    )
+                ],
+                "page_lookup": {
+                    "pc": _u16(session, 0x7E2EAC),
+                    "start": _u16(session, 0x7E2EAE),
+                    "length": _u16(session, 0x7E2EB0),
+                    "record_index": _u16(session, 0x7E2EB2),
+                    "remaining": _u16(session, 0x7E2EB4),
+                    "body_length": _u16(session, 0x7E2EBA),
+                },
+                "request": {
+                    "id": _u16(session, 0x7E2F58),
+                    "slot": session.read_u8(0x7E2F5A),
+                    "status": session.read_u8(0x7E2FAA),
+                },
+                "provider": {
+                    "status": session.read_u8(0x7E2F00),
+                    "error": session.read_u8(0x7E2F01),
+                    "offset": int.from_bytes(
+                        session.read_memory("snesMemory", 0x7E2F04, 4), "little"
+                    ),
+                    "length": int.from_bytes(
+                        session.read_memory("snesMemory", 0x7E2F08, 4), "little"
+                    ),
+                    "destination": int.from_bytes(
+                        session.read_memory("snesMemory", 0x7E2F0C, 3), "little"
+                    ),
+                    "destination_capacity": _u16(session, 0x7E2F0F),
+                    "remaining": int.from_bytes(
+                        session.read_memory("snesMemory", 0x7E2F15, 4), "little"
+                    ),
+                    "bytes_read": int.from_bytes(
+                        session.read_memory("snesMemory", 0x7E2F2D, 4), "little"
+                    ),
+                },
+                "failures": _u16(session, 0x7E2F68),
+                "room_state": session.read_u8(0x7E2FEB),
+                "room_id": session.read_u8(0x7E2FEC),
+                "room_failures": _u16(session, 0x7E2FF1),
+                "room_requests": _u16(session, 0x7E2FED),
+                "room_validations": _u16(session, 0x7E2FEF),
+                "maximum_checked_fetch_latency_frames": _u16(session, 0x7E2FF3),
+                "last_room_request_start_frame": _u16(session, 0x7E2FF5),
+                "last_room_record_length": _u16(session, 0x7E2FF7),
+                "service_turns": _u16(session, 0x7E2FA8),
+                "frame_entries": _u16(session, 0x7E2FAB),
+                "service_last_status": session.read_u8(0x7E2FAA),
+                "m23a_counts": {
+                    "requests": session.read_u8(0x7FF2C5),
+                    "exits": session.read_u8(0x7FF2CA),
+                    "retires": session.read_u8(0x7FF2C8),
+                    "entries": session.read_u8(0x7FF2C9),
+                    "return_valid": session.read_u8(0x7FF467),
+                },
+                "live_room_control": list(
+                    session.read_memory("snesMemory", 0x401400, 64)
+                ),
+            }
+        } if ACTIVE_MSU_PROGRAMS else {}),
     }
+    if include_live_room and ACTIVE_LIVE_ROOM_RESOURCES:
+        header = session.read_memory("snesMemory", 0x41F000, 82)
+        verb_count = int.from_bytes(header[18:20], "little")
+        verbs_offset = int.from_bytes(header[42:44], "little")
+        rows = session.read_memory(
+            "snesMemory", 0x41F000 + verbs_offset, verb_count * 8
+        ) if verb_count else b""
+        snapshot["live_room_header"] = {
+            "magic": bytes(header[:8]).decode("ascii", errors="replace"),
+            "room": header[12],
+            "verb_count": verb_count,
+            "verbs_offset": verbs_offset,
+            "verb_rows": [
+                {
+                    "object": int.from_bytes(rows[index:index + 2], "little"),
+                    "verb": int.from_bytes(rows[index + 2:index + 4], "little"),
+                    "entry_pc": int.from_bytes(rows[index + 4:index + 6], "little"),
+                    "program_unit": int.from_bytes(rows[index + 6:index + 8], "little"),
+                }
+                for index in range(0, len(rows), 8)
+            ],
+        }
+    return snapshot
 
 
 def _authentic_room4_object61_use_source(archive: Path) -> dict[str, Any]:
@@ -623,9 +830,16 @@ def _native_directory_for_build(identity_path: Path) -> dict[str, Any]:
         # build_snes.sh deliberately isolates dynamic-residency artifacts from
         # the legacy/static M23A build root. Follow that build-owned location;
         # never glob for a report or consume stale compiler output.
-        report_candidates.insert(
-            0, identity_path.parent / "fate-dynamic-residency" / "cooked-rooms.json",
-        )
+        configured_root = explicit_environment.get("SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR")
+        if configured_root:
+            root = Path(str(configured_root))
+            if not root.is_absolute():
+                root = ROOT / root
+            report_candidates.insert(0, root / "cooked-rooms.json")
+        else:
+            report_candidates.insert(
+                0, identity_path.parent / "fate-dynamic-residency" / "cooked-rooms.json",
+            )
     existing_reports = [path for path in report_candidates if path.is_file()]
     if len(existing_reports) > 1:
         raise RuntimeError(
@@ -1209,6 +1423,25 @@ def _live_slot_locals(session: Any, slots: list[dict[str, int]]) -> list[dict[st
     return result
 
 
+def _room4_source_probe(
+    session: Any, *, variable_base: int, variable_count: int,
+) -> dict[str, Any]:
+    """Read-only source-state evidence at a bounded room-4 checkpoint."""
+    count = min(32, variable_count)
+    raw = session.read_memory("snesMemory", variable_base, count * 2)
+    variables = [
+        int.from_bytes(raw[index * 2:index * 2 + 2], "little")
+        for index in range(count)
+    ]
+    slots = _snapshot(session)["slots"]
+    return {
+        "global_variables_0_31": variables,
+        "global_5": variables[5] if len(variables) > 5 else None,
+        "bit_variables_0_31": session.read_memory("snesMemory", 0x7E2BA0, 4).hex(),
+        "live_slot_locals": _live_slot_locals(session, slots),
+    }
+
+
 def _parse_rom_variable_layout(listing_text: str) -> dict[str, int]:
     """Read variable RAM constants from a listing already verified for this ROM."""
     wanted = {
@@ -1393,8 +1626,11 @@ def _talk_bytes(state: dict[str, Any]) -> bytes:
 
 def _finish_room4_intro(session: Any, *, max_frames: int,
                         rom: Path, symbol_banks: dict[str, int]) -> dict[str, Any]:
-    """Follow timed room-4 intro messages; acknowledge only authored FF03 waits."""
-    from fate_replay import advance_bounded, room4_message_ready
+    """Follow the bounded authored room-4 intro to its replay checkpoint."""
+    from fate_replay import (
+        advance_bounded, room4_message_ready,
+    )
+    from validate_scumm_startup42_nexen import mapped_cpu_address_for_rom
 
     start = _snapshot(session)
     baseline_submissions = start["submissions"]
@@ -1429,7 +1665,8 @@ def _finish_room4_intro(session: Any, *, max_frames: int,
             state["talk_active"] == 0 and state["c19_stack_pointer"] == 0
             and state["ready"] == 1 and state["mode"] == 0
             and state["input_held"] == 0 and state["input_pressed"] == 0
-            and (state["x"], state["y"]) == (117, 138)
+            and state["cursor_world_x"] == 117
+            and state["cursor_world_y"] == 138
         ):
             final = _snapshot(session)
             if final["submissions"] != baseline_submissions:
@@ -1446,7 +1683,7 @@ def _finish_room4_intro(session: Any, *, max_frames: int,
                 "sentence_submissions_during_intro": (
                     final["submissions"] - baseline_submissions
                 ),
-                "result": "intro completed; controller seeded at authored actor position",
+                "result": "intro completed; cursor reached the authored room-world checkpoint",
             }
         remaining = max_frames - (state["frame"] - start_frame)
         step = min(1 if (state["talk_active"] and
@@ -1466,6 +1703,7 @@ def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], lis
     from fate_replay import advance_bounded
 
     transitions: list[dict[str, Any]] = []
+    progress: list[dict[str, Any]] = []
     last_room: int | None = None
     elapsed = 0
     while elapsed < max_frames:
@@ -1489,23 +1727,125 @@ def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], lis
             raise RuntimeError(f"SCUMM error during cold startup: {_snapshot(session)!r}")
         if lifecycle == 0xFF:
             raise RuntimeError(f"engine failed during cold startup: {_snapshot(session)!r}")
-        state = _snapshot(session)
-        if state.get("resident_binding_violations"):
-            raise RuntimeError(
-                "dynamic startup reached a live activation without a resident binding; "
-                f"event-time state={state!r}"
-            )
+        ready = session.read_u8(0x7E5E8A)
+        talk_active = session.read_u8(0x7E7A20)
+        mode = session.read_u8(0x7E5FE0)
         if (
             room == 4 and phase == 0 and error == 0 and lifecycle == 2
-            and state["ready"] == 1 and state["talk_active"] == 0
-            and state["mode"] == 0
+            and ready == 1 and talk_active == 0 and mode == 0
         ):
-            return state, transitions
-        advanced = advance_bounded(session, min(5, max_frames - elapsed))
+            return _snapshot(session), transitions
+        # Startup has no controller actions while it waits for the authored
+        # boot lifecycle to install the target room, so a wider polling slice
+        # cannot skip an input edge or transition. The state is monotonic here:
+        # once room 4 is settled it remains the accepted checkpoint.
+        # The room and error words above are sampled every sixty frames. The
+        # full resolver/slot census is much more expensive over Nexen's RPC
+        # interface, so inspect it periodically and at the accepted endpoint
+        # without changing a single emulated frame or controller submission.
+        if elapsed % 60 == 0:
+            state = _snapshot(session)
+            if state.get("resident_binding_violations"):
+                raise RuntimeError(
+                    "dynamic startup reached a live activation without a resident binding; "
+                    f"event-time state={state!r}"
+                )
+        if elapsed % 600 == 0:
+            slot_by_script = {
+                item["script"]: item for item in _slots(session)
+            }
+            global1 = slot_by_script.get(1, {})
+            global74 = slot_by_script.get(74, {})
+            sample = {
+                "frame": int(session.get_state()["frameCount"]),
+                "room": room,
+                "phase": phase,
+                "error": error,
+                "lifecycle": lifecycle,
+                "global74_status": global74.get("status"),
+                "global74_pc": global74.get("saved_pc"),
+                "global74_delay": global74.get("delay"),
+                "global1_status": global1.get("status"),
+                "global1_pc": global1.get("saved_pc"),
+                "global1_delay": global1.get("delay"),
+            }
+            if ACTIVE_MSU_PROGRAMS:
+                sample.update({
+                    "cache_ids": [
+                        _u16(session, 0x7E2F4A), _u16(session, 0x7E2F4C),
+                        _u16(session, 0x7E2EC4),
+                    ],
+                    "cache_generations": [
+                        _u16(session, 0x7E2F54), _u16(session, 0x7E2F56),
+                        _u16(session, 0x7E2EC9),
+                    ],
+                    "cache_states": [
+                        session.read_u8(0x7E2F48), session.read_u8(0x7E2F49),
+                        session.read_u8(0x7E2EC3),
+                    ],
+                    "provider_status": session.read_u8(0x7E2F00),
+                })
+            # A room-exit phase that stops advancing can indicate a CPU-side
+            # loop inside one Engine_Frame call, which ordinary WRAM polling
+            # cannot distinguish from an asynchronous resource wait. Capture
+            # the CPU and recent native instructions at the first stable
+            # authentic-room boundary; this is observation only and does not
+            # change emulated timing or input.
+            if room == 68 and phase == 1:
+                sample["cpu"] = session.get_cpu_state("Snes")
+                sample["trace_tail"] = session.trace_log(
+                    count=1000, cpu_type="Snes"
+                )
+                sample["m24rb_state"] = session.read_memory(
+                    "snesMemory", 0x7FFA30, 0x10
+                ).hex()
+                sample["m24rb_frame_end_active"] = session.read_u8(0x7FFA37)
+                sample["m24rb_c25_return_frame"] = session.read_u8(0x7FFA3A)
+                sample["c25_state"] = {
+                    "queue_count": session.read_u8(0x7FD459),
+                    "flush_count": session.read_u8(0x7FD8AB),
+                    "pending_count": session.read_u8(0x7FD8AC),
+                    "queue_words_used": _u16(session, 0x7FD8F2),
+                }
+                brk_capture = session.read_memory("snesMemory", 0x7FF46B, 0x44)
+                brk_pbr = brk_capture[5]
+                brk_pc = brk_capture[6] | (brk_capture[7] << 8)
+                brk_stack = brk_capture[0x26:0x26 + 0x18]
+                caller_pbr = brk_stack[6]
+                caller_return_pc = (brk_stack[4] | (brk_stack[5] << 8)) + 1
+                caller_return_pc &= 0xFFFF
+                caller_callsite = (caller_pbr << 16) | ((caller_return_pc - 4) & 0xFFFF)
+                sample["c4_state"] = {
+                    "scheduler_slot": session.read_u8(0x7E2B22),
+                    "current_slot": session.read_u8(0x7E2A88),
+                    "didexec": session.read_memory(
+                        "snesMemory", 0x7E23CB, 25
+                    ).hex(),
+                    "first_brk_capture": brk_capture.hex(),
+                    "captured_fault_address": (brk_pbr << 16) | brk_pc,
+                    "captured_fault_fetch": session.read_memory(
+                        "snesMemory", (brk_pbr << 16) | brk_pc, 16
+                    ).hex(),
+                    "captured_fault_stack": brk_stack.hex(),
+                    "captured_caller_return_address": (caller_pbr << 16) | caller_return_pc,
+                    "captured_caller_callsite": caller_callsite,
+                    "captured_caller_callsite_bytes": session.read_memory(
+                        "snesMemory", caller_callsite, 8
+                    ).hex(),
+                }
+                sample["engine_frame_busy"] = session.read_u8(0x7E2231)
+                sample["engine_frame_ops"] = _u16(session, 0x7E2224)
+                sample["vm_pc"] = _u16(session, 0x7E2300)
+                if ACTIVE_MSU_PROGRAMS:
+                    sample["active_cache_slot"] = session.read_u8(0x7E2F5B)
+                sample["active_program_select"] = session.read_u8(0x7E2362)
+            progress.append(sample)
+        advanced = advance_bounded(session, min(60, max_frames - elapsed))
         elapsed += int(advanced["frames_advanced"])
     raise TimeoutError(
         f"cold authentic startup did not reach room4 readiness within {max_frames} "
-        f"frames; last={_snapshot(session)!r}"
+        f"frames; transitions={transitions!r}; progress={progress!r}; "
+        f"last={_snapshot(session)!r}"
     )
 
 
@@ -2098,6 +2438,15 @@ def main() -> int:
     parser.add_argument("--nexen-boot-wait", type=float, default=10.0)
     parser.add_argument("--socket-timeout", type=float, default=300.0)
     parser.add_argument("--startup-frames", type=int, default=1600)
+    parser.add_argument(
+        "--break-on-cpu-address", type=lambda value: int(value, 0),
+        help=("diagnostic only: stop at a CPU bus address during cold startup, "
+              "capture registers/stack/trace, and do not continue the replay"),
+    )
+    parser.add_argument(
+        "--diagnostic-trace-rows", type=int, default=256,
+        help="number of native trace rows retained in diagnostic captures",
+    )
     parser.add_argument("--action-frames", type=int, default=2400)
     parser.add_argument("--continue-trapdoor-use", action="store_true")
     parser.add_argument("--continue-room5-rope", action="store_true")
@@ -2108,6 +2457,10 @@ def main() -> int:
     parser.add_argument("--room6-action-frames", type=int, default=12000)
     parser.add_argument("--room7-action-frames", type=int, default=12000)
     parser.add_argument("--room7-save-state", type=Path)
+    parser.add_argument(
+        "--room4-settled-state-output", type=Path,
+        help="optional ROM-specific native state captured at the verified room4 C19 checkpoint",
+    )
     parser.add_argument("--archive", type=Path, default=Path("/home/chad/ATLANTIS.zip"))
     parser.add_argument(
         "--accept-current-build-sidecars", action="store_true",
@@ -2115,6 +2468,8 @@ def main() -> int:
               "requiring the historical recipe hashes"),
     )
     args = parser.parse_args()
+    if not 1 <= args.diagnostic_trace_rows <= 1000:
+        parser.error("--diagnostic-trace-rows must be in 1..1000 (Nexen limit)")
     if args.continue_room5_rope and not args.continue_trapdoor_use:
         parser.error("--continue-room5-rope requires --continue-trapdoor-use")
     if args.continue_room6_books and not args.continue_room5_rope:
@@ -2134,12 +2489,21 @@ def main() -> int:
     if not identity_path.is_file():
         parser.error(f"ROM-bound build identity is missing: {identity_path}")
     build_identity = json.loads(identity_path.read_text(encoding="utf-8"))
-    global ACTIVE_DYNAMIC_RESIDENCY, ACTIVE_PROGRAM_DIRECTORY, RESIDENCY_PINNED_PEAK
+    global ACTIVE_DYNAMIC_RESIDENCY, ACTIVE_MSU_PROGRAMS
+    global ACTIVE_LIVE_ROOM_RESOURCES, ACTIVE_PROGRAM_DIRECTORY
+    global RESIDENCY_PINNED_PEAK
     global RESIDENCY_OBSERVER_READY, RESIDENCY_PREINIT_UNKNOWN_ROWS
     ACTIVE_DYNAMIC_RESIDENCY = (
         build_identity.get("explicit_environment", {}).get(
             "SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY"
         ) == "1"
+    )
+    explicit_environment = build_identity.get("explicit_environment", {})
+    ACTIVE_MSU_PROGRAMS = (
+        explicit_environment.get("SAME_BUILD_SCUMM_MSU1_PROGRAMS") == "1"
+    )
+    ACTIVE_LIVE_ROOM_RESOURCES = (
+        explicit_environment.get("SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES") == "1"
     )
     RESIDENCY_EVENTS.clear()
     RESIDENCY_LAST.clear()
@@ -2149,7 +2513,7 @@ def main() -> int:
     RESIDENCY_PREINIT_UNKNOWN_ROWS = 0
     RESIDENCY_POSTINIT_UNKNOWN_ROWS.clear()
     if ACTIVE_DYNAMIC_RESIDENCY:
-        explicit = build_identity.get("explicit_environment", {})
+        explicit = explicit_environment
         if (explicit.get("SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT") != "1"
                 or explicit.get("SAME_FATE_PROFILE") != (
                     "examples/profiles/templates/fate_of_atlantis_dos_cd.json"
@@ -2174,10 +2538,12 @@ def main() -> int:
         finish_room4_authored_cutscene,
         replay_room4_open_trapdoor_prefix,
         replay_room4_trapdoor_use,
+        reposition_room4_cursor_to_world,
         replay_room6_books_interaction,
         replay_room7_lost_dialogue_interaction,
         replay_room7_cat_figure_use,
         replay_room5_rope_to_room6,
+        room4_controller_snapshot,
         room4_synchronous_input_edge,
         skip_room4_authored_override,
     )
@@ -2348,9 +2714,208 @@ def main() -> int:
                 }
             else:
                 advance_bounded(session, 2)
+            # Nexen lazily enables its native trace ring on the first query.
+            # Arm it before the bounded startup so a later stalled-room
+            # sample contains instructions from the actual SCUMM frame, not
+            # merely an empty-ring status response.
+            trace_arm = session.trace_log(count=1, cpu_type="Snes")
+            report["startup_trace_arm"] = {
+                "requested_rows": 1,
+                "initial_rows": len(trace_arm.get("rows", []))
+                if isinstance(trace_arm, dict) else None,
+            }
+            if args.break_on_cpu_address is not None:
+                if not 0 <= args.break_on_cpu_address <= 0xFFFFFF:
+                    parser.error("--break-on-cpu-address must be a 24-bit CPU address")
+                fault_hook = session.add_exec_hook(args.break_on_cpu_address)
+                try:
+                    stop = session.run_until(
+                        max_frames=args.startup_frames,
+                        hook_handle=fault_hook,
+                    )
+                    session.pause()
+                    cpu = session.get_cpu_state("Snes")
+                    hook_events = [
+                        message.get("params", message)
+                        for message in session.drain_notifications(timeout=0.0)
+                        if message.get("params", message).get("handle") == fault_hook
+                    ]
+                    stack_start = max(0, int(cpu.get("sp", 0)) - 0x20)
+                    stack_end = min(0x2000, int(cpu.get("sp", 0)) + 0x21)
+                    report["diagnostic_capture"] = {
+                        "address": f"${args.break_on_cpu_address:06X}",
+                        "run_until": stop,
+                        "hook_events": hook_events,
+                        "cpu": cpu,
+                        "first_brk_capture": {
+                            "address": "$7FF46B",
+                            "bytes": session.read_memory(
+                                "snesMemory", 0x7FF46B, 0x44,
+                            ).hex(),
+                            "stack_address": "$7FF491",
+                            "stack_bytes": session.read_memory(
+                                "snesMemory", 0x7FF491, 0x18,
+                            ).hex(),
+                        },
+                        "stack_window": {
+                            "address": stack_start,
+                            "bytes": session.read_memory(
+                                "snesMemory", stack_start,
+                                stack_end - stack_start,
+                            ).hex(),
+                        },
+                        "native_engine_evidence": {
+                            "movement_actor": session.read_u8(0x7E7EB4),
+                            "movement_tick": _u16(session, 0x7E7EB9),
+                            "moving_flags": session.read_memory(
+                                "snesMemory", 0x7FF220, 32,
+                            ).hex(),
+                            "actor1_position": session.read_memory(
+                                "snesMemory", 0x7FF1A0, 4,
+                            ).hex(),
+                            "m24rb_frame_end_active": session.read_u8(0x7FFA37),
+                            "c25_queue_count": session.read_u8(0x7FD459),
+                            "c25_flush_count": session.read_u8(0x7FD8AB),
+                            "c25_pending_count": session.read_u8(0x7FD8AC),
+                        },
+                        "trace_tail": session.trace_log(
+                            count=args.diagnostic_trace_rows, cpu_type="Snes"
+                        ),
+                        "state": _snapshot(session),
+                    }
+                    if stop.get("reason") != "hookFired":
+                        raise TimeoutError(
+                            "diagnostic breakpoint was not reached within "
+                            f"{args.startup_frames} frames: {stop!r}"
+                        )
+                    report["result"] = "diagnostic-captured"
+                    args.output.write_text(
+                        json.dumps(report, indent=2) + "\n", encoding="utf-8"
+                    )
+                    print(f"FATE diagnostic capture: {report['result']} ({rom_sha})")
+                    print(args.output)
+                    return 0
+                finally:
+                    session.remove_hook(fault_hook)
             ready, transitions = _cold_wait_room4(session, args.startup_frames)
             report["room_transitions"] = transitions
             report["room4_ready"] = ready
+            report["room4_ready_source_probe"] = _room4_source_probe(
+                session, variable_base=variable_layout["base"],
+                variable_count=variable_layout["count"],
+            )
+            # A streamed room becomes drawable before its ENCD continuation
+            # necessarily finishes the nested authentic global setup. Keep
+            # advancing the ordinary scheduler (with no injected input) until
+            # the established room-4 C19 owner is actually present.
+            settle_deadline = int(ready["frame"]) + args.startup_frames
+            # Stop on the first authored setCutsceneOverride write. Sampling
+            # at a coarse frame boundary can miss it: the source script may
+            # start another LSCR206 before the host gets the next snapshot.
+            # The watchpoint observes the engine's own write and does not
+            # inject or alter game state.
+            override_pc_hook = session.add_write_hook(
+                0x7FD356, match_value=0x19, match_value_mask=0xFF,
+            )
+            try:
+                while int(session.get_state()["frameCount"]) < settle_deadline:
+                    settled = _snapshot(session)
+                    if settled["error"]:
+                        settled = _snapshot(session, include_live_room=True)
+                        trace_tail = session.trace_log(
+                            count=args.diagnostic_trace_rows, cpu_type="Snes"
+                        )
+                        report["room4_error"] = settled
+                        report["room4_error_trace_tail"] = trace_tail
+                        report["result"] = "fail"
+                        args.output.write_text(
+                            json.dumps(report, indent=2) + "\n", encoding="utf-8"
+                        )
+                        raise RuntimeError(
+                            "SCUMM error while settling streamed room 4: "
+                            f"code={settled['error']}; scenario_error="
+                            f"{settled['scenario_error']!r}; "
+                            f"state artifact={args.output}"
+                        )
+                    override_active = (
+                        settled["c19_stack_pointer"] == 1
+                        and settled["c19_override_pc"] == 0x0019
+                        and settled["c19_override_script"] == 206
+                        and settled["c19_override_room"] == 4
+                        and settled["c19_override_slot_depth"] == 1
+                    )
+                    if override_active:
+                        report["room4_settle"] = {
+                            "frames_after_resource_ready": (
+                                int(settled["frame"]) - int(ready["frame"])
+                            ),
+                            "checkpoint": (
+                                "active authored C19 override for "
+                                "RoomLocalProgram(room=4,local=206)"
+                            ),
+                            "state": settled,
+                        }
+                        report["room4_settle_source_probe"] = _room4_source_probe(
+                            session, variable_base=variable_layout["base"],
+                            variable_count=variable_layout["count"],
+                        )
+                        break
+                    before = int(session.get_state()["frameCount"])
+                    advanced = advance_bounded(
+                        session, min(600, settle_deadline - before),
+                        error_hook=override_pc_hook,
+                    )
+                    if advanced["hook_fired"]:
+                        settled = _snapshot(session)
+                        if not override_active and not (
+                            settled["c19_stack_pointer"] == 1
+                            and settled["c19_override_pc"] == 0x0019
+                            and settled["c19_override_script"] == 206
+                            and settled["c19_override_room"] == 4
+                            and settled["c19_override_slot_depth"] == 1
+                        ):
+                            raise RuntimeError(
+                                "C19 override-PC watchpoint fired without the "
+                                "expected live room4 LSCR206 owner: "
+                                f"{settled!r}"
+                            )
+                        report["room4_settle"] = {
+                            "frames_after_resource_ready": (
+                                int(settled["frame"]) - int(ready["frame"])
+                            ),
+                            "checkpoint": (
+                                "active authored C19 override for "
+                                "RoomLocalProgram(room=4,local=206)"
+                            ),
+                            "watchpoint": "first write of authored continuation PC $0019",
+                            "state": settled,
+                        }
+                        report["room4_settle_source_probe"] = _room4_source_probe(
+                            session, variable_base=variable_layout["base"],
+                            variable_count=variable_layout["count"],
+                        )
+                        break
+                    if int(advanced.get("frames_advanced", 0)) <= 0:
+                        raise RuntimeError(
+                            "room 4 scheduler did not advance while settling: "
+                            f"{settled!r}"
+                        )
+            finally:
+                session.remove_hook(override_pc_hook)
+            if "room4_settle" not in report:
+                raise TimeoutError(
+                    "room 4 reached resource-ready state but did not reach the "
+                    f"established LSCR206 continuation within {args.startup_frames} "
+                    f"additional frames; last={_snapshot(session)!r}"
+                )
+            if args.room4_settled_state_output is not None:
+                settled_state_path = args.room4_settled_state_output.resolve()
+                settled_state_path.parent.mkdir(parents=True, exist_ok=True)
+                report["room4_settled_state"] = {
+                    "path": str(settled_state_path),
+                    "rom_sha256": rom_sha,
+                    "save_result": session.save_state(settled_state_path),
+                }
             entry4 = (
                 _directory_unit(
                     _native_directory_for_build(identity_path),
@@ -2368,12 +2933,15 @@ def main() -> int:
                 "body_sha256": "b787c221b19beaf99632c0748aab0fb80a85e79bac3b8a557e440e69d2c3d67b",
                 "source_archive_sha256": "0f3fc396642c800069d31ab9a087b314f1bb1612d37accbe13b6013219ac94f0",
             }
+            override_slot = int(settled["c19_override_slot"])
             override_owner = next(
-                (slot for slot in ready["slots"] if slot["slot"] == 3), None
+                (slot for slot in settled["slots"]
+                 if slot["slot"] == override_slot), None
             )
             if override_owner is None or override_owner["script"] != 206:
                 raise RuntimeError(
-                    "room4 override continuation has no live slot-3 LSCR206 owner: "
+                    "room4 override continuation has no live LSCR206 owner at "
+                    f"C19 slot {override_slot}: "
                     f"{override_owner!r}"
                 )
             # This byte is a build-local selector. Derive it from the live
@@ -2391,30 +2959,59 @@ def main() -> int:
                 report["room4_cutscene_owner"] = {
                     "canonical_program_unit_id": override_owner["program_unit_id"],
                     "identity": override_owner["program_unit_identity"],
+                    "owner_slot": override_slot,
                     "selector": expected_override_program,
                     "binding_generation": override_owner["binding_generation"],
-                    "pin_evidence": "live C4 slot 3 owns the C19 override continuation",
+                    "pin_evidence": (
+                        "C19 references this live C4 activation, whose binding "
+                        "remains pinned for the continuation"
+                    ),
                 }
             report["room4_cutscene_skip"] = skip_room4_authored_override(
                 session,
                 expected_override_program=expected_override_program,
+                expected_override_slot=override_slot,
                 defer_release_sample=True,
                 poll_interval_frames=2,
                 poll_boundary_address=mapped_cpu_address_for_rom(
                     rom, "Same_Input_Poll__edge_sequence_done", bank=0
                 ),
+                pre_press_poll_boundary_address=mapped_cpu_address_for_rom(
+                    rom, "Same_Input_Poll", bank=0
+                ),
             )
-            try:
-                report["room4_cutscene_completion"] = finish_room4_authored_cutscene(session)
-            except Exception as exc:
-                report["room4_cutscene_completion"] = {
-                    "result": "bounded-authored-cutscene-boundary",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-                raise
+            report["room4_after_first_skip_source_probe"] = _room4_source_probe(
+                session, variable_base=variable_layout["base"],
+                variable_count=variable_layout["count"],
+            )
+            report["room4_cutscene_completion"] = finish_room4_authored_cutscene(
+                session,
+            )
+            cutscene_state_before_intro = room4_controller_snapshot(session)
             report["room4_intro"] = _finish_room4_intro(
                 session, max_frames=2400, rom=rom, symbol_banks=symbols
             )
+            report["room4_intro_source_probe"] = _room4_source_probe(
+                session, variable_base=variable_layout["base"],
+                variable_count=variable_layout["count"],
+            )
+            cutscene_state_after_intro = room4_controller_snapshot(session)
+            report["room4_cutscene_completion"] = {
+                "result": "authored room-4 continuation and messages settled",
+                "before": {
+                    "frame": cutscene_state_before_intro["emulator_frame"],
+                    "cutscene_stack": cutscene_state_before_intro["c19_stack_pointer"],
+                    "override_pc": cutscene_state_before_intro["c19_override_pc"],
+                },
+                "after": {
+                    "frame": cutscene_state_after_intro["emulator_frame"],
+                    "cutscene_stack": cutscene_state_after_intro["c19_stack_pointer"],
+                    "override_pc": cutscene_state_after_intro["c19_override_pc"],
+                    "room": cutscene_state_after_intro["room"],
+                    "error": cutscene_state_after_intro["error"],
+                },
+                "result_detail": report["room4_intro"]["result"],
+            }
             def exact_edge_pulse(
                 pulse_session: Any,
                 mask: int,
@@ -2423,8 +3020,22 @@ def main() -> int:
                 return room4_synchronous_input_edge(
                     pulse_session, mask, predicate,
                     poll_interval_frames=2,
+                    poll_boundary_address=mapped_cpu_address_for_rom(
+                        rom, "Same_Input_Poll__edge_sequence_done", bank=0
+                    ),
+                    pre_press_poll_boundary_address=mapped_cpu_address_for_rom(
+                        rom, "Same_Input_Poll", bank=0
+                    ),
                 )
 
+            room4_ready_for_input = room4_controller_snapshot(session)
+            if (room4_ready_for_input["cursor_world_x"],
+                    room4_ready_for_input["cursor_world_y"]) != (117, 138):
+                raise RuntimeError(
+                    "room-4 authored intro did not produce the recorded cursor "
+                    f"checkpoint: {room4_ready_for_input!r}"
+                )
+            report["room4_cursor_checkpoint"] = room4_ready_for_input
             replay = replay_room4_open_trapdoor_prefix(
                 session, pulse=exact_edge_pulse
             )
@@ -2441,6 +3052,36 @@ def main() -> int:
                 max_frames=args.action_frames, rom=rom,
                 symbol_banks=symbols,
             )
+            if ACTIVE_DYNAMIC_RESIDENCY:
+                explicit = build_identity.get("explicit_environment", {})
+                if explicit.get("SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES") != "1":
+                    raise RuntimeError(
+                        "authentic streamed-room acceptance requires live MSU room resources"
+                    )
+                storage_root = Path(
+                    explicit["SAME_SCUMM_MSU1_PROGRAM_STORAGE_DIR"]
+                )
+                if not storage_root.is_absolute():
+                    storage_root = ROOT / storage_root
+                storage_manifest = json.loads(
+                    (storage_root / "program-storage.json").read_text(encoding="utf-8")
+                )
+                storage_package = storage_root / "scumm-programs.msu"
+                inputs = {
+                    "program_storage": storage_manifest,
+                    "program_storage_package": {"path": str(storage_package)},
+                    "rom_path": str(rom),
+                    "build_identity": build_identity,
+                }
+                from validate_scumm_native_residency_nexen import (
+                    check_live_room_native, drain_and_check_live_room_ppu,
+                )
+                report["room4_external_resource_consumption"] = check_live_room_native(
+                    session, inputs, 4
+                )
+                report["room4_visual_ppu"] = drain_and_check_live_room_ppu(
+                    session, inputs, 4, max_frames=4096
+                )
             if args.continue_trapdoor_use:
                 if report["post_action"]["status"] != "authored-action-quiescent-in-room4":
                     raise RuntimeError(
@@ -2985,6 +3626,21 @@ def main() -> int:
                 process.wait(timeout=5)
         report["result"] = "fail"
         report["error"] = f"{type(exc).__name__}: {exc}"
+        if ACTIVE_DYNAMIC_RESIDENCY:
+            # Keep the event-time ownership evidence even when a bounded
+            # replay stops at an explicit engine/resource error.  This is
+            # particularly useful for building a minimal static oracle from
+            # the exact canonical units observed before the failure; the
+            # diagnostic must not turn a failed replay into a pass.
+            report["residency_failure_trace"] = {
+                "events": RESIDENCY_EVENTS,
+                "last_binding_by_selector": {
+                    str(selector): binding
+                    for selector, binding in sorted(RESIDENCY_HISTORY.items())
+                },
+                "observed_event_count": len(RESIDENCY_EVENTS),
+                "result_remains_failure": True,
+            }
         args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         raise
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

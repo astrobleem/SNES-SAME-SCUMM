@@ -13,17 +13,17 @@ import zlib
 from same.engine import EngineHost
 from same.engines import default_registry
 from same.engines.scumm_v5.program_storage import (
-    build_program_storage, read_package_prefix_sections,
+    build_program_storage, plan_program_pages, read_package_prefix_sections,
 )
 from same.engines.scumm_v5.live_room_resources import encode_live_room
-from same.engines.scumm_v5.room_compiler import compile_room_payload
-from same.engines.scumm_v5.room_visual import encode_room_visual
+from same.engines.scumm_v5.room_compiler import compile_room_payload, decode_script
+from same.engines.scumm_v5.room_visual import decode_room_visual, encode_room_visual
 from same.input import SnesButton
 from same.package import build_package, inspect_package
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
 from same.services import HostServices
-from tools.build_scumm_native_residency_fixture import raw_room
+from tools.build_scumm_native_residency_fixture import large_program_body, raw_room
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -217,6 +217,46 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
             self.assertEqual(result["live_room_resource_count"], 1)
             self.assertEqual(result["visual_resource_count"], 1)
 
+    def test_storage_projects_fate_sized_visuals_to_native_surface_in_package(self) -> None:
+        directory = self.directory()
+        bodies = {
+            "GlobalProgram(4)": b"\0",
+            "RoomEntryProgram(2)": b"\xa0",
+            "ObjectProgram(room=2,object=9)": b"\0",
+        }
+        hashes = [hashlib.sha256(value.encode()).hexdigest()
+                  for value in ("archive", "index", "data", "room")]
+        width, height, pitch = 320, 200, 320
+        palette = bytes(value for index in range(256) for value in (index, index, index))
+        source_pixels = bytes((x + y) & 0xFF for y in range(height) for x in range(width))
+        source_visual = encode_room_visual(
+            room=2, width=width, height=height, pitch=pitch,
+            palette=palette, pixels=source_pixels,
+            archive_sha256=hashes[0], index_sha256=hashes[1],
+            data_sha256=hashes[2], room_sha256=hashes[3],
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = build_program_storage(
+                directory, bodies, root, room_visual_resources={2: source_visual},
+            )
+            row = result["visual_records"][0]
+            self.assertEqual((row["width"], row["height"], row["pitch"]), (256, 224, 256))
+            self.assertEqual(row["source_record_sha256"], hashlib.sha256(source_visual).hexdigest())
+            self.assertEqual(row["projection"]["source_width"], 320)
+            self.assertEqual(row["projection"]["source_height"], 200)
+            package_bytes = (root / "scumm-programs.msu").read_bytes()
+            pixel_offset = int(row["pixel_package_offset"])
+            projected_pixels = package_bytes[pixel_offset:pixel_offset + 256 * 224]
+            self.assertEqual(len(projected_pixels), 256 * 224)
+            self.assertEqual(projected_pixels[31 * 256:32 * 256], bytes(256))
+            self.assertEqual(projected_pixels[32 * 256], 0)
+            self.assertEqual(projected_pixels[32 * 256 + 255], (319 + 0) & 0xFF)
+            self.assertEqual(projected_pixels[191 * 256 + 255], (319 + 199) & 0xFF)
+            self.assertEqual(projected_pixels[192 * 256:193 * 256], bytes(256))
+            self.assertNotEqual(projected_pixels, source_pixels)
+            self.assertEqual(row["projection"]["sampling"], "nearest_neighbor_aspect_fit")
+
     def test_live_room_fixture_has_distinct_checked_visuals_for_each_room(self) -> None:
         from same.engines.scumm_v5.room_visual import decode_room_visual
 
@@ -241,7 +281,30 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
             self.assertEqual(len(visual_hashes), 4)
             self.assertEqual(len(set(visual_hashes)), 4)
 
-    def test_missing_extra_and_oversized_units_fail_before_directory_publish(self) -> None:
+    def test_room_crc_failure_fixture_uses_two_real_room_transitions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary)
+            subprocess.run(
+                [sys.executable, str(ROOT / "tools/build_scumm_native_residency_fixture.py"),
+                 "--output-dir", str(fixture), "--room-resource-failure",
+                 "--live-room-resources"],
+                cwd=ROOT, check=True, capture_output=True, text=True,
+            )
+            manifest = json.loads((fixture / "manifest.json").read_text())
+            self.assertEqual(manifest["conformance_case"], "room-resource-failure")
+            global_one = (fixture / "global-1.bin").read_bytes()
+            self.assertIn(bytes((0x24, 70, 0, 1)), global_one)
+            self.assertIn(bytes((0xE4, 40, 0, 41, 0, 6, 0, 7, 0)), global_one)
+            self.assertNotIn(bytes((0x72, 1)), global_one)
+            room_records = {int(row["room"]): row for row in manifest["records"]}
+            for room, object_id in ((1, 70), (2, 72)):
+                object_rows = room_records[room]["objects"]
+                carrier = next(row for row in object_rows
+                               if int(row["object_id"]) == object_id)
+                self.assertGreaterEqual(len(carrier["verb_entries"]), 2)
+                self.assertIn("visual", room_records[room])
+
+    def test_missing_extra_and_unmapped_large_units_fail_before_directory_publish(self) -> None:
         directory = self.directory()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -252,17 +315,120 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
                 "RoomEntryProgram(2)": b"\xa0",
                 "ObjectProgram(room=2,object=9)": bytes(0x801),
             }
-            with self.assertRaisesRegex(ValueError, "cache limit"):
+            with self.assertRaisesRegex(ValueError, "instruction boundaries"):
                 build_program_storage(directory, bodies, root / "large")
             self.assertFalse((root / "large" / "program-storage.json").exists())
 
-    def test_host_reference_runs_generated_msu_fixture_programs_and_room_scripts(self) -> None:
-        """The same copyright-free bodies have observable host/native markers."""
+    def test_large_program_units_are_segmented_at_instruction_boundaries_with_page_crcs(self) -> None:
+        directory = self.directory()
+        # Include a body just above the authentic FATE maximum (21,002 bytes)
+        # so the page directory and u16 body-length descriptor are exercised
+        # beyond the complete known source corpus.
+        sizes = (0x801, 0x2301, 0x5201, 0x520B)
+        identities = [row["identity"] for row in directory["entries"]]
+        bodies = {
+            identity: bytes((index * 13 + unit) & 0xFF for index in range(size))
+            for unit, (identity, size) in enumerate(zip(identities, sizes))
+        }
+        metadata = {
+            identity: {"instruction_spans": [[pc, 1] for pc in range(len(body))],
+                       "opaque_ranges": []}
+            for identity, body in bodies.items()
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = build_program_storage(
+                directory, bodies, root, page_metadata=metadata,
+                rom_bank=10, page_directory_bank=11,
+            )
+            self.assertGreater(result["program_page_count"], len(bodies))
+            self.assertEqual(result["program_page_directory_bank"], 11)
+            self.assertIn("ScummV5_MsuProgramPageIndex:",
+                          (root / "scumm_msu1_programs.inc.pasm").read_text())
+            pages = result["page_records"]
+            for row in result["records"]:
+                identity = str(row["identity"])
+                body = bodies[identity]
+                first = int(row["first_page"])
+                count = int(row["page_count"])
+                self.assertEqual(row["length"], len(body))
+                self.assertLessEqual(row["length"], 0xFFFF)
+                selected = pages[first:first + count]
+                self.assertEqual(selected[0]["start_pc"], 0)
+                self.assertEqual(selected[-1]["start_pc"] + selected[-1]["length"], len(body))
+                self.assertTrue(all(0 < int(page["length"]) <= 0x800 for page in selected))
+                rebuilt = bytearray()
+                for page in selected:
+                    start, length = int(page["start_pc"]), int(page["length"])
+                    part = body[start:start + length]
+                    self.assertEqual(page["crc32"], f"{zlib.crc32(part) & 0xFFFFFFFF:08x}")
+                    rebuilt.extend(part)
+                self.assertEqual(bytes(rebuilt), body)
+
+    def test_page_planner_never_splits_an_instruction_or_opaque_tail(self) -> None:
+        body = bytes(0x2400)
+        pages = plan_program_pages(
+            body,
+            {"instruction_spans": [[0, 4], [4, 1800], [1804, 596]],
+             "opaque_ranges": []},
+        )
+        for start, length in pages[:-1]:
+            end = start + length
+            self.assertFalse(any(span_start < end < span_start + width
+                                 for span_start, width in
+                                 ((0, 4), (4, 1800), (1804, 596))))
+        with self.assertRaisesRegex(ValueError, "blocking span"):
+            plan_program_pages(
+                bytes(5000),
+                {"instruction_spans": [[0, 1000]], "opaque_ranges": [[1000, 5000]]},
+            )
+
+    def test_large_native_fixture_body_has_decoded_cross_page_branches(self) -> None:
+        body = large_program_body()
+        script = decode_script(
+            body, identity="GlobalProgram(2)", kind="global", number=2,
+            room=0, resource_key="global.2", game_name="copyright-free",
+            source_member="fixture/global-2.bin", resource_offset=0,
+            source_offset=0,
+        )
+        self.assertGreater(len(body), 21002)
+        self.assertIsNone(script.opaque_from_pc)
+        branches = [item.branch_target for item in script.instructions
+                    if item.branch_target is not None]
+        branch_pcs = [item.pc for item in script.instructions
+                       if item.branch_target is not None]
+        self.assertGreater(branches[0], 0x1800)
+        self.assertEqual(len(branches), 2)
+        self.assertLess(branches[1], branch_pcs[1])
+        metadata = {
+            "instruction_spans": [[item.pc, item.instruction_width]
+                                  for item in script.instructions],
+            "opaque_ranges": [],
+        }
+        pages = plan_program_pages(body, metadata)
+        self.assertEqual(len(pages), 11)
+        self.assertEqual(sum(length for _start, length in pages), len(body))
+        self.assertTrue(all(0 < length <= 0x800 for _start, length in pages))
+        page_ends = {start + length for start, length in pages[:-1]}
+        self.assertTrue(all(
+            not (item.pc < end < item.pc + item.instruction_width)
+            for end in page_ends for item in script.instructions
+        ))
+        self.assertTrue(any(0 < end < 0x1801 for end in page_ends))
+        self.assertTrue(any(15005 < end < 21008 for end in page_ends))
+
+    def test_large_program_refuses_page_cuts_without_decoded_boundaries(self) -> None:
+        body = large_program_body()
+        with self.assertRaisesRegex(ValueError, "no decoded instruction or opaque boundaries"):
+            plan_program_pages(body, {"instruction_spans": [], "opaque_ranges": []})
+
+    def test_host_reference_runs_large_yielding_msu_body_and_room_scripts(self) -> None:
+        """Large body branches/yields preserve the host-visible route markers."""
         with tempfile.TemporaryDirectory() as temporary:
             fixture = Path(temporary) / "fixture"
             subprocess.run(
                 [sys.executable, str(ROOT / "tools/build_scumm_native_residency_fixture.py"),
-                 "--output-dir", str(fixture)],
+                 "--output-dir", str(fixture), "--large-program-body"],
                 cwd=ROOT, check=True, capture_output=True, text=True,
             )
             source = json.loads((fixture / "manifest.json").read_text())
@@ -323,7 +489,7 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
                 ),
             )
             host.boot()
-            for frame in range(1800):
+            for frame in range(5000):
                 host.tick(input_word=int(SnesButton.START) if frame == 2 else 0)
                 if host.lifecycle.value != "running":
                     break
@@ -335,10 +501,10 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
             expected = {
                 "5": 1, "6": 2, "7": 192, "8": 3, "9": 3,
                 "10": 10, "15": 1, "20": 4, "21": 5, "22": 6, "24": 4,
-                "25": 1,
+                "25": 1, "50": 1, "51": 0, "53": 4000, "54": 2,
             }
             self.assertEqual(
-                {key: state["variables"].get(key) for key in expected}, expected,
+                {key: state["variables"].get(key, 0) for key in expected}, expected,
             )
             activated_rooms = [
                 int(event["room"])

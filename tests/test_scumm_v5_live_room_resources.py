@@ -123,7 +123,7 @@ class LiveRoomResourceTests(unittest.TestCase):
             struct.pack("<HhhBhhB", object_id, 0, 0, 0, 0, 0, 0)
             for object_id in object_ids
         )
-        with self.assertRaisesRegex(Exception, "audited active room buffer is 2048 bytes"):
+        with self.assertRaisesRegex(Exception, "audited active room buffer is 2560 bytes"):
             encode_live_room(record, program_units=units)
 
     def test_visual_source_record_is_checked_before_storage_projection(self) -> None:

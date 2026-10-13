@@ -453,6 +453,10 @@ def main() -> int:
     )
     parser.add_argument("--msu1-program-directory-include", type=Path)
     parser.add_argument("--msu1-program-directory-bank", type=int, default=10)
+    parser.add_argument(
+        "--msu1-program-page-directory-bank", type=int,
+        help="ROM bank for compiler-proven bytecode page index/CRC records",
+    )
     parser.add_argument("--msu1-program-cache-bytes", type=lambda value: int(value, 0), default=0x0800)
     parser.add_argument(
         "--msu1-live-room-resources", action="store_true",
@@ -892,6 +896,10 @@ def main() -> int:
                     )
             record_index = len(records)
             script_records = []
+            source_scripts = {
+                str(item["identity"]): item
+                for item in source_record.get("scripts", [])
+            }
             for script in decoded.scripts:
                 executable = (
                     not decoded.registration_only
@@ -921,6 +929,12 @@ def main() -> int:
                     "number": script.number, "length": len(script.program),
                     "program": script.program, "identity": script.identity,
                     "source": script,
+                    "instruction_spans": source_scripts.get(script.identity, {}).get(
+                        "instruction_spans", []
+                    ),
+                    "opaque_ranges": source_scripts.get(script.identity, {}).get(
+                        "opaque_ranges", []
+                    ),
                     # Resolvability is distinct from lifecycle scheduling.
                     # Every LSCR in an executable complete room may be started;
                     # ENCD/EXCD selection remains governed by room lifecycle.
@@ -1023,6 +1037,10 @@ def main() -> int:
                         not decoded.registration_only
                         and (not args.dynamic_program_residency or bool(item.verb_entries))
                     ),
+                    "instruction_spans": ([] if source is None else
+                                           source.get("instruction_spans", [])),
+                    "opaque_ranges": ([] if source is None else
+                                      source.get("opaque_ranges", [])),
                     "entrypoints": item.verb_entries,
                     "local_object_index": local_index,
                 }
@@ -1144,12 +1162,36 @@ def main() -> int:
                     raise RuntimeError(
                         f"global script {number} differs between cooked-room manifests"
                     )
+                # A source-root fixture manifest may provide an authored
+                # global body without decoder maps, while a companion
+                # source-cooked manifest carries the authoritative PC spans
+                # needed by checked paging. Merge only that compiler metadata;
+                # the executable bytes and canonical identity remain the
+                # first, hash-verified copy.
+                incoming_spans = source_script.get("instruction_spans", [])
+                if incoming_spans:
+                    if (existing_global.get("instruction_spans")
+                            and existing_global["instruction_spans"] != incoming_spans):
+                        raise RuntimeError(
+                            f"global script {number} instruction maps differ between manifests"
+                        )
+                    existing_global["instruction_spans"] = incoming_spans
+                incoming_opaque = source_script.get("opaque_ranges", [])
+                if incoming_opaque:
+                    if (existing_global.get("opaque_ranges")
+                            and existing_global["opaque_ranges"] != incoming_opaque):
+                        raise RuntimeError(
+                            f"global script {number} opaque maps differ between manifests"
+                        )
+                    existing_global["opaque_ranges"] = incoming_opaque
                 continue
             item = {
                 "id": program_ids.allocate(), "record": None, "room": None,
                 "kind": 0, "kind_name": "GLOBAL", "number": number,
                 "length": len(program), "program": program,
                 "identity": f"script.{number}", "source": source_script,
+                "instruction_spans": source_script.get("instruction_spans", []),
+                "opaque_ranges": source_script.get("opaque_ranges", []),
                 "executable": True,
             }
             programs.append(item)
@@ -1181,6 +1223,8 @@ def main() -> int:
             "kind": 0, "kind_name": "GLOBAL", "number": number,
             "length": len(program), "program": program,
             "identity": f"script.{number}", "source": source_script,
+            "instruction_spans": source_script.get("instruction_spans", []),
+            "opaque_ranges": source_script.get("opaque_ranges", []),
             "executable": True,
         }
         programs.append(item)
@@ -1522,10 +1566,27 @@ def main() -> int:
             str(item["unit_identity"]): bytes(item["program"])
             for item in programs if item["executable"]
         }
-        room_resources = {
+        for item in programs:
+            source = item.get("source")
+            if isinstance(source, dict):
+                item.setdefault("instruction_spans", source.get("instruction_spans", []))
+                item.setdefault("opaque_ranges", source.get("opaque_ranges", []))
+        storage_page_metadata = {
+            str(item["unit_identity"]): {
+                "instruction_spans": item.get("instruction_spans", []),
+                "opaque_ranges": item.get("opaque_ranges", []),
+            }
+            for item in programs if item["executable"]
+        }
+        # In live-resource mode SC5LIVE, SC5VIS, and SC5CODE are the checked
+        # compiler-owned projections consumed by the runtime. The complete
+        # SC5ROOM container contains the same script bodies plus the retained
+        # source ROOM payload and can be tens of KiB; it is not a live consumer
+        # and must not be staged merely as a redundant preflight copy.
+        room_resources = ({} if args.msu1_live_room_resources else {
             int(record["room"]): bytes(record["raw"])
             for record in records
-        }
+        })
         live_room_resources = {}
         room_visual_resources = {}
         if args.msu1_live_room_resources:
@@ -1552,11 +1613,17 @@ def main() -> int:
         program_storage = build_program_storage(
             native_directory.document, storage_bodies, args.msu1_program_storage_dir,
             max_cached_body_bytes=args.msu1_program_cache_bytes,
+            page_metadata=storage_page_metadata,
             prefix_sections=prefix_sections,
             room_resources=room_resources,
             live_room_resources=live_room_resources,
             room_visual_resources=room_visual_resources,
             rom_bank=args.msu1_program_directory_bank,
+            page_directory_bank=(
+                args.msu1_program_directory_bank + 2
+                if args.msu1_program_page_directory_bank is None
+                else args.msu1_program_page_directory_bank
+            ),
         )
         args.msu1_program_directory_include.parent.mkdir(parents=True, exist_ok=True)
         args.msu1_program_directory_include.write_bytes(
@@ -1613,6 +1680,12 @@ def main() -> int:
     for record_index, record in enumerate(records):
         segments = []
         raw = record["raw"]
+        if args.msu1_live_room_resources:
+            # Live-room builds consume SC5LIVE/SC5VIS through the checked
+            # resource service. Do not retain the complete cooked SC5C ROOM
+            # projection in ROM as an accidental fallback copy.
+            record["segments"] = segments
+            continue
         source_offset = 0
         segment_index = 0
         while source_offset < len(raw):
@@ -1669,6 +1742,11 @@ def main() -> int:
     directory_offset = 0
     expected_directory_map: list[dict[str, object]] = []
     for index, record in enumerate(records):
+        if args.msu1_live_room_resources:
+            # The live-room transaction validates its package record and
+            # source-bound compiler projection before publication; the
+            # legacy ROM-record validator is deliberately not a consumer.
+            continue
         prefix = record["raw"][:HEADER.size + len(record["scripts"]) * 96]
         if len(prefix) > 0x8000:
             raise RuntimeError(
@@ -2886,12 +2964,19 @@ def main() -> int:
             f"ScummV5_ObjectProgram_Resolve_Far__record_{index}:",
             "    rep #$20", "    .a16", "    lda.l SAME_SCUMM_VERB_OBJECT",
         ))
-        for item in record["object_programs"]:
+        for object_index, item in enumerate(record["object_programs"]):
             if not item["executable"]:
                 continue
+            unit_label = program_label_id(
+                item["id"], dynamic=args.dynamic_program_residency,
+            )
+            match = f"ScummV5_ObjectProgram_Resolve_Far__object_match_{index}_{object_index}"
             data_lines.extend((
                 f"    cmp #${item['number']:04X}",
-                f"    beq ScummV5_ObjectProgram_Resolve_Far__object_{program_label_id(item['id'], dynamic=args.dynamic_program_residency)}",
+                f"    bne {match}",
+                f"    brl ScummV5_ObjectProgram_Resolve_Far__object_{unit_label}",
+                f"{match}:",
+                "    .a16",
             ))
         # Room/object dispatch tables can make this cold failure path larger
         # than a short-branch range when a real room is joined to a fixture.
@@ -3445,12 +3530,14 @@ def main() -> int:
     # then checksum the complete pre-trailer record while excluding mutable
     # checksum fields 32..37 exactly as the host encoder does.
     validator_lines = ["ScummV5_M23A_ValidateRecord:", "    sep #$20", "    .a8"]
-    for index in range(len(records)):
+    for index in range(0 if args.msu1_live_room_resources else len(records)):
         validator_lines.extend((f"    cmp #${index:02X}", f"    bne ScummV5_M23A_ValidateRecord__dispatch_{index}",
                                 f"    jmp ScummV5_M23A_ValidateRecord__{index}",
                                 f"ScummV5_M23A_ValidateRecord__dispatch_{index}:", "    .a8"))
     validator_lines.extend(("    sec", "    rts"))
-    for index, record in enumerate(records):
+    for index, record in enumerate(
+        () if args.msu1_live_room_resources else records
+    ):
         directory_size = HEADER.size + len(record["scripts"]) * 96
         first_label = record["segments"][0][0]
         validator_lines.extend((

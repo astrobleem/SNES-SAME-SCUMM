@@ -76,11 +76,11 @@ class SnesCarrierTests(unittest.TestCase):
         self.assertEqual(allocations["live_room_palette_stage"]["offset"], 0x100)
         self.assertEqual(allocations["live_room_palette_stage"]["bytes"], 768)
         self.assertEqual(allocations["live_room_pending"]["offset"], 0x600)
-        self.assertEqual(allocations["live_room_pending"]["bytes"], 2048)
+        self.assertEqual(allocations["live_room_pending"]["bytes"], 2560)
         self.assertEqual(carrier.layout["live_room_active"], {
-            "address": "41:E800", "bytes": 2048,
+            "address": "41:F000", "bytes": 4096,
             "owner": "SCUMM active room metadata",
-            "exclusive_with": "runtime/snes/video_backends/mode3_surface_layout.json:fixture",
+            "exclusive_with": "runtime/snes/video_backends/mode3_surface_layout.json:reserved",
         })
 
     def test_generated_ordinary_carrier_emits_no_boot_bytes(self) -> None:
@@ -125,11 +125,12 @@ class SnesCarrierTests(unittest.TestCase):
                 "SAME_BWRAM_TILE_SHADOW_BASE = $410000",
                 "SAME_BWRAM_LIVE_ROOM_PALETTE_STAGE = SAME_BWRAM_BACKEND_BASE+$0100",
                 "SAME_BWRAM_CGRAM_SHADOW_BASE = $41E000",
-                "SAME_SCUMM_LIVE_ROOM_STAGING_BASE = $41E800",
+                "SAME_SCUMM_LIVE_ROOM_STAGING_BASE = $41F000",
                 "SAME_SCUMM_LIVE_ROOM_PENDING_BASE = SAME_BWRAM_LIVE_ROOM_PENDING",
                 "SAME_SCUMM_LIVE_ROOM_PENDING_BANK = $40",
             ):
                 self.assertIn(line, constants)
+            self.assertNotIn("PROGRAM_CACHE_PAGE2", constants)
             boot = (root / "carrier_boot.inc.pasm").read_text(encoding="utf-8")
             self.assertIn("jsl Same_Carrier_Boot", boot)
             code = (root / "carrier_code.inc.pasm").read_text(encoding="utf-8")

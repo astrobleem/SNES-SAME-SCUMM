@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -20,14 +21,17 @@ from fate_replay import (  # noqa: E402
     replay_room7_lost_dialogue_interaction,
     replay_room7_cat_figure_use,
     replay_room5_rope_to_room6,
+    room4_c19_record_snapshot,
     skip_room4_authored_override,
     room4_message_ready,
     room4_controller_snapshot,
     room4_synchronous_input_edge,
+    reposition_room4_cursor_to_world,
     world_point_direction_mask,
 )
 from validate_fate_authentic_startup_nexen import _button_names  # noqa: E402
 from replay_fate_room4_cold_nexen import (  # noqa: E402
+    _snapshot as cold_startup_snapshot,
     _native_directory_for_build,
     _observed_pinned_selectors,
     _known_resident_bindings,
@@ -38,6 +42,7 @@ from replay_fate_room4_cold_nexen import (  # noqa: E402
     _parse_rom_variable_layout,
     _room7_runtime_context,
 )
+import replay_fate_room4_cold_nexen as cold_startup_module  # noqa: E402
 
 
 class FakeSession:
@@ -76,15 +81,31 @@ class FakeSession:
         return {"reason": "maxFrames", "framesAdvanced": max_frames}
 
 
+class SparseSnapshotSession:
+    def __init__(self, values: dict[int, int]) -> None:
+        self.values = values
+
+    def get_state(self) -> dict[str, int]:
+        return {"frameCount": 0}
+
+    def read_memory(self, space: str, address: int, length: int) -> bytes:
+        if space != "snesMemory":
+            raise AssertionError(space)
+        return bytes(self.values.get(address + offset, 0) for offset in range(length))
+
+
 class FakeRoom4Session:
     def __init__(self, *, ready: int = 1,
                  cursor: tuple[int, int] = (117, 138),
+                 camera: tuple[int, int] = (0, 100),
                  input_poll_delay_frames: int = 0) -> None:
         self.frame = 100
         self.values = {
             0x7FF2BF: 4, 0x7FF2C2: 0, 0x7E2303: 0, 0x7E2221: 2,
             0x7E5E8A: ready, 0x7E7A20: 0, 0x7E5FE0: 0,
-            0x7E5FE1: cursor[0], 0x7E5FE3: cursor[1], 0x7E5FE5: 0,
+            0x7E5FE1: cursor[0] & 0xFFFF, 0x7E5FE3: cursor[1] & 0xFFFF,
+            0x7E5FE5: 0,
+            0x7E7FB8: camera[0], 0x7E7FAA: camera[1],
             0x7E5FE6: 0, 0x7E5F94: 0, 0x7E5FE9: 22,
             0x7FD348: 0,
             0x7E2200: 0, 0x7E2202: 0, 0x7E2204: 0, 0x7E2206: 0,
@@ -102,6 +123,7 @@ class FakeRoom4Session:
         self.pending_edge_delay = 0
         self.input_poll_delay_frames = input_poll_delay_frames
         self.input_poll_delay_remaining = 0
+        self.override_owner_slot = 3
 
     def get_state(self) -> dict[str, int]:
         return {"frameCount": self.frame}
@@ -206,15 +228,16 @@ class FakeRoom4Session:
 
     def _apply_edge(self, buttons: int) -> None:
         if buttons == 0x040:
-            self.values[0x7E5FE1] -= 2
+            self.values[0x7E5FE1] = (self.values[0x7E5FE1] - 2) & 0xFFFF
         elif buttons == 0x080:
-            self.values[0x7E5FE1] += 2
+            self.values[0x7E5FE1] = (self.values[0x7E5FE1] + 2) & 0xFFFF
         elif buttons == 0x010:
-            self.values[0x7E5FE3] -= 2
+            self.values[0x7E5FE3] = (self.values[0x7E5FE3] - 2) & 0xFFFF
         elif buttons == 0x020:
-            self.values[0x7E5FE3] += 2
+            self.values[0x7E5FE3] = (self.values[0x7E5FE3] + 2) & 0xFFFF
         if buttons in (0x040, 0x080, 0x010, 0x020):
-            x, y = self.values[0x7E5FE1], self.values[0x7E5FE3]
+            x = (self.values[0x7E5FE1] + self.values.get(0x7E7FB8, 0)) & 0xFFFF
+            y = (self.values[0x7E5FE3] + self.values.get(0x7E7FAA, 0) - 0x64) & 0xFFFF
             self.values[0x7E5F94] = int(64 <= x < 104 and 128 <= y < 136) * 61
         elif buttons == 0x001:
             if self.values[0x7E5FE0] == 0:
@@ -227,9 +250,11 @@ class FakeRoom4Session:
                 self.values[0x7E5FE9] += 1
         elif buttons == 0x100:
             if self.values[0x7FD348]:
+                if self.values.get(0x7FD356) == 126:
+                    self.values[0x7FD348] = 0
                 self.values[0x7FD356] = 0
                 self.values[0x7FD35F] = 0
-                self.values[0x7FD366] = 0
+                self.values[0x7FD363 + self.override_owner_slot] = 0
                 self.cutscene_finish_after = 5
         elif buttons == 0x800:
             if self.values[0x7E5FE0] == 1 and self.values[0x7E5FE6] == 61:
@@ -237,15 +262,18 @@ class FakeRoom4Session:
                 current = self.values[0x7E5FE5]
                 self.values[0x7E5FE5] = verbs[(verbs.index(current) + 1) % len(verbs)]
 
-    def activate_room4_override(self) -> None:
+    def activate_room4_override(self, *, slot: int = 3, pc: int = 0x0019,
+                                owner_depth: int = 1) -> None:
+        self.override_owner_slot = slot
         self.values.update({
             0x7FD348: 1,
-            0x7FD356: 0x0019,
-            0x7FD35F: 3,
-            0x7E239C: 206,
-            0x7E23B5: 0xF9,
-            0x7FF2EA: 4,
-            0x7FD366: 1,
+            0x7FD356: pc,
+            0x7FD35F: slot,
+            0x7E2380 + slot: 2,
+            0x7E2399 + slot: 206,
+            0x7E23B2 + slot: 0xF9,
+            0x7FF2E7 + slot: 4,
+            0x7FD363 + slot: owner_depth,
         })
 
 
@@ -453,6 +481,71 @@ class FakeRoom7CatSession(FakeRoom4Session):
 
 
 class FateReplayTests(unittest.TestCase):
+    def test_room4_cursor_world_coordinates_follow_native_camera_transform(self) -> None:
+        session = FakeRoom4Session(cursor=(-31, 140), camera=(148, 98))
+        state = room4_controller_snapshot(session)
+        self.assertEqual((state["cursor_world_x"], state["cursor_world_y"]), (117, 138))
+        result = replay_room4_open_trapdoor_prefix(session)
+        self.assertEqual(
+            (result["precondition"]["cursor_world_x"],
+             result["precondition"]["cursor_world_y"]),
+            (117, 138),
+        )
+        self.assertEqual(
+            ((result["final"]["x"] + 148) & 0xFFFF,
+             (result["final"]["y"] + 98 - 100) & 0xFFFF),
+            (89, 132),
+        )
+        self.assertEqual(result["final"]["hit_object"], 61)
+
+    def test_room4_cursor_reposition_is_bounded_and_does_not_submit_sentence(self) -> None:
+        session = FakeRoom4Session(cursor=(-31, 140), camera=(0, 100))
+        moved = reposition_room4_cursor_to_world(session, (117, 138))
+        self.assertEqual(len(moved["steps"]), 75)
+        self.assertEqual(moved["sentence_submission_delta"], 0)
+        self.assertEqual(
+            (moved["final"]["cursor_world_x"], moved["final"]["cursor_world_y"]),
+            (117, 138),
+        )
+        action = replay_room4_open_trapdoor_prefix(session)
+        self.assertEqual(action["final"]["hit_object"], 61)
+        self.assertEqual(action["final"]["submissions"], 23)
+
+    def test_cold_startup_snapshot_reads_room_counters_not_adjacent_timing_fields(self) -> None:
+        room_requests = 0x1234
+        room_validations = 0x5678
+        values = {
+            0x7E2FED: room_requests & 0xFF,
+            0x7E2FEE: room_requests >> 8,
+            0x7E2FEF: room_validations & 0xFF,
+            0x7E2FF0: room_validations >> 8,
+            # Adjacent timing fields intentionally carry different sentinels.
+            0x7E2FF3: 0xAA,
+            0x7E2FF4: 0xBB,
+            0x7E2FF5: 0xCC,
+            0x7E2FF6: 0xDD,
+        }
+        with (
+            patch("replay_fate_room4_cold_nexen.ACTIVE_DYNAMIC_RESIDENCY", True),
+            patch("replay_fate_room4_cold_nexen.ACTIVE_MSU_PROGRAMS", True),
+        ):
+            observed = cold_startup_snapshot(SparseSnapshotSession(values))
+        self.assertEqual(observed["program_cache"]["room_requests"], room_requests)
+        self.assertEqual(
+            observed["program_cache"]["room_validations"], room_validations
+        )
+
+    def test_rom_backed_dynamic_snapshot_does_not_read_msu_only_state(self) -> None:
+        session = SparseSnapshotSession({})
+        with (
+            patch("replay_fate_room4_cold_nexen.ACTIVE_DYNAMIC_RESIDENCY", True),
+            patch("replay_fate_room4_cold_nexen.ACTIVE_MSU_PROGRAMS", False),
+            patch("replay_fate_room4_cold_nexen.ACTIVE_LIVE_ROOM_RESOURCES", False),
+        ):
+            observed = cold_startup_snapshot(session, include_live_room=True)
+        self.assertNotIn("program_cache", observed)
+        self.assertNotIn("live_room_header", observed)
+
     def test_dynamic_build_report_is_resolved_from_its_isolated_output_root(self) -> None:
         import hashlib
         import json
@@ -510,6 +603,39 @@ class FateReplayTests(unittest.TestCase):
 
             with self.assertRaisesRegex(RuntimeError, "ambiguous"):
                 _native_directory_for_build(identity_path)
+
+    def test_dynamic_build_report_uses_identity_bound_custom_build_root(self) -> None:
+        import hashlib
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dynamic_root = root / "isolated-dynamic-output"
+            dynamic_root.mkdir()
+            directory = {"entries": [{
+                "program_unit_id": 9,
+                "identity": "RoomEntryProgram(room=4)",
+            }]}
+            payload = (json.dumps(directory, sort_keys=True) + "\n").encode()
+            (dynamic_root / "native-program-directory.json").write_bytes(payload)
+            (dynamic_root / "cooked-rooms.json").write_text(json.dumps({
+                "native_program_directory": "native-program-directory.json",
+                "native_program_directory_sha256": hashlib.sha256(payload).hexdigest(),
+            }), encoding="utf-8")
+            identity_path = root / "route.build_identity.json"
+            identity_path.write_text(json.dumps({
+                "explicit_environment": {
+                    "SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY": "1",
+                    "SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR": str(dynamic_root),
+                },
+            }), encoding="utf-8")
+
+            result = _native_directory_for_build(identity_path)
+
+        self.assertEqual(result["by_identity"]["RoomEntryProgram(room=4)"][
+            "program_unit_id"
+        ], 9)
 
     def test_generated_input_provenance_uses_sealed_manifest_not_mutable_workspace(self) -> None:
         import hashlib
@@ -1066,7 +1192,7 @@ ScummV5_M23A_FetchProgramByte_Far:
         self.assertTrue(result["step"]["release_sampled"])
         self.assertEqual(result["cleared_override_record"], {
             "stack_index": 1, "override_pc": 0,
-            "override_slot": 0, "owner_slot_depth": 0,
+            "override_slot": 0, "owner_slot": 3, "owner_slot_depth": 0,
         })
         self.assertEqual(session.controller_events, [
             (100, 0x100, True, 0),
@@ -1081,6 +1207,31 @@ ScummV5_M23A_FetchProgramByte_Far:
         self.assertEqual(completion["idle_frames"], 4)
         self.assertEqual(completion["final"]["c19_stack_pointer"], 0)
         self.assertEqual(session.held_buttons, 0)
+
+    def test_c19_record_snapshot_uses_explicit_stack_index(self) -> None:
+        session = FakeRoom4Session()
+        session.values.update({
+            0x7FD356: 0x1234,
+            0x7FD35F: 7,
+            0x7FD363 + 7: 2,
+            0x7FD35A: 0x5678,
+            0x7FD361: 9,
+            0x7FD363 + 9: 1,
+        })
+        self.assertEqual(room4_c19_record_snapshot(session, 1), {
+            "stack_index": 1,
+            "override_pc": 0x1234,
+            "override_slot": 7,
+            "owner_slot_depth": 2,
+        })
+        self.assertEqual(room4_c19_record_snapshot(session, 3), {
+            "stack_index": 3,
+            "override_pc": 0x5678,
+            "override_slot": 9,
+            "owner_slot_depth": 1,
+        })
+        with self.assertRaisesRegex(ValueError, "outside the native table"):
+            room4_c19_record_snapshot(session, 5)
 
     def test_room4_override_waits_for_delayed_native_input_sample_once(self) -> None:
         session = FakeRoom4Session(
@@ -1108,6 +1259,35 @@ ScummV5_M23A_FetchProgramByte_Far:
         )
         self.assertEqual(result["before"]["c19_override_program"], 0xE0)
         self.assertEqual(result["after"]["c19_override_pc"], 0)
+
+    def test_room4_override_accepts_caller_verified_live_owner_slot(self) -> None:
+        session = FakeRoom4Session(cursor=(0, 0))
+        session.activate_room4_override(slot=4)
+        result = skip_room4_authored_override(
+            session,
+            expected_override_program=0xF9,
+            expected_override_slot=4,
+        )
+        self.assertEqual(result["before"]["c19_override_slot"], 4)
+        self.assertEqual(result["after"]["c19_override_pc"], 0)
+
+    def test_room4_second_authored_override_can_have_zero_cutscene_depth(self) -> None:
+        session = FakeRoom4Session(cursor=(0, 0))
+        session.activate_room4_override(slot=1, pc=126, owner_depth=0)
+        result = skip_room4_authored_override(
+            session,
+            expected_override_program=0xF9,
+            expected_override_slot=1,
+            expected_override_pc=126,
+        )
+        self.assertEqual(result["before"]["c19_override_pc"], 126)
+        self.assertEqual(result["after"]["c19_stack_pointer"], 0)
+        self.assertEqual(result["cleared_override_record"]["owner_slot_depth"], 0)
+        self.assertEqual(
+            [buttons for _frame, buttons, hold, _frames in session.controller_events
+             if hold and buttons],
+            [0x100],
+        )
 
     def test_room4_override_replay_rejects_unexpected_owner_without_input(self) -> None:
         session = FakeRoom4Session(cursor=(0, 0))
