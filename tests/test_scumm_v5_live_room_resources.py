@@ -11,14 +11,21 @@ from same.msu1 import (
     CheckedPackageReader, FileDataPort, Msu1ReadError, ReadStatus,
     trusted_package,
 )
-from same.package import build_package
+from same.package import build_package, inspect_package
 from same.engines.scumm_v5.live_room_resources import (
-    HEADER, MAX_ACTIVE_BYTES, MAX_PENDING_BYTES, OBJECT_WALK,
-    decode_live_room, encode_live_room,
+    HEADER, MAX_ACTIVE_BYTES, MAX_PENDING_BYTES, MAX_SOURCE_RECORD_BYTES, OBJECT_WALK,
+    decode_live_room, encode_live_room, encode_live_room_sections,
 )
 from same.engines.scumm_v5.room_visual import decode_room_visual, encode_room_visual
+from same.engines.scumm_v5.room import decode_room
 from tools.generate_snes_carrier import generate as generate_carrier
-from tools.validate_scumm_native_residency_nexen import live_room_ppu_generation_ready
+from tools.build_scumm_native_residency_fixture import raw_room
+from tools.generate_snes_cooked_rooms import (
+    inject_diagnostic_invalid_sparse_route_value,
+)
+from tools.validate_scumm_native_residency_nexen import (
+    live_room_ppu_generation_ready, read_active_route_matrix,
+)
 
 
 class LiveRoomResourceTests(unittest.TestCase):
@@ -73,7 +80,410 @@ class LiveRoomResourceTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<HHHH", raw, verb_offset + 8), (22, 10, 12, 5))
         self.assertEqual(raw[0:8], b"SC5LIVE\0")
         self.assertLessEqual(len(raw), MAX_ACTIVE_BYTES)
+        self.assertEqual(struct.unpack_from("<H", raw, 8)[0], 3)
         self.assertEqual(live.source_room_sha256, hashlib.sha256(record["raw"]).hexdigest())
+
+    def test_sectioned_v4_round_trip_externalizes_routes_and_packs_portals(self) -> None:
+        record, units = self.source_record()
+        record["portals"] = b"".join(
+            struct.pack("<Bhhh", 1, 120, -8, 8)
+            if (src, dst) == (0, 1) else bytes(7)
+            for src in range(2) for dst in range(2)
+        )
+        active, routes = encode_live_room_sections(record, program_units=units)
+        decoded = decode_live_room(active, expected_room=4, route_data=routes)
+        self.assertEqual(struct.unpack_from("<H", active, 8)[0], 4)
+        self.assertEqual(len(active), struct.unpack_from("<H", active, 48)[0])
+        self.assertEqual(decoded.route_matrix, bytes(record["box_routes"]))
+        self.assertEqual(decoded.portal_indices, (None, 0, None, None))
+        self.assertEqual(decoded.portal_records, (struct.pack("<Bhhh", 1, 120, -8, 8),))
+        self.assertEqual(active[0x20:0x22], b"\xff\xff")
+        self.assertLessEqual(len(active), MAX_ACTIVE_BYTES)
+        self.assertLessEqual(len(routes), MAX_PENDING_BYTES)
+
+    def test_sectioned_v4_sparse_route_rows_keep_ascending_destinations(self) -> None:
+        record, units = self.source_record()
+        box_count = 8
+        matrix = bytearray(b"\xff" * (box_count * box_count))
+        matrix[2] = 3
+        matrix[5] = 4
+        record["walkbox_flags"] = bytes(box_count)
+        record["walkbox_geometry"] = bytes(box_count * 18)
+        record["box_routes"] = bytes(matrix)
+        record["portals"] = bytes(box_count * box_count * 7)
+
+        active, routes = encode_live_room_sections(record, program_units=units)
+        directory_size = struct.unpack_from("<H", routes, 2)[0]
+        self.assertEqual(routes[4], 2)  # row zero is sparse
+        self.assertEqual(routes[directory_size:directory_size + 4],
+                         bytes((2, 3, 5, 4)))
+        decoded = decode_live_room(active, expected_room=4, route_data=routes)
+        self.assertEqual(decoded.route_matrix, bytes(matrix))
+
+    def test_route_values_are_walkbox_indices_or_ff_in_every_host_representation(self) -> None:
+        record, units = self.source_record()
+        invalid = dict(record, box_routes=b"\x00\x02\xff\x00")
+        with self.assertRaisesRegex(Exception, "outside 0\\.\\.1"):
+            encode_live_room(invalid, program_units=units)
+        with self.assertRaisesRegex(Exception, "outside 0\\.\\.1"):
+            encode_live_room_sections(invalid, program_units=units)
+
+        valid_v3 = bytearray(encode_live_room(record, program_units=units))
+        route_offset = HEADER.unpack_from(valid_v3)[14]
+        valid_v3[route_offset + 1] = 2
+        with self.assertRaisesRegex(Exception, "outside 0\\.\\.1"):
+            decode_live_room(bytes(valid_v3))
+
+        record["walkbox_flags"] = bytes(8)
+        record["walkbox_geometry"] = bytes(8 * 18)
+        record["portals"] = bytes(8 * 8 * 7)
+        for expected_mode, row in (
+            (0, bytes(index & 1 for index in range(8))),
+            (1, bytes([2] * 8)),
+            (2, bytes((0xFF, 0xFF, 3, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF))),
+        ):
+            matrix = bytearray([0xFF] * 64)
+            matrix[:8] = row
+            record["box_routes"] = bytes(matrix)
+            active, routes = encode_live_room_sections(record, program_units=units)
+            directory_size = struct.unpack_from("<H", routes, 2)[0]
+            self.assertEqual(routes[4], expected_mode)
+            malformed = bytearray(routes)
+            malformed[directory_size + (1 if expected_mode else 0)] = 8
+            with self.assertRaisesRegex(Exception, "outside 0\\.\\.7"):
+                decode_live_room(active, route_data=bytes(malformed))
+
+    def test_valid_package_crc_does_not_bypass_sparse_route_semantic_validation(self) -> None:
+        record, units = self.source_record()
+        box_count = 8
+        record["walkbox_flags"] = bytes(box_count)
+        record["walkbox_geometry"] = bytes(box_count * 18)
+        route_matrix = bytearray([0xFF] * (box_count * box_count))
+        route_matrix[0] = 0
+        record["box_routes"] = bytes(route_matrix)
+        record["portals"] = bytes(box_count * box_count * 7)
+        active, routes = encode_live_room_sections(record, program_units=units)
+        directory_size = struct.unpack_from("<H", routes, 2)[0]
+        self.assertEqual(routes[4], 2)  # sparse rows
+        malformed = bytearray(routes)
+        malformed[directory_size + 1] = box_count
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "active.bin").write_bytes(active)
+            (root / "routes.bin").write_bytes(malformed)
+            manifest = {
+                "same_package": 1,
+                "sections": [
+                    {"name": "LIVE", "kind": "SCVL", "path": "active.bin",
+                     "flags": ["streamable", "read_only"]},
+                    {"name": "ROUTES", "kind": "SCRT", "path": "routes.bin",
+                     "flags": ["streamable", "read_only"]},
+                ],
+            }
+            (root / "package.json").write_text(json.dumps(manifest))
+            package_path = root / "routes.samepkg"
+            info = build_package(root / "package.json", package_path)
+            verified = inspect_package(package_path, verify=True)
+            self.assertEqual(verified.crc32, info.crc32)
+            self.assertEqual(len(verified.sections), 2)
+
+        with self.assertRaisesRegex(Exception, "outside 0\\.\\.7"):
+            decode_live_room(active, route_data=bytes(malformed))
+
+    def test_diagnostic_sparse_route_mutation_preserves_directory_and_is_explicit(self) -> None:
+        record, units = self.source_record()
+        box_count = 8
+        record["walkbox_flags"] = bytes(box_count)
+        record["walkbox_geometry"] = bytes(box_count * 18)
+        route_matrix = bytearray([0xFF] * (box_count * box_count))
+        route_matrix[0] = 0
+        record["box_routes"] = bytes(route_matrix)
+        record["portals"] = bytes(box_count * box_count * 7)
+        active, routes = encode_live_room_sections(record, program_units=units)
+        malformed = inject_diagnostic_invalid_sparse_route_value(
+            routes, room=4, row=0, pair_index=0, value=box_count,
+        )
+        self.assertEqual(len(malformed), len(routes))
+        directory_size = struct.unpack_from("<H", routes, 2)[0]
+        changed_at = directory_size + 1
+        self.assertEqual(malformed[changed_at], box_count)
+        self.assertEqual(
+            malformed[:changed_at] + malformed[changed_at + 1:],
+            routes[:changed_at] + routes[changed_at + 1:],
+        )
+        with self.assertRaisesRegex(Exception, "outside 0\\.\\.7"):
+            decode_live_room(active, route_data=malformed)
+        with self.assertRaisesRegex(ValueError, "no pair"):
+            inject_diagnostic_invalid_sparse_route_value(
+                routes, room=4, row=1, pair_index=0, value=box_count,
+            )
+
+    def test_v4_compact_active_limit_is_independent_of_normalized_host_size(self) -> None:
+        record, units = self.source_record()
+        box_count = 64
+        record["walkbox_flags"] = bytes(box_count)
+        record["walkbox_geometry"] = bytes(box_count * 18)
+        record["box_routes"] = bytes([0xFF] * (box_count * box_count))
+        record["portals"] = bytes(box_count * box_count * 7)
+        object_ids = tuple(range(22, 39))
+        record["objects"] = b"".join(
+            struct.pack("<HhhhhB", object_id, 0, 0, 1, 1, 0)
+            for object_id in object_ids
+        )
+        record["object_walk"] = b"".join(
+            struct.pack("<HhhBhhB", object_id, 0, 0, 0, 0, 0, 0)
+            for object_id in object_ids
+        )
+        record["object_names"] = tuple((object_id, b"n" * 32)
+                                        for object_id in object_ids)
+        active, routes = encode_live_room_sections(record, program_units=units)
+        decoded = decode_live_room(active, expected_room=4, route_data=routes)
+        self.assertLessEqual(len(active), MAX_ACTIVE_BYTES)
+        self.assertGreater(sum(decoded.section_sizes.values()), MAX_ACTIVE_BYTES)
+        bounded = decode_live_room(
+            active, expected_room=4, max_size=MAX_ACTIVE_BYTES, route_data=routes,
+        )
+        self.assertEqual(bounded.route_matrix, record["box_routes"])
+
+    def test_v4_active_records_at_allocation_boundary_are_bounded(self) -> None:
+        record, units = self.source_record()
+
+        def build_exact(target: int) -> tuple[bytes, bytes]:
+            for count in range(1, 256):
+                object_ids = tuple(22 + index for index in range(count))
+                candidate = dict(record)
+                candidate["objects"] = b"".join(
+                    struct.pack("<HhhhhB", object_id, 0, 0, 1, 1, 0)
+                    for object_id in object_ids
+                )
+                candidate["object_walk"] = b"".join(
+                    struct.pack("<HhhBhhB", object_id, 0, 0, 0, 0, 0, 0)
+                    for object_id in object_ids
+                )
+                candidate["object_names"] = tuple((object_id, b"")
+                                                   for object_id in object_ids)
+                empty_active, _empty_routes = encode_live_room_sections(
+                    candidate, program_units=units,
+                )
+                extra = target - len(empty_active)
+                if 0 <= extra <= count * 32:
+                    names = []
+                    for object_id in object_ids:
+                        take = min(extra, 32)
+                        names.append((object_id, b"n" * take))
+                        extra -= take
+                    candidate["object_names"] = tuple(names)
+                    active, routes = encode_live_room_sections(
+                        candidate, program_units=units, max_active_size=target,
+                    )
+                    if len(active) == target:
+                        return active, routes
+            self.fail(f"could not construct a valid {target}-byte SC5LIVE v4 record")
+
+        for size in (6143, 6144):
+            active, routes = build_exact(size)
+            decoded = decode_live_room(
+                active, max_size=MAX_ACTIVE_BYTES, route_data=routes,
+            )
+            self.assertEqual(len(decoded.payload), size)
+
+        active, routes = build_exact(6145)
+        with self.assertRaisesRegex(Exception, "length exceeds"):
+            decode_live_room(active, max_size=MAX_ACTIVE_BYTES, route_data=routes)
+
+    def test_native_sparse_routes_accept_sorted_pairs_and_rle_no_route_sentinel(self) -> None:
+        source = (Path(__file__).resolve().parents[1]
+                  / "runtime/snes/engines/scumm_v5_msu_live_room.pasm").read_text()
+        sparse = source.split(
+            "ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_value_ok:", 1,
+        )[1].split(
+            "ScummV5_LiveRoom_ValidateRouteDirectory_Far__row_done:", 1,
+        )[0]
+        self.assertIn("cmp #$FFFF", sparse)
+        self.assertIn("sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE", sparse)
+        self.assertRegex(
+            sparse,
+            r"lda\.l SCUMM_LIVE_ROOM_ROUTE_VALUE\s+and #\$00FF\s+"
+            r"cmp\.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT\s+"
+            r"bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_value_in_range",
+        )
+        self.assertIn(
+            "cmp.l SCUMM_LIVE_ROOM_TEMP4\n"
+            "    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad\n"
+            "    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad",
+            sparse,
+        )
+        rle = source.split(
+            "ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_value_nonmissing:", 1,
+        )[1].split(
+            "ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_value_ok:", 1,
+        )[0]
+        self.assertIn(
+            "cmp #$00FF\n"
+            "    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_value_ok",
+            rle,
+        )
+
+    def test_native_route_matrix_observer_removes_runtime_row_padding(self) -> None:
+        class Session:
+            def __init__(self) -> None:
+                self.rows = bytes(
+                    byte for row in range(64)
+                    for byte in ((row + column) & 0xFF for column in range(64))
+                )
+
+            def read_memory(self, _space: str, address: int, length: int) -> bytes:
+                offset = address - 0x7F2000
+                return self.rows[offset:offset + length]
+
+        actual = read_active_route_matrix(Session(), 61)
+        expected = bytes(
+            (row + column) & 0xFF
+            for row in range(61) for column in range(61)
+        )
+        self.assertEqual(actual, expected)
+        self.assertEqual(len(actual), 61 * 61)
+
+    def test_generated_large_room_source_has_many_objects_boxes_and_shared_verbs(self) -> None:
+        decoded = decode_room(
+            raw_room(1, large_live_room=True), key="fixture.large-live-room",
+        )
+        self.assertEqual(len(decoded.walkboxes), 64)
+        self.assertEqual(len(decoded.objects), 36)
+        self.assertEqual(sum(len(item.verb_entries) for item in decoded.objects), 2)
+        self.assertEqual(sum(bool(item.object_name) for item in decoded.objects), 36)
+        self.assertEqual(decoded.objects[0].object_id, 70)
+        self.assertEqual(decoded.objects[0].verb_entries[0][0], 3)
+        self.assertEqual(decoded.objects[0].verb_entries[1][0], 10)
+        self.assertTrue(all(item.parent == 0 for item in decoded.objects))
+        self.assertEqual(decoded.box_routes[0][1], 1)
+        self.assertEqual(decoded.box_routes[1][0], 0)
+        padded = decode_room(
+            raw_room(1, large_live_room=True,
+                     large_live_room_name_padding_bytes=27),
+            key="fixture.large-live-room-boundary",
+        )
+        self.assertEqual(
+            sum(len(item.object_name) for item in padded.objects)
+            - sum(len(item.object_name) for item in decoded.objects),
+            27,
+        )
+
+    def test_large_sectioned_record_exceeds_legacy_window_without_large_active_allocation(self) -> None:
+        box_count = 64
+        object_count = 34
+        geometry = b"".join(
+            struct.pack("<hhhhhhhhH", left, 0, left + 1, 0,
+                        left + 1, 1, left, 1, 255)
+            for left in (0,) * 56 + (4,) * 8
+        )
+        routes = bytes((0xFF,)) * (box_count * box_count)
+        routes = bytearray(routes)
+        routes[1] = 1
+        routes[box_count] = 0
+        portal_rows = bytearray(box_count * box_count * 7)
+        for group, fixed in ((range(56), 0), (range(56, 64), 4)):
+            for source in group:
+                for destination in group:
+                    struct.pack_into(
+                        "<Bhhh", portal_rows,
+                        (source * box_count + destination) * 7,
+                        1, fixed, 0, 1,
+                    )
+        objects = b"".join(
+            struct.pack("<HhhhhB", object_id, object_id, 10, 8, 8, 0)
+            for object_id in range(70, 70 + object_count)
+        )
+        names = tuple(
+            (object_id, f"large-room-object-{object_id:03d}".encode())
+            for object_id in range(70, 70 + object_count)
+        )
+        object_walk = b"".join(
+            struct.pack("<HhhBhhB", object_id, 8, 9, 2, 8, 9, 1)
+            for object_id in range(70, 70 + object_count)
+        )
+        record = {
+            "room": 1, "raw": b"copyright-free-large-room-source",
+            "walkbox_flags": bytes(box_count),
+            "walkbox_geometry": geometry,
+            "box_routes": bytes(routes),
+            "portals": bytes(portal_rows),
+            "objects": objects, "object_names": names,
+            "object_walk": object_walk,
+            "object_programs": [{
+                "id": 5, "unit_identity": "ObjectProgram(room=1,object=70)",
+                "number": 70, "executable": True,
+                "entrypoints": ((3, 19), (10, 29)),
+            }],
+            "executable_locals": [], "entry": 3, "exit": 4,
+        }
+        units = [
+            {"id": 3, "room": 1, "unit_identity": "RoomEntryProgram(1)"},
+            {"id": 4, "room": 1, "unit_identity": "RoomExitProgram(1)"},
+            {"id": 5, "room": 1,
+             "unit_identity": "ObjectProgram(room=1,object=70)"},
+        ]
+        active, route_data = encode_live_room_sections(record, program_units=units)
+        semantic = decode_live_room(active, expected_room=1, route_data=route_data)
+        expanded_size = sum(semantic.section_sizes.values())
+        self.assertGreater(expanded_size, 19_135)
+        self.assertLessEqual(len(active), MAX_ACTIVE_BYTES)
+        self.assertLessEqual(len(route_data), MAX_PENDING_BYTES)
+        self.assertEqual(semantic.box_count, box_count)
+        self.assertEqual(semantic.object_count, object_count)
+        self.assertEqual(semantic.verb_count, 2)
+        self.assertEqual(semantic.route_matrix, routes)
+        self.assertEqual(semantic.object_names, names)
+        self.assertEqual(semantic.portal_indices[1], 0)
+        self.assertEqual(len(semantic.portal_records), 2)
+        active_verbs_offset = HEADER.unpack_from(active)[19]
+        self.assertEqual(struct.unpack_from("<HHHH", active,
+                                            active_verbs_offset),
+                         (70, 3, 19, 5))
+
+    def test_sectioned_v4_rejects_corrupt_route_row_and_portal_directory(self) -> None:
+        record, units = self.source_record()
+        active, routes = encode_live_room_sections(record, program_units=units)
+        corrupt_routes = bytearray(routes)
+        corrupt_routes[4] = 0xFF
+        with self.assertRaisesRegex(Exception, "route row mode"):
+            decode_live_room(active, route_data=bytes(corrupt_routes))
+        corrupt_active = bytearray(active)
+        portal_offset = struct.unpack_from("<H", active, 0x22)[0]
+        corrupt_active[portal_offset + 4] = 0xFF
+        with self.assertRaisesRegex(Exception, "portal bit layout"):
+            decode_live_room(bytes(corrupt_active), route_data=routes)
+
+    def test_v2_dense_portal_records_remain_decodable(self) -> None:
+        record, units = self.source_record()
+        record["portals"] = b"".join(
+            struct.pack("<Bhhh", 1, 0, 0, 0)
+            if (src, dst) == (0, 1) else bytes(7)
+            for src in range(2) for dst in range(2)
+        )
+        v3 = encode_live_room(record, program_units=units)
+        decoded_v3 = decode_live_room(v3)
+        portal_offset = decoded_v3.offsets["portals"]
+        object_offset = decoded_v3.offsets["objects"]
+        dense = b"".join(
+            struct.pack("<H", 0xFFFF if index is None else index)
+            for index in decoded_v3.portal_indices
+        )
+        old_portals = dense + b"".join(decoded_v3.portal_records)
+        delta = len(old_portals) - (object_offset - portal_offset)
+        v2 = bytearray(v3[:portal_offset] + old_portals + v3[object_offset:])
+        header_values = list(HEADER.unpack_from(v2))
+        header_values[1] = 2
+        for offset_index in range(4, 10):
+            header_values[12 + offset_index] += delta
+        header_values[22] = len(v2)
+        v2[:HEADER.size] = HEADER.pack(*header_values)
+
+        decoded_v2 = decode_live_room(bytes(v2), expected_room=4)
+        self.assertEqual(decoded_v2.portal_indices, decoded_v3.portal_indices)
+        self.assertEqual(decoded_v2.portal_records, decoded_v3.portal_records)
+        self.assertEqual(decoded_v2.object_names, decoded_v3.object_names)
 
     def test_decoder_rejects_noncanonical_offsets_and_trailing_payload(self) -> None:
         record, units = self.source_record()
@@ -177,7 +587,7 @@ class LiveRoomResourceTests(unittest.TestCase):
             self.assertEqual(raised.exception.status, ReadStatus.SECTION_CRC)
             self.assertEqual(destination, bytearray([0xA7] * section.size))
 
-    def test_live_room_metadata_capacity_failure_is_explicit(self) -> None:
+    def test_large_live_room_compacts_portals_but_reports_runtime_capacity_separately(self) -> None:
         record, units = self.source_record()
         object_ids = range(22, 222)
         record["objects"] = b"".join(
@@ -190,8 +600,12 @@ class LiveRoomResourceTests(unittest.TestCase):
             struct.pack("<HhhBhhB", object_id, 0, 0, 0, 0, 0, 0)
             for object_id in object_ids
         )
-        with self.assertRaisesRegex(Exception, "audited pending room buffer is 3132 bytes"):
-            encode_live_room(record, program_units=units)
+        raw = encode_live_room(record, program_units=units)
+        self.assertGreater(len(raw), MAX_PENDING_BYTES)
+        self.assertGreater(len(raw), MAX_ACTIVE_BYTES)
+        self.assertLessEqual(len(raw), MAX_SOURCE_RECORD_BYTES)
+        live = decode_live_room(raw, expected_room=4)
+        self.assertEqual(live.object_count, 200)
 
     def test_metadata_record_fits_packed_pending_capacity(self) -> None:
         record, units = self.source_record()
@@ -416,6 +830,26 @@ class LiveRoomResourceTests(unittest.TestCase):
         self.assertLess(load.index(".a8"), load.index("lda #$00"))
         self.assertLess(load.index("lda #$00"),
                         load.index("sta.l SAME_SCUMM_M23A_HOLD"))
+
+    def test_lifecycle_chain_completion_preserves_async_resource_ready_phase(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        m24rb = (root / "runtime/snes/engines/scumm_v5_m24rb_far.pasm").read_text()
+        complete = m24rb.split(
+            "ScummV5_M23A_PollLifecycleChain__complete:", 1,
+        )[1].split("ScummV5_M23A_PollLifecycleChain__entry_done:", 1)[0]
+        self.assertIn(
+            "lda.l SAME_SCUMM_M23A_PHASE\n"
+            "    cmp #$05\n"
+            "    beq ScummV5_M23A_PollLifecycleChain__preserve_resource_ready\n"
+            "    lda #$00\n"
+            "    sta.l SAME_SCUMM_M23A_PHASE\n"
+            "ScummV5_M23A_PollLifecycleChain__preserve_resource_ready:",
+            complete,
+        )
+        self.assertLess(
+            complete.index("ScummV5_M23A_PollLifecycleChain__preserve_resource_ready:"),
+            complete.index("pla\n    cmp #$01"),
+        )
 
 
 if __name__ == "__main__":

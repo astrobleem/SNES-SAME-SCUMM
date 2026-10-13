@@ -14,7 +14,11 @@ import zlib
 from typing import Mapping
 
 from same.package import build_package, inspect_package
-from .live_room_resources import MAX_PENDING_BYTES as MAX_PENDING_LIVE_ROOM_BYTES
+from .live_room_resources import (
+    MAX_ACTIVE_BYTES as MAX_ACTIVE_LIVE_ROOM_BYTES,
+    LIVE_ROOM_CHUNK_BYTES,
+    MAX_PENDING_BYTES as MAX_PENDING_LIVE_ROOM_BYTES,
+)
 
 
 PROGRAM_SECTION = "SC5CODE"
@@ -23,11 +27,15 @@ ROOM_SECTION = "SC5ROOM"
 ROOM_SECTION_KIND = "SCVR"
 LIVE_ROOM_SECTION = "SC5LIVE"
 LIVE_ROOM_SECTION_KIND = "SCVL"
+LIVE_ROUTE_SECTION = "SC5ROUT"
+LIVE_ROUTE_SECTION_KIND = "SCRT"
 VISUAL_SECTION = "SC5VIS"
 VISUAL_SECTION_KIND = "SCVV"
-PROGRAM_STORAGE_SCHEMA = "same_scumm_v5_msu1_program_storage_v2"
+PROGRAM_STORAGE_SCHEMA = "same_scumm_v5_msu1_program_storage_v4"
 ROOM_RECORD_LIMIT = 0x0800
 LIVE_ROOM_DIRECTORY_RECORD_SIZE = 10
+SECTIONED_LIVE_ROOM_DIRECTORY_RECORD_SIZE = 13
+LIVE_ROOM_CHUNK_RECORD_SIZE = 10
 VISUAL_DIRECTORY_RECORD_SIZE = 26
 PROGRAM_PAGE_INDEX_RECORD_SIZE = 4
 PROGRAM_PAGE_RECORD_SIZE = 8
@@ -167,12 +175,16 @@ def _record_include(
     room_count: int,
     rom_bank: int | None,
     live_room_records: list[dict[str, object]] | None = None,
+    live_route_records: list[dict[str, object]] | None = None,
+    live_room_chunks: list[dict[str, object]] | None = None,
     visual_records: list[dict[str, object]] | None = None,
     page_indices: list[dict[str, int]] | None = None,
     page_records: list[dict[str, object]] | None = None,
     page_directory_bank: int | None = None,
 ) -> str:
     live_room_records = live_room_records or []
+    live_route_records = live_route_records or []
+    live_room_chunks = live_room_chunks or []
     visual_records = visual_records or []
     page_indices = page_indices or []
     page_records = page_records or []
@@ -204,7 +216,10 @@ def _record_include(
             int(str(row[field]), 16)
     directory_bytes = (
         len(records) * 10 + room_count * 10
-        + room_count * LIVE_ROOM_DIRECTORY_RECORD_SIZE
+        + room_count * (SECTIONED_LIVE_ROOM_DIRECTORY_RECORD_SIZE
+                        if live_route_records else LIVE_ROOM_DIRECTORY_RECORD_SIZE)
+        + room_count * (LIVE_ROOM_DIRECTORY_RECORD_SIZE if live_route_records else 0)
+        + len(live_room_chunks) * LIVE_ROOM_CHUNK_RECORD_SIZE
         + room_count * VISUAL_DIRECTORY_RECORD_SIZE
     )
     if directory_bytes > 0x8000:
@@ -256,9 +271,12 @@ def _record_include(
     if not room_raw:
         lines.append("    .byte $00")
     if live_room_records:
+        sectioned = bool(live_route_records)
+        live_record_size = (SECTIONED_LIVE_ROOM_DIRECTORY_RECORD_SIZE if sectioned
+                            else LIVE_ROOM_DIRECTORY_RECORD_SIZE)
         lines.extend((
             f"SCUMM_MSU1_LIVE_ROOM_COUNT = ${room_count:04X}",
-            f"SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE = ${LIVE_ROOM_DIRECTORY_RECORD_SIZE:04X}",
+            f"SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE = ${live_record_size:04X}",
             "ScummV5_MsuLiveRoomRecords:",
         ))
         by_room = {int(row["room"]): row for row in live_room_records}
@@ -266,13 +284,45 @@ def _record_include(
         for room_id in range(room_count):
             row = by_room.get(room_id)
             if row is None:
-                raw.extend(bytes(LIVE_ROOM_DIRECTORY_RECORD_SIZE))
+                raw.extend(bytes(live_record_size))
             else:
                 raw += int(row["package_offset"]).to_bytes(4, "little")
                 raw += int(row["length"]).to_bytes(2, "little")
                 raw += int(row["crc32"], 16).to_bytes(4, "little")
+                if sectioned:
+                    raw += int(row["first_chunk"]).to_bytes(2, "little")
+                    raw += int(row["chunk_count"]).to_bytes(1, "little")
         for start in range(0, len(raw), 16):
             lines.append("    .byte " + ",".join(f"${value:02X}" for value in raw[start:start + 16]))
+        if sectioned:
+            lines.extend((
+                f"SCUMM_MSU1_LIVE_ROUTE_RECORD_SIZE = ${LIVE_ROOM_DIRECTORY_RECORD_SIZE:04X}",
+                "ScummV5_MsuLiveRouteRecords:",
+            ))
+            by_room = {int(row["room"]): row for row in live_route_records}
+            raw = bytearray()
+            for room_id in range(room_count):
+                row = by_room.get(room_id)
+                if row is None:
+                    raw.extend(bytes(LIVE_ROOM_DIRECTORY_RECORD_SIZE))
+                else:
+                    raw += int(row["package_offset"]).to_bytes(4, "little")
+                    raw += int(row["length"]).to_bytes(2, "little")
+                    raw += int(row["crc32"], 16).to_bytes(4, "little")
+            for start in range(0, len(raw), 16):
+                lines.append("    .byte " + ",".join(f"${value:02X}" for value in raw[start:start + 16]))
+            lines.extend((
+                f"SCUMM_MSU1_LIVE_CHUNK_COUNT = ${len(live_room_chunks):04X}",
+                f"SCUMM_MSU1_LIVE_CHUNK_RECORD_SIZE = ${LIVE_ROOM_CHUNK_RECORD_SIZE:04X}",
+                "ScummV5_MsuLiveRoomChunkRecords:",
+            ))
+            raw = bytearray()
+            for row in live_room_chunks:
+                raw += int(row["package_offset"]).to_bytes(4, "little")
+                raw += int(row["length"]).to_bytes(2, "little")
+                raw += int(row["crc32"], 16).to_bytes(4, "little")
+            for start in range(0, len(raw), 16):
+                lines.append("    .byte " + ",".join(f"${value:02X}" for value in raw[start:start + 16]))
     if visual_records:
         lines.extend((
             f"SCUMM_MSU1_VISUAL_COUNT = ${room_count:04X}",
@@ -354,6 +404,9 @@ def build_program_storage(
     room_resources: Mapping[int, bytes] | None = None,
     source_room_resources: Mapping[int, bytes] | None = None,
     live_room_resources: Mapping[int, bytes] | None = None,
+    live_route_resources: Mapping[int, bytes] | None = None,
+    diagnostic_allow_invalid_live_route: bool = False,
+    diagnostic_live_route_validation_resources: Mapping[int, bytes] | None = None,
     room_visual_resources: Mapping[int, bytes] | None = None,
     rom_bank: int | None = None,
     page_directory_bank: int | None = None,
@@ -435,7 +488,8 @@ def build_program_storage(
     package_sections: list[dict[str, object]] = []
     used_section_names = {name for name, _kind, _data, _alignment in prefix_sections}
     for name, kind, data, alignment in prefix_sections:
-        if name in {PROGRAM_SECTION, ROOM_SECTION, LIVE_ROOM_SECTION, VISUAL_SECTION}:
+        if name in {PROGRAM_SECTION, ROOM_SECTION, LIVE_ROOM_SECTION,
+                    LIVE_ROUTE_SECTION, VISUAL_SECTION}:
             raise ValueError(f"reserved SCUMM package section name {name}")
         if alignment <= 0 or alignment & (alignment - 1):
             raise ValueError(f"package section {name} alignment must be a power of two")
@@ -521,40 +575,109 @@ def build_program_storage(
             "flags": ["streamable", "read_only"],
         })
     live_room_rows: list[dict[str, object]] = []
+    live_room_chunks: list[dict[str, object]] = []
     live_room_payload = bytearray()
     live_by_id = dict(live_room_resources or {})
+    route_by_id = dict(live_route_resources or {})
+    validation_route_by_id = dict(
+        diagnostic_live_route_validation_resources
+        if diagnostic_live_route_validation_resources is not None else route_by_id
+    )
+    if route_by_id and set(route_by_id) != set(live_by_id):
+        raise ValueError("sectioned live-room and route resource room sets differ")
+    if validation_route_by_id and set(validation_route_by_id) != set(live_by_id):
+        raise ValueError("validated live-room and route resource room sets differ")
+    if (diagnostic_live_route_validation_resources is not None and
+            not diagnostic_allow_invalid_live_route):
+        raise ValueError("diagnostic route validation override requires explicit diagnostic mode")
     if any(isinstance(room, bool) or not 0 <= int(room) <= 255 for room in live_by_id):
         raise ValueError("live room IDs must fit u8")
     if live_by_id and LIVE_ROOM_SECTION in used_section_names:
         raise ValueError(f"reserved SCUMM package section name {LIVE_ROOM_SECTION}")
+    if route_by_id and LIVE_ROUTE_SECTION in used_section_names:
+        raise ValueError(f"reserved SCUMM package section name {LIVE_ROUTE_SECTION}")
     if live_by_id:
         from .live_room_resources import decode_live_room
 
         live_file = output_dir / "scumm-live-room-resources.bin"
         for room_id, resource in sorted(live_by_id.items()):
             body = bytes(resource)
+            route_body = (bytes(route_by_id[room_id]) if route_by_id else b"")
             decoded_live = decode_live_room(
                 body, expected_room=int(room_id), max_size=0xFFFF,
+                route_data=(validation_route_by_id[room_id] if route_by_id else None),
             )
             if len(body) > 0xFFFF:
                 raise ValueError(f"live room {room_id} exceeds directory length field")
+            active_limit = (MAX_ACTIVE_LIVE_ROOM_BYTES if route_by_id
+                            else MAX_PENDING_LIVE_ROOM_BYTES)
+            route_loadable = len(route_body) <= MAX_PENDING_LIVE_ROOM_BYTES
+            active_loadable = len(body) <= active_limit
             offset = len(live_room_payload)
             live_room_payload.extend(body)
+            first_chunk = len(live_room_chunks)
+            chunks = []
+            for chunk_start in range(0, len(body), LIVE_ROOM_CHUNK_BYTES):
+                chunk_body = body[chunk_start:chunk_start + LIVE_ROOM_CHUNK_BYTES]
+                chunk = {
+                    "start": chunk_start,
+                    "length": len(chunk_body),
+                    "crc32": f"{zlib.crc32(chunk_body) & 0xFFFFFFFF:08x}",
+                }
+                chunks.append(chunk)
+                live_room_chunks.append({"room": int(room_id), **chunk})
             live_room_rows.append({
                 "room": int(room_id), "section_relative_offset": offset,
                 "length": len(body), "crc32": f"{decoded_live.crc32:08x}",
                 "sha256": decoded_live.sha256,
-                "native_loadable": len(body) <= MAX_PENDING_LIVE_ROOM_BYTES,
+                "normalized_v3_semantic_bytes": sum(decoded_live.section_sizes.values()),
+                "normalized_v3_semantic_table_bytes": dict(decoded_live.section_sizes),
+                "external_route_bytes": len(route_body),
+                "first_chunk": first_chunk, "chunk_count": len(chunks),
+                "chunks": chunks,
+                "native_loadable": active_loadable and route_loadable,
                 "native_loadability_reason": (
-                    None if len(body) <= MAX_PENDING_LIVE_ROOM_BYTES else
-                    f"SC5LIVE record exceeds audited pending staging capacity "
-                    f"{MAX_PENDING_LIVE_ROOM_BYTES} bytes"
+                    None if active_loadable and route_loadable else "; ".join(
+                        message for message, failed in (
+                            (f"SC5LIVE active record exceeds audited active metadata capacity "
+                             f"{active_limit} bytes" if route_by_id else
+                             f"SC5LIVE record exceeds audited pending metadata capacity "
+                             f"{active_limit} bytes", not active_loadable),
+                            (f"SC5ROUT record exceeds pending checked-read capacity "
+                             f"{MAX_PENDING_LIVE_ROOM_BYTES} bytes", not route_loadable),
+                        ) if failed
+                    )
                 ),
             })
         live_file.write_bytes(live_room_payload)
         package_sections.append({
             "name": LIVE_ROOM_SECTION, "kind": LIVE_ROOM_SECTION_KIND,
             "path": live_file.name, "alignment": 1,
+            "flags": ["streamable", "read_only"],
+        })
+    live_route_rows: list[dict[str, object]] = []
+    live_route_payload = bytearray()
+    if route_by_id:
+        route_file = output_dir / "scumm-live-room-routes.bin"
+        for room_id, resource in sorted(route_by_id.items()):
+            body = bytes(resource)
+            offset = len(live_route_payload)
+            live_route_payload.extend(body)
+            live_route_rows.append({
+                "room": int(room_id), "section_relative_offset": offset,
+                "length": len(body), "crc32": f"{zlib.crc32(body) & 0xFFFFFFFF:08x}",
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "native_loadable": len(body) <= MAX_PENDING_LIVE_ROOM_BYTES,
+                "native_loadability_reason": (
+                    None if len(body) <= MAX_PENDING_LIVE_ROOM_BYTES else
+                    f"SC5ROUT room section exceeds pending checked-read capacity "
+                    f"{MAX_PENDING_LIVE_ROOM_BYTES} bytes"
+                ),
+            })
+        route_file.write_bytes(live_route_payload)
+        package_sections.append({
+            "name": LIVE_ROUTE_SECTION, "kind": LIVE_ROUTE_SECTION_KIND,
+            "path": route_file.name, "alignment": 1,
             "flags": ["streamable", "read_only"],
         })
     visual_rows: list[dict[str, object]] = []
@@ -628,6 +751,7 @@ def build_program_storage(
     section = next(row for row in package_info.sections if row.name == PROGRAM_SECTION)
     room_section = next((row for row in package_info.sections if row.name == ROOM_SECTION), None)
     live_room_section = next((row for row in package_info.sections if row.name == LIVE_ROOM_SECTION), None)
+    live_route_section = next((row for row in package_info.sections if row.name == LIVE_ROUTE_SECTION), None)
     visual_section = next((row for row in package_info.sections if row.name == VISUAL_SECTION), None)
     prefix_descriptors = []
     for name, kind, data, alignment in prefix_sections:
@@ -655,6 +779,14 @@ def build_program_storage(
         assert live_room_section is not None
         for row in live_room_rows:
             row["package_offset"] = live_room_section.offset + int(row["section_relative_offset"])
+            for chunk in row["chunks"]:
+                chunk["package_offset"] = row["package_offset"] + int(chunk["start"])
+            for local_index, chunk in enumerate(row["chunks"]):
+                live_room_chunks[int(row["first_chunk"]) + local_index]["package_offset"] = chunk["package_offset"]
+    if live_route_rows:
+        assert live_route_section is not None
+        for row in live_route_rows:
+            row["package_offset"] = live_route_section.offset + int(row["section_relative_offset"])
     if visual_rows:
         assert visual_section is not None
         for row in visual_rows:
@@ -698,6 +830,14 @@ def build_program_storage(
         "live_room_resource_bytes": len(live_room_payload),
         "live_room_section": None if live_room_section is None else live_room_section.to_dict(),
         "live_room_records": live_room_rows,
+        "live_route_resource_count": len(live_route_rows),
+        "live_route_resource_bytes": len(live_route_payload),
+        "live_route_section": None if live_route_section is None else live_route_section.to_dict(),
+        "live_route_records": live_route_rows,
+        "live_room_chunk_size": LIVE_ROOM_CHUNK_BYTES,
+        "live_room_chunk_count": len(live_room_chunks),
+        "live_room_chunk_directory_bytes": 0,
+        "live_room_chunks": live_room_chunks,
         "visual_resource_count": len(visual_rows),
         "visual_resource_bytes": len(visual_payload),
         "visual_section": None if visual_section is None else visual_section.to_dict(),
@@ -710,8 +850,8 @@ def build_program_storage(
     (output_dir / "scumm_msu1_programs.inc.pasm").write_text(
         _record_include(
             rows, room_rows, room_directory_count, rom_bank,
-            live_room_rows, visual_rows, page_indices, page_records,
-            page_directory_bank,
+            live_room_rows, live_route_rows, live_room_chunks, visual_rows,
+            page_indices, page_records, page_directory_bank,
         ), encoding="ascii",
     )
     return result

@@ -11,7 +11,10 @@ import zipfile
 from pathlib import Path
 
 BASE = 0x7E0800
-STACK_FLOOR = 0x7E1800
+# Streaming builds reserve $7E:1000 onward for bytecode pages.  Keep the
+# generated profile-owned globals below that boundary; on the production
+# frame path the native stack baseline is $0FFF in the mirrored low WRAM bank.
+STACK_FLOOR = 0x7E1000
 EXPECTED_MAXS_SHA = {
     "004c043e2371f1f75f81df26184eda89fef95c7d6886b84deeffa07ac1c0f98f",
     "884b8f381d75ef21c89bd953caad18365a6f319275a6ce1bbd849d3768c57178",

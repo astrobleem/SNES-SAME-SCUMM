@@ -537,8 +537,8 @@ brk_handler__capture_stack:
 
 ; Keep the fixed LoROM header/vector window visible in every assembly map.
 ; Bank 0 code must leave deliberate slack before $FFC0.
-SAME_BANK0_CODE_END = *
-SAME_BANK0_FREE_BYTES = $FFC0 - *
+SAME_BANK0_CODE_END:
+SAME_BANK0_FREE_BYTES = $FFC0 - SAME_BANK0_CODE_END
 .assert SAME_BANK0_FREE_BYTES >= $0020, "bank 0 requires at least 32 bytes before header"
 
 ; Emit the internal LoROM header directly.  Poppy's current SNES header builder
@@ -594,6 +594,9 @@ Same_Tad_BlankSong:
 ; bank 9 is reserved for validator/lifecycle code and remains below 32 KiB.
 .bank 9
 .org $8000
+.if SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP
+.include "engines/scumm_v5_bootstrap_far.pasm"
+.endif
 .if SAME_BUILD_SCUMM_PHASE6LA1D == $01 || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 ; Validation-only C2 payload is cold data.  Keep its canonical labels for the
 ; bank-zero fixture dispatcher while placing the cohesive block in bank 9.
@@ -628,6 +631,9 @@ Same_Tad_BlankSong:
 .include "engines/scumm_v5_camera_far.pasm"
 .if SAME_VIDEO_BACKEND_LEGACY
 .include "services/video_k1_far.pasm"
+.endif
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+.include "engines/scumm_v5_msu_lifecycle_far.pasm"
 .endif
 ScummV5_M24RB_FarCodeEnd:
 .endif

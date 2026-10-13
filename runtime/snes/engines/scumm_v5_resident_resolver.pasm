@@ -677,6 +677,8 @@ ScummV5_Resident_ResolveGlobalScript_Far:
     sta.l SAME_SCUMM_RESIDENT_DYNAMIC_LOOKUPS
     sep #$20
     .a8
+    rep #$10
+    .i16
     ldx #$0000
 ScummV5_Resident_ResolveGlobalScript_Far__loop:
     .a8

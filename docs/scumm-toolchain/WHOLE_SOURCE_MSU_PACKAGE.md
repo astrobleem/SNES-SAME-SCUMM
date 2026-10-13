@@ -21,20 +21,25 @@ The current package layout is:
 | SAMEPKG section | Bytes | Role |
 | --- | ---: | --- |
 | SC5ROOM | 6,387,956 | Complete cooked room source records, retained package-only |
-| SC5LIVE | 381,925 | Object/verb, lifecycle, local, and movement projection |
+| SC5LIVE | 157,980 | SC5LIVE v4 compact object/verb, lifecycle, local, and movement projection |
+| SC5ROUT | 41,239 | Separately checked, row-encoded movement routes |
 | SC5VIS | 5,776,320 | 96 indexed 256×224 projections with palettes |
 | SC5CODE | 1,000,867 | 2,203 compiler-owned ProgramUnit bodies |
-| Header and section directory | 160 | SAMEPKG v1 metadata |
+| Header and section directory | 192 | SAMEPKG v1 metadata |
 | Inter-section / trailing padding | 0 | Sections use alignment 1 |
-| **Total** | **13,547,228** | |
+| **Total** | **13,364,554** | |
 
 The SC5CODE directory has 2,376 integrity-checked instruction-aligned pages;
 the largest body is 21,002 bytes and the page limit remains 2,048 bytes. Its
 16-bit whole-body length field is sufficient for the observed maximum. The
-ROM lookup payload is 54,404 bytes: 22,030 ProgramUnit records, 990 room
-records, 990 SC5LIVE records, 2,574 SC5VIS records, and 27,820 page-directory
-bytes, split across the existing directory banks. Package offsets are 32-bit;
-resident selectors remain an independent 178-entry window.
+ROM lookup payload is 54,404 bytes: a 22,030-byte ProgramUnit directory,
+990-byte room directory, 990-byte SC5LIVE directory, 2,574-byte SC5VIS
+directory, and 27,820-byte page directory, split across the existing
+directory banks. Package offsets are 32-bit; resident selectors remain an
+independent 178-entry window. Two independent package roots emitted the same
+13,364,554-byte package (SHA-256
+`b79cc2e24ee428acd8d0ff8bb4714ca2d4264d6e041bbf6e91baa0cac7720ca6`); their
+402 declared artifacts had equal file sets and byte contents.
 
 The complete SC5ROOM containers include 857,071 bytes that are also present,
 byte-for-byte and hash-for-hash, as room-owned SC5CODE carriers (2,040
@@ -48,14 +53,21 @@ identities remain separate.
 
 All 96 indexed rooms currently have SC5ROOM, SC5LIVE, and SC5VIS package
 records. Room 0 remains resource-less and keeps its established lifecycle
-behavior. The current native incoming-room staging allocation is 3,132 bytes;
-32 SC5LIVE records exceed it, with the largest record 19,135 bytes (room 66).
+behavior. The earlier v3 sparse/deduplicated portal encoding reduced the
+maximum normalized record from 19,135 to 11,237 bytes (room 66), but that
+representation still exceeded the old active and incoming staging limits.
+The current v4 projection splits out checked routes and uses bounded
+instruction-independent metadata chunks; the exact active/pending capacities
+and separate native evidence are summarized below.
 The largest retained cooked SC5ROOM is 131,487 bytes (room 91), but SC5ROOM is
 package-only and is not passed through that native staging buffer. Therefore
-the package can represent every indexed room, while only 64 room records fit
-the current live incoming staging bound; including resource-less room 0 gives
-65 entries classified loadable in the report. No capacity constants were
-silently enlarged.
+the package represents every indexed room, while 71 SC5LIVE records fit the
+old 3,132-byte pending bound. The current v4 projection is bounded differently:
+all 96 active records fit the measured 6,144-byte active allocation, and all
+96 separately encoded SC5ROUT resources fit the pending bound. Eleven v4
+metadata records still require multiple checked chunks. These are descriptor
+and host-capacity findings; native runtime installation remains an independent
+evidence field and must not be inferred from package presence.
 
 SC5VIS conversion is an aspect-fit projection, not proof of native PPU
 equivalence. Rooms 89 and 90 expose a 16-pixel-wide source projection and are
@@ -110,10 +122,18 @@ carriers. Dynamic global lookups were 5; cache failures, stale rejections, and
 selector exhaustion were zero. This is full-directory native boot and room-68
 load evidence, not a whole-game execution or the bounded room-3 route.
 
-The final 4 MiB ROM passes ROM and 21-region WRAM audits. The all-room
-readiness report still has `native_loadable: false` because 32 SC5LIVE records
-exceed the current 3,132-byte incoming staging limit. The booted room-68 record
-fits; the smoke does not certify those other rooms. The 2,144 unverified plus
+The final 4 MiB ROM passes ROM and WRAM audits. The all-room readiness report
+distinguishes descriptor/capacity preflight from emulator installation: all
+96 v4 SC5LIVE/SC5ROUT records fit their bounded representation and pass the
+host preflight; native metadata probes separately installed and hash-checked
+rooms 4, 40, 43, 51, 55, and 66. A complete native installation sweep has not
+been run. Diagnostic requests for rooms 78 and 98 did not reach a stable
+matching active-record observation, so those rooms remain unverified natively.
+The room-68 boot does not certify other rooms. The 2,144 unverified plus
 4 blocked backend units and the separate graphics, sound/iMUSE, text/font, and
 save-state gaps continue to keep release readiness `NOT_READY`. Room 5's PPU
 comparison remains `NOT_CAPTURED`.
+
+The large-room follow-up documents SC5LIVE v4, exact per-room section sizes,
+bounded staging/active capacities, and the two-pass checked route/metadata
+transaction in LARGE_ROOM_METADATA.md.

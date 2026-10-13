@@ -12,7 +12,8 @@ import unittest
 
 from tools.validate_scumm_native_residency_nexen import (
     LIVE_ROOM_ACTIVE_BASE, LIVE_ROOM_ACTIVE_CAPACITY,
-    audit_runtime_walkbox_flags, git_identity,
+    audit_runtime_walkbox_flags, git_identity, room_metadata_probe_is_published,
+    room_metadata_probe_step,
 )
 from tools.audit_scumm_residency_wram import audit as audit_wram
 
@@ -32,6 +33,19 @@ def symbols() -> dict[str, int]:
 
 
 class NativeResidencyLayoutTests(unittest.TestCase):
+    def test_authentic_bootstrap_uses_far_body_with_room_service(self) -> None:
+        main = (ROOT / "runtime/snes/main.pasm").read_text(encoding="utf-8")
+        engine = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text(
+            encoding="utf-8")
+        helper = (ROOT / "runtime/snes/engines/scumm_v5_bootstrap_far.pasm").read_text(
+            encoding="utf-8")
+        bank9 = main.split(".bank 9\n.org $8000", 1)[1].split(".bank", 1)[0]
+        self.assertIn('engines/scumm_v5_bootstrap_far.pasm', bank9)
+        self.assertIn(".if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR", engine)
+        self.assertIn("jsl ScummV5_AuthenticBootstrap_Far", engine)
+        self.assertIn("jsl ScummV5_Resident_ResolveGlobalScript_Far", helper)
+        self.assertIn("SAME_SCUMM_C4_SLOT_LOCALS+$0040", helper)
+
     def test_mutable_walkbox_flags_require_runtime_matrixops_evidence(self) -> None:
         initial = bytes([0, 0, 0, 0])
         same = audit_runtime_walkbox_flags(
@@ -97,9 +111,41 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         layout = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json")
                             .read_text(encoding="utf-8"))
         active = layout["live_room_active"]
+        self.assertEqual(LIVE_ROOM_ACTIVE_BASE, 0x41E800)
+        self.assertEqual(LIVE_ROOM_ACTIVE_CAPACITY, 0x1800)
         self.assertEqual(int(active["address"].replace(":", ""), 16),
                          LIVE_ROOM_ACTIVE_BASE)
         self.assertEqual(active["bytes"], LIVE_ROOM_ACTIVE_CAPACITY)
+
+    def test_live_room_length_boundary_reloads_u16_after_a8_checkpoint(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm").read_text()
+        validator = source.split("ScummV5_LiveRoom_Validate_Far:", 1)[1].split(
+            "ScummV5_LiveRoom_Validate_Far__bad:", 1,
+        )[0]
+        after_checkpoint = validator.split(
+            "lda #$C1 ; identity/schema/length checks passed", 1,
+        )[1].split("ScummV5_LiveRoom_Validate_Far__maximum_size_ok:", 1)[0]
+        self.assertIsNotNone(re.search(
+            r"rep #\$20\s+\.a16\s+.*?"
+            r"lda\.l SCUMM_LIVE_ROOM_VALIDATION_BASE\+\$30\s+"
+            r"cmp #SCUMM_LIVE_ROOM_HEADER_SIZE",
+            after_checkpoint,
+            re.S,
+        ))
+        self.assertIn("cmp #SCUMM_LIVE_ROOM_MAX_SIZE+1", after_checkpoint)
+
+    def test_room_metadata_probe_batches_transfer_then_samples_commit_seam(self) -> None:
+        self.assertEqual(room_metadata_probe_step(0, 98, 1, 98, 100), 16)
+        self.assertEqual(room_metadata_probe_step(0, 98, 4, 98, 100), 16)
+        self.assertEqual(room_metadata_probe_step(0, 98, 5, 98, 100), 1)
+        self.assertEqual(room_metadata_probe_step(98, 0, 0, 98, 100), 1)
+        self.assertEqual(room_metadata_probe_step(0, 0, 0, 98, 3), 3)
+
+    def test_room_metadata_probe_requires_matching_published_active_identity(self) -> None:
+        self.assertTrue(room_metadata_probe_is_published(98, 98, 1, 98))
+        self.assertFalse(room_metadata_probe_is_published(98, 98, 0, 68))
+        self.assertFalse(room_metadata_probe_is_published(98, 98, 1, 68))
+        self.assertFalse(room_metadata_probe_is_published(68, 98, 1, 98))
 
     def test_live_object_walk_uses_the_ten_byte_compact_row_stride(self) -> None:
         runtime = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm")
@@ -146,6 +192,51 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         self.assertEqual(20 * 20 + next_u8, 401)
         self.assertNotEqual(20 * 20 + (adjacent_portal_type << 8 | next_u8), 401)
 
+    def test_live_room_v3_uses_validated_sparse_portal_directory(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm")
+        source = runtime.read_text(encoding="utf-8")
+        validator = source.split("ScummV5_LiveRoom_Validate_Far:", 1)[1]
+        validator = validator.split("ScummV5_LiveRoom_Validate_Far__bad:", 1)[0]
+        portal = source.split("ScummV5_LiveRoom_Portal_Far:", 1)[1]
+        portal = portal.split("ScummV5_LiveRoom_Portal_Far__bad:", 1)[0]
+
+        # V2 remains accepted; v3 is validated as a bounded pair-row and
+        # descriptor section, then queried without expanding the dense matrix.
+        self.assertIn("cmp #$0002", validator)
+        self.assertIn("cmp #$0003", validator)
+        self.assertIn("ScummV5_LiveRoom_Validate_Far__portal_v3_start:", validator)
+        self.assertIn("ScummV5_LiveRoom_Validate_Far__portal_descriptors_no_overflow:", validator)
+        self.assertIn("cmp #$0003", portal)
+        self.assertIn("ScummV5_LiveRoom_Portal_Far__v3_search:", portal)
+        self.assertIn("ScummV5_LiveRoom_Portal_Far__v3_found:", portal)
+        self.assertIn("ScummV5_LiveRoom_Portal_Far__load_descriptor:", portal)
+
+        layout = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json")
+                            .read_text(encoding="utf-8"))
+        self.assertEqual(layout["backend_reserved"]["allocations"]["live_room_pending"]["bytes"],
+                         3132)
+        self.assertEqual(layout["live_room_active"]["bytes"], 6144)
+
+    def test_v4_final_validation_reads_installed_active_record(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm").read_text()
+        self.assertIn(
+            "SCUMM_LIVE_ROOM_VALIDATION_BASE = SAME_SCUMM_LIVE_ROOM_STAGING_BASE",
+            source,
+        )
+        self.assertIn(
+            "SCUMM_LIVE_ROOM_VALIDATION_BASE = SCUMM_LIVE_ROOM_PENDING",
+            source,
+        )
+        validator = source.split("ScummV5_LiveRoom_Validate_Far:", 1)[1]
+        validator = validator.split("ScummV5_LiveRoom_Validate_Far__bad:", 1)[0]
+        self.assertIn("SCUMM_LIVE_ROOM_VALIDATION_BASE+$30", validator)
+        self.assertNotIn("SCUMM_LIVE_ROOM_PENDING", validator)
+
+    def test_global_resolver_uses_a_wide_directory_index(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_resident_resolver.pasm").read_text()
+        resolver = source.split("ScummV5_Resident_ResolveGlobalScript_Far:", 1)[1]
+        resolver = resolver.split("ScummV5_Resident_ResolveLocalScript_Far:", 1)[0]
+        self.assertIn("rep #$10\n    .i16\n    ldx #$0000", resolver)
 
     def test_rom_backed_build_emits_inert_msu_program_include(self) -> None:
         build = (ROOT / "tools/build_snes.sh").read_text(encoding="utf-8")
@@ -185,12 +276,14 @@ class NativeResidencyLayoutTests(unittest.TestCase):
                         if row["owner"] == "resident_resolver")
         self.assertEqual((resolver["start"], resolver["end_exclusive"], resolver["bytes"]),
                          ("$7E8C00", "$7E8FC0", 960))
-        self.assertEqual(report["bwram_aliases"], [{
-            "owner": "SCUMM checked ProgramUnit page cache",
-            "address": "$41E800", "bytes": 0x800,
-            "exclusive_with": "Mode-3 conformance fixture engine",
-            "active_mode3_staging_unaffected": True,
-        }])
+        self.assertEqual(report["bwram_aliases"], [])
+        self.assertEqual(report["wram_cache_page2"], {
+            "address": "$7F1000", "bytes": 0x800, "exclusive_with": [],
+        })
+        variables = next(row for row in report["regions"]
+                         if row["owner"] == "generated_variables_and_stack_guard")
+        self.assertEqual((variables["start"], variables["end_exclusive"]),
+                         ("$7E0800", "$7E1000"))
         self.assertEqual(report["bwram_lifetime_aliases"], [{
             "owner": "SCUMM checked SC5VIS pixel staging",
             "address": "$410000", "bytes": 0xE000,
@@ -396,6 +489,46 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         self.assertIn("SCUMM_VM_WAIT_RESOURCE", nested)
         self.assertIn("SCUMM_VM_ERROR", nested)
 
+    def test_room_lifecycle_services_exact_pending_nested_child(self) -> None:
+        engine = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        far = (ROOT / "runtime/snes/engines/scumm_v5_m24rb_far.pasm").read_text()
+        lifecycle_far = (
+            ROOT / "runtime/snes/engines/scumm_v5_msu_lifecycle_far.pasm"
+        ).read_text()
+        memory = MEMORY.read_text()
+        lifecycle = engine.split(
+            "ScummV5_Engine_Frame__m23a_run_room_script:", 1
+        )[1].split("ScummV5_Engine_Frame__m23a_owner_slot_zero:", 1)[0]
+        helper = lifecycle_far.split(
+            "ScummV5_M23A_RunPendingLifecycleChild_FarEntry:", 1
+        )[1]
+        nested = far.split(
+            "ScummV5_M23B_RunNestedChild_FarEntry:", 1
+        )[1].split("ScummV5_M25A_RunNestedChild__success:", 1)[0]
+        self.assertIn(
+            "ScummV5_M23A_RunPendingLifecycleChild_FarEntry", lifecycle
+        )
+        self.assertIn("SAME_SCUMM_MSU_PENDING_CHILD_SLOT", helper)
+        self.assertIn("SAME_SCUMM_C4_SLOT_STATUS,x", helper)
+        self.assertIn("cmp #SCUMM_VM_RUNNING", helper)
+        self.assertIn("cmp #SCUMM_VM_WAIT_RESOURCE", helper)
+        self.assertIn("cmp #SCUMM_VM_YIELDED", helper)
+        self.assertIn("ScummV5_M23A_RunSelected_FarThunk", helper)
+        self.assertIn("ScummV5_M23A_SaveCurrentSlot_FarThunk", helper)
+        self.assertIn(
+            "ScummV5_M23A_RunSelected_FarThunk:\n    jsr ScummV5_Engine_RunSelected",
+            engine,
+        )
+        self.assertIn("SAME_SCUMM_M23B_NEST_CHILD_SLOTS,x", nested)
+        self.assertIn(
+            "SAME_SCUMM_M23B_NEST_CHILD_SLOTS        = $7E5438",
+            memory,
+        )
+        self.assertIn(
+            "SAME_SCUMM_M23B_NEST_CHILD_SLOTS_END    = $7E5450",
+            memory,
+        )
+
     def test_bytecode_context_stack_uses_bounded_byte_indices(self) -> None:
         engine = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
         enter = engine.split(
@@ -497,12 +630,12 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         self.assertLessEqual(c25_record_end, capture_start)
         self.assertLess(capture_end, c25_counters_start)
 
-    def test_third_checked_program_page_aliases_only_the_mode3_fixture_workspace(self) -> None:
+    def test_third_checked_program_page_is_disjoint_from_variables_and_room_metadata(self) -> None:
         memory = MEMORY.read_text()
-        self.assertIn("SAME_SCUMM_MSU_PROGRAM_CACHE2           = $41E800", memory)
-        self.assertIn("SAME_SCUMM_MSU_PROGRAM_CACHE2_END       = $41F000", memory)
+        self.assertIn("SAME_SCUMM_MSU_PROGRAM_CACHE2           = $7F1000", memory)
+        self.assertIn("SAME_SCUMM_MSU_PROGRAM_CACHE2_END       = $7F1800", memory)
         report = audit_wram()
-        self.assertEqual(report["bwram_aliases"][0]["address"], "$41E800")
+        self.assertEqual(report["wram_cache_page2"]["address"], "$7F1000")
         video = json.loads(
             (ROOT / "runtime/snes/video_backends/mode3_surface_layout.json").read_text()
         )
@@ -524,7 +657,7 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             "ScummV5_MsuProgram_EnsureSelected_Far__target2:", 1
         )[1].split("ScummV5_MsuProgram_EnsureSelected_Far__destination_ready:", 1)[0]
         self.assertIn("lda #SAME_SCUMM_MSU_PROGRAM_CACHE2_BANK", target2)
-        self.assertIn("SAME_SCUMM_MSU_PROGRAM_CACHE2_BANK      = $41", MEMORY.read_text())
+        self.assertIn("SAME_SCUMM_MSU_PROGRAM_CACHE2_BANK      = $7F", MEMORY.read_text())
         self.assertIn("SAME_SCUMM_MSU_CACHE_GENERATION2", programs)
         self.assertIn("SAME_SCUMM_MSU_CACHE_PINS2", programs)
         lookup = programs.split(

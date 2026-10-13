@@ -9,10 +9,35 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from lint_poppy import include_closure, line_index_at  # noqa: E402
+from lint_poppy import (  # noqa: E402
+    include_closure,
+    line_index_at,
+    mask_constant_disabled_blocks,
+)
 
 
 class PoppySourceTests(unittest.TestCase):
+    def test_literal_false_assembler_block_is_masked_without_shifting_lines(self) -> None:
+        text = (
+            "LiveLabel:\n"
+            ".if 0\n"
+            "DeadLabel:\n"
+            "    lda #$1234\n"
+            ".endif\n"
+            "AfterLabel:\n"
+        )
+        masked = mask_constant_disabled_blocks(text)
+        self.assertEqual(masked.splitlines(), [
+            "LiveLabel:", "", "", "", ".endif", "AfterLabel:"
+        ])
+        self.assertEqual(masked.count("\n"), text.count("\n"))
+
+    def test_literal_false_assembler_block_exposes_else_branch(self) -> None:
+        text = ".if 0\nDeadLabel:\n.else\nLiveLabel:\n.endif\n"
+        masked = mask_constant_disabled_blocks(text)
+        self.assertNotIn("DeadLabel:", masked)
+        self.assertIn("LiveLabel:", masked)
+
     def test_poppy_line_index_matches_prefix_count_at_boundaries(self) -> None:
         text = "first\nsecond\n\nthird\n"
         newline_offsets = [match.start() for match in re.finditer("\n", text)]

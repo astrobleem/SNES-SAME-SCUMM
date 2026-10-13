@@ -329,6 +329,9 @@ Same_Msu1_ReadBegin:
     beq Same_Msu1_ReadBegin__ready
     jml Same_Msu1_ReadBegin__state_error
 Same_Msu1_ReadBegin__ready:
+    .a8
+    lda #$00
+    sta.l SAME_MSU1_LAST_CHECK_STAGE
     ; Sum offset + length as a checked u32, rejecting carry out.
     clc
     lda.l SAME_MSU1_REQUEST_OFFSET
@@ -375,6 +378,9 @@ Same_Msu1_ReadBegin__compare_length_byte0:
     beq Same_Msu1_ReadBegin__range_ok
     jml Same_Msu1_ReadBegin__range_error
 Same_Msu1_ReadBegin__range_ok:
+    .a8
+    lda #$01 ; caller capacity and address-wrap checks
+    sta.l SAME_MSU1_LAST_CHECK_STAGE
     ; Caller destination must be one bounded WRAM bank and at most 32 KiB.
     rep #$20
     .a16
@@ -394,6 +400,8 @@ Same_Msu1_ReadBegin__capacity_limit_ok:
 Same_Msu1_ReadBegin__destination_no_wrap:
     sep #$20
     .a8
+    lda #$02 ; supported destination bank selection
+    sta.l SAME_MSU1_LAST_CHECK_STAGE
     lda.l SAME_MSU1_DESTINATION+2
     cmp #$7E
     beq Same_Msu1_ReadBegin__dest_bank_ok
@@ -405,7 +413,9 @@ Same_Msu1_ReadBegin__destination_no_wrap:
     .endif
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     cmp #$40 ; only explicitly audited palette and pending-metadata ranges
-    beq Same_Msu1_ReadBegin__dest_palette_ok
+    bne Same_Msu1_ReadBegin__dest_bank_other
+    jml Same_Msu1_ReadBegin__dest_palette_ok
+Same_Msu1_ReadBegin__dest_bank_other:
     .endif
     jml Same_Msu1_ReadBegin__capacity_error
 Same_Msu1_ReadBegin__dest_bank_ok:
@@ -423,15 +433,59 @@ Same_Msu1_ReadBegin__destination_bank_limit_ok:
     jml Same_Msu1_ReadBegin__dest_capacity_ok
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES || SAME_BUILD_SCUMM_MSU1_PROGRAMS
 Same_Msu1_ReadBegin__dest_bwram_ok:
+    .a8
+    lda #$03 ; audited BWRAM subrange validation
+    sta.l SAME_MSU1_LAST_CHECK_STAGE
     rep #$20
     .a16
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; Compiler-generated sectioned SC5LIVE metadata is installed only after
+    ; outgoing EXCD. Allow bounded chunk writes into the explicit active-room
+    ; alias, rejecting any request that crosses its audited half-open range.
+    lda.l SAME_MSU1_DESTINATION
+    cmp #SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET
+    bcc Same_Msu1_ReadBegin__bwram_active_not_selected
+    pha
+    sep #$20
+    .a8
+    lda #$30 ; active-room BWRAM alias selected
+    sta.l SAME_MSU1_LAST_CHECK_STAGE
+    rep #$20
+    .a16
+    pla
+    sec
+    sbc #SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET
+    clc
+    adc.l SAME_MSU1_DEST_CAPACITY
+    bcc Same_Msu1_ReadBegin__bwram_active_extent_no_overflow
+    sep #$20
+    .a8
+    lda #$31 ; active-room end-address arithmetic overflow
+    sta.l SAME_MSU1_LAST_CHECK_STAGE
+    jml Same_Msu1_ReadBegin__capacity_error16
+Same_Msu1_ReadBegin__bwram_active_extent_no_overflow:
+    .a16
+    cmp #SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE+1
+    bcc Same_Msu1_ReadBegin__bwram_active_range_ok
+    beq Same_Msu1_ReadBegin__bwram_active_range_ok
+    sep #$20
+    .a8
+    lda #$32 ; active-room extent exceeds the owned BWRAM buffer
+    sta.l SAME_MSU1_LAST_CHECK_STAGE
+    jml Same_Msu1_ReadBegin__capacity_error16
+Same_Msu1_ReadBegin__bwram_active_range_ok:
+    sep #$20
+    .a8
+    brl Same_Msu1_ReadBegin__dest_capacity_ok
+Same_Msu1_ReadBegin__bwram_active_not_selected:
     lda.l SAME_MSU1_DESTINATION
     beq Same_Msu1_ReadBegin__bwram_base_ok
     .endif
     .if SAME_BUILD_SCUMM_MSU1_PROGRAMS && SAME_CARRIER_IS_SA1_BWRAM
-    ; The cache page address is E800, while <CACHE2 is 00. Compare this
-    ; address byte in 8-bit mode; a 16-bit comparison rejects the valid page.
+    ; Page 2 is deliberately in bank $7F at address $1000 to avoid the
+    ; generated-variable/name-cache ranges. Compare the destination low byte
+    ; against <CACHE2 in 8-bit mode; widening this check would compare against
+    ; the unrelated upper address byte and reject the valid page.
     sep #$20
     .a8
     lda.l SAME_MSU1_DESTINATION
@@ -451,7 +505,7 @@ Same_Msu1_ReadBegin__bwram_base_ok:
 Same_Msu1_ReadBegin__dest_capacity_ok16:
     sep #$20
     .a8
-    bra Same_Msu1_ReadBegin__dest_capacity_ok
+    brl Same_Msu1_ReadBegin__dest_capacity_ok
     .endif
     .if SAME_BUILD_SCUMM_MSU1_PROGRAMS && SAME_CARRIER_IS_SA1_BWRAM
 Same_Msu1_ReadBegin__bwram_cache_page_low_ok:
@@ -470,7 +524,7 @@ Same_Msu1_ReadBegin__cache_page_invalid:
 Same_Msu1_ReadBegin__cache_page_capacity_ok:
     sep #$20
     .a8
-    bra Same_Msu1_ReadBegin__dest_capacity_ok
+    brl Same_Msu1_ReadBegin__dest_capacity_ok
     .endif
 .endif
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
@@ -527,6 +581,8 @@ Same_Msu1_ReadBegin__dest_invalid:
 .endif
 Same_Msu1_ReadBegin__dest_capacity_ok:
     .a8
+    lda #$04 ; requested length must fit caller capacity
+    sta.l SAME_MSU1_LAST_CHECK_STAGE
     lda.l SAME_MSU1_FLAGS
     and #SAME_MSU1_FLAG_RING
     bne Same_Msu1_ReadBegin__length_ok

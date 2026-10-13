@@ -17,6 +17,9 @@ SCUMM_LIVE_ROOM_TEMP3 = SAME_SCUMM_LIVE_ROOM_CONTROL+$16
 SCUMM_LIVE_ROOM_TEMP4 = SAME_SCUMM_LIVE_ROOM_CONTROL+$18
 SCUMM_LIVE_ROOM_TEMP5 = SAME_SCUMM_LIVE_ROOM_CONTROL+$1A
 SCUMM_LIVE_ROOM_TEMP_BYTE = SAME_SCUMM_LIVE_ROOM_CONTROL+$1C
+; Persistent diagnostic checkpoint for the SC5LIVE validator.  $1D is the
+; loader's per-frame transient state and is intentionally not used here.
+SCUMM_LIVE_ROOM_VALIDATE_CHECKPOINT = SAME_SCUMM_LIVE_ROOM_CONTROL+$3D
 
 SCUMM_LIVE_ROOM_BOX_FLAGS_OFFSET = $001C
 SCUMM_LIVE_ROOM_GEOMETRY_OFFSET = $001E
@@ -33,6 +36,14 @@ SCUMM_LIVE_ROOM_OBJECT_COUNT = $0010
 SCUMM_LIVE_ROOM_VERB_COUNT = $0012
 SCUMM_LIVE_ROOM_LOCAL_COUNT = $0014
 SCUMM_LIVE_ROOM_BUNDLE_COUNT = $0016
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+; Sectioned v4 chunks are installed into the active metadata allocation only
+; after outgoing EXCD. Validate the installed record there; v2/v3 retain the
+; single pending-record validation path.
+SCUMM_LIVE_ROOM_VALIDATION_BASE = SAME_SCUMM_LIVE_ROOM_STAGING_BASE
+.else
+SCUMM_LIVE_ROOM_VALIDATION_BASE = SCUMM_LIVE_ROOM_PENDING
+.endif
 
 ; Initiate the next checked read for stages METADATA, PALETTE, or PIXELS.
 ; The incoming room number indexes compiler-generated directories; no ROM
@@ -58,11 +69,35 @@ ScummV5_MsuLiveRoom_Start_Far__provider_idle:
     jmp ScummV5_MsuLiveRoom_Start_Far__metadata
 ScummV5_MsuLiveRoom_Start_Far__not_metadata:
     .a8
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    cmp #SCUMM_LIVE_ROOM_STAGE_INSTALL
+    bne ScummV5_MsuLiveRoom_Start_Far__not_install
+    jmp ScummV5_MsuLiveRoom_Start_Far__install
+ScummV5_MsuLiveRoom_Start_Far__not_install:
+    .a8
+    cmp #SCUMM_LIVE_ROOM_STAGE_ROUTES
+    bne ScummV5_MsuLiveRoom_Start_Far__not_routes
+    jmp ScummV5_MsuLiveRoom_Start_Far__routes
+ScummV5_MsuLiveRoom_Start_Far__not_routes:
+    .a8
+.endif
     cmp #SCUMM_LIVE_ROOM_STAGE_PALETTE
     bne ScummV5_MsuLiveRoom_Start_Far__not_palette
     jmp ScummV5_MsuLiveRoom_Start_Far__palette
 ScummV5_MsuLiveRoom_Start_Far__not_palette:
     .a8
+    .if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    cmp #SCUMM_LIVE_ROOM_STAGE_INSTALL
+    bne ScummV5_MsuLiveRoom_Start_Far__dispatch_not_install
+    jml ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__install
+ScummV5_MsuLiveRoom_Start_Far__dispatch_not_install:
+    .a8
+    cmp #SCUMM_LIVE_ROOM_STAGE_ROUTES
+    bne ScummV5_MsuLiveRoom_Start_Far__dispatch_not_routes
+    jml ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__routes
+ScummV5_MsuLiveRoom_Start_Far__dispatch_not_routes:
+    .a8
+    .endif
     cmp #SCUMM_LIVE_ROOM_STAGE_PIXELS
     bne ScummV5_MsuLiveRoom_Start_Far__not_pixels
     jmp ScummV5_MsuLiveRoom_Start_Far__pixels
@@ -90,6 +125,62 @@ ScummV5_MsuLiveRoom_Start_Far__metadata:
 ScummV5_MsuLiveRoom_Start_Far__pcm_started:
     .a8
 .endif
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_ROOM_ID
+    and #$00FF
+    cmp #SCUMM_MSU1_LIVE_ROOM_COUNT
+    bcc ScummV5_MsuLiveRoom_Start_Far__metadata_v4_room_ok
+    sep #$20
+    .a8
+    lda #$A5
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1E
+    jmp ScummV5_MsuLiveRoom_Start_Far__invalid
+ScummV5_MsuLiveRoom_Start_Far__metadata_v4_room_ok:
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    asl
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    asl
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP1
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0 ; room * 13
+    tax
+    sep #$20
+    .a8
+    inx
+    inx
+    inx
+    inx
+    lda.l ScummV5_MsuLiveRoomRecords,x
+    sta.l SCUMM_LIVE_ROOM_READ_LENGTH
+    inx
+    lda.l ScummV5_MsuLiveRoomRecords,x
+    sta.l SCUMM_LIVE_ROOM_READ_LENGTH+1
+    inx
+    inx
+    inx
+    inx
+    inx ; skip all four CRC bytes: chunk-first index is record byte +10
+    lda.l ScummV5_MsuLiveRoomRecords,x
+    sta.l SCUMM_LIVE_ROOM_CHUNK_FIRST
+    inx
+    lda.l ScummV5_MsuLiveRoomRecords,x
+    sta.l SCUMM_LIVE_ROOM_CHUNK_FIRST+1
+    inx
+    lda.l ScummV5_MsuLiveRoomRecords,x
+    sta.l SCUMM_LIVE_ROOM_CHUNK_COUNT
+    jsl ScummV5_MsuLiveRoom_PrepareChunkRead_Far
+    bcs ScummV5_MsuLiveRoom_Start_Far__metadata_v4_prepared
+    jmp ScummV5_MsuLiveRoom_Start_Far__invalid
+ScummV5_MsuLiveRoom_Start_Far__metadata_v4_prepared:
+    jmp ScummV5_MsuLiveRoom_Start_Far__read
+.else
     rep #$20
     .a16
     lda.l SAME_SCUMM_MSU_ROOM_ID
@@ -157,7 +248,7 @@ ScummV5_MsuLiveRoom_Start_Far__metadata_room_ok:
     jmp ScummV5_MsuLiveRoom_Start_Far__invalid
 ScummV5_MsuLiveRoom_Start_Far__metadata_length_ok:
     .a16
-    lda #SCUMM_LIVE_ROOM_MAX_SIZE
+    lda #SAME_SCUMM_LIVE_ROOM_PENDING_CAPACITY
     sta.l SAME_MSU1_DEST_CAPACITY
     sep #$20
     .a8
@@ -168,6 +259,214 @@ ScummV5_MsuLiveRoom_Start_Far__metadata_length_ok:
     lda #SAME_SCUMM_LIVE_ROOM_PENDING_BANK
     sta.l SAME_MSU1_DESTINATION+2
     jmp ScummV5_MsuLiveRoom_Start_Far__read
+.endif
+
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+ScummV5_MsuLiveRoom_Start_Far__install:
+    .a8
+    lda #$01
+    sta.l SCUMM_LIVE_ROOM_CHUNK_MODE
+    jsl ScummV5_MsuLiveRoom_PrepareChunkRead_Far
+    bcs ScummV5_MsuLiveRoom_Start_Far__install_prepared
+    jmp ScummV5_MsuLiveRoom_Start_Far__invalid
+ScummV5_MsuLiveRoom_Start_Far__install_prepared:
+    jmp ScummV5_MsuLiveRoom_Start_Far__read
+
+; Read one table row from the generated chunk directory. Every fetch has its
+; own expected CRC; active writes are post-EXCD only and remain unpublished
+; until the final chunk completes.
+ScummV5_MsuLiveRoom_PrepareChunkRead_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    lda.l SCUMM_LIVE_ROOM_CHUNK_FIRST
+    clc
+    adc.l SCUMM_LIVE_ROOM_CHUNK_INDEX
+    cmp #SCUMM_MSU1_LIVE_CHUNK_COUNT
+    bcc ScummV5_MsuLiveRoom_PrepareChunkRead_Far__directory_index_ok
+    jmp ScummV5_MsuLiveRoom_PrepareChunkRead_Far__invalid
+ScummV5_MsuLiveRoom_PrepareChunkRead_Far__directory_index_ok:
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; *2
+    asl
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP1 ; *10
+    tax
+    sep #$20
+    .a8
+    lda.l ScummV5_MsuLiveRoomChunkRecords,x
+    sta.l SAME_MSU1_REQUEST_OFFSET
+    inx
+    lda.l ScummV5_MsuLiveRoomChunkRecords,x
+    sta.l SAME_MSU1_REQUEST_OFFSET+1
+    inx
+    lda.l ScummV5_MsuLiveRoomChunkRecords,x
+    sta.l SAME_MSU1_REQUEST_OFFSET+2
+    inx
+    lda.l ScummV5_MsuLiveRoomChunkRecords,x
+    sta.l SAME_MSU1_REQUEST_OFFSET+3
+    inx
+    lda.l ScummV5_MsuLiveRoomChunkRecords,x
+    sta.l SAME_MSU1_REQUEST_LENGTH
+    inx
+    lda.l ScummV5_MsuLiveRoomChunkRecords,x
+    sta.l SAME_MSU1_REQUEST_LENGTH+1
+    lda #$00
+    sta.l SAME_MSU1_REQUEST_LENGTH+2
+    sta.l SAME_MSU1_REQUEST_LENGTH+3
+    inx
+    lda.l ScummV5_MsuLiveRoomChunkRecords,x
+    sta.l SAME_MSU1_EXPECTED_CRC
+    inx
+    lda.l ScummV5_MsuLiveRoomChunkRecords,x
+    sta.l SAME_MSU1_EXPECTED_CRC+1
+    inx
+    lda.l ScummV5_MsuLiveRoomChunkRecords,x
+    sta.l SAME_MSU1_EXPECTED_CRC+2
+    inx
+    lda.l ScummV5_MsuLiveRoomChunkRecords,x
+    sta.l SAME_MSU1_EXPECTED_CRC+3
+    rep #$20
+    .a16
+    lda.l SAME_MSU1_REQUEST_LENGTH
+    beq ScummV5_MsuLiveRoom_PrepareChunkRead_Far__invalid
+    cmp #$0801
+    bcc ScummV5_MsuLiveRoom_PrepareChunkRead_Far__length_ok
+ScummV5_MsuLiveRoom_PrepareChunkRead_Far__invalid:
+    plp
+    clc
+    rtl
+ScummV5_MsuLiveRoom_PrepareChunkRead_Far__length_ok:
+    lda.l SCUMM_LIVE_ROOM_CHUNK_INDEX
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    sta.l SCUMM_LIVE_ROOM_CHUNK_START ; index * 2048
+    ; Require each generated row to be the exact contiguous page implied by
+    ; the checked complete-record length.
+    lda.l SCUMM_LIVE_ROOM_CHUNK_START
+    cmp.l SCUMM_LIVE_ROOM_READ_LENGTH
+    bcc ScummV5_MsuLiveRoom_PrepareChunkRead_Far__start_in_body
+    jmp ScummV5_MsuLiveRoom_PrepareChunkRead_Far__invalid
+ScummV5_MsuLiveRoom_PrepareChunkRead_Far__start_in_body:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_READ_LENGTH
+    sec
+    sbc.l SCUMM_LIVE_ROOM_CHUNK_START
+    cmp #$0800
+    bcc ScummV5_MsuLiveRoom_PrepareChunkRead_Far__expected_short
+    lda #$0800
+ScummV5_MsuLiveRoom_PrepareChunkRead_Far__expected_short:
+    cmp.l SAME_MSU1_REQUEST_LENGTH
+    beq ScummV5_MsuLiveRoom_PrepareChunkRead_Far__exact_length
+    jmp ScummV5_MsuLiveRoom_PrepareChunkRead_Far__invalid
+ScummV5_MsuLiveRoom_PrepareChunkRead_Far__exact_length:
+    lda.l SAME_MSU1_REQUEST_LENGTH
+    sta.l SAME_MSU1_DEST_CAPACITY
+    rep #$20
+    .a16
+    lda #SAME_SCUMM_LIVE_ROOM_PENDING_CAPACITY
+    sta.l SAME_MSU1_DEST_CAPACITY
+    sep #$20
+    .a8
+    lda #<SAME_SCUMM_LIVE_ROOM_PENDING_BASE
+    sta.l SAME_MSU1_DESTINATION
+    lda #>SAME_SCUMM_LIVE_ROOM_PENDING_BASE
+    sta.l SAME_MSU1_DESTINATION+1
+    lda #SAME_SCUMM_LIVE_ROOM_PENDING_BANK
+    sta.l SAME_MSU1_DESTINATION+2
+    plp
+    sec
+    rtl
+
+ScummV5_MsuLiveRoom_Start_Far__routes:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_ROOM_ID
+    and #$00FF
+    cmp #SCUMM_MSU1_LIVE_ROOM_COUNT
+    bcc ScummV5_MsuLiveRoom_Start_Far__routes_room_ok
+    sep #$20
+    .a8
+    lda #$A5
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1E
+    jmp ScummV5_MsuLiveRoom_Start_Far__invalid
+ScummV5_MsuLiveRoom_Start_Far__routes_room_ok:
+    asl
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0 ; room * 10
+    tax
+    sep #$20
+    .a8
+    lda.l ScummV5_MsuLiveRouteRecords,x
+    sta.l SAME_MSU1_REQUEST_OFFSET
+    inx
+    lda.l ScummV5_MsuLiveRouteRecords,x
+    sta.l SAME_MSU1_REQUEST_OFFSET+1
+    inx
+    lda.l ScummV5_MsuLiveRouteRecords,x
+    sta.l SAME_MSU1_REQUEST_OFFSET+2
+    inx
+    lda.l ScummV5_MsuLiveRouteRecords,x
+    sta.l SAME_MSU1_REQUEST_OFFSET+3
+    inx
+    lda.l ScummV5_MsuLiveRouteRecords,x
+    sta.l SAME_MSU1_REQUEST_LENGTH
+    inx
+    lda.l ScummV5_MsuLiveRouteRecords,x
+    sta.l SAME_MSU1_REQUEST_LENGTH+1
+    lda #$00
+    sta.l SAME_MSU1_REQUEST_LENGTH+2
+    sta.l SAME_MSU1_REQUEST_LENGTH+3
+    inx
+    lda.l ScummV5_MsuLiveRouteRecords,x
+    sta.l SAME_MSU1_EXPECTED_CRC
+    inx
+    lda.l ScummV5_MsuLiveRouteRecords,x
+    sta.l SAME_MSU1_EXPECTED_CRC+1
+    inx
+    lda.l ScummV5_MsuLiveRouteRecords,x
+    sta.l SAME_MSU1_EXPECTED_CRC+2
+    inx
+    lda.l ScummV5_MsuLiveRouteRecords,x
+    sta.l SAME_MSU1_EXPECTED_CRC+3
+    rep #$20
+    .a16
+    lda.l SAME_MSU1_REQUEST_LENGTH
+    cmp #SAME_SCUMM_LIVE_ROOM_PENDING_CAPACITY+1
+    bcc ScummV5_MsuLiveRoom_Start_Far__routes_length_ok
+    sep #$20
+    .a8
+    lda #$A6
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1E
+    jmp ScummV5_MsuLiveRoom_Start_Far__invalid
+ScummV5_MsuLiveRoom_Start_Far__routes_length_ok:
+    .a16
+    sta.l SAME_MSU1_DEST_CAPACITY
+    sep #$20
+    .a8
+    lda #<SAME_SCUMM_LIVE_ROOM_PENDING_BASE
+    sta.l SAME_MSU1_DESTINATION
+    lda #>SAME_SCUMM_LIVE_ROOM_PENDING_BASE
+    sta.l SAME_MSU1_DESTINATION+1
+    lda #SAME_SCUMM_LIVE_ROOM_PENDING_BANK
+    sta.l SAME_MSU1_DESTINATION+2
+    jmp ScummV5_MsuLiveRoom_Start_Far__read
+.endif
 
 ScummV5_MsuLiveRoom_Start_Far__palette:
 ScummV5_MsuLiveRoom_Start_Far__pixels:
@@ -407,12 +706,67 @@ ScummV5_MsuLiveRoom_ValidateCompletedRead_Far:
     lda.l SCUMM_LIVE_ROOM_STAGE
     cmp #SCUMM_LIVE_ROOM_STAGE_METADATA
     beq ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__metadata
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    cmp #SCUMM_LIVE_ROOM_STAGE_INSTALL
+    bne ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__not_install
+    jml ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__install
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__not_install:
+    .a8
+    cmp #SCUMM_LIVE_ROOM_STAGE_ROUTES
+    bne ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__not_routes
+    jml ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__routes
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__not_routes:
+    .a8
+.endif
     cmp #SCUMM_LIVE_ROOM_STAGE_PALETTE
-    beq ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__palette
+    bne ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__not_palette
+    jml ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__palette
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__not_palette:
+    .a8
     cmp #SCUMM_LIVE_ROOM_STAGE_PIXELS
-    beq ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__pixels
+    bne ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__not_pixels
+    jml ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__pixels
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__not_pixels:
     jml ScummV5_MsuRoom_Service_Far__fail
 ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__metadata:
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    lda.l SCUMM_LIVE_ROOM_CHUNK_MODE
+    beq ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__metadata_preflight
+    jml ScummV5_MsuRoom_Service_Far__fail
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__metadata_preflight:
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_CHUNK_INDEX
+    bne ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__metadata_advance
+    jsl ScummV5_LiveRoom_ValidateSectionedHeader_Far
+    bcc ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__metadata_advance
+    jml ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__bad
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__metadata_advance:
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_CHUNK_INDEX
+    inc
+    sta.l SCUMM_LIVE_ROOM_CHUNK_INDEX
+    cmp.l SCUMM_LIVE_ROOM_CHUNK_COUNT
+    bcs ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__metadata_done
+    sep #$20
+    .a8
+    lda #SCUMM_MSU_ROOM_REQUESTED
+    sta.l SAME_SCUMM_MSU_ROOM_STATE
+    clc
+    rtl
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__metadata_done:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SCUMM_LIVE_ROOM_CHUNK_INDEX
+    lda #SCUMM_LIVE_ROOM_STAGE_ROUTES
+    sta.l SCUMM_LIVE_ROOM_STAGE
+    lda #SCUMM_MSU_ROOM_REQUESTED
+    sta.l SAME_SCUMM_MSU_ROOM_STATE
+    clc
+    rtl
+.else
     jsl ScummV5_LiveRoom_Validate_Far
     bcc ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__metadata_ok
     jml ScummV5_MsuRoom_Service_Far__fail
@@ -423,7 +777,134 @@ ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__metadata_ok:
     .a8
     lda #SCUMM_LIVE_ROOM_STAGE_PREFLIGHT_READY
     sta.l SCUMM_LIVE_ROOM_STAGE
-    bra ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__ready
+    jml ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__ready
+.endif
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__routes:
+    jsl ScummV5_LiveRoom_ValidateRouteDirectory_Far
+    bcs ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__bad
+    sep #$20
+    .a8
+    lda #$C6 ; checked route directory passed
+    sta.l SCUMM_LIVE_ROOM_VALIDATE_CHECKPOINT
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_CHUNK_MODE
+    bne ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__routes_install
+    lda #SCUMM_LIVE_ROOM_STAGE_PREFLIGHT_READY
+    sta.l SCUMM_LIVE_ROOM_STAGE
+    jml ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__ready
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__routes_install:
+    ; Route payload was authenticated during preflight, but the bounded
+    ; pending window is reused for metadata installation. Re-fetching here
+    ; makes the exact bytes consumed by matrix expansion independently
+    ; checked immediately before publication.
+    jsl ScummV5_LiveRoom_ExpandRoutes_Far
+    bcs ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__bad
+    sep #$20
+    .a8
+    lda #$C7 ; route matrix expanded into the existing engine table
+    sta.l SCUMM_LIVE_ROOM_VALIDATE_CHECKPOINT
+    lda #$01
+    sta.l SCUMM_LIVE_ROOM_VALID
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_VALID
+    lda #SCUMM_LIVE_ROOM_STAGE_INSTALL_READY
+    sta.l SCUMM_LIVE_ROOM_STAGE
+    jml ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__ready
+
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__install:
+    jsl ScummV5_LiveRoom_InstallVerifiedChunk_Far
+    bcs ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__bad
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_CHUNK_INDEX
+    inc
+    sta.l SCUMM_LIVE_ROOM_CHUNK_INDEX
+    cmp.l SCUMM_LIVE_ROOM_CHUNK_COUNT
+    bcs ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__install_complete
+    sep #$20
+    .a8
+    lda #SCUMM_MSU_ROOM_REQUESTED
+    sta.l SAME_SCUMM_MSU_ROOM_STATE
+    clc
+    rtl
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__install_complete:
+    jsl ScummV5_LiveRoom_Validate_Far
+    bcs ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__bad
+    sep #$20
+    .a8
+    lda #SCUMM_LIVE_ROOM_STAGE_ROUTES
+    sta.l SCUMM_LIVE_ROOM_STAGE
+    lda #SCUMM_MSU_ROOM_REQUESTED
+    sta.l SAME_SCUMM_MSU_ROOM_STATE
+    clc
+    rtl
+
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__bad:
+    jml ScummV5_MsuRoom_Service_Far__fail
+.endif
+
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+; The provider CRC covers bytes as they arrive. Copy only its checked pending
+; page into active metadata; no live consumer can observe the record until
+; the complete record has passed structural validation.
+ScummV5_LiveRoom_InstallVerifiedChunk_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    lda.l SAME_MSU1_REQUEST_LENGTH
+    beq ScummV5_LiveRoom_InstallVerifiedChunk_Far__invalid
+    sep #$20
+    .a8
+    lda #SAME_SCUMM_LIVE_ROOM_ACTIVE_BANK
+    pha
+    plb ; use the explicitly audited active BWRAM bank for indexed stores
+    rep #$20
+    .a16
+    lda.l SAME_MSU1_REQUEST_LENGTH
+    pha ; bounded byte-copy counter; depth stays constant through the loop
+    ldx #$0000 ; pending reads always begin at its checked staging base
+    ; Source chunks live at the pending staging offset, while the active
+    ; SC5LIVE record starts at offset zero in its separate BWRAM allocation.
+    lda.l SCUMM_LIVE_ROOM_CHUNK_START
+    tay
+ScummV5_LiveRoom_InstallVerifiedChunk_Far__copy:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    rep #$20
+    .a16
+    inx
+    iny
+    pla
+    dec
+    beq ScummV5_LiveRoom_InstallVerifiedChunk_Far__copied
+    pha
+    bra ScummV5_LiveRoom_InstallVerifiedChunk_Far__copy
+ScummV5_LiveRoom_InstallVerifiedChunk_Far__copied:
+    plb
+    ply
+    plx
+    pla
+    plp
+    clc
+    rtl
+ScummV5_LiveRoom_InstallVerifiedChunk_Far__invalid:
+    plb
+    ply
+    plx
+    pla
+    plp
+    sec
+    rtl
+.endif
+
 ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__palette:
     .a8
     lda #SCUMM_LIVE_ROOM_STAGE_PIXELS
@@ -452,6 +933,712 @@ ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__ready:
     sec
     rtl
 
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+; Validate the first SC5LIVE chunk and generated chunk span before following
+; any directory entry. The complete active record is revalidated after the
+; post-EXCD chunk installation. Carry clear means valid.
+ScummV5_LiveRoom_ValidateSectionedHeader_Far:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$08
+    cmp #$0004
+    beq ScummV5_LiveRoom_ValidateSectionedHeader_Far__version_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__version_ok:
+    .a16
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$0A
+    cmp #SCUMM_LIVE_ROOM_HEADER_SIZE
+    beq ScummV5_LiveRoom_ValidateSectionedHeader_Far__header_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__header_ok:
+    .a8
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$0C
+    cmp.l SAME_SCUMM_LIVE_ROOM_CONTROL+$0C
+    beq ScummV5_LiveRoom_ValidateSectionedHeader_Far__room_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__room_ok:
+    .a16
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$30
+    cmp.l SCUMM_LIVE_ROOM_READ_LENGTH
+    beq ScummV5_LiveRoom_ValidateSectionedHeader_Far__length_equal
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__length_equal:
+    .a16
+    cmp #SCUMM_LIVE_ROOM_HEADER_SIZE
+    bcs ScummV5_LiveRoom_ValidateSectionedHeader_Far__length_min_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__length_min_ok:
+    .a16
+    cmp #SCUMM_LIVE_ROOM_MAX_SIZE+1
+    bcc ScummV5_LiveRoom_ValidateSectionedHeader_Far__length_max_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__length_max_ok:
+    .a16
+    ; chunks = ceil(length / 2048)
+    clc
+    adc #$07FF
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    lda.l SCUMM_LIVE_ROOM_CHUNK_COUNT
+    and #$00FF
+    cmp.l SCUMM_LIVE_ROOM_TEMP0
+    beq ScummV5_LiveRoom_ValidateSectionedHeader_Far__chunk_count_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__chunk_count_ok:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_CHUNK_COUNT
+    and #$00FF
+    clc
+    adc.l SCUMM_LIVE_ROOM_CHUNK_FIRST
+    bcc ScummV5_LiveRoom_ValidateSectionedHeader_Far__chunk_end_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__chunk_end_ok:
+    .a16
+    cmp #SCUMM_MSU1_LIVE_CHUNK_COUNT+1
+    bcc ScummV5_LiveRoom_ValidateSectionedHeader_Far__chunk_span_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__chunk_span_ok:
+    .a16
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$0E
+    and #$00FF
+    cmp #$0041
+    bcc ScummV5_LiveRoom_ValidateSectionedHeader_Far__box_count_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__box_count_ok:
+    .a16
+    sta.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    clc
+    adc #SCUMM_LIVE_ROOM_HEADER_SIZE
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    cmp.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$1E
+    beq ScummV5_LiveRoom_ValidateSectionedHeader_Far__geometry_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__geometry_ok:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__geometry_extent:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    beq ScummV5_LiveRoom_ValidateSectionedHeader_Far__geometry_done
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    clc
+    adc #$0012
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    bra ScummV5_LiveRoom_ValidateSectionedHeader_Far__geometry_extent
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__geometry_done:
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    cmp.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$22
+    beq ScummV5_LiveRoom_ValidateSectionedHeader_Far__portal_offset_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__portal_offset_ok:
+    .a16
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$20
+    cmp #$FFFF
+    beq ScummV5_LiveRoom_ValidateSectionedHeader_Far__route_sentinel_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__route_sentinel_ok:
+    .a16
+    ; Portal header (7) and its (box_count+1) row offsets precede objects.
+    lda.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    and #$00FF
+    asl
+    clc
+    adc #$0009
+    clc
+    adc.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$22
+    cmp.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$24
+    bcc ScummV5_LiveRoom_ValidateSectionedHeader_Far__portal_prefix_ok
+    beq ScummV5_LiveRoom_ValidateSectionedHeader_Far__portal_prefix_ok
+    jmp ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__portal_prefix_ok:
+    .a16
+    clc
+    rtl
+ScummV5_LiveRoom_ValidateSectionedHeader_Far__bad:
+    sec
+    rtl
+
+; Validate route directory/row bounds, encoding modes, and expanded values
+; before any lifecycle retirement. Route record bytes are in physical pending
+; storage (not the v4 active-record alias).
+ScummV5_LiveRoom_ValidateRouteDirectory_Far:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_MSU1_REQUEST_LENGTH
+    cmp #$0006
+    bcs ScummV5_LiveRoom_ValidateRouteDirectory_Far__minimum_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__minimum_ok:
+    .a16
+    cmp #SAME_SCUMM_LIVE_ROOM_PENDING_CAPACITY+1
+    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__length_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__length_ok:
+    sta.l SCUMM_LIVE_ROOM_ROUTE_LENGTH
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE
+    cmp #$01
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__version_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__version_ok:
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$01
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__box_count_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__box_count_ok:
+    .a8
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0
+    clc
+    adc #$0006
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX ; canonical directory size
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$02
+    cmp.l SCUMM_LIVE_ROOM_COPY_INDEX
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__directory_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__directory_ok:
+    lda.l SCUMM_LIVE_ROOM_ROUTE_LENGTH
+    sec
+    sbc.l SCUMM_LIVE_ROOM_COPY_INDEX
+    bcs ScummV5_LiveRoom_ValidateRouteDirectory_Far__payload_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__payload_ok:
+    .a16
+    sta.l SCUMM_LIVE_ROOM_TEMP5 ; payload length
+    ; The first row offset is canonically zero.
+    lda.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    and #$00FF
+    clc
+    adc #$0004
+    tax
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__first_offset_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__first_offset_ok:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    and #$00FF
+    bne ScummV5_LiveRoom_ValidateRouteDirectory_Far__has_rows
+    jml ScummV5_LiveRoom_ValidateRouteDirectory_Far__empty
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__has_rows:
+    .a16
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; row
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__row:
+    .a16
+    ; Read adjacent row offsets from 4+box_count+2*row.
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    clc
+    adc #$0004
+    tax
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; relative start
+    inx
+    inx
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; relative end
+    cmp.l SCUMM_LIVE_ROOM_TEMP1
+    bcs ScummV5_LiveRoom_ValidateRouteDirectory_Far__offset_order_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__offset_order_ok:
+    cmp.l SCUMM_LIVE_ROOM_TEMP5
+    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__offset_bound_ok
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__offset_bound_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__offset_bound_ok:
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    inc
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    bne ScummV5_LiveRoom_ValidateRouteDirectory_Far__not_last
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    cmp.l SCUMM_LIVE_ROOM_TEMP5
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__last_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__last_ok:
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__not_last:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    clc
+    adc.l SCUMM_LIVE_ROOM_COPY_INDEX
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; absolute source start
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    clc
+    adc.l SCUMM_LIVE_ROOM_COPY_INDEX
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; absolute source end
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    clc
+    adc #$0004
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    and #$00FF
+    cmp #$0000
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__raw
+    cmp #$0001
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle
+    cmp #$0002
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_dispatch
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_dispatch:
+    jml ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse
+
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__raw:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP1
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__raw_begin
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__raw_begin:
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__raw_loop:
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__raw_has_value
+    jml ScummV5_LiveRoom_ValidateRouteDirectory_Far__row_done
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__raw_has_value:
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    cmp #$FF
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__raw_value_ok
+    rep #$20
+    .a16
+    and #$00FF
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__raw_value_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__raw_value_ok:
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    inc
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+    bra ScummV5_LiveRoom_ValidateRouteDirectory_Far__raw_loop
+
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP1
+    and #$0001
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_even
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_even:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; source cursor
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; expanded cells
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_loop:
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcs ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_done
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    bne ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_count_nonzero
+    jml ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_count_nonzero:
+    .a8
+    sta.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    inx
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_value_nonmissing:
+    ; $FF is the SCUMM no-route sentinel. Raw rows preserve it, so RLE rows
+    ; must accept the same value instead of rejecting valid disconnected boxes.
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    and #$00FF
+    cmp #$00FF
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_value_ok
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_value_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_value_ok:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    and #$00FF
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_sum_ok
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_sum_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_sum_ok:
+    .a16
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    clc
+    adc #$0002
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+    bra ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_loop
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_done:
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_row_complete
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__rle_row_complete:
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__row_done
+
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP1
+    and #$0001
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_even
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_even:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+    lda #$FFFF
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; previous destination
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_loop:
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcs ScummV5_LiveRoom_ValidateRouteDirectory_Far__row_done
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_destination_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_destination_ok:
+    .a8
+    sta.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    inx
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    cmp #$FF
+    bne ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_value_ok
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_value_ok:
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    and #$00FF
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_value_in_range
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_value_in_range:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    cmp #$FFFF
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_first_pair
+    lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    and #$00FF
+    cmp.l SCUMM_LIVE_ROOM_TEMP4
+    bcc ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad
+    bra ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_first
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_first_pair:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    and #$00FF
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_first:
+    .a16
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    clc
+    adc #$0002
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+    bra ScummV5_LiveRoom_ValidateRouteDirectory_Far__sparse_loop
+
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__row_done:
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    inc
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    bcs ScummV5_LiveRoom_ValidateRouteDirectory_Far__all_rows_done
+    jmp ScummV5_LiveRoom_ValidateRouteDirectory_Far__row
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__all_rows_done:
+    clc
+    rtl
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__empty:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_ROUTE_LENGTH
+    cmp #$0006
+    beq ScummV5_LiveRoom_ValidateRouteDirectory_Far__all_rows_done
+ScummV5_LiveRoom_ValidateRouteDirectory_Far__bad:
+    sec
+    rtl
+
+; Expand already authenticated and structurally validated rows to SAME's
+; existing 64-byte-stride route matrix. This runs after EXCD, before the new
+; room is published to SCUMM consumers.
+ScummV5_LiveRoom_ExpandRoutes_Far:
+    rep #$30
+    .a16
+    .i16
+    lda.l SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; box count
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; row
+ScummV5_LiveRoom_ExpandRoutes_Far__row:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcc ScummV5_LiveRoom_ExpandRoutes_Far__row_active
+    jml ScummV5_LiveRoom_ExpandRoutes_Far__done
+ScummV5_LiveRoom_ExpandRoutes_Far__row_active:
+    .a16
+    ; X = 4 + box_count + 2*row; resolve relative input cursors.
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP2
+    clc
+    adc #$0004
+    tax
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    inx
+    inx
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$02
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; absolute input cursor
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$02
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP3
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; absolute input end
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; output row*64
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    clc
+    adc #$0004
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    and #$00FF
+    cmp #$0000
+    beq ScummV5_LiveRoom_ExpandRoutes_Far__raw
+    cmp #$0001
+    beq ScummV5_LiveRoom_ExpandRoutes_Far__rle
+    cmp #$0002
+    beq ScummV5_LiveRoom_ExpandRoutes_Far__sparse_dispatch
+    jmp ScummV5_LiveRoom_ExpandRoutes_Far__bad
+ScummV5_LiveRoom_ExpandRoutes_Far__sparse_dispatch:
+    jml ScummV5_LiveRoom_ExpandRoutes_Far__sparse
+
+ScummV5_LiveRoom_ExpandRoutes_Far__raw:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP5 ; input cursor
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX ; output column
+ScummV5_LiveRoom_ExpandRoutes_Far__raw_loop:
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcc ScummV5_LiveRoom_ExpandRoutes_Far__raw_has_cell
+    jml ScummV5_LiveRoom_ExpandRoutes_Far__next_row
+ScummV5_LiveRoom_ExpandRoutes_Far__raw_has_cell:
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    clc
+    adc.l SCUMM_LIVE_ROOM_COPY_INDEX
+    tax
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    inc
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    inc
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX
+    bra ScummV5_LiveRoom_ExpandRoutes_Far__raw_loop
+
+ScummV5_LiveRoom_ExpandRoutes_Far__rle:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP5 ; input cursor
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX ; expanded output column
+ScummV5_LiveRoom_ExpandRoutes_Far__rle_pair:
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    cmp.l SCUMM_LIVE_ROOM_TEMP3
+    bcc ScummV5_LiveRoom_ExpandRoutes_Far__rle_has_pair
+    jml ScummV5_LiveRoom_ExpandRoutes_Far__next_row
+ScummV5_LiveRoom_ExpandRoutes_Far__rle_has_pair:
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP_BYTE ; run count
+    inx
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    and #$00FF
+    clc
+    adc.l SCUMM_LIVE_ROOM_COPY_INDEX
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; end output column for this run
+ScummV5_LiveRoom_ExpandRoutes_Far__rle_cells:
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    cmp.l SCUMM_LIVE_ROOM_TEMP1
+    bcs ScummV5_LiveRoom_ExpandRoutes_Far__rle_next_pair
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    clc
+    adc.l SCUMM_LIVE_ROOM_COPY_INDEX
+    tax
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    inc
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX
+    bra ScummV5_LiveRoom_ExpandRoutes_Far__rle_cells
+ScummV5_LiveRoom_ExpandRoutes_Far__rle_next_pair:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    clc
+    adc #$0002
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+    bra ScummV5_LiveRoom_ExpandRoutes_Far__rle_pair
+
+ScummV5_LiveRoom_ExpandRoutes_Far__sparse:
+    .a16
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX
+ScummV5_LiveRoom_ExpandRoutes_Far__sparse_fill:
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcs ScummV5_LiveRoom_ExpandRoutes_Far__sparse_pairs_start
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    tax
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    inc
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX
+    bra ScummV5_LiveRoom_ExpandRoutes_Far__sparse_fill
+ScummV5_LiveRoom_ExpandRoutes_Far__sparse_pairs_start:
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP5 ; input cursor
+ScummV5_LiveRoom_ExpandRoutes_Far__sparse_pairs:
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    cmp.l SCUMM_LIVE_ROOM_TEMP3
+    bcs ScummV5_LiveRoom_ExpandRoutes_Far__next_row
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP_BYTE ; destination
+    inx
+    lda.l SAME_SCUMM_LIVE_ROOM_PENDING_BASE,x
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    and #$00FF
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    tax
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    clc
+    adc #$0002
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+    bra ScummV5_LiveRoom_ExpandRoutes_Far__sparse_pairs
+
+ScummV5_LiveRoom_ExpandRoutes_Far__next_row:
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    inc
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    jmp ScummV5_LiveRoom_ExpandRoutes_Far__row
+ScummV5_LiveRoom_ExpandRoutes_Far__done:
+    clc
+    rtl
+ScummV5_LiveRoom_ExpandRoutes_Far__bad:
+    sec
+    rtl
+.endif
+
 ; Validate SC5LIVE after the storage provider has authenticated its CRC.
 ; The compiler emits canonical, contiguous table offsets and the exact room
 ; record length; this guard repeats identity/schema/bounds checks before the
@@ -460,12 +1647,13 @@ ScummV5_LiveRoom_Validate_Far:
     .a8
     lda #$B0
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1E
+    sta.l SCUMM_LIVE_ROOM_VALIDATE_CHECKPOINT
     sep #$20
     .a8
     ldx #$0000
 ScummV5_LiveRoom_Validate_Far__magic:
     .a8
-    lda.l SCUMM_LIVE_ROOM_PENDING,x
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
     cmp.l ScummV5_LiveRoom_Magic,x
     beq ScummV5_LiveRoom_Validate_Far__magic_match
     jmp ScummV5_LiveRoom_Validate_Far__bad
@@ -476,13 +1664,19 @@ ScummV5_LiveRoom_Validate_Far__magic_match:
     bcc ScummV5_LiveRoom_Validate_Far__magic
     rep #$20
     .a16
-    lda.l SCUMM_LIVE_ROOM_PENDING+$08
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$08
     cmp #$0002
     beq ScummV5_LiveRoom_Validate_Far__version_ok
+    cmp #$0003
+    beq ScummV5_LiveRoom_Validate_Far__version_ok
+    .if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    cmp #$0004
+    beq ScummV5_LiveRoom_Validate_Far__version_ok
+    .endif
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__version_ok:
     .a16
-    lda.l SCUMM_LIVE_ROOM_PENDING+$0A
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$0A
     cmp #SCUMM_LIVE_ROOM_HEADER_SIZE
     beq ScummV5_LiveRoom_Validate_Far__header_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
@@ -490,13 +1684,13 @@ ScummV5_LiveRoom_Validate_Far__header_ok:
     .a16
     sep #$20
     .a8
-    lda.l SCUMM_LIVE_ROOM_PENDING+$0C
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$0C
     cmp.l SAME_SCUMM_LIVE_ROOM_CONTROL+$0C
     beq ScummV5_LiveRoom_Validate_Far__room_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__room_ok:
     .a8
-    lda.l SCUMM_LIVE_ROOM_PENDING+$0D
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$0D
     and #$FE
     beq ScummV5_LiveRoom_Validate_Far__flags_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
@@ -504,12 +1698,21 @@ ScummV5_LiveRoom_Validate_Far__flags_ok:
     .a8
     rep #$20
     .a16
-    lda.l SCUMM_LIVE_ROOM_PENDING+$30
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$30
     cmp.l SCUMM_LIVE_ROOM_READ_LENGTH
     beq ScummV5_LiveRoom_Validate_Far__length_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__length_ok:
     .a16
+    sep #$20
+    .a8
+    lda #$C1 ; identity/schema/length checks passed
+    sta.l SCUMM_LIVE_ROOM_VALIDATE_CHECKPOINT
+    rep #$20
+    .a16
+    ; The checkpoint write above leaves A=$00C1 after REP. Reload the
+    ; validated u16 length before applying either allocation-bound check.
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$30
     cmp #SCUMM_LIVE_ROOM_HEADER_SIZE
     bcs ScummV5_LiveRoom_Validate_Far__minimum_size_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
@@ -520,31 +1723,352 @@ ScummV5_LiveRoom_Validate_Far__minimum_size_ok:
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__maximum_size_ok:
     .a16
-    lda.l SCUMM_LIVE_ROOM_PENDING+$1C
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$1C
     cmp #SCUMM_LIVE_ROOM_HEADER_SIZE
     beq ScummV5_LiveRoom_Validate_Far__first_offset_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__first_offset_ok:
     .a16
+    sep #$20
+    .a8
+    lda #$C2 ; section offsets and portal directory are being checked
+    sta.l SCUMM_LIVE_ROOM_VALIDATE_CHECKPOINT
+    rep #$20
+    .a16
+    ; SC5LIVE v3 uses a sorted fixed-width pair directory. v4 uses packed
+    ; row-local pairs; both are validated against the object-section boundary.
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$08
+    cmp #$0003
+    beq ScummV5_LiveRoom_Validate_Far__portal_v3_start
+    .if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    cmp #$0004
+    bne ScummV5_LiveRoom_Validate_Far__portal_v4_dispatch_done
+    jml ScummV5_LiveRoom_Validate_Far__portal_v4_start
+ScummV5_LiveRoom_Validate_Far__portal_v4_dispatch_done:
+    .endif
+    jmp ScummV5_LiveRoom_Validate_Far__portal_v3_done
+ScummV5_LiveRoom_Validate_Far__portal_v3_start:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$22
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; portal section
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$24
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; object section
+    cmp.l SCUMM_LIVE_ROOM_TEMP0
+    bcs ScummV5_LiveRoom_Validate_Far__portal_section_order_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_section_order_ok:
+    .a16
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP0
+    cmp #$0004
+    bcs ScummV5_LiveRoom_Validate_Far__portal_header_available
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_header_available:
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    tax
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; edge count
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; unique descriptor count
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcc ScummV5_LiveRoom_Validate_Far__portal_count_ok
+    beq ScummV5_LiveRoom_Validate_Far__portal_count_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_count_ok:
+    .a16
+    ; edge_count cannot exceed box_count squared.
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$0E
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+ScummV5_LiveRoom_Validate_Far__portal_box_square:
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    beq ScummV5_LiveRoom_Validate_Far__portal_pair_bound
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+    bra ScummV5_LiveRoom_Validate_Far__portal_box_square
+ScummV5_LiveRoom_Validate_Far__portal_pair_bound:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$20
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0
+    bcc ScummV5_LiveRoom_Validate_Far__portal_offset_no_overflow
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_offset_no_overflow:
+    .a16
+    cmp.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$22
+    beq ScummV5_LiveRoom_Validate_Far__portal_offset_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_offset_ok:
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    cmp.l SCUMM_LIVE_ROOM_TEMP0
+    bcc ScummV5_LiveRoom_Validate_Far__portal_pairs_fit
+    beq ScummV5_LiveRoom_Validate_Far__portal_pairs_fit
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_pairs_fit:
+    .a16
+    ; Prove edge_count*4 fits between the portal header and object section,
+    ; then prove descriptors occupy the exact remaining bytes.
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$22
+    clc
+    adc #$0004
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$24
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP0
+    lsr
+    lsr
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcs ScummV5_LiveRoom_Validate_Far__portal_rows_fit
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_rows_fit:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    asl
+    asl
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; pair-row byte count
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    asl
+    asl
+    asl
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP3 ; descriptor_count * 7
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$22
+    clc
+    adc #$0004
+    bcc ScummV5_LiveRoom_Validate_Far__portal_start_no_overflow
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_start_no_overflow:
+    .a16
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    bcc ScummV5_LiveRoom_Validate_Far__portal_rows_no_overflow
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_rows_no_overflow:
+    .a16
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP5
+    bcc ScummV5_LiveRoom_Validate_Far__portal_descriptors_no_overflow
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_descriptors_no_overflow:
+    .a16
+    cmp.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$24
+    bne ScummV5_LiveRoom_Validate_Far__portal_v3_not_done
+    jml ScummV5_LiveRoom_Validate_Far__portal_v3_done
+ScummV5_LiveRoom_Validate_Far__portal_v3_not_done:
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+ScummV5_LiveRoom_Validate_Far__portal_v4_start:
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$22
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; portal offset
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$24
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; object offset
+    cmp.l SCUMM_LIVE_ROOM_TEMP0
+    bcs ScummV5_LiveRoom_Validate_Far__portal_v4_order
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_v4_order:
+    .a16
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP0
+    cmp #$0007
+    bcs ScummV5_LiveRoom_Validate_Far__portal_v4_header
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_v4_header:
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    tax
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; edge count
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; descriptor count
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcc ScummV5_LiveRoom_Validate_Far__portal_v4_counts
+    beq ScummV5_LiveRoom_Validate_Far__portal_v4_counts
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_v4_counts:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$0E
+    and #$00FF
+    cmp #$0041
+    bcc ScummV5_LiveRoom_Validate_Far__portal_v4_boxes
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_v4_boxes:
+    .a16
+    sta.l SCUMM_LIVE_ROOM_TEMP5 ; box count
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    clc
+    adc #$0004
+    tax
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
+    cmp #$01
+    bcs ScummV5_LiveRoom_Validate_Far__portal_pair_width_min_ok
+    jml ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_pair_width_min_ok:
+    .a8
+    cmp #$04
+    bcc ScummV5_LiveRoom_Validate_Far__portal_pair_width_max_ok
+    jml ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_pair_width_max_ok:
+    .a8
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; pair byte width
+    inx
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
+    cmp #$01
+    bcs ScummV5_LiveRoom_Validate_Far__destination_bits_min_ok
+    jml ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__destination_bits_min_ok:
+    .a8
+    cmp #$07
+    bcc ScummV5_LiveRoom_Validate_Far__destination_bits_max_ok
+    jml ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__destination_bits_max_ok:
+    .a8
+    inx
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
+    cmp #$01
+    bcs ScummV5_LiveRoom_Validate_Far__descriptor_bits_min_ok
+    jml ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__descriptor_bits_min_ok:
+    .a8
+    cmp #$11
+    bcc ScummV5_LiveRoom_Validate_Far__descriptor_bits_max_ok
+    jml ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__descriptor_bits_max_ok:
+    .a8
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+    ; Compute the exact extent using bounded multiplication loops.
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    inc
+    asl
+    clc
+    adc #$0007
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0
+    sta.l SCUMM_LIVE_ROOM_READ_LENGTH ; cursor after row offsets
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+ScummV5_LiveRoom_Validate_Far__portal_v4_pair_extent:
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    beq ScummV5_LiveRoom_Validate_Far__portal_v4_pairs_done
+    lda.l SCUMM_LIVE_ROOM_READ_LENGTH
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    sta.l SCUMM_LIVE_ROOM_READ_LENGTH
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    bra ScummV5_LiveRoom_Validate_Far__portal_v4_pair_extent
+ScummV5_LiveRoom_Validate_Far__portal_v4_pairs_done:
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+ScummV5_LiveRoom_Validate_Far__portal_v4_descriptor_extent:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    beq ScummV5_LiveRoom_Validate_Far__portal_v4_extent_done
+    lda.l SCUMM_LIVE_ROOM_READ_LENGTH
+    clc
+    adc #$0007
+    sta.l SCUMM_LIVE_ROOM_READ_LENGTH
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    bra ScummV5_LiveRoom_Validate_Far__portal_v4_descriptor_extent
+ScummV5_LiveRoom_Validate_Far__portal_v4_extent_done:
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$24
+    cmp.l SCUMM_LIVE_ROOM_READ_LENGTH
+    beq ScummV5_LiveRoom_Validate_Far__portal_v4_rows_start
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_v4_rows_start:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    clc
+    adc #$0007
+    tax
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
+    beq ScummV5_LiveRoom_Validate_Far__portal_v4_rows_first_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_v4_rows_first_ok:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; edge count for row endpoint checks
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; previous row offset
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; row number
+ScummV5_LiveRoom_Validate_Far__portal_v4_rows:
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    cmp.l SCUMM_LIVE_ROOM_TEMP5
+    bcs ScummV5_LiveRoom_Validate_Far__portal_v4_rows_done
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcc ScummV5_LiveRoom_Validate_Far__portal_v4_bad_row
+    cmp.l SCUMM_LIVE_ROOM_TEMP3
+    bcc ScummV5_LiveRoom_Validate_Far__portal_v4_row_ok
+    beq ScummV5_LiveRoom_Validate_Far__portal_v4_row_ok
+ScummV5_LiveRoom_Validate_Far__portal_v4_bad_row:
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_v4_row_ok:
+    sta.l SCUMM_LIVE_ROOM_TEMP2
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    inc
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    bra ScummV5_LiveRoom_Validate_Far__portal_v4_rows
+ScummV5_LiveRoom_Validate_Far__portal_v4_rows_done:
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    cmp.l SCUMM_LIVE_ROOM_TEMP3
+    beq ScummV5_LiveRoom_Validate_Far__portal_v4_done
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_v4_done:
+    jmp ScummV5_LiveRoom_Validate_Far__portal_v3_done
+.endif
+ScummV5_LiveRoom_Validate_Far__portal_v3_done:
+    .a16
+    sep #$20
+    .a8
+    lda #$C3 ; portal directory and movement metadata passed
+    sta.l SCUMM_LIVE_ROOM_VALIDATE_CHECKPOINT
+    rep #$20
+    .a16
     ; SC5LIVE v2 stores one (u8 byte length, bytes) name row per object, in
     ; object-table order. Walk exactly object_count rows and require the table
     ; to end at object-walk. Package CRC authenticates bytes; these checks
     ; protect the native consumer offsets.
-    lda.l SCUMM_LIVE_ROOM_PENDING+$26
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$26
     sta.l SCUMM_LIVE_ROOM_TEMP0 ; names cursor
-    lda.l SCUMM_LIVE_ROOM_PENDING+$28
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$28
     sta.l SCUMM_LIVE_ROOM_TEMP1 ; object-walk offset
     cmp.l SCUMM_LIVE_ROOM_TEMP0
     bcs ScummV5_LiveRoom_Validate_Far__names_order_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__names_order_ok:
     .a16
-    cmp.l SCUMM_LIVE_ROOM_PENDING+$30
+    cmp.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$30
     bcc ScummV5_LiveRoom_Validate_Far__names_bound_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__names_bound_ok:
     .a16
-    lda.l SCUMM_LIVE_ROOM_PENDING+$10
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$10
     sta.l SCUMM_LIVE_ROOM_TEMP3 ; name rows remaining
 ScummV5_LiveRoom_Validate_Far__name_row:
     .a16
@@ -562,7 +2086,7 @@ ScummV5_LiveRoom_Validate_Far__name_length_available:
     tax
     sep #$20
     .a8
-    lda.l SCUMM_LIVE_ROOM_PENDING,x
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
     rep #$20
     .a16
     and #$00FF
@@ -595,16 +2119,29 @@ ScummV5_LiveRoom_Validate_Far__names_done:
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__names_exact:
     .a16
+    sep #$20
+    .a8
+    lda #$C4 ; object-name rows passed
+    sta.l SCUMM_LIVE_ROOM_VALIDATE_CHECKPOINT
+    rep #$20
+    .a16
     ; The final bundle table must terminate exactly at total_size. This also
     ; rejects malformed counts/offsets before any native consumer indexes it.
-    lda.l SCUMM_LIVE_ROOM_PENDING+$2E
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$2E
     sta.l SCUMM_LIVE_ROOM_TEMP0
-    lda.l SCUMM_LIVE_ROOM_PENDING+$16
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$16
     asl
     clc
     adc.l SCUMM_LIVE_ROOM_TEMP0
-    cmp.l SCUMM_LIVE_ROOM_PENDING+$30
-    bne ScummV5_LiveRoom_Validate_Far__bad
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$3E ; diagnostic expected terminal offset
+    cmp.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$30
+    beq ScummV5_LiveRoom_Validate_Far__bundle_extent_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__bundle_extent_ok:
+    sep #$20
+    .a8
+    lda #$C5
+    sta.l SCUMM_LIVE_ROOM_VALIDATE_CHECKPOINT
     sep #$20
     .a8
     lda #$B1
@@ -614,6 +2151,16 @@ ScummV5_LiveRoom_Validate_Far__names_exact:
 ScummV5_LiveRoom_Validate_Far__bad:
     sep #$20
     .a8
+    rep #$10
+    .i16
+    ldx #$0000
+ScummV5_LiveRoom_Validate_Far__capture_prefix:
+    lda.l SCUMM_LIVE_ROOM_VALIDATION_BASE,x
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$34,x
+    inx
+    .a8
+    cpx #$0008
+    bcc ScummV5_LiveRoom_Validate_Far__capture_prefix
     lda #$94
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
     lda #$B2
@@ -1009,11 +2556,41 @@ ScummV5_LiveRoom_NextBox_Far:
     .a8
     lda.l SAME_SCUMM_MOVE_ROUTE_SOURCE
     cmp.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_BOX_COUNT
-    bcs ScummV5_LiveRoom_NextBox_Far__bad
+    bcc ScummV5_LiveRoom_NextBox_Far__source_valid
+    jml ScummV5_LiveRoom_NextBox_Far__bad
+ScummV5_LiveRoom_NextBox_Far__source_valid:
     lda.l SAME_SCUMM_MOVE_ROUTE_DEST
     cmp.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_BOX_COUNT
-    bcs ScummV5_LiveRoom_NextBox_Far__bad
+    bcc ScummV5_LiveRoom_NextBox_Far__destination_valid
+    jml ScummV5_LiveRoom_NextBox_Far__bad
+ScummV5_LiveRoom_NextBox_Far__destination_valid:
     rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_BASE+$08
+    cmp #$0004
+    bne ScummV5_LiveRoom_NextBox_Far__legacy
+    lda.l SAME_SCUMM_MOVE_ROUTE_SOURCE
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    lda.l SAME_SCUMM_MOVE_ROUTE_DEST
+    and #$00FF
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+    cmp #$FF
+    beq ScummV5_LiveRoom_NextBox_Far__bad
+    sec
+    rtl
+ScummV5_LiveRoom_NextBox_Far__legacy:
     .a16
     lda.l SAME_SCUMM_MOVE_ROUTE_SOURCE
     and #$00FF
@@ -1097,6 +2674,13 @@ ScummV5_LiveRoom_Portal_Far__index:
     clc
     adc.l SCUMM_LIVE_ROOM_TEMP5
     sta.l SCUMM_LIVE_ROOM_TEMP2
+    lda.l SCUMM_LIVE_ROOM_BASE+$08
+    cmp #$0003
+    beq ScummV5_LiveRoom_Portal_Far__v3
+    .if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    cmp #$0004
+    beq ScummV5_LiveRoom_Portal_Far__v4
+    .endif
     ; Pair matrix stores a sparse portal-record index, FFFF means no portal.
     asl
     clc
@@ -1104,8 +2688,95 @@ ScummV5_LiveRoom_Portal_Far__index:
     tax
     lda.l SCUMM_LIVE_ROOM_BASE,x
     cmp #$FFFF
-    bne ScummV5_LiveRoom_Portal_Far__has_portal
+    beq ScummV5_LiveRoom_Portal_Far__v2_no_portal
+    jmp ScummV5_LiveRoom_Portal_Far__has_portal
+ScummV5_LiveRoom_Portal_Far__v2_no_portal:
     jmp ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_Portal_Far__v4:
+    jsl ScummV5_LiveRoom_PortalV4_Far
+    bcc ScummV5_LiveRoom_Portal_Far__v4_missing
+    jml ScummV5_LiveRoom_Portal_Far__load_descriptor
+ScummV5_LiveRoom_Portal_Far__v4_missing:
+    jmp ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_Portal_Far__v3:
+    .a16
+    ; Binary search the sorted v3 pair directory by source*box_count+next.
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; high = edge_count
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; low
+ScummV5_LiveRoom_Portal_Far__v3_search:
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    cmp.l SCUMM_LIVE_ROOM_TEMP1
+    bcc ScummV5_LiveRoom_Portal_Far__v3_search_step
+    jmp ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_Portal_Far__v3_search_step:
+    .a16
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP1
+    lsr
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; midpoint
+    asl
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    clc
+    adc #$0004
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; pair row offset
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    beq ScummV5_LiveRoom_Portal_Far__v3_found
+    bcc ScummV5_LiveRoom_Portal_Far__v3_search_lower
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    bra ScummV5_LiveRoom_Portal_Far__v3_search
+ScummV5_LiveRoom_Portal_Far__v3_search_lower:
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    inc
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    bra ScummV5_LiveRoom_Portal_Far__v3_search
+ScummV5_LiveRoom_Portal_Far__v3_found:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; descriptor index
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; edge count
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    cmp.l SCUMM_LIVE_ROOM_TEMP3
+    bcc ScummV5_LiveRoom_Portal_Far__v3_bad_descriptor_index
+    bne ScummV5_LiveRoom_Portal_Far__v3_descriptor_index_ok
+ScummV5_LiveRoom_Portal_Far__v3_bad_descriptor_index:
+    jmp ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_Portal_Far__v3_descriptor_index_ok:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    asl
+    clc
+    adc #$0004
+    clc
+    adc.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    asl
+    asl
+    asl
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP3
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    tax
+    jmp ScummV5_LiveRoom_Portal_Far__load_descriptor
 ScummV5_LiveRoom_Portal_Far__has_portal:
     .a16
     sta.l SCUMM_LIVE_ROOM_TEMP3 ; sparse portal record index
@@ -1142,11 +2813,16 @@ ScummV5_LiveRoom_Portal_Far__records:
     clc
     adc.l SCUMM_LIVE_ROOM_TEMP4
     tax
+ScummV5_LiveRoom_Portal_Far__load_descriptor:
     sep #$20
     .a8
     lda.l SCUMM_LIVE_ROOM_BASE,x
     sta.l SAME_SCUMM_MOVE_PORTAL_TYPE
-    beq ScummV5_LiveRoom_Portal_Far__bad
+    cmp #$01
+    beq ScummV5_LiveRoom_Portal_Far__descriptor_kind_ok
+    cmp #$02
+    bne ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_Portal_Far__descriptor_kind_ok:
     inx
     rep #$20
     .a16
@@ -1169,6 +2845,502 @@ ScummV5_LiveRoom_Portal_Far__bad:
     .a8
     clc
     rtl
+
+; Superseded draft kept out of assembled images while the compact resolver
+; below is the active v4 implementation.
+.if 0
+; Lookup one sparse row-local v4 portal pair. X returns the existing seven-byte
+; descriptor in the active metadata record; the shared descriptor consumer is
+; unchanged. The whole directory is structurally validated before publication.
+ScummV5_LiveRoom_PortalV4_Far:
+    rep #$30
+    .a16
+    .i16
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; portal section offset
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_READ_LENGTH ; edge count
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_ROUTE_LENGTH ; descriptor count
+    inx
+    inx
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; pair byte width
+    inx
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP_BYTE ; destination bit width
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    and #$00FF
+    cmp #$0001
+    beq ScummV5_LiveRoom_PortalV4_Far__pair_width_ok
+    cmp #$0002
+    beq ScummV5_LiveRoom_PortalV4_Far__pair_width_ok
+    cmp #$0003
+    beq ScummV5_LiveRoom_PortalV4_Far__pair_width_ok
+    jmp ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_PortalV4_Far__pair_width_ok:
+    ; Pair-array base = portal + 7 + 2*(box_count+1).
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_BOX_COUNT
+    and #$00FF
+    asl
+    clc
+    adc #$0009
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0
+    sta.l SCUMM_LIVE_ROOM_CHUNK_START
+    ; Locate this source row's inclusive-start/exclusive-end pair indexes.
+    lda.l SAME_SCUMM_MOVE_ROUTE_SOURCE
+    and #$00FF
+    asl
+    clc
+    adc #$0007
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP5 ; row start index
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP5
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; pair count in row
+    beq ScummV5_LiveRoom_PortalV4_Far__not_found
+    ; Convert start pair index to byte cursor without a wide multiply.
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; multiplication count
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP5 ; byte offset
+ScummV5_LiveRoom_PortalV4_Far__cursor_multiply:
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    beq ScummV5_LiveRoom_PortalV4_Far__cursor_ready
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    bra ScummV5_LiveRoom_PortalV4_Far__cursor_multiply
+ScummV5_LiveRoom_PortalV4_Far__cursor_ready:
+    lda.l SCUMM_LIVE_ROOM_CHUNK_START
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP5
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; pair cursor
+    ; Keep the row's requested destination in a different scratch word.
+    lda.l SAME_SCUMM_MOVE_ROUTE_NEXT
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+ScummV5_LiveRoom_PortalV4_Far__pair:
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    tax
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    and #$00FF
+    cmp #$0001
+    beq ScummV5_LiveRoom_PortalV4_Far__read_one
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; low 16 bits
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    and #$00FF
+    cmp #$0002
+    beq ScummV5_LiveRoom_PortalV4_Far__pair_read
+    inx
+    inx
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+    bra ScummV5_LiveRoom_PortalV4_Far__pair_read
+ScummV5_LiveRoom_PortalV4_Far__read_one:
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    rep #$20
+    .a16
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP2
+    lda #$0000
+    sep #$20
+    .a8
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+ScummV5_LiveRoom_PortalV4_Far__pair_read:
+    ; Extract destination using the declared low-bit width.
+    lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; shift count
+    lda #$0001
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX
+ScummV5_LiveRoom_PortalV4_Far__mask_loop:
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    beq ScummV5_LiveRoom_PortalV4_Far__mask_ready
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    asl
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    bra ScummV5_LiveRoom_PortalV4_Far__mask_loop
+ScummV5_LiveRoom_PortalV4_Far__mask_ready:
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    dec
+    and.l SCUMM_LIVE_ROOM_TEMP2
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; destination
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_BOX_COUNT
+    and #$00FF
+    cmp.l SCUMM_LIVE_ROOM_TEMP1
+    bcc ScummV5_LiveRoom_Portal_Far__bad
+    beq ScummV5_LiveRoom_Portal_Far__bad
+    ; Shift the combined packed pair right by destination_bits.
+    lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; shift count
+ScummV5_LiveRoom_PortalV4_Far__unpack_loop:
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    beq ScummV5_LiveRoom_PortalV4_Far__unpack_done
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    lsr
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    ror
+    sta.l SCUMM_LIVE_ROOM_TEMP2
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+    bra ScummV5_LiveRoom_PortalV4_Far__unpack_loop
+ScummV5_LiveRoom_PortalV4_Far__unpack_done:
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_LENGTH
+    bcc ScummV5_LiveRoom_PortalV4_Far__descriptor_ok
+    jmp ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_PortalV4_Far__descriptor_ok:
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    cmp.l SCUMM_LIVE_ROOM_TEMP5
+    beq ScummV5_LiveRoom_PortalV4_Far__found
+    ; Advance the source cursor and try the next pair in this row.
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    ; TEMP1 currently contains destination; recover cursor from a dedicated
+    ; slot saved before unpacking (SCUMM_LIVE_ROOM_WIDTH).
+    lda.l SCUMM_LIVE_ROOM_WIDTH
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    sta.l SCUMM_LIVE_ROOM_WIDTH
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+    beq ScummV5_LiveRoom_PortalV4_Far__not_found
+    lda.l SCUMM_LIVE_ROOM_WIDTH
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    jmp ScummV5_LiveRoom_PortalV4_Far__pair
+ScummV5_LiveRoom_PortalV4_Far__found:
+    ; Descriptor table follows the packed pair array.
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX ; descriptor ID
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    clc
+    adc #$0009
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_BOX_COUNT
+    and #$00FF
+    asl
+    clc
+    adc #$0009
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; pair-array base
+    lda.l SCUMM_LIVE_ROOM_READ_LENGTH
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; pair-array byte length
+ScummV5_LiveRoom_PortalV4_Far__descriptor_extent:
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    beq ScummV5_LiveRoom_PortalV4_Far__descriptor_base
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4 ; overwritten below; do not use doubled value
+    ; Multiply edge_count by pair_width with the bounded width (1..3).
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+    bra ScummV5_LiveRoom_PortalV4_Far__descriptor_extent
+ScummV5_LiveRoom_PortalV4_Far__descriptor_base:
+    ; TODO: pair width/edge extent are reconstructed in the follow-up below.
+    jmp ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_PortalV4_Far__not_found:
+    clc
+    rtl
+.endif
+
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+; Resolve a packed, sorted v4 portal pair in its source row. Carry set returns
+; X at the existing seven-byte descriptor; carry clear means no portal.
+ScummV5_LiveRoom_PortalV4_Far:
+    rep #$30
+    .a16
+    .i16
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; portal offset
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_READ_LENGTH ; edge count
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_ROUTE_LENGTH ; descriptor count
+    inx
+    inx
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_CHUNK_COUNT ; pair width
+    inx
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP_BYTE ; destination bit count
+    rep #$20
+    .a16
+    ; Pair-array base = portal + 7 + 2*(box_count+1).
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_BOX_COUNT
+    and #$00FF
+    asl
+    clc
+    adc #$0009
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0
+    sta.l SCUMM_LIVE_ROOM_CHUNK_START
+    ; The row-offset table supplies pair indexes, not byte offsets.
+    lda.l SAME_SCUMM_MOVE_ROUTE_SOURCE
+    and #$00FF
+    asl
+    clc
+    adc #$0007
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX ; first pair index
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sec
+    sbc.l SCUMM_LIVE_ROOM_COPY_INDEX
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; pairs remaining
+    bne ScummV5_LiveRoom_PortalV4_Far__has_pairs
+    jml ScummV5_LiveRoom_PortalV4_Far__not_found
+ScummV5_LiveRoom_PortalV4_Far__has_pairs:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    sta.l SCUMM_LIVE_ROOM_TEMP5 ; multiply counter
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; byte offset to first pair
+ScummV5_LiveRoom_PortalV4_Far__cursor_offset:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    beq ScummV5_LiveRoom_PortalV4_Far__cursor_ready
+    lda.l SCUMM_LIVE_ROOM_CHUNK_COUNT
+    and #$00FF
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+    bra ScummV5_LiveRoom_PortalV4_Far__cursor_offset
+ScummV5_LiveRoom_PortalV4_Far__cursor_ready:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    clc
+    adc.l SCUMM_LIVE_ROOM_CHUNK_START
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; current pair cursor
+    lda.l SAME_SCUMM_MOVE_ROUTE_NEXT
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP5 ; requested destination
+ScummV5_LiveRoom_PortalV4_Far__scan:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    tax
+    lda.l SCUMM_LIVE_ROOM_CHUNK_COUNT
+    and #$00FF
+    cmp #$0001
+    beq ScummV5_LiveRoom_PortalV4_Far__pair_one
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; low 16 bits
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_CHUNK_COUNT
+    and #$00FF
+    cmp #$0002
+    beq ScummV5_LiveRoom_PortalV4_Far__packed_pair_ready
+    inx
+    inx
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+    bra ScummV5_LiveRoom_PortalV4_Far__packed_pair_ready
+ScummV5_LiveRoom_PortalV4_Far__pair_one:
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    rep #$20
+    .a16
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP2
+    lda #$0000
+    sep #$20
+    .a8
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+ScummV5_LiveRoom_PortalV4_Far__packed_pair_ready:
+    .a16
+    ; Low destination bits form mask (1 << destination_bits) - 1.
+    lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; shift count
+    lda #$0001
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX
+ScummV5_LiveRoom_PortalV4_Far__mask:
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    beq ScummV5_LiveRoom_PortalV4_Far__mask_done
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    asl
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+    bra ScummV5_LiveRoom_PortalV4_Far__mask
+ScummV5_LiveRoom_PortalV4_Far__mask_done:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    dec
+    and.l SCUMM_LIVE_ROOM_TEMP2
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX ; destination
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_BOX_COUNT
+    and #$00FF
+    cmp.l SCUMM_LIVE_ROOM_COPY_INDEX
+    bcs ScummV5_LiveRoom_PortalV4_Far__destination_may_fit
+    jml ScummV5_LiveRoom_PortalV4_Far__not_found
+ScummV5_LiveRoom_PortalV4_Far__destination_may_fit:
+    bne ScummV5_LiveRoom_PortalV4_Far__destination_valid
+    jml ScummV5_LiveRoom_PortalV4_Far__not_found
+ScummV5_LiveRoom_PortalV4_Far__destination_valid:
+    .a16
+    ; Decode descriptor_id = packed_pair >> destination_bits.
+    lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+ScummV5_LiveRoom_PortalV4_Far__unpack:
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    beq ScummV5_LiveRoom_PortalV4_Far__unpack_done
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    lsr
+    sta.l SCUMM_LIVE_ROOM_ROUTE_VALUE
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    ror
+    sta.l SCUMM_LIVE_ROOM_TEMP2
+    lda.l SCUMM_LIVE_ROOM_TEMP4
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+    bra ScummV5_LiveRoom_PortalV4_Far__unpack
+ScummV5_LiveRoom_PortalV4_Far__unpack_done:
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    cmp.l SCUMM_LIVE_ROOM_ROUTE_LENGTH
+    bcc ScummV5_LiveRoom_PortalV4_Far__descriptor_valid
+    jmp ScummV5_LiveRoom_PortalV4_Far__not_found
+ScummV5_LiveRoom_PortalV4_Far__descriptor_valid:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    cmp.l SCUMM_LIVE_ROOM_TEMP5
+    beq ScummV5_LiveRoom_PortalV4_Far__found
+    ; Advance cursor by pair width and scan the next record in this row.
+    lda.l SCUMM_LIVE_ROOM_CHUNK_COUNT
+    and #$00FF
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+    beq ScummV5_LiveRoom_PortalV4_Far__not_found
+    jmp ScummV5_LiveRoom_PortalV4_Far__scan
+ScummV5_LiveRoom_PortalV4_Far__found:
+    .a16
+    ; Descriptor array starts after all packed pairs. Re-read edge count and
+    ; compute its byte extent using the validated one-to-three-byte width.
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX ; descriptor ID
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; edges remaining
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; pair bytes
+ScummV5_LiveRoom_PortalV4_Far__edge_extent:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    beq ScummV5_LiveRoom_PortalV4_Far__descriptor_table
+    lda.l SCUMM_LIVE_ROOM_CHUNK_COUNT
+    and #$00FF
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+    bra ScummV5_LiveRoom_PortalV4_Far__edge_extent
+ScummV5_LiveRoom_PortalV4_Far__descriptor_table:
+    lda.l SCUMM_LIVE_ROOM_CHUNK_START
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; descriptor table base
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    asl
+    asl
+    asl
+    sec
+    sbc.l SCUMM_LIVE_ROOM_COPY_INDEX ; descriptor id * 7
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP1
+    tax
+    sec
+    rtl
+ScummV5_LiveRoom_PortalV4_Far__not_found:
+    clc
+    rtl
+.endif
 
 ScummV5_LiveRoom_ObjectWalk_Far:
     rep #$30

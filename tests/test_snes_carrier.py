@@ -80,9 +80,12 @@ class SnesCarrierTests(unittest.TestCase):
         self.assertEqual(allocations["live_room_pending"]["offset"], 0x3C4)
         self.assertEqual(allocations["live_room_pending"]["bytes"], 3132)
         self.assertEqual(carrier.layout["live_room_active"], {
-            "address": "41:F000", "bytes": 4096,
+            "address": "41:E800", "bytes": 6144,
             "owner": "SCUMM active room metadata",
-            "exclusive_with": "runtime/snes/video_backends/mode3_surface_layout.json:reserved",
+            "exclusive_with": [
+                "runtime/snes/video_backends/mode3_surface_layout.json:fixture",
+                "runtime/snes/video_backends/mode3_surface_layout.json:reserved",
+            ],
         })
 
     def test_generated_ordinary_carrier_emits_no_boot_bytes(self) -> None:
@@ -131,12 +134,16 @@ class SnesCarrierTests(unittest.TestCase):
                 "SAME_BWRAM_VIDEO_SURFACE_STATE_SIZE = $0044",
                 "SAME_BWRAM_LIVE_ROOM_PALETTE_STAGE = SAME_BWRAM_BACKEND_BASE+$0084",
                 "SAME_BWRAM_CGRAM_SHADOW_BASE = $41E000",
-                "SAME_SCUMM_LIVE_ROOM_STAGING_BASE = $41F000",
+                "SAME_SCUMM_LIVE_ROOM_STAGING_BASE = $41E800",
+                "SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET = $E800",
                 "SAME_SCUMM_LIVE_ROOM_PENDING_BASE = SAME_BWRAM_LIVE_ROOM_PENDING",
                 "SAME_SCUMM_LIVE_ROOM_PENDING_CAPACITY = SAME_BWRAM_LIVE_ROOM_PENDING_SIZE",
                 "SAME_SCUMM_LIVE_ROOM_PENDING_BANK = $40",
             ):
                 self.assertIn(line, constants)
+            carrier_code = (root / "carrier_code.inc.pasm").read_text(encoding="utf-8")
+            self.assertIn("sta $2226 ; SBWE: enable S-CPU BW-RAM writes", carrier_code)
+            self.assertNotIn("lda #$A5", carrier_code)
             self.assertNotIn("PROGRAM_CACHE_PAGE2", constants)
             video_surface = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()
             self.assertIn(
@@ -165,6 +172,10 @@ class SnesCarrierTests(unittest.TestCase):
             code = (root / "carrier_code.inc.pasm").read_text(encoding="utf-8")
             self.assertIn(".bank 14", code)
             self.assertIn("lda #$20\n    sta $2200", code)
+            self.assertIn(
+                "lda #$80\n    sta $2226 ; SBWE: enable S-CPU BW-RAM writes",
+                code,
+            )
             self.assertNotIn("sta $2200\n    lda #$00", code)
             self.assertNotIn("$2230", code)
             self.assertEqual(manifest["save"], {"base": "400800", "bytes": 2048})

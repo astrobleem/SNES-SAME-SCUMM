@@ -58,6 +58,8 @@ def generate(
                 "SAME_BWRAM_STAGING_BASE = $000000",
                 "SAME_BWRAM_STAGING_SIZE = $0000",
                 "SAME_SCUMM_LIVE_ROOM_STAGING_BASE = $000000",
+                "SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET = $0000",
+                "SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE = $0000",
                 "SAME_SCUMM_LIVE_ROOM_SURFACE_BASE = $000000",
                 "SAME_SCUMM_LIVE_ROOM_PENDING_BASE = $000000",
                 "SAME_SCUMM_LIVE_ROOM_CONTROL = $000000",
@@ -114,6 +116,9 @@ def generate(
         constants.extend(
             [
                 f"SAME_SCUMM_LIVE_ROOM_STAGING_BASE = {hex24(live_room_active)}",
+                f"SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET = ${live_room_active & 0xFFFF:04X}",
+                f"SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE = ${int(layout['live_room_active']['bytes']):04X}",
+                f"SAME_SCUMM_LIVE_ROOM_ACTIVE_BANK = ${((live_room_active >> 16) & 0xFF):02X}",
                 "SAME_SCUMM_LIVE_ROOM_SURFACE_BASE = SAME_BWRAM_SURFACE_BASE",
                 "SAME_SCUMM_LIVE_ROOM_PENDING_BASE = SAME_BWRAM_LIVE_ROOM_PENDING",
                 "SAME_SCUMM_LIVE_ROOM_PENDING_CAPACITY = SAME_BWRAM_LIVE_ROOM_PENDING_SIZE",
@@ -150,7 +155,8 @@ Same_Carrier_Boot:
     sta $2200 ; CCNT: keep SA-1 reset asserted
     lda #$03
     sta $2228 ; BWPA: protect low 2 KiB
-    stz $2226 ; SBWE: enforce BWPA
+    lda #$80
+    sta $2226 ; SBWE: enable S-CPU BW-RAM writes; BWPA protects the low 2 KiB
     stz $2224 ; BMAPS: baseline 8 KiB window
     lda #$53
     sta.l SAME_BWRAM_CONTROL_MAGIC+$00

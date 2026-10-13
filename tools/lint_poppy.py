@@ -48,6 +48,45 @@ def line_index_at(newline_offsets: list[int], character_offset: int) -> int:
     return bisect_left(newline_offsets, character_offset)
 
 
+def mask_constant_disabled_blocks(text: str) -> str:
+    """Hide literal-false assembler blocks from source-level checks.
+
+    Poppy removes ``.if 0`` bodies before assembly.  Keep line positions stable
+    while preventing dead drafts from creating duplicate-label and width-flow
+    diagnostics.  Unknown conditions remain visible (fail closed).
+    """
+    lines = text.splitlines(keepends=True)
+    # (parent-enabled, condition-is-known, condition-value, in-else)
+    stack: list[tuple[bool, bool, bool, bool]] = []
+    enabled = True
+    output: list[str] = []
+    for line in lines:
+        code = line.split(";", 1)[0].strip().lower()
+        if code.startswith(".if "):
+            expression = code[4:].strip()
+            known = expression in {"0", "$0", "false"} or expression in {
+                "1", "$1", "true"
+            }
+            value = expression in {"1", "$1", "true"}
+            stack.append((enabled, known, value, False))
+            enabled = enabled and (value if known else True)
+            output.append(line if enabled else "\n" if line.endswith("\n") else "")
+            continue
+        if code == ".else" and stack:
+            parent, known, value, _ = stack[-1]
+            stack[-1] = (parent, known, value, True)
+            enabled = parent and ((not value) if known else True)
+            output.append(line if enabled else "\n" if line.endswith("\n") else "")
+            continue
+        if code == ".endif" and stack:
+            parent, _, _, _ = stack.pop()
+            enabled = parent
+            output.append(line if enabled else "\n" if line.endswith("\n") else "")
+            continue
+        output.append(line if enabled else "\n" if line.endswith("\n") else "")
+    return "".join(output)
+
+
 def _conditional_value(expression: str, symbols: dict[str, int | None]) -> bool | None:
     """Evaluate the small boolean subset used to guard source includes.
 
@@ -221,7 +260,7 @@ def main() -> int:
     branch_targets: set[str] = set()
     combined = []
     for path in files:
-        text = path.read_text(encoding="utf-8")
+        text = mask_constant_disabled_blocks(path.read_text(encoding="utf-8"))
         source_lines = text.splitlines()
         newline_offsets = [match.start() for match in re.finditer("\n", text)]
         combined.append(text)
@@ -270,7 +309,7 @@ def main() -> int:
     # WRAM.  This caught a real lifecycle reset bug at $7E:2222.
     far_symbols: dict[str, int] = {}
     for path in files:
-        text = path.read_text(encoding="utf-8")
+        text = mask_constant_disabled_blocks(path.read_text(encoding="utf-8"))
         for match in re.finditer(
             r"^\s*(SAME_[A-Z0-9_]+)\s*=\s*\$([0-9A-Fa-f]{6})\b",
             text,
@@ -287,7 +326,9 @@ def main() -> int:
     operand_symbols = re.compile(r"\bSAME_[A-Z0-9_]+\b", re.IGNORECASE)
     for path in files:
         for line_number, raw_line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
+            mask_constant_disabled_blocks(
+                path.read_text(encoding="utf-8")
+            ).splitlines(), start=1
         ):
             code = raw_line.split(";", 1)[0].strip()
             if not code or code.startswith(".") or "=" in code:

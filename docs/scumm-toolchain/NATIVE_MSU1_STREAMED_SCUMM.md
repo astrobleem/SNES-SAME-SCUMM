@@ -34,15 +34,16 @@ physical-hardware throughput.
 
 ## Bounded cache and ownership
 
-The feature reserves three 2 KiB bytecode pages (6 KiB total) on the SA-1
-BW-RAM carrier. The third page is feature-exclusive and mechanically
-represented in the BWRAM layout; the two ordinary WRAM pages remain unchanged:
+The feature reserves three 2 KiB bytecode pages (6 KiB total) in SNES WRAM.
+The third page uses bank `$7F`, separate from the profile-generated global
+variable table in bank `$7E`; live room metadata and the indexed surface keep
+their independent SA-1 BW-RAM allocations:
 
 | WRAM | Purpose |
 | --- | --- |
 | `$7E1000-$7E17FF` | Program cache slot 0 |
 | `$7E1800-$7E1FFF` | Program cache slot 1 |
-| `$41E800-$41EFFF` | Program cache slot 2 (SA-1 BW-RAM; separate from room metadata) |
+| `$7F1000-$7F17FF` | Program cache slot 2 (WRAM gap after object names, before C10 state) |
 | `$7E2F00-$7E2F47` | Existing 72-byte MSU provider state |
 | `$7E2F48-$7E2FEA` | Program cache metadata, generations, ownership and diagnostics |
 | `$7E2FEB-$7E2FFF` | Room-resource fetch/validation state |
@@ -65,11 +66,10 @@ Each cache page holds at most 2 KiB of one instruction-aligned body segment.
 The compiler emits checked segment boundaries and per-segment CRCs; logical
 source PCs remain independent of the physical window. Large ProgramUnits are
 fetched page by page. The 6-KiB cache is bounded; an all-pinned working set
-fails explicitly rather than reusing a live page. The third page uses SA-1
-BW-RAM `$41:E800..EFFF`, feature-exclusive with the Mode-3 conformance fixture
-workspace. The live room tile shadow occupies `$41:0000..DFFF`, palette shadow
-`$41:E000..E1FF`, and active room metadata `$41:F000..FFFF`; none overlap the
-code page. Reset and mechanical WRAM/BWRAM audits cover this ownership.
+fails explicitly rather than reusing a live page. The third page is the
+bank-$7F WRAM interval in the table above; it does not consume BW-RAM or
+overlap the live room tile shadow, palette shadow, or active metadata. Reset
+and mechanical WRAM/BW-RAM audits cover these ownership boundaries.
 
 ## Room boundary: implemented for the synthetic live-room profile
 

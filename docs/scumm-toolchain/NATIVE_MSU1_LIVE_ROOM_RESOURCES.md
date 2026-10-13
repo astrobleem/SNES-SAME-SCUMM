@@ -26,7 +26,7 @@ cursor and are checked before publication.
 | Entry/exit lifecycle | SC5LIVE ProgramUnit IDs and the existing M24R-B lifecycle | EXCD/ENCD order is retained; the outgoing room remains installed until its exit/retirement boundary. |
 | Background pixels and palette | Checked SC5VIS plus checked palette record | Pixels enter the indexed active surface; the existing Mode-3 converter/DMA path writes PPU VRAM and CGRAM. |
 | Actor placement/camera | Existing SCUMM runtime state and services | Actor/camera state is not a room asset payload; room geometry and live visual surface are room-backed. |
-| Object names | SC5LIVE v2 length-prefixed rows parallel to object records | General strings, dialogue text, and font/charset data are not part of this adapter. |
+| Object names | Validated length-prefixed rows in the compact SC5LIVE v4 active record, copied to the existing bounded object-name cache | General strings, dialogue text, and font/charset data are not part of this adapter. |
 
 The feature build has no embedded copy of the SC5LIVE/SC5VIS payloads and no
 fallback to generated ROM object, local-script, movement, or visual tables for
@@ -39,10 +39,19 @@ source-game room or resource codec is supported.
 ## Transaction and memory ownership
 
 Room transitions use the existing pending-room and M24R-B lifecycle state
-machine. Incoming SC5ROOM and SC5LIVE are fetched and checked before the
-outgoing room is retired. The validated incoming metadata is staged separately
-and copied to the active room window only after the old EXCD boundary. Palette
-and pixel records are fetched/checked before room publication and ENCD. A
+machine. Incoming SC5ROOM and SC5LIVE descriptors are checked before the
+outgoing room is retired. V4 SC5LIVE metadata is fetched in bounded chunks;
+each checked chunk is structurally preflighted before EXCD. After EXCD, the
+same chunks are fetched and CRC-checked again before copying to the active
+record, which is then validated in full before the existing consumers can
+observe it.
+
+V4 route data is a separate SC5ROUT resource. It is checked during preflight,
+but the pending buffer is reused for metadata installation. The route resource
+is therefore fetched and checked a second time after installation, immediately
+before validation and expansion into the existing movement table. This closes
+the gap where preflighted bytes could be replaced in the shared staging window.
+Palette and pixel records are also checked before room publication and ENCD. A
 pre-commit failure leaves the old room installed. A failure after irreversible
 EXCD retirement enters the explicit resource-error state; the runtime does not
 claim rollback.
@@ -54,30 +63,38 @@ accepted room request, not by each resume. The native route verifies four
 bundle loads and three releases for its four room commits, matching the host
 residency simulator rather than counting resume entries as additional releases.
 
-The SA-1/BW-RAM feature layout is mechanically declared in
-`runtime/snes/carriers/sa1_bwram_layout.json` and the WRAM overlap audit. The
-live-room feature uses:
+The SA-1/BW-RAM layout is mechanically declared in
+`runtime/snes/carriers/sa1_bwram_layout.json` and checked by the WRAM/BW-RAM
+ownership audit. Relevant live-resource allocations are:
 
-- `$40:1000-$40:1FFF`: 4 KiB backend reservation, including 768-byte palette
-  stage, 64-byte transition/control record, and 2 KiB incoming metadata stage.
-- `$41:E800-$41:EFFF`: third 2-KiB checked ProgramUnit cache page in the
-  combined live-room/streamed-program personality.
-- `$41:E200-$41:E4FF`: 768-byte active Mode-3 RGB palette; the subsequent
-  Mode-3 bitsets/work area occupy the rest of the renderer's reserved tail.
-- `$41:0000-$41:DFFF`: 57,344-byte Mode-3 tile shadow, used as bounded pixel
-  staging before pixels are copied to the active indexed surface.
+- `$40:13C4` onward: separate 3,132-byte pending metadata/resource window;
+  metadata transfers are at most 2,048 bytes per checked chunk.
+- `$41:E800` through the exclusive end at `$42:0000`: 6,144-byte active
+  SC5LIVE v4 record. It owns the Mode-3 fixture/reserved tail while this live
+  profile is active; Mode-3 writes exclude that range.
+- `$41:E200-$41:E4FF`: 768-byte visual palette staging/active palette area.
+- `$41:0000-$41:DFFF`: 57,344-byte tile shadow used as bounded pixel staging.
 - `$40:2000-$40:FFFF`: 57,344-byte active indexed surface.
-- `$41:F000-$41:FFFF`: 4-KiB active SC5LIVE metadata record.
+- `$7E:1000-$7E:17FF`, `$7E:1800-$7E:1FFF`, and `$7F:1000-$7F:17FF`:
+  three separate 2-KiB ProgramUnit cache pages. The bank-$7F page occupies
+  the audited gap after object-name storage; no page overlaps active room
+  metadata or generated variables.
 
-These regions are disjoint from the two WRAM ProgramUnit windows and the
-third BW-RAM page, resident resolver, C4/C19, controller, name cache and
-save-validator state. The active live record is bounded at 4 KiB; incoming
-metadata is staged in the separate 2.5-KiB transaction area. In authentic
-room 4, SC5LIVE is 1,646 bytes and SC5VIS contains a 57,344-byte indexed
-surface plus a 768-byte palette. Visual records are consumed in bounded
-checked reads into their dedicated staging regions. Room-resource buffers and
-bytecode cache have separate ownership and generation rules. A failed
-validation never publishes a partially received record or executable body.
+The active record is not a full contiguous copy of the normalized source
+record: routes are external, sparse portals are compact, and runtime tables
+retain only what consumers need. In the canonical DOS-CD corpus all 96 active
+records fit 6,144 bytes; the largest is 6,081 bytes (room 66). All 96 SC5ROUT
+records fit the pending bound; the largest is 3,118 bytes (room 51). Eleven
+SC5LIVE records require more than one metadata chunk. These are measured
+capacities, not a claim that every room is playable. The active and pending
+metadata, visual buffers, indexed surfaces, cache pages, resolver, C4/C19,
+controller, name cache, and save validator are mechanically checked for
+overlap.
+
+Visual records continue through bounded checked reads into their dedicated
+staging. Room-resource buffers and bytecode cache have separate ownership and
+generation rules. A failed validation never publishes a partially received
+record or executable body.
 
 ## Performance and limits
 
@@ -236,3 +253,18 @@ claimed.
 - **PLANNED:** per-resource request/CRC/presentation timing records that do
   not share an overwritten timestamp; broader resource codecs and audio
   conversion; portable streamed-save migration; and physical hardware tests.
+
+## SC5LIVE validation invariants
+
+The native v4 active record is bounded by the 6,144-byte active metadata
+allocation. Its 16-bit length is checked before any record bytes are published
+to that allocation; 6,143 and 6,144 are in range, while 6,145 is rejected.
+The host decoder applies this bound to the compact v4 bytes only. Its expanded
+legacy-shaped validation view has a separate 65,535-byte format bound because
+external route rows and compact portal data can expand during normalization.
+
+Each SCUMM v5 `BOXM` route-matrix cell is either a walkbox index in
+`[0, box_count)` or `$FF`, the no-route sentinel. This remains true after raw,
+RLE, or sparse-row decoding. Sparse rows encode only actual next-hop entries,
+so `$FF` is not a valid sparse entry value. Container CRC validity authenticates
+the bytes; it does not waive these semantic bounds.

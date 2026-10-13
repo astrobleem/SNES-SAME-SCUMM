@@ -15,7 +15,8 @@ class Phase6HBDenseGlobalsTests(unittest.TestCase):
                 "--include",str(inc),"--manifest",str(manifest)],check=True)
             data=json.loads(manifest.read_text()); text=inc.read_text()
             self.assertEqual((data["maxs_offset"],data["variable_count"]),(979,800))
-            self.assertEqual((data["variable_bytes"],data["guard_bytes"]),(1600,0x9C0))
+            self.assertEqual((data["variable_bytes"],data["guard_bytes"]),(1600,0x1C0))
+            self.assertEqual(data["stack_floor"], "7E1000")
             self.assertIn("SAME_SCUMM_VARIABLES = $7E0800",text)
             self.assertIn("SAME_SCUMM_VARIABLE_END = $7E0E40",text)
 

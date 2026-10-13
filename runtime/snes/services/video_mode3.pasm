@@ -23,9 +23,8 @@ Same_Mode3_Reset__clear_staging:
     sta.l SAME_MODE3_CANDIDATE_TILES,x
     inx
     inx
-    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS && SAME_CARRIER_IS_SA1_BWRAM
-    ; The $41:E800..EFFF Mode-3 conformance fixture workspace is the third
-    ; checked ProgramUnit page in streamed-SCUMM builds. Do not clear live code.
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS && SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; Live room metadata owns the fixture/reserved tail after publication.
     cpx #SAME_MODE3_FIXTURE-SAME_MODE3_CANDIDATE_TILES
     .else
     cpx #SAME_MODE3_FIXTURE+SAME_MODE3_FIXTURE_SIZE-SAME_MODE3_CANDIDATE_TILES

@@ -4180,10 +4180,12 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertRegex(
             poll,
             r"sep #\$10\s+\.i8\s+lda\.l SAME_SCUMM_M23A_CHAIN_SLOT\s+"
-            r"cmp #SCUMM_V5_MAX_SCRIPT_SLOTS\s+bcs .*?\s+tax\s+"
+            r"cmp #SCUMM_V5_MAX_SCRIPT_SLOTS\s+bcc (?P<valid>[A-Za-z0-9_]+)\s+"
+            r"jml ScummV5_M23A_PollLifecycleChain__invalid_slot\s+"
+            r"(?P=valid):\s+\.a8\s+tax\s+"
             r"lda\.l SAME_SCUMM_C4_SLOT_STATUS,x",
             "the lifecycle poll must zero-extend its byte slot before indexing "
-            "the C4 status table",
+            "the C4 status table and fail closed on an invalid slot",
         )
         self.assertRegex(poll, r"rep #\$10\s+\.i16\s+rts")
 

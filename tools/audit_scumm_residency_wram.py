@@ -16,6 +16,10 @@ MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 # Intervals are half-open. Their endpoints are ownership boundaries declared
 # in memory.pasm; unrelated ownership overlap fails closed.
 REGIONS = (
+    ("program_cache_page2", "SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_START",
+     "SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_END"),
+    ("generated_variables_and_stack_guard", "SAME_SCUMM_VARIABLES_RESERVED_START",
+     "SAME_SCUMM_VARIABLES_RESERVED_END"),
     ("program_cache", "SAME_SCUMM_MSU_PROGRAM_CACHE_BASE",
      "SAME_SCUMM_MSU_PROGRAM_CACHE_END"),
     ("event_queue", "SAME_EVENT_HEAD", "SAME_INPUT_HELD"),
@@ -38,10 +42,10 @@ REGIONS = (
     ("room_lifecycle", "SAME_SCUMM_M23A_ACTIVE_RECORD", "SAME_SCUMM_M23A_STATE_END"),
     ("save_staging_max", "SAME_SAVE_STAGING", "SAME_SAVE_STAGING_MAX_END"),
     ("m23b_continuations", "SAME_SCUMM_M23B_STATE", "SAME_SCUMM_M23A_RETURN_VALID"),
+    ("m23b_nested_child_slots", "SAME_SCUMM_M23B_NEST_CHILD_SLOTS",
+     "SAME_SCUMM_M23B_NEST_CHILD_SLOTS_END"),
     ("room_return_continuation", "SAME_SCUMM_M23A_RETURN_VALID",
      "SAME_SCUMM_M23A_REQUEST_API_ACTIVE_END"),
-    ("authored_variables", "SAME_SCUMM_RESIDENCY_VARIABLES_BASE",
-     "SAME_SCUMM_RESIDENCY_VARIABLES_END"),
     ("object_name_lengths", "SAME_SCUMM_OBJECT_NAME_LENGTH",
      "SAME_SCUMM_RESIDENT_WRAM_BASE"),
     ("resident_resolver", "SAME_SCUMM_RESIDENT_WRAM_BASE",
@@ -93,18 +97,14 @@ def audit() -> dict[str, Any]:
         raise ValueError(f"ProgramUnit base cache span changed: {cache['bytes']} bytes")
     bwram = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json").read_text())
     video = json.loads((ROOT / "runtime/snes/video_backends/mode3_surface_layout.json").read_text())
-    alias = bwram["future_staging"]["allocations"]["scumm_program_cache_page2"]
-    alias_address = parse_address(str(bwram["future_staging"]["address"])) + alias["offset"]
     fixture_address = parse_address(str(video["fixture"]["address"]))
-    if (alias_address, alias["bytes"]) != (fixture_address, video["fixture"]["bytes"]):
-        raise ValueError("third ProgramUnit page must exactly alias Mode-3 fixture workspace")
-    if not alias.get("alias") or alias.get("exclusive_with") != (
-        "runtime/snes/video_backends/mode3_surface_layout.json:fixture"
-    ):
-        raise ValueError("third ProgramUnit page alias lacks explicit exclusive ownership")
+    page2 = next(item for item in intervals if item["owner"] == "program_cache_page2")
+    if (page2["start"], page2["end_exclusive"], page2["bytes"]) != (
+            "$7F1000", "$7F1800", 0x800):
+        raise ValueError("third ProgramUnit page must occupy the audited bank-$7F gap")
+    if fixture_address < 0x41E800 or fixture_address >= 0x41F000:
+        raise ValueError("Mode-3 fixture alias bounds changed")
     runtime_source = (ROOT / "runtime/snes/services/video_mode3.pasm").read_text()
-    if "SAME_BUILD_SCUMM_MSU1_PROGRAMS && SAME_CARRIER_IS_SA1_BWRAM" not in runtime_source:
-        raise ValueError("Mode-3 reset does not preserve the aliased streamed code page")
     live_constants = (ROOT / "tools/generate_snes_carrier.py").read_text()
     video_surface_source = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()
     if "SAME_VIDEO_SURFACE_STATE              = SAME_BWRAM_VIDEO_SURFACE_STATE" not in video_surface_source:
@@ -119,6 +119,22 @@ def audit() -> dict[str, Any]:
         "sta.l SAME_BWRAM_CONTROL_TILE_VALID" not in runtime_source
     ):
         raise ValueError("live SC5VIS publication must invalidate the aliased tile shadow")
+    active = bwram["live_room_active"]
+    active_start = parse_address(str(active["address"]))
+    active_end = active_start + int(active["bytes"])
+    fixture_end = parse_address(str(video["fixture"]["address"])) + int(video["fixture"]["bytes"])
+    reserved_start = parse_address(str(video["reserved"]["address"]))
+    reserved_end = reserved_start + int(video["reserved"]["bytes"])
+    if (active_start != fixture_address or active_end != reserved_end
+            or fixture_end != reserved_start
+            or int(active["bytes"]) != 6144
+            or set(active.get("exclusive_with", ())) != {
+                "runtime/snes/video_backends/mode3_surface_layout.json:fixture",
+                "runtime/snes/video_backends/mode3_surface_layout.json:reserved",
+            }):
+        raise ValueError("live-room active metadata alias must exactly cover the audited fixture/reserved span")
+    if "SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE" not in live_constants:
+        raise ValueError("carrier constants omit the audited active-room metadata capacity")
     return {
         "format": "same-scumm-residency-wram-ownership-v1",
         "result": "pass",
@@ -126,13 +142,11 @@ def audit() -> dict[str, Any]:
         "features_coexist": ["resolver", "controller/input", "name cache",
                              "save validator", "C4", "C19", "room lifecycle",
                              "three-page streamed-program cache", "Mode-3 live staging"],
-        "bwram_aliases": [{
-            "owner": "SCUMM checked ProgramUnit page cache",
-            "address": f"${alias_address:06X}",
-            "bytes": alias["bytes"],
-            "exclusive_with": "Mode-3 conformance fixture engine",
-            "active_mode3_staging_unaffected": True,
-        }],
+        "bwram_aliases": [],
+        "wram_cache_page2": {
+            "address": page2["start"], "bytes": page2["bytes"],
+            "exclusive_with": [],
+        },
         "bwram_lifetime_aliases": [{
             "owner": "SCUMM checked SC5VIS pixel staging",
             "address": f"${pixel_stage_address:06X}",
@@ -141,6 +155,11 @@ def audit() -> dict[str, Any]:
             "lifetime": "incoming visual transfer through checked publication",
             "coherency": "full room present invalidates shadow before re-encoding",
         }],
+        "live_room_metadata_alias": {
+            "address": f"${active_start:06X}", "bytes": int(active["bytes"]),
+            "exclusive_with": ["Mode-3 fixture workspace", "Mode-3 reserved alias"],
+            "active_video_staging_overlaps": False,
+        },
         "regions": intervals,
         "overlaps": [],
     }
