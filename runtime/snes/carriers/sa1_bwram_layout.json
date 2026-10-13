@@ -12,7 +12,34 @@
   },
   "backend_reserved": {
     "address": "40:1000",
-    "bytes": 4096
+    "bytes": 4096,
+    "allocations": {
+      "mode3_control": {
+        "offset": 0,
+        "bytes": 18,
+        "owner": "video_mode3.pasm"
+      },
+      "video_surface_state": {
+        "offset": 128,
+        "bytes": 68,
+        "owner": "video_surface.pasm"
+      },
+      "live_room_palette_stage": {
+        "offset": 256,
+        "bytes": 768,
+        "owner": "SCUMM live-room MSU transition"
+      },
+      "live_room_control": {
+        "offset": 1024,
+        "bytes": 64,
+        "owner": "SCUMM live-room MSU transition"
+      },
+      "live_room_pending": {
+        "offset": 1536,
+        "bytes": 2048,
+        "owner": "SCUMM live-room incoming metadata transaction"
+      }
+    }
   },
   "live_surface": {
     "address": "40:2000",
@@ -35,5 +62,11 @@
   "future_staging": {
     "address": "41:E200",
     "bytes": 7680
+  },
+  "live_room_active": {
+    "address": "41:E800",
+    "bytes": 2048,
+    "owner": "SCUMM active room metadata",
+    "exclusive_with": "runtime/snes/video_backends/mode3_surface_layout.json:fixture"
   }
 }

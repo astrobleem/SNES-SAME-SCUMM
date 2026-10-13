@@ -224,8 +224,6 @@ ScummV5_Resident_ResolveProgramUnit_Far__new_peak_done:
     .a8
     bra ScummV5_Resident_ResolveProgramUnit_Far__set_valid
 ScummV5_Resident_ResolveProgramUnit_Far__reuse:
-    rep #$20
-    .a16
     lda.l SAME_SCUMM_RESIDENT_REUSE_COUNT
     inc
     sta.l SAME_SCUMM_RESIDENT_REUSE_COUNT
@@ -511,12 +509,12 @@ ScummV5_Resident_ProgramUnitForSelector_Far:
     ; the byte-sized residency flags. SEP does not disturb the carry result.
     sep #$20
     .a8
-    bcc ScummV5_Resident_ProgramUnitForSelector_Far__bad
+    bcc ScummV5_Resident_ProgramUnitForSelector_Far__bad_selector
     lda.l SAME_SCUMM_RESIDENT_POOL_INDEX
     tax
     lda.l SAME_SCUMM_RESIDENT_FLAGS,x
     and #SCUMM_RESIDENT_FLAG_VALID
-    beq ScummV5_Resident_ProgramUnitForSelector_Far__bad
+    beq ScummV5_Resident_ProgramUnitForSelector_Far__bad_flags
     rep #$20
     .a16
     lda.l SAME_SCUMM_RESIDENT_POOL_INDEX
@@ -532,8 +530,46 @@ ScummV5_Resident_ProgramUnitForSelector_Far:
 ScummV5_Resident_ProgramUnitForSelector_Far__bad16:
     sep #$20
     .a8
+    lda #$03
+    sta.l SAME_SCUMM_RESIDENT_DIAG_STAGE
+    bra ScummV5_Resident_ProgramUnitForSelector_Far__bad
+ScummV5_Resident_ProgramUnitForSelector_Far__bad_selector:
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_RESIDENT_DIAG_STAGE
+    bra ScummV5_Resident_ProgramUnitForSelector_Far__bad
+ScummV5_Resident_ProgramUnitForSelector_Far__bad_flags:
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_RESIDENT_DIAG_STAGE
 ScummV5_Resident_ProgramUnitForSelector_Far__bad:
     .a8
+    .if SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP
+    lda.l SAME_SCUMM_RESIDENT_SELECTOR
+    sta.l SAME_SCUMM_RESIDENT_DIAG_RETURNED
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_RESIDENT_POOL_INDEX
+    sta.l SAME_SCUMM_RESIDENT_DIAG_POOL_INDEX
+    cmp #SCUMM_RESIDENT_SELECTOR_COUNT
+    bcs ScummV5_Resident_ProgramUnitForSelector_Far__bad_diag_done
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_RESIDENT_FLAGS,x
+    rep #$20
+    .a16
+    and #$00FF
+    sta.l SAME_SCUMM_RESIDENT_DIAG_INDEX
+    lda.l SAME_SCUMM_RESIDENT_POOL_INDEX
+    asl
+    tax
+    lda.l SAME_SCUMM_RESIDENT_UNIT_IDS,x
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+ScummV5_Resident_ProgramUnitForSelector_Far__bad_diag_done:
+    sep #$20
+    .a8
+    .endif
     lda #$02
     sta.l SAME_SCUMM_RESIDENT_BUNDLE_FAILURE
     .if SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP
@@ -545,6 +581,20 @@ ScummV5_Resident_ProgramUnitForSelector_Far__bad:
     sta.l SAME_SCUMM_SCENARIO_ERROR_OPCODE
     lda.l SAME_SCUMM_C4_CURRENT_SLOT
     sta.l SAME_SCUMM_SCENARIO_ERROR_SLOT
+    ; The PHP at this routine's entry is the top stack byte; the rejecting
+    ; caller's JSL return frame begins at S+2. Keep it in bounded diagnostic
+    ; scratch so a stale selector report identifies its actual VM call site.
+    rep #$10
+    .i16
+    tsx
+    sep #$20
+    .a8
+    lda 2,s
+    sta.l SAME_SCUMM_RESIDENT_ERROR_CALLER_PC
+    lda 3,s
+    sta.l SAME_SCUMM_RESIDENT_ERROR_CALLER_PC+1
+    lda 4,s
+    sta.l SAME_SCUMM_RESIDENT_ERROR_CALLER_BANK
     rep #$20
     .a16
     lda.l SAME_SCUMM_PC
@@ -651,6 +701,9 @@ ScummV5_Resident_ResolveGlobalScript_Far__missing:
 
 ; Resolve an LSCR number in the currently active resource record.
 ScummV5_Resident_ResolveLocalScript_Far:
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    jml ScummV5_LiveRoom_ResolveLocalScript_Far
+.endif
     php
     sep #$20
     .a8
@@ -789,6 +842,9 @@ ScummV5_Resident_RefreshDiagnostics_Far:
 ; Eagerly bind and room-pin every selector-bearing ProgramUnit in one bundle.
 ; On failure, unwind the partial bundle and leave an explicit resolver error.
 ScummV5_Resident_LoadRoomBundle_Far:
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    jml ScummV5_LiveRoom_LoadBundle_Far
+.endif
     php
     sep #$20
     .a8
@@ -864,6 +920,9 @@ ScummV5_Resident_LoadRoomBundle_Far__bad:
 ; Remove only the room-bundle ownership pins for one record. Live activations
 ; and independent explicit pins remain protected by their own owners.
 ScummV5_Resident_ReleaseRoomBundle_Far:
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    jml ScummV5_LiveRoom_ReleaseBundle_Far
+.endif
     php
     sep #$20
     .a8

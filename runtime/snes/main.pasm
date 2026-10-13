@@ -567,6 +567,9 @@ Same_Tad_BlankSong:
 .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
 .include "engines/scumm_v5_msu_programs.pasm"
 .endif
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+.include "engines/scumm_v5_msu_live_room.pasm"
+.endif
 .include "engines/scumm_v5_camera_far.pasm"
 .if SAME_VIDEO_BACKEND_LEGACY
 .include "services/video_k1_far.pasm"

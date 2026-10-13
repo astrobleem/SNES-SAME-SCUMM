@@ -1111,6 +1111,25 @@ ScummV5_Engine_Frame__controller_root_done:
     beq ScummV5_Engine_Frame__m23a_ready
     cmp #$06
     beq ScummV5_Engine_Frame__m23a_failed
+    cmp #$03
+    bne ScummV5_Engine_Frame__m23a_hold_check
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda.l SCUMM_LIVE_ROOM_STAGE
+    cmp #SCUMM_LIVE_ROOM_STAGE_PREFLIGHT_READY
+    bne ScummV5_Engine_Frame__m23a_hold_check
+    ; Phase 3 normally represents an authored lifecycle hold. In the live-room
+    ; path, PREFLIGHT_READY plus phase 3 specifically means EXCD already
+    ; stopped and CommitRoom is waiting for the renderer's shared staging
+    ; buffer. Retry that same commit without replaying EXCD.
+    jsl ScummV5_M24RB_Far_ResumeVisualCommit_FarEntry
+    bcs ScummV5_Engine_Frame__m23a_error
+    lda.l SAME_SCUMM_M23A_PHASE
+    cmp #$04
+    beq ScummV5_Engine_Frame__m23a_wait
+    lda.l SAME_SCUMM_M23A_HOLD
+    bne ScummV5_Engine_Frame__m23a_wait
+    jmp ScummV5_Engine_Frame__m23a_continue
+.endif
     bra ScummV5_Engine_Frame__m23a_hold_check
 ScummV5_Engine_Frame__m23a_ready:
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
@@ -1119,6 +1138,15 @@ ScummV5_Engine_Frame__m23a_ready:
     jsr ScummV5_M23A_ResourceReady
     .endif
     bcs ScummV5_Engine_Frame__m23a_error
+    ; ResourceReady may synchronously advance the lifecycle into a new
+    ; asynchronous stage (for example, after validating incoming SC5LIVE
+    ; metadata and starting its palette read). Recheck the phase before the
+    ; scheduler: otherwise the same frame can run C4 with the neutral
+    ; PROGRAM_SELECT used by the room-transition boundary.
+    .a8
+    lda.l SAME_SCUMM_M23A_PHASE
+    cmp #$04
+    beq ScummV5_Engine_Frame__m23a_wait
 ScummV5_Engine_Frame__m23a_hold_check:
     lda.l SAME_SCUMM_M23A_HOLD
     beq ScummV5_Engine_Frame__m23a_continue
@@ -2922,6 +2950,7 @@ ScummV5_Engine_Frame__error:
     .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
     jsl ScummV5_MsuProgram_Leave_Far
     .endif
+ScummV5_Engine_Frame__error_after_leave:
     sep #$20
     .a8
     lda.l SAME_SCUMM_C18_NESTED
@@ -2951,6 +2980,7 @@ ScummV5_Engine_Frame__complete_success:
     ; bytecode context before the existing C18 return path resumes it.
     jsl ScummV5_MsuProgram_Leave_Far
     .endif
+ScummV5_Engine_Frame__complete_success_after_leave:
     sep #$20
     .a8
     lda.l SAME_SCUMM_C18_NESTED
@@ -2987,9 +3017,22 @@ ScummV5_Engine_Frame__outer_complete_success:
     beq ScummV5_Engine_Frame__room_exit_yield_done
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_EndRoomScript_FarEntry
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; EXCD has stopped and EndRoomScript retired slot zero. PROGRAM_SELECT is
+    ; only the shared interpreter's transient current-program scratch here;
+    ; do not leave the outgoing ephemeral selector live while CommitRoom
+    ; releases its bundle and asynchronously fetches/installs the next room.
+    ; Persistent activations retain their canonical selector in C4 slots.
+    lda #$00
+    sta.l SAME_SCUMM_PROGRAM_SELECT
+    .endif
     jsl ScummV5_M23A_CommitRoom_FarEntry
     .else
     jsr ScummV5_M23A_EndRoomScript
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    lda #$00
+    sta.l SAME_SCUMM_PROGRAM_SELECT
+    .endif
     jsr ScummV5_M23A_CommitRoom
     .endif
     bcc ScummV5_Engine_Frame__room_exit_yield_commit_ok
@@ -15900,15 +15943,39 @@ ScummV5_Op_Stop__m23a_check_phase:
     beq ScummV5_Op_Stop__m23a_entry_complete
     jmp ScummV5_Op_Stop__m23a_not_room_script
 ScummV5_Op_Stop__m23a_exit_complete:
+    .a8
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; This Stop is the final instruction fetched from the outgoing EXCD. Drop
+    ; its transient bytecode-cache execution pin before CommitRoom releases
+    ; the outgoing room bundle. The continuation below skips the ordinary
+    ; frame-boundary Leave so a nested parent context cannot be popped twice.
+    jsl ScummV5_MsuProgram_Leave_Far
+    .endif
     .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
     jsl ScummV5_M23A_EndRoomScript_FarEntry
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    ; The opcode-driven EXCD completion path reaches CommitRoom directly (it
+    ; does not pass through the frame-boundary completion fallback below).
+    ; Slot zero is retired, so clear only the shared transient selector before
+    ; releasing the outgoing bundle. Live global selectors remain in C4 slots.
+    lda #$00
+    sta.l SAME_SCUMM_PROGRAM_SELECT
+    .endif
     jsl ScummV5_M23A_CommitRoom_FarEntry
     .else
     jsr ScummV5_M23A_EndRoomScript
+    .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
+    lda #$00
+    sta.l SAME_SCUMM_PROGRAM_SELECT
+    .endif
     jsr ScummV5_M23A_CommitRoom
     .endif
     bcc ScummV5_Op_Stop__m23a_exit_commit_ok
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jmp ScummV5_Engine_Frame__error_after_leave
+.else
     jmp ScummV5_Op_Stop__m23a_error
+.endif
 ScummV5_Op_Stop__m23a_exit_commit_ok:
     lda.l SAME_SCUMM_C22_NULL_SCENE
     beq ScummV5_Op_Stop__m23a_exit_room_ready
@@ -15917,11 +15984,8 @@ ScummV5_Op_Stop__m23a_exit_commit_ok:
     jmp ScummV5_Op_Stop__m23a_restore_return
 ScummV5_Op_Stop__m23a_exit_room_ready:
 .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
-    ; CommitRoom has installed the incoming ENCD in slot zero.  The current
-    ; interpreter invocation still owns the outgoing EXCD cache context, so
-    ; it must return through the common frame boundary (which releases that
-    ; cache pin) before the next frame resolves/fetches the incoming body.
-    jmp ScummV5_Engine_Frame__complete_success
+    ; The outgoing EXCD cache context was released before room-bundle release.
+    jmp ScummV5_Engine_Frame__complete_success_after_leave
 .else
     jmp ScummV5_Engine_Frame__next
 .endif
@@ -18829,6 +18893,10 @@ ScummV5_GetProgramSize:
     .if SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS == 0
     ; A source-backed profile has no implicit C1/C2 fallback. A missing
     ; selector is a resource error, never a conformance program alias.
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$97
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
+    .endif
     lda #SCUMM_ERR_RESOURCE
     jsr ScummV5_SetError
     rep #$20
@@ -19521,6 +19589,10 @@ ScummV5_FetchSelectedByteAtX:
     ; no ROM body fallback is permitted after a checked MSU cache miss/failure.
     jsl ScummV5_MsuProgram_FetchByte_Far
     bcc ScummV5_FetchSelectedByteAtX__m23a
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$98
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
+    .endif
     lda #SCUMM_ERR_RESOURCE
     jsr ScummV5_SetError
     lda #$00

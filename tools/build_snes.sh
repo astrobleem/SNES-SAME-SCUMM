@@ -75,6 +75,27 @@ if [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" == "1" ]]; then
         exit 1
     fi
 fi
+if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
+    if [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" != "1" ||
+          "${SAME_SNES_CARRIER:-lorom}" != "sa1_bwram" ||
+          "${SAME_SNES_VIDEO_BACKEND:-legacy_backdrop}" != "mode3_surface" ||
+          "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" != "1" ]]; then
+        echo "Live MSU room resources require MSU ProgramUnits, SA-1 BW-RAM, mode3_surface, and room visuals" >&2
+        exit 1
+    fi
+fi
+if [[ -n "${SAME_MSU1_LIVE_ROOM_PCM_TRACK:-}" ]]; then
+    if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" != "1" ||
+          ! "${SAME_MSU1_LIVE_ROOM_PCM_TRACK}" =~ ^[0-9]+$ ||
+          "${SAME_MSU1_LIVE_ROOM_PCM_TRACK}" -lt 1 ||
+          "${SAME_MSU1_LIVE_ROOM_PCM_TRACK}" -gt 65535 ||
+          -z "${SAME_MSU1_LIVE_ROOM_PCM_SOURCE:-}" ||
+          ! -f "${SAME_MSU1_LIVE_ROOM_PCM_SOURCE}" ]]; then
+        echo "MSU room PCM test needs live-room SCUMM mode, a track in 1..65535, and an existing SAME_MSU1_LIVE_ROOM_PCM_SOURCE" >&2
+        exit 1
+    fi
+fi
 if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" &&
       "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" != "1" ]]; then
     echo "SAME_SCUMM_WHOLE_SOURCE_MANIFEST requires dynamic SCUMM program residency" >&2
@@ -109,6 +130,10 @@ fi
 
 cd "$ROOT"
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+mkdir -p runtime/snes/generated
+# Builds must own the complete generated engine-fixture include set instead
+# of accidentally depending on stale files in runtime/snes/generated.
+"$PYTHON" tools/generate_engine_fixtures.py
 "$PYTHON" tools/check_poppy.py "$POPPY_ROOT" --dll "$POPPY_DLL"
 POPPY_SHA256="$(sha256sum "$POPPY_DLL" | awk '{print $1}')"
 echo "Poppy SHA-256: $POPPY_SHA256"
@@ -284,6 +309,13 @@ if [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--msu1-storage --scumm-msu1-programs
         --scumm-disable-embedded-test-programs)
 fi
+if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
+    ENGINE_SELECTION_ARGS+=(--scumm-msu1-live-room-resources)
+fi
+if [[ -n "${SAME_MSU1_LIVE_ROOM_PCM_TRACK:-}" ]]; then
+    ENGINE_SELECTION_ARGS+=(--scumm-msu1-live-room-pcm-track
+        "$SAME_MSU1_LIVE_ROOM_PCM_TRACK")
+fi
 if [[ "${SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-residency-diagnostic)
 fi
@@ -350,7 +382,7 @@ else
             ROOM_GENERATOR_ARGS+=(--pack-source-tables --banked-room-directory-data)
         else
             DYNAMIC_RESIDENCY_MANIFEST="${SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST:?Set SAME_SCUMM_DYNAMIC_FIXTURE_MANIFEST to a generated synthetic cooked-room manifest}"
-            M23A_BUILD="$ROOT/build/scumm-native-residency"
+            M23A_BUILD="${SAME_SCUMM_DYNAMIC_BUILD_DIR:-$ROOT/build/scumm-native-residency}"
         fi
         ROOM_MANIFESTS=(--manifest "$DYNAMIC_RESIDENCY_MANIFEST")
         ROOM_BINARY_DIR="${SAME_SCUMM_DYNAMIC_FIXTURE_BINARY_DIR:-$(dirname "$DYNAMIC_RESIDENCY_MANIFEST")/segments}"
@@ -906,6 +938,9 @@ else
             --msu1-program-directory-include runtime/snes/generated/scumm_v5_msu_programs.inc.pasm
             --msu1-program-directory-bank 10
             --reserved-bank 10 --reserved-bank 11)
+        if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
+            ROOM_GENERATOR_ARGS+=(--msu1-live-room-resources)
+        fi
         if [[ -n "${SAME_SCUMM_MSU1_PREFIX_PACKAGE:-}" ||
               -n "${SAME_SCUMM_MSU1_PREFIX_SECTION:-}" ||
               "${SAME_SCUMM_MSU1_PREFIX_ALL_SECTIONS:-0}" == "1" ]]; then
@@ -951,23 +986,39 @@ else
         "${ROOM_GENERATOR_ARGS[@]}"
     ROOM_TABLES_GENERATED=1
     if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" == "1" ]]; then
-        ROOM_VISUAL_MANIFEST="${SAME_SCUMM_ROOM_VISUAL_MANIFEST:-$M23A_BUILD/authentic/manifest.json}"
-        if [[ -n "${SAME_SCUMM_ROOM_VISUAL_FIRST_BANK:-}" ]]; then
-            ROOM_VISUAL_FIRST_BANK="$SAME_SCUMM_ROOM_VISUAL_FIRST_BANK"
+        if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
+            # The canonical visual payload is in the checked SC5VIS package
+            # section. Keep only zero-count compile-time symbols for dormant
+            # ROM visual routines; no descriptor or pixel payload is emitted.
+            printf '%s\n' \
+                '; Live-room mode: no ROM visual descriptors or pixel payloads exist.' \
+                'SCUMM_V5_ROOM_VISUAL_COUNT = $00' \
+                'SCUMM_V5_INITIAL_VISUAL_ROOM = $00' \
+                'SCUMM_V5_ROOM_VISUAL_DESCRIPTOR_MAGIC = $5652' \
+                'SCUMM_V5_ROOM_VISUAL_DESCRIPTOR_VERSION = $01' \
+                'SCUMM_V5_ROOM_VISUAL_FIRST_DATA_BANK = $00' \
+                'SCUMM_V5_ROOM_VISUAL_LAST_DATA_BANK = $00' \
+                'SCUMM_V5_ROOM_VISUAL_DIRECTORY = $000000' \
+                > runtime/snes/generated/scumm_v5_room_visuals.inc.pasm
         else
-            ROOM_VISUAL_FIRST_BANK="$(( $("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["last_bank"])' "$ROOM_GENERATOR_REPORT") + 1 ))"
-        fi
-        if [[ "${SAME_SCUMM_REUSE_COOKED_ROOM_VISUALS:-0}" == "1" ]]; then
-            test -s runtime/snes/generated/scumm_v5_room_visuals.inc.pasm
-            echo "Reusing existing cooked room-visual delivery"
-        else
-            "$PYTHON" tools/generate_snes_room_visuals.py \
-                --manifest "$ROOM_VISUAL_MANIFEST" \
-                --output runtime/snes/generated/scumm_v5_room_visuals.inc.pasm \
-                --binary-dir "$M23A_BUILD/visual-segments" \
-                --report "${SAME_SNES_OUTPUT:-build/same-engine-host.sfc}.room-visuals.json" \
-                --first-bank "$ROOM_VISUAL_FIRST_BANK" \
-                ${SAME_SCUMM_ROOM_VISUAL_ROOMS:+$(for room in ${SAME_SCUMM_ROOM_VISUAL_ROOMS//,/ }; do printf -- '--room %s ' "$room"; done)}
+            ROOM_VISUAL_MANIFEST="${SAME_SCUMM_ROOM_VISUAL_MANIFEST:-$M23A_BUILD/authentic/manifest.json}"
+            if [[ -n "${SAME_SCUMM_ROOM_VISUAL_FIRST_BANK:-}" ]]; then
+                ROOM_VISUAL_FIRST_BANK="$SAME_SCUMM_ROOM_VISUAL_FIRST_BANK"
+            else
+                ROOM_VISUAL_FIRST_BANK="$(( $("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["last_bank"])' "$ROOM_GENERATOR_REPORT") + 1 ))"
+            fi
+            if [[ "${SAME_SCUMM_REUSE_COOKED_ROOM_VISUALS:-0}" == "1" ]]; then
+                test -s runtime/snes/generated/scumm_v5_room_visuals.inc.pasm
+                echo "Reusing existing cooked room-visual delivery"
+            else
+                "$PYTHON" tools/generate_snes_room_visuals.py \
+                    --manifest "$ROOM_VISUAL_MANIFEST" \
+                    --output runtime/snes/generated/scumm_v5_room_visuals.inc.pasm \
+                    --binary-dir "$M23A_BUILD/visual-segments" \
+                    --report "${SAME_SNES_OUTPUT:-build/same-engine-host.sfc}.room-visuals.json" \
+                    --first-bank "$ROOM_VISUAL_FIRST_BANK" \
+                    ${SAME_SCUMM_ROOM_VISUAL_ROOMS:+$(for room in ${SAME_SCUMM_ROOM_VISUAL_ROOMS//,/ }; do printf -- '--room %s ' "$room"; done)}
+            fi
         fi
     fi
     if [[ "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" == "1" ]]; then
@@ -1062,6 +1113,11 @@ elif [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" == "1" ]]; then
     "$PYTHON" tools/generate_snes_msu1_directory.py "$MSU_PROGRAM_PACKAGE" \
         --include runtime/snes/generated/msu1_package.inc.pasm \
         --manifest "${SAME_SNES_OUTPUT:-build/same-scumm-v5-msu-programs.sfc}.msu1-directory.json"
+    # SCUMM consumes the generated package directory directly. The provider's
+    # standalone read-case vectors belong only to the Winston diagnostic
+    # personality, but the shared storage module still includes this symbol.
+    printf '%s\n' '; No standalone MSU read vectors in the SCUMM consumer build.' \
+        > runtime/snes/generated/msu1_read_cases.inc.pasm
     MSU_PROGRAM_ROM="${SAME_SNES_OUTPUT:-build/same-engine-host.sfc}"
     MSU_PROGRAM_STEM="${MSU_PROGRAM_ROM##*/}"
     MSU_PROGRAM_STEM="${MSU_PROGRAM_STEM%.sfc}"
@@ -1075,6 +1131,17 @@ elif [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" == "1" ]]; then
         fi
     else
         cp "$MSU_PROGRAM_PACKAGE" "$MSU_PROGRAM_DEST"
+    fi
+    if [[ -n "${SAME_MSU1_LIVE_ROOM_PCM_TRACK:-}" ]]; then
+        MSU_ROOM_PCM_DEST="$MSU_PROGRAM_DEST_DIR/$MSU_PROGRAM_STEM-$SAME_MSU1_LIVE_ROOM_PCM_TRACK.pcm"
+        if [[ -e "$MSU_ROOM_PCM_DEST" ]]; then
+            if ! cmp -s "$SAME_MSU1_LIVE_ROOM_PCM_SOURCE" "$MSU_ROOM_PCM_DEST"; then
+                echo "Refusing to overwrite non-identical live-room PCM sidecar: $MSU_ROOM_PCM_DEST" >&2
+                exit 1
+            fi
+        else
+            cp "$SAME_MSU1_LIVE_ROOM_PCM_SOURCE" "$MSU_ROOM_PCM_DEST"
+        fi
     fi
 else
     printf '%s\n' '; Generated empty MSU-1 package directory (provider disabled).' \

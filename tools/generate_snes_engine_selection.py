@@ -28,6 +28,14 @@ def main() -> int:
         "--scumm-msu1-programs", action="store_true",
         help="load dynamic SCUMM ProgramUnit bodies through the checked MSU-1 provider",
     )
+    parser.add_argument(
+        "--scumm-msu1-live-room-resources", action="store_true",
+        help="source live SCUMM room tables and visuals from checked SAMEPKG records",
+    )
+    parser.add_argument(
+        "--scumm-msu1-live-room-pcm-track", type=int, default=0,
+        help="diagnostic only: loop this MSU PCM track while live room reads run",
+    )
     parser.add_argument("--msu1-test-force-busy", action="store_true",
                         help="diagnostic-only: force bounded MSU busy timeout")
     parser.add_argument("--scumm-m21", action="store_true")
@@ -115,6 +123,17 @@ def main() -> int:
         parser.error(
             "--scumm-msu1-programs requires SCUMM v5, --msu1-storage, dynamic residency, M23A, and M24RB"
         )
+    if args.scumm_msu1_live_room_resources and (
+        not args.scumm_msu1_programs or not args.scumm_room_visual
+        or not args.engine == "scumm_v5"
+    ):
+        parser.error(
+            "--scumm-msu1-live-room-resources requires SCUMM MSU ProgramUnits and room visuals"
+        )
+    if not 0 <= args.scumm_msu1_live_room_pcm_track <= 0xFFFF:
+        parser.error("--scumm-msu1-live-room-pcm-track must fit u16")
+    if args.scumm_msu1_live_room_pcm_track and not args.scumm_msu1_live_room_resources:
+        parser.error("--scumm-msu1-live-room-pcm-track requires live room resources")
     if args.msu1_test_force_busy and args.engine != "winston_io":
         parser.error("--msu1-test-force-busy is only valid for winston_io")
     if args.scumm_m25a_pending_only and args.engine != "scumm_v5":
@@ -182,6 +201,8 @@ def main() -> int:
         f"SAME_BUILD_SCUMM_M19 = ${1 if args.engine == 'scumm_v5' else 0:02X}\n"
         f"SAME_BUILD_MSU1_STORAGE = ${1 if args.msu1_storage else 0:02X}\n"
         f"SAME_BUILD_SCUMM_MSU1_PROGRAMS = ${1 if args.engine == 'scumm_v5' and args.scumm_msu1_programs else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES = ${1 if args.engine == 'scumm_v5' and args.scumm_msu1_live_room_resources else 0:02X}\n"
+        f"SAME_SCUMM_MSU1_LIVE_ROOM_PCM_TEST_TRACK = ${args.scumm_msu1_live_room_pcm_track:04X}\n"
         f"SAME_BUILD_MSU1_TEST_FORCE_BUSY = ${1 if args.msu1_test_force_busy else 0:02X}\n"
         f"SAME_BUILD_WINSTON_IO = ${1 if args.engine == 'winston_io' else 0:02X}\n"
         f"SAME_BUILD_MODE3_SURFACE_CONFORMANCE = ${1 if args.engine == 'mode3_surface_conformance' else 0:02X}\n"

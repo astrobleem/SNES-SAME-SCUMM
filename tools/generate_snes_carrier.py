@@ -55,6 +55,13 @@ def generate(
                 "SAME_BWRAM_CGRAM_SHADOW_SIZE = $0000",
                 "SAME_BWRAM_STAGING_BASE = $000000",
                 "SAME_BWRAM_STAGING_SIZE = $0000",
+                "SAME_SCUMM_LIVE_ROOM_STAGING_BASE = $000000",
+                "SAME_SCUMM_LIVE_ROOM_SURFACE_BASE = $000000",
+                "SAME_SCUMM_LIVE_ROOM_PENDING_BASE = $000000",
+                "SAME_SCUMM_LIVE_ROOM_CONTROL = $000000",
+                "SAME_SCUMM_LIVE_ROOM_PALETTE_STAGE = $000000",
+                "SAME_SCUMM_LIVE_ROOM_PIXEL_STAGE_BASE = $000000",
+                "SAME_SCUMM_LIVE_ROOM_PIXEL_STAGE_BANK = $00",
             ]
         )
     else:
@@ -90,6 +97,28 @@ def generate(
                 "SAME_BWRAM_CONTROL_PENDING_GENERATION = SAME_BWRAM_BACKEND_BASE+$000E",
                 "SAME_BWRAM_CONTROL_COMMITTED_GENERATION = SAME_BWRAM_BACKEND_BASE+$0010",
                 "SAME_BWRAM_CONTROL_SIZE = $0012",
+            ]
+        )
+        for allocation_name, allocation in layout["backend_reserved"]["allocations"].items():
+            constant_name = allocation_name.upper()
+            constants.append(
+                f"SAME_BWRAM_{constant_name} = SAME_BWRAM_BACKEND_BASE+${allocation['offset']:04X}"
+            )
+            constants.append(f"SAME_BWRAM_{constant_name}_SIZE = ${allocation['bytes']:04X}")
+        from same.snes_carrier import parse_address
+        live_room_active = parse_address(layout["live_room_active"]["address"])
+        live_room_pending = parse_address(layout["backend_reserved"]["address"])
+        live_room_pending += int(layout["backend_reserved"]["allocations"]["live_room_pending"]["offset"])
+        constants.extend(
+            [
+                f"SAME_SCUMM_LIVE_ROOM_STAGING_BASE = {hex24(live_room_active)}",
+                "SAME_SCUMM_LIVE_ROOM_SURFACE_BASE = SAME_BWRAM_SURFACE_BASE",
+                "SAME_SCUMM_LIVE_ROOM_PENDING_BASE = SAME_BWRAM_LIVE_ROOM_PENDING",
+                f"SAME_SCUMM_LIVE_ROOM_PENDING_BANK = ${((live_room_pending >> 16) & 0xFF):02X}",
+                "SAME_SCUMM_LIVE_ROOM_CONTROL = SAME_BWRAM_LIVE_ROOM_CONTROL",
+                "SAME_SCUMM_LIVE_ROOM_PALETTE_STAGE = SAME_BWRAM_LIVE_ROOM_PALETTE_STAGE",
+                "SAME_SCUMM_LIVE_ROOM_PIXEL_STAGE_BASE = SAME_BWRAM_TILE_SHADOW_BASE",
+                f"SAME_SCUMM_LIVE_ROOM_PIXEL_STAGE_BANK = ${((parse_address(layout['tile_shadow']['address']) >> 16) & 0xFF):02X}",
             ]
         )
     (output_dir / "carrier_constants.inc.pasm").write_text(

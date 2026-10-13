@@ -88,6 +88,45 @@ def _validate_layout(layout: dict[str, Any]) -> tuple[MemoryRegion, ...]:
         raise ValueError("live surface is not INDEX8")
     if layout["tile_shadow"].get("tiles") != 896 or layout["tile_shadow"].get("tile_bytes") != 64:
         raise ValueError("tile shadow dimensions differ")
+    subregions = layout["backend_reserved"].get("allocations")
+    if not isinstance(subregions, dict):
+        raise ValueError("backend-reserved BW-RAM requires explicit internal allocations")
+    occupied: list[tuple[int, int, str]] = []
+    for name, item in subregions.items():
+        if not isinstance(item, dict):
+            raise ValueError(f"backend allocation {name} is malformed")
+        offset, size = item.get("offset"), item.get("bytes")
+        if not isinstance(offset, int) or not isinstance(size, int) or offset < 0 or size <= 0:
+            raise ValueError(f"backend allocation {name} has invalid bounds")
+        if offset + size > layout["backend_reserved"]["bytes"]:
+            raise ValueError(f"backend allocation {name} escapes backend_reserved")
+        occupied.append((offset, offset + size, name))
+    occupied.sort()
+    for left, right in zip(occupied, occupied[1:]):
+        if left[1] > right[0]:
+            raise ValueError(f"backend allocations overlap: {left[2]} and {right[2]}")
+    # The active live-room metadata occupies the mode-3 diagnostic fixture
+    # bytes only in the mutually exclusive SCUMM live-resource personality.
+    # It must never overlap the mode-3 palette/work pipeline.
+    live_room = layout.get("live_room_active")
+    if not isinstance(live_room, dict):
+        raise ValueError("live-room active metadata allocation is missing")
+    live_address = parse_address(str(live_room.get("address")))
+    live_size = live_room.get("bytes")
+    staging = layout["future_staging"]
+    staging_address = parse_address(str(staging["address"]))
+    if not isinstance(live_size, int) or live_size != 0x0800:
+        raise ValueError("live-room active metadata must be exactly 2 KiB")
+    if not (staging_address <= live_address and live_address + live_size <= staging_address + staging["bytes"]):
+        raise ValueError("live-room active metadata escapes future_staging")
+    if live_room.get("exclusive_with") != (
+        "runtime/snes/video_backends/mode3_surface_layout.json:fixture"
+    ):
+        raise ValueError("live-room active metadata must declare its exclusive video fixture alias")
+    pending = subregions.get("live_room_pending")
+    if pending != {"offset": 0x600, "bytes": 0x800,
+                   "owner": "SCUMM live-room incoming metadata transaction"}:
+        raise ValueError("live-room pending metadata must use its audited 2 KiB backend allocation")
     return tuple(ordered)
 
 
@@ -117,6 +156,29 @@ def load_carrier(
         layout_raw = layout_path.read_bytes()
         layout = json.loads(layout_raw)
         _validate_layout(layout)
+        if name == "sa1_bwram":
+            video_path = root / "runtime/snes/video_backends/mode3_surface_layout.json"
+            video_layout = json.loads(video_path.read_text(encoding="utf-8"))
+            active = layout["live_room_active"]
+            fixture = video_layout.get("fixture", {})
+            if (active.get("address"), active.get("bytes")) != (
+                fixture.get("address"), fixture.get("bytes")
+            ):
+                raise ValueError("live-room metadata alias no longer matches the exclusive mode3 fixture")
+            active_start = parse_address(str(active["address"]))
+            active_end = active_start + int(active["bytes"])
+            for region_name, region in video_layout.items():
+                if region_name in {"format", "version", "active_convert_tile_budget",
+                                   "dma_byte_budget", "dma_descriptor_limit", "fixture"}:
+                    continue
+                if not isinstance(region, dict) or "address" not in region or "bytes" not in region:
+                    continue
+                start = parse_address(str(region["address"]))
+                end = start + int(region["bytes"])
+                if active_start < end and start < active_end:
+                    raise ValueError(
+                        f"live-room metadata overlaps active video region {region_name}"
+                    )
         layout_hash = _sha256(layout_raw)
     description = CarrierDescription(
         name=name,

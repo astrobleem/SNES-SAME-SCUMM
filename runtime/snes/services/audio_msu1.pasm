@@ -40,6 +40,12 @@ Same_Msu1_Audio_Play__control:
     plp
     rts
 
+; Bank-safe service entry for far SCUMM diagnostic clients. The payload
+; routine remains the single owner of the MSU audio registers.
+Same_Msu1_Audio_Play_Far:
+    jsr Same_Msu1_Audio_Play
+    rtl
+
 Same_Msu1_Audio_Stop:
     php
     sep #$20

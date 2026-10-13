@@ -84,6 +84,39 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             self.assertIn("SAME_BUILD_SCUMM_SAVE_PERSISTENCE_VALIDATOR = $01", config)
             self.assertIn("SAME_BUILD_SCUMM_ROOM_SERVICE_FAR = $01", config)
 
+    def test_live_room_pcm_diagnostic_is_feature_gated_by_room_storage(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="same-live-room-pcm-selection-") as raw:
+            output = Path(raw) / "active_engine.inc.pasm"
+            command = [
+                sys.executable, str(ROOT / "tools/generate_snes_engine_selection.py"),
+                "--engine", "scumm_v5", "--msu1-storage",
+                "--scumm-msu1-programs", "--scumm-msu1-live-room-resources",
+                "--scumm-room-visual", "--scumm-m23a", "--m24rb",
+                "--scumm-dynamic-program-residency",
+                "--scumm-msu1-live-room-pcm-track", "101",
+                "--output", str(output),
+            ]
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            config = output.with_name("build_config.inc.pasm").read_text()
+            self.assertIn("SAME_SCUMM_MSU1_LIVE_ROOM_PCM_TEST_TRACK = $0065", config)
+            self.assertIn("SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES = $01", config)
+
+            invalid = subprocess.run(
+                [sys.executable, str(ROOT / "tools/generate_snes_engine_selection.py"),
+                 "--engine", "scumm_v5", "--scumm-msu1-live-room-pcm-track", "1",
+                 "--output", str(Path(raw) / "invalid.inc.pasm")],
+                capture_output=True, text=True,
+            )
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("requires live room resources", invalid.stderr)
+
+    def test_live_room_provider_budget_is_bounded_and_other_clients_keep_64(self) -> None:
+        source = (ROOT / "runtime/snes/services/storage_msu1.pasm").read_text()
+        self.assertIn(".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES", source)
+        self.assertIn("SAME_MSU1_STEP_BUDGET         = $0100", source)
+        self.assertIn("SAME_MSU1_STEP_BUDGET         = $0040", source)
+        self.assertIn("request copying uses SAME_MSU1_STEP_BUDGET", source)
+
     def test_dynamic_boot_clears_name_cache_before_resolver_initialization(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
         room_service = source.index(".if SAME_BUILD_SCUMM_ROOM_SERVICE\n")
