@@ -111,13 +111,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY' >> "$GITHUB_ENV"
+          mapfile -t toolchain_commits < <(python - <<'PY'
           import json
           from pathlib import Path
           pin = json.loads(Path('tools/poppy_pin.json').read_text())
-          print('POPPY_COMMIT=' + pin['commit'])
-          print('PANSY_COMMIT=' + pin['pansy_commit'])
+          print(pin['pansy_commit'])
+          print(pin['commit'])
           PY
+          )
+          PANSY_COMMIT="${toolchain_commits[0]}"
+          POPPY_COMMIT="${toolchain_commits[1]}"
           git clone https://github.com/TheAnsarya/pansy.git /tmp/pansy
           git -C /tmp/pansy checkout --detach "$PANSY_COMMIT"
           git clone https://github.com/astrobleem/poppy.git /tmp/poppy-jsl-address-fix
