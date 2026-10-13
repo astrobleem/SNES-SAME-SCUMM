@@ -916,30 +916,55 @@ ScummV5_M24RB_Far_CommitRoom__old_bundle_released:
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     lda.l SCUMM_LIVE_ROOM_STAGE
     cmp #SCUMM_LIVE_ROOM_STAGE_PREFLIGHT_READY
+    beq ScummV5_M24RB_Far_CommitRoom__begin_live_install
+    .if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    cmp #SCUMM_LIVE_ROOM_STAGE_INSTALL_READY
     beq ScummV5_M24RB_Far_CommitRoom__begin_live_visuals
+    .endif
     jmp ScummV5_M24RB_Far_CommitRoom__load_incoming_bundle
-ScummV5_M24RB_Far_CommitRoom__begin_live_visuals:
+ScummV5_M24RB_Far_CommitRoom__begin_live_install:
     .a8
-    ; Metadata CRC/schema validation completed before EXCD.  At this point
-    ; outgoing locals and bundle pins are retired, so publish the validated
-    ; directory into its separately-owned active buffer, then fetch visuals.
-    rep #$30
-    .a16
-    .i16
-    ldx #$0000
-ScummV5_M24RB_Far_CommitRoom__live_metadata_copy:
-    txa
-    cmp.l SCUMM_LIVE_ROOM_READ_LENGTH
-    bcs ScummV5_M24RB_Far_CommitRoom__live_metadata_copied
-    sep #$20
-    .a8
-    lda.l SCUMM_LIVE_ROOM_PENDING,x
-    sta.l SCUMM_LIVE_ROOM_BASE,x
+    .if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    ; Re-fetch every independently CRC'd chunk only after EXCD and outgoing
+    ; activation retirement. The active record is not valid until all chunks,
+    ; structural tables, and external routes pass validation.
+    lda #$01
+    sta.l SCUMM_LIVE_ROOM_CHUNK_MODE
+    ; The transition is now beyond its rollback boundary. Revoke old metadata
+    ; and route validity before the first active-alias write; any later failure
+    ; is an explicit post-retirement error, never a partially valid room.
+    lda #$00
+    sta.l SCUMM_LIVE_ROOM_VALID
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_VALID
     rep #$20
     .a16
-    inx
-    bra ScummV5_M24RB_Far_CommitRoom__live_metadata_copy
-ScummV5_M24RB_Far_CommitRoom__live_metadata_copied:
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_CHUNK_INDEX
+    sep #$20
+    .a8
+    lda #SCUMM_LIVE_ROOM_STAGE_INSTALL
+    sta.l SCUMM_LIVE_ROOM_STAGE
+    jsl ScummV5_MsuLiveRoom_Start_Far
+    bcc ScummV5_M24RB_Far_CommitRoom__live_install_started
+    lda #$24
+    sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
+    lda #SCUMM_ERR_RESOURCE
+    jsl ScummV5_M24RB_FarCall_SetError
+    sec
+    rts
+ScummV5_M24RB_Far_CommitRoom__live_install_started:
+    .a8
+    lda #$04
+    sta.l SAME_SCUMM_M23A_PHASE
+    clc
+    rts
+    .else
+    jmp ScummV5_M24RB_Far_CommitRoom__begin_live_visuals
+    .endif
+ScummV5_M24RB_Far_CommitRoom__begin_live_visuals:
+    .a8
+    ; The v4 active record and movement matrix are fully validated and
+    ; published by the chunk-completion state machine before this stage.
     sep #$20
     .a8
     lda #SCUMM_LIVE_ROOM_STAGE_PALETTE
@@ -990,6 +1015,15 @@ ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded:
     lda.l SAME_SCUMM_M23A_PENDING_RECORD
     sta.l SAME_SCUMM_M23A_ACTIVE_RECORD
     jsl ScummV5_Matrix_LoadActiveRoom_Far
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    .if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    ; The live v4 route matrix is expanded into the normal bounded matrix
+    ; table before active-room installation. Matrix_LoadActiveRoom resets
+    ; createBoxMatrix validity, so restore the resource-backed table owner.
+    lda #$01
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_VALID
+    .endif
+    .endif
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && SAME_BUILD_SCUMM_PHASE6LA1D
     jsl ScummV5_Scenario_Fixture_InstallSourceStringPrerequisite_Far
     .endif
@@ -1658,7 +1692,10 @@ ScummV5_M23A_PollLifecycleChain:
     .i8
     lda.l SAME_SCUMM_M23A_CHAIN_SLOT
     cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
-    bcs ScummV5_M23A_PollLifecycleChain__invalid_slot
+    bcc ScummV5_M23A_PollLifecycleChain__slot_valid
+    jml ScummV5_M23A_PollLifecycleChain__invalid_slot
+ScummV5_M23A_PollLifecycleChain__slot_valid:
+    .a8
     tax
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
     cmp #SCUMM_VM_RUNNING
@@ -1674,7 +1711,8 @@ ScummV5_M23A_PollLifecycleChain:
     cmp #SCUMM_VM_STOPPED
     beq ScummV5_M23A_PollLifecycleChain__complete
     cmp #$00
-    bne ScummV5_M23A_PollLifecycleChain__invalid_status
+    beq ScummV5_M23A_PollLifecycleChain__complete
+    jml ScummV5_M23A_PollLifecycleChain__invalid_status
 ScummV5_M23A_PollLifecycleChain__complete:
     .a8
     lda.l SAME_SCUMM_M23A_CHAIN_PHASE
@@ -1683,7 +1721,19 @@ ScummV5_M23A_PollLifecycleChain__complete:
     sta.l SAME_SCUMM_M23A_CHAIN_SLOT
     lda #$00
     sta.l SAME_SCUMM_M23A_CHAIN_PHASE
+    ; Resource completion can arrive in the same frame that a chained
+    ; lifecycle activation retires. Phase $05 is the checked-resource-ready
+    ; notification consumed by Engine_Frame after this poll. Do not erase it:
+    ; otherwise the validated incoming room remains pending forever even
+    ; though its transfer and CRC have completed.
+    lda.l SAME_SCUMM_M23A_PHASE
+    cmp #$05
+    beq ScummV5_M23A_PollLifecycleChain__preserve_resource_ready
+    lda #$00
     sta.l SAME_SCUMM_M23A_PHASE
+ScummV5_M23A_PollLifecycleChain__preserve_resource_ready:
+    .a8
+    lda #$00
     sta.l SAME_SCUMM_M23A_HOLD
     pla
     cmp #$01
@@ -1860,6 +1910,18 @@ ScummV5_M25A_RunNestedChild__parent_mode_packed:
     rep #$10
     .i16
     plx
+    ; LAST_ALLOCATED is shared scratch and may change while the child runs.
+    ; Keep the exact slot selected for this nested activation in its bounded
+    ; frame so an asynchronous first-page wait cannot be attributed to a
+    ; later allocation (or to the lifecycle owner itself).
+    sep #$10
+    .i8
+    lda.l SAME_SCUMM_M23B_NEST_DEPTH
+    tax
+    lda.l SAME_SCUMM_C4_LAST_ALLOCATED
+    sta.l SAME_SCUMM_M23B_NEST_CHILD_SLOTS,x
+    rep #$10
+    .i16
     rep #$20
     .a16
     lda.l SAME_SCUMM_FRAME_OPS
@@ -1953,7 +2015,12 @@ ScummV5_M25A_RunNestedChild__parent_mode_packed:
     lda.l SAME_SCUMM_STATUS
     cmp #SCUMM_VM_WAIT_RESOURCE
     bne ScummV5_M25A_RunNestedChild__msu_check_child_error
-    lda.l SAME_SCUMM_C4_LAST_ALLOCATED
+    lda.l SAME_SCUMM_M23B_NEST_DEPTH
+    dec
+    sep #$10
+    .i8
+    tax
+    lda.l SAME_SCUMM_M23B_NEST_CHILD_SLOTS,x
     sta.l SAME_SCUMM_MSU_CACHE_TEMP
     tax
     lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x

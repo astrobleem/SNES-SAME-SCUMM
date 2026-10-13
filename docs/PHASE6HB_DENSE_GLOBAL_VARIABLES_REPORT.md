@@ -15,6 +15,11 @@ fresh authentic gates ended at `$1FFF` (LoROM and SA-1 legacy) and `$1FEE`
 (Mode-3/BG2).  The accepted preflight owns the deeper-path stack/guard audit.
 The historical `$7E2320-$7E233F` bootstrap window remains reserved and zero.
 
+The MSU streaming layout later tightened the generated-variable allocation
+ceiling to `$7E1000`, immediately before bytecode cache slot 0. The same
+800-word table ends at `$7E0E40`, leaving `$01C0` bytes in this configuration;
+the earlier `$7E1800` ceiling is historical, not the streamed-build limit.
+
 Ordinary reads, result decoding, result reads, and result writes use the one
 generated base.  Result offsets remain byte offsets, so Var[799] is `$063E`;
 local (`$8000`) and bit (`$4000`) result tags remain disjoint.  Indexed

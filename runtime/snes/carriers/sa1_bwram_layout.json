@@ -62,20 +62,15 @@
   "future_staging": {
     "address": "41:E200",
     "bytes": 7680,
-    "allocations": {
-      "scumm_program_cache_page2": {
-        "offset": 1536,
-        "bytes": 2048,
-        "owner": "SCUMM checked ProgramUnit page cache",
-        "alias": true,
-        "exclusive_with": "runtime/snes/video_backends/mode3_surface_layout.json:fixture"
-      }
-    }
+    "allocations": {}
   },
   "live_room_active": {
-    "address": "41:F000",
-    "bytes": 4096,
+    "address": "41:E800",
+    "bytes": 6144,
     "owner": "SCUMM active room metadata",
-    "exclusive_with": "runtime/snes/video_backends/mode3_surface_layout.json:reserved"
+    "exclusive_with": [
+      "runtime/snes/video_backends/mode3_surface_layout.json:fixture",
+      "runtime/snes/video_backends/mode3_surface_layout.json:reserved"
+    ]
   }
 }

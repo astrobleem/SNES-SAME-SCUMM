@@ -132,6 +132,54 @@ def snapshot(session) -> dict[str, object]:
         "fixture_requested": session.read_memory("snesMemory", 0x7E5600, 1)[0],
         "fixture_ready": session.read_memory("snesMemory", 0x7E5601, 1)[0],
         "engine_boot_count": session.read_memory("snesMemory", 0x7E5451, 1)[0],
+        # Preserve room-loader and checked-provider diagnostics in the cold
+        # startup artifact.  A terminal SCUMM_ERR_RESOURCE alone does not tell
+        # whether the failure was the generated room descriptor, a bounded
+        # transfer, or SC5LIVE validation.
+        "msu_provider": {
+            "status": session.read_memory("snesMemory", 0x7E2F00, 1)[0],
+            "error": session.read_memory("snesMemory", 0x7E2F01, 1)[0],
+            "flags": session.read_memory("snesMemory", 0x7E2F02, 1)[0],
+            "last_check_stage": session.read_memory("snesMemory", 0x7E2F03, 1)[0],
+            "section_temp": u16(session.read_memory("snesMemory", 0x7E2F46, 2)),
+            "request_offset": session.read_memory("snesMemory", 0x7E2F04, 4).hex(),
+            "request_length": session.read_memory("snesMemory", 0x7E2F08, 4).hex(),
+            "destination": session.read_memory("snesMemory", 0x7E2F0C, 3).hex(),
+            "destination_capacity": u16(session.read_memory("snesMemory", 0x7E2F0F, 2)),
+            "remaining": session.read_memory("snesMemory", 0x7E2F15, 4).hex(),
+            "seek_count": u16(session.read_memory("snesMemory", 0x7E2F2B, 2)),
+            "bytes_read": int.from_bytes(
+                session.read_memory("snesMemory", 0x7E2F2D, 4), "little"),
+            "read_count": u16(session.read_memory("snesMemory", 0x7E2F31, 2)),
+            "range_reject_count": u16(
+                session.read_memory("snesMemory", 0x7E2F35, 2)),
+            "verify_count": u16(session.read_memory("snesMemory", 0x7E2F37, 2)),
+        },
+        "msu_room_service": {
+            "state": session.read_memory("snesMemory", 0x7E2FEB, 1)[0],
+            "room": session.read_memory("snesMemory", 0x7E2FEC, 1)[0],
+            "requests": u16(session.read_memory("snesMemory", 0x7E2FED, 2)),
+            "validations": u16(session.read_memory("snesMemory", 0x7E2FEF, 2)),
+            "failures": u16(session.read_memory("snesMemory", 0x7E2FF1, 2)),
+            "last_length": u16(session.read_memory("snesMemory", 0x7E2FF7, 2)),
+        },
+        "stream_error": {
+            "program_unit": u16(session.read_memory("snesMemory", 0x7E5F13, 2)),
+            "logical_pc": u16(session.read_memory("snesMemory", 0x7E5F15, 2)),
+            "site": session.read_memory("snesMemory", 0x7E5F17, 1)[0],
+            "capture_valid": session.read_memory("snesMemory", 0x7E5F18, 1)[0],
+        },
+        "live_room_diagnostics": {
+            "control": session.read_memory("snesMemory", 0x401384, 0x40).hex(),
+            "stage": session.read_memory("snesMemory", 0x401384, 1)[0],
+            "room": session.read_memory("snesMemory", 0x401385, 1)[0],
+            "chunk_index": u16(session.read_memory("snesMemory", 0x4013A8, 2)),
+            "chunk_mode": session.read_memory("snesMemory", 0x4013A7, 1)[0],
+            "read_length": u16(session.read_memory("snesMemory", 0x401386, 2)),
+            "pending_header": session.read_memory("snesMemory", 0x4013C4, 0x40).hex(),
+            "active_header": session.read_memory("snesMemory", 0x41E800, 0x40).hex(),
+            "chunk_state": session.read_memory("snesMemory", 0x4013A7, 0x10).hex(),
+        },
         "reset_diag": session.read_memory("snesMemory", RESET_DIAG_BASE, 0x50).hex(),
         "c25": {
             "queue_count": session.read_memory("snesMemory", 0x7FD459, 1)[0],
@@ -239,10 +287,21 @@ def main() -> int:
             "ScummV5_Engine_Frame__error",
             "ScummV5_Engine_Frame__m23a_error",
             "ScummV5_Engine_Frame__m23a_failed",
+            "ScummV5_Engine_Frame__m23a_ready",
             "ScummV5_Engine_Frame__complete_success",
             "ScummV5_Engine_Frame__outer_return_success",
             "ScummV5_M24RB_Far_RequestRoom",
             "ScummV5_M24RB_Far_CommitRoom",
+            "ScummV5_M24RB_Far_CommitRoom__begin_live_install",
+            "ScummV5_M24RB_Far_CommitRoom__begin_live_visuals",
+            "ScummV5_M24RB_Far_CommitRoom__load_incoming_bundle",
+            "ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded",
+            "ScummV5_M24RB_Far_CommitRoom__live_visual_published",
+            "ScummV5_M24RB_Far_CommitRoom__execute",
+            "ScummV5_M23A_PollLifecycleChain_FarEntry",
+            "ScummV5_M23A_PollLifecycleChain__complete",
+            "ScummV5_M23A_HandoffLifecycleChain",
+            "ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__ready",
             "ScummV5_RequestRoom",
             "ScummV5_M23A_RequestRoom_FarEntry",
             "ScummV5_Engine_Frame__scenario_request_done",
@@ -269,7 +328,11 @@ def main() -> int:
     # implementation and its adapters. Map PCs are bank-local, so resolving
     # these labels with PBR 0 installs plausible-looking but unrelated hooks.
     for name in tuple(hook_banks):
-        if name.startswith("ScummV5_M24RB_Far_"):
+        if (
+            name.startswith("ScummV5_M24RB_Far_")
+            or name.startswith("ScummV5_M23A_PollLifecycleChain")
+            or name.startswith("ScummV5_MsuLiveRoom_ValidateCompletedRead_Far")
+        ):
             hook_banks[name] = 9
     for name in (
         "ScummV5_M23A_RequestRoom_FarEntry",
@@ -288,6 +351,17 @@ def main() -> int:
         "ScummV5_M24RB_Far_EndRoomScript",
         "ScummV5_M24RB_Far_CommitNullRoom",
         "ScummV5_M24RB_Far_CommitRoom",
+        "ScummV5_M24RB_Far_CommitRoom__begin_live_install",
+        "ScummV5_M24RB_Far_CommitRoom__begin_live_visuals",
+        "ScummV5_M24RB_Far_CommitRoom__load_incoming_bundle",
+        "ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded",
+        "ScummV5_M24RB_Far_CommitRoom__live_visual_published",
+        "ScummV5_M24RB_Far_CommitRoom__execute",
+        "ScummV5_M23A_PollLifecycleChain_FarEntry",
+        "ScummV5_M23A_PollLifecycleChain__complete",
+        "ScummV5_M23A_HandoffLifecycleChain",
+        "ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__ready",
+        "ScummV5_Engine_Frame__m23a_ready",
         "ScummV5_M23A_ResourceReady_FarEntry",
         "ScummV5_M23A_EndRoomScript_FarEntry",
         "ScummV5_M23A_CommitRoom_FarEntry",
@@ -302,7 +376,12 @@ def main() -> int:
     for name in boundary_names:
         if name in symbols:
             hook_banks[name] = (
-                9 if name.startswith("ScummV5_M24RB_Far_") or name.endswith("_FarEntry")
+                9 if (
+                    name.startswith("ScummV5_M24RB_Far_")
+                    or name.startswith("ScummV5_M23A_PollLifecycleChain")
+                    or name.startswith("ScummV5_MsuLiveRoom_ValidateCompletedRead_Far")
+                    or name.endswith("_FarEntry")
+                )
                 else 0
             )
     # The C25 far body is deliberately placed in bank 83; its bank-0 entry is

@@ -18,7 +18,7 @@ from same.engines.scumm_v5.native_residency import (
 from same.engines.scumm_v5.program_storage import (
     build_program_storage, read_package_prefix_sections,
 )
-from same.engines.scumm_v5.live_room_resources import encode_live_room
+from same.engines.scumm_v5.live_room_resources import encode_live_room_sections
 from same.engines.scumm_v5.room_visual import decode_room_visual
 from same.engines.scumm_v5.room import decode_room
 
@@ -1617,6 +1617,7 @@ def main() -> int:
             for record in records
         })
         live_room_resources = {}
+        live_route_resources = {}
         room_visual_resources = {}
         if args.msu1_live_room_resources:
             missing_visuals = [int(record["room"]) for record in records
@@ -1626,12 +1627,13 @@ def main() -> int:
                     "live room-resource mode requires a checked SC5VIS record for every room; "
                     f"missing {missing_visuals[:8]}"
                 )
-            live_room_resources = {
-                int(record["room"]): encode_live_room(
-                    record, program_units=programs, max_size=0xFFFF,
+            for record in records:
+                room_id = int(record["room"])
+                live_room_resources[room_id], live_route_resources[room_id] = (
+                    encode_live_room_sections(
+                        record, program_units=programs,
+                    )
                 )
-                for record in records
-            }
             room_visual_resources = {
                 int(record["room"]): bytes(record["visual_raw"])
                 for record in records
@@ -1653,6 +1655,7 @@ def main() -> int:
             room_resources=room_resources,
             source_room_resources=source_room_resources,
             live_room_resources=live_room_resources,
+            live_route_resources=live_route_resources,
             room_visual_resources=room_visual_resources,
             rom_bank=args.msu1_program_directory_bank,
             page_directory_bank=(
@@ -3741,6 +3744,10 @@ def main() -> int:
                 "body_bytes": program_storage["program_body_bytes"],
                 "room_resource_count": program_storage["room_resource_count"],
                 "room_resource_bytes": program_storage["room_resource_bytes"],
+                "live_room_resource_count": program_storage["live_room_resource_count"],
+                "live_room_resource_bytes": program_storage["live_room_resource_bytes"],
+                "live_route_resource_count": program_storage["live_route_resource_count"],
+                "live_route_resource_bytes": program_storage["live_route_resource_bytes"],
                 "room_section": program_storage["room_section"],
                 "room_records": program_storage["room_records"],
                 "package_sha256": program_storage["package_sha256"],

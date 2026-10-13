@@ -243,7 +243,6 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
         live = encode_live_room(room, program_units=room_units, max_size=0xFFFF)
         self.assertGreater(len(live), MAX_PENDING_BYTES)
         self.assertEqual(decode_live_room(live, expected_room=2).room, 2)
-
         source_room = bytes((index * 7) & 0xFF for index in range(100_000))
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -268,6 +267,21 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
             source_offset = int(source_row["package_offset"])
             self.assertEqual(raw[source_offset:source_offset + len(source_room)], source_room)
             self.assertIn("SC5ROOM", [section.name for section in package.sections])
+
+    def test_native_v4_reader_skips_crc_before_chunk_directory_fields(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm").read_text()
+        start = source.index("ScummV5_MsuLiveRoom_Start_Far__metadata_v4_room_ok:")
+        end = source.index("ScummV5_MsuLiveRoom_Start_Far__metadata_v4_prepared:", start)
+        reader = source[start:end]
+        length_hi = reader.index("sta.l SCUMM_LIVE_ROOM_READ_LENGTH+1")
+        chunk_first = reader.index("sta.l SCUMM_LIVE_ROOM_CHUNK_FIRST\n", length_hi)
+        field_advance = reader[length_hi:chunk_first]
+        # The 13-byte row is offset:u32, length:u16, CRC32, chunk-first:u16,
+        # chunk-count:u8. From byte 5 the reader advances to byte 10; omitting
+        # one INX aliases the CRC tail as the chunk index and rejects every
+        # nonempty room before its first checked SC5LIVE read.
+        self.assertEqual(sum(line.strip().startswith("inx")
+                             for line in field_advance.splitlines()), 5)
 
     def test_storage_projects_fate_sized_visuals_to_native_surface_in_package(self) -> None:
         directory = self.directory()
@@ -332,6 +346,50 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
                 visual_hashes.append(visual.record_sha256)
             self.assertEqual(len(visual_hashes), 4)
             self.assertEqual(len(set(visual_hashes)), 4)
+
+    def test_large_live_room_fixture_revisits_after_second_room(self) -> None:
+        def room_scripts(raw: bytes) -> dict[bytes, bytes]:
+            scripts: dict[bytes, bytes] = {}
+            cursor = 0
+            while cursor < len(raw):
+                tag = raw[cursor:cursor + 4]
+                size = int.from_bytes(raw[cursor + 4:cursor + 8], "big")
+                self.assertGreaterEqual(size, 8)
+                self.assertLessEqual(cursor + size, len(raw))
+                if tag in (b"ENCD", b"EXCD"):
+                    scripts[tag] = raw[cursor + 8:cursor + size]
+                cursor += size
+            self.assertEqual(cursor, len(raw))
+            return scripts
+
+        first = room_scripts(raw_room(1, large_live_room=True))[b"ENCD"]
+        second = room_scripts(raw_room(2, large_live_room=True))[b"ENCD"]
+        decode_args = {
+            "number": None, "room": 1,
+            "game_name": "copyright-free-native-residency-fixture",
+            "resource_offset": 0, "source_offset": 0,
+        }
+        decoded_first = decode_script(
+            first, identity="fixture:large-room-entry", kind="ENCD",
+            resource_key="fixture.room.1/ENCD", source_member="fixture/room-1",
+            **decode_args,
+        )
+        decoded_second = decode_script(
+            second, identity="fixture:return-room-entry", kind="ENCD",
+            resource_key="fixture.room.2/ENCD", source_member="fixture/room-2",
+            **decode_args,
+        )
+        self.assertTrue(decoded_first.decode_complete)
+        self.assertTrue(decoded_second.decode_complete)
+        self.assertEqual(first[0], 0x28)  # branch to stop on the second visit
+        self.assertIn(bytes((0x1A, 200, 0, 1, 0)), first)
+        verb3 = first.index(bytes((0x37, 70, 0, 3)))
+        break_after_verb3 = first.index(b"\x80", verb3 + 5)
+        verb10 = first.index(bytes((0x37, 70, 0, 10)))
+        self.assertLess(verb3, break_after_verb3)
+        self.assertLess(break_after_verb3, verb10)
+        self.assertIn(bytes((0x72, 2)), first)
+        self.assertIn(bytes((0x72, 1)), second)
 
     def test_room_crc_failure_fixture_uses_two_real_room_transitions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

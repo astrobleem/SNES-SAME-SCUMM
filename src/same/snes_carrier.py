@@ -131,25 +131,19 @@ def _validate_layout(layout: dict[str, Any]) -> tuple[MemoryRegion, ...]:
     live_size = live_room.get("bytes")
     staging = layout["future_staging"]
     staging_address = parse_address(str(staging["address"]))
-    if not isinstance(live_size, int) or live_size != 0x1000:
-        raise ValueError("live-room active metadata must be exactly 4 KiB")
+    if not isinstance(live_size, int) or live_size != 0x1800:
+        raise ValueError("live-room active metadata must be the measured 6 KiB alias")
     if not (staging_address <= live_address and live_address + live_size <= staging_address + staging["bytes"]):
         raise ValueError("live-room active metadata escapes future_staging")
     if staging_address != 0x41E200 or staging.get("bytes") != 0x1E00:
         raise ValueError("Mode-3 staging ownership changed")
-    cache_alias = staging.get("allocations", {}).get("scumm_program_cache_page2")
-    if cache_alias != {
-        "offset": 0x600,
-        "bytes": 0x800,
-        "owner": "SCUMM checked ProgramUnit page cache",
-        "alias": True,
-        "exclusive_with": "runtime/snes/video_backends/mode3_surface_layout.json:fixture",
+    if staging.get("allocations") != {}:
+        raise ValueError("Mode-3 future staging must not claim the live SCUMM cache page")
+    if set(live_room.get("exclusive_with", ())) != {
+        "runtime/snes/video_backends/mode3_surface_layout.json:fixture",
+        "runtime/snes/video_backends/mode3_surface_layout.json:reserved",
     }:
-        raise ValueError("third ProgramUnit page must explicitly alias only the Mode-3 fixture allocation")
-    if live_room.get("exclusive_with") != (
-        "runtime/snes/video_backends/mode3_surface_layout.json:reserved"
-    ):
-        raise ValueError("live-room active metadata must declare its reserved Mode-3 alias")
+        raise ValueError("live-room active metadata must declare both Mode-3 lifetime aliases")
     pending = subregions.get("live_room_pending")
     if pending != {"offset": 0x3C4, "bytes": 0xC3C,
                    "owner": "SCUMM live-room incoming metadata transaction"}:
@@ -188,20 +182,18 @@ def load_carrier(
             video_layout = json.loads(video_path.read_text(encoding="utf-8"))
             active = layout["live_room_active"]
             reserved = video_layout.get("reserved", {})
-            if (active.get("address"), active.get("bytes")) != (
-                reserved.get("address"), reserved.get("bytes")
-            ):
-                raise ValueError("live-room metadata alias no longer matches reserved Mode-3 storage")
+            fixture = video_layout.get("fixture", {})
+            expected_live_start = parse_address(str(fixture.get("address")))
+            expected_live_end = (parse_address(str(reserved.get("address")))
+                                 + int(reserved.get("bytes", 0)))
+            if (parse_address(str(active.get("address"))), active.get("bytes")) != (
+                    expected_live_start, expected_live_end - expected_live_start,
+                ):
+                raise ValueError(
+                    "live-room metadata alias must cover fixture plus reserved Mode-3 storage"
+                )
             active_start = parse_address(str(active["address"]))
             active_end = active_start + int(active["bytes"])
-            cache_alias = layout["future_staging"]["allocations"]["scumm_program_cache_page2"]
-            cache_start = parse_address(str(layout["future_staging"]["address"])) + int(cache_alias["offset"])
-            cache_end = cache_start + int(cache_alias["bytes"])
-            fixture = video_layout.get("fixture", {})
-            if (cache_start, cache_end - cache_start) != (
-                parse_address(str(fixture.get("address"))), fixture.get("bytes")
-            ):
-                raise ValueError("ProgramUnit cache alias does not exactly match Mode-3 fixture storage")
             for region_name, region in video_layout.items():
                 if region_name in {"format", "version", "active_convert_tile_budget",
                                    "dma_byte_budget", "dma_descriptor_limit", "reserved"}:
@@ -210,6 +202,8 @@ def load_carrier(
                     continue
                 start = parse_address(str(region["address"]))
                 end = start + int(region["bytes"])
+                if region_name in {"fixture", "reserved"}:
+                    continue
                 if active_start < end and start < active_end:
                     raise ValueError(
                         f"live-room metadata overlaps active video region {region_name}"

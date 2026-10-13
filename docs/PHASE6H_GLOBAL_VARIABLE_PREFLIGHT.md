@@ -12,6 +12,11 @@ compile or include the diagnostic dense-variable implementation.
 - Candidate table: `$7E0800-$7E0E3F` (800 little-endian u16 entries,
   `$0640` bytes), half-open end `$7E0E40`.
 - Declared stack floor: `$7E1800`; proposed guard `$09C0` bytes.
+
+Streaming-profile correction: the historical ceiling above predates the
+three-page MSU bytecode cache. The current generated-variable limit is
+`$7E1000`, immediately before cache slot 0; the DOS-CD profile's 800-word
+table still ends at `$7E0E40` and retains a `$01C0` guard.
 - Preflight diagnostic ROM (not accepted):
   `3e5a73442ffde3c58c383d75c4cc70c4d89849971974dd221f54935b664715ea`.
 

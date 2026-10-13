@@ -23,7 +23,14 @@ SCUMM_MSU_ROOM_TRAILER_BYTES = $0020
 
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
 SCUMM_LIVE_ROOM_BASE = SAME_SCUMM_LIVE_ROOM_STAGING_BASE
+.if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+; v4 metadata is validated in place after EXCD has completed and the
+; incoming chunks have been installed into the active alias. The physical
+; pending buffer remains independently addressable for checked staging.
+SCUMM_LIVE_ROOM_PENDING = SCUMM_LIVE_ROOM_BASE
+.else
 SCUMM_LIVE_ROOM_PENDING = SAME_SCUMM_LIVE_ROOM_PENDING_BASE
+.endif
 SCUMM_LIVE_ROOM_STAGE = SAME_SCUMM_LIVE_ROOM_CONTROL+$00
 SCUMM_LIVE_ROOM_VALID = SAME_SCUMM_LIVE_ROOM_CONTROL+$01
 SCUMM_LIVE_ROOM_READ_LENGTH = SAME_SCUMM_LIVE_ROOM_CONTROL+$02
@@ -38,15 +45,26 @@ SCUMM_LIVE_ROOM_ACTIVE_VISUAL_VALID = SAME_SCUMM_LIVE_ROOM_CONTROL+$21
 ; M24R-B may be re-entered while the incoming visual is fetched. This
 ; transaction bit makes retiring the outgoing resolver bundle idempotent.
 SCUMM_LIVE_ROOM_OLD_BUNDLE_RELEASED = SAME_SCUMM_LIVE_ROOM_CONTROL+$22
+SCUMM_LIVE_ROOM_CHUNK_MODE = SAME_SCUMM_LIVE_ROOM_CONTROL+$23 ; 0 preflight, 1 post-EXCD install
+SCUMM_LIVE_ROOM_CHUNK_INDEX = SAME_SCUMM_LIVE_ROOM_CONTROL+$24 ; u16 room-local index
+SCUMM_LIVE_ROOM_CHUNK_FIRST = SAME_SCUMM_LIVE_ROOM_CONTROL+$26 ; u16 generated directory index
+SCUMM_LIVE_ROOM_CHUNK_COUNT = SAME_SCUMM_LIVE_ROOM_CONTROL+$28 ; u8
+SCUMM_LIVE_ROOM_CHUNK_START = SAME_SCUMM_LIVE_ROOM_CONTROL+$29 ; u16 destination offset
+SCUMM_LIVE_ROOM_ROUTE_LENGTH = SAME_SCUMM_LIVE_ROOM_CONTROL+$2C ; u16 checked SC5ROUT length
+SCUMM_LIVE_ROOM_ROUTE_BOX_COUNT = SAME_SCUMM_LIVE_ROOM_CONTROL+$2E ; u8 validated source box count
+SCUMM_LIVE_ROOM_ROUTE_VALUE = SAME_SCUMM_LIVE_ROOM_CONTROL+$30 ; transient packed-row byte
 SCUMM_LIVE_ROOM_MAGIC = $004C ; 'SC5LIVE' prefix checked bytewise
 SCUMM_LIVE_ROOM_HEADER_SIZE = $0052
-SCUMM_LIVE_ROOM_MAX_SIZE = SAME_SCUMM_LIVE_ROOM_PENDING_CAPACITY
+SCUMM_LIVE_ROOM_MAX_SIZE = SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE
 SCUMM_LIVE_ROOM_STAGE_COOKED = $00
 SCUMM_LIVE_ROOM_STAGE_METADATA = $01
 SCUMM_LIVE_ROOM_STAGE_PREFLIGHT_READY = $02
 SCUMM_LIVE_ROOM_STAGE_PALETTE = $03
 SCUMM_LIVE_ROOM_STAGE_PIXELS = $04
 SCUMM_LIVE_ROOM_STAGE_COMMIT_READY = $05
+SCUMM_LIVE_ROOM_STAGE_INSTALL = $06
+SCUMM_LIVE_ROOM_STAGE_ROUTES = $07
+SCUMM_LIVE_ROOM_STAGE_INSTALL_READY = $08
 .endif
 
 ; The engine's selected-activation adapter enters here before resolution. A
@@ -604,9 +622,16 @@ ScummV5_MsuRoom_Request_Far:
     ; their own checked SC5CODE/SC5LIVE/SC5VIS records.
     lda #SCUMM_LIVE_ROOM_STAGE_METADATA
     sta.l SCUMM_LIVE_ROOM_STAGE
+    ; Keep the outgoing active record published until EXCD has completed and
+    ; the transaction crosses the irreversible installation boundary.
     lda #$00
-    sta.l SCUMM_LIVE_ROOM_VALID
     sta.l SCUMM_LIVE_ROOM_OLD_BUNDLE_RELEASED
+    sta.l SCUMM_LIVE_ROOM_CHUNK_MODE
+    rep #$20
+    .a16
+    sta.l SCUMM_LIVE_ROOM_CHUNK_INDEX
+    sep #$20
+    .a8
     .endif
     lda #SCUMM_MSU_ROOM_REQUESTED
     sta.l SAME_SCUMM_MSU_ROOM_STATE
@@ -747,8 +772,15 @@ ScummV5_MsuRoom_Service_Far__mark_failed:
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     lda #$12
     jsl ScummV5_Stream_RecordErrorSite_FarEntry
+    ; Preserve the structural validator's precise failure when it has run;
+    ; this generic service marker is for fetch/commit failures only.
+    lda.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1E
+    cmp #$B2
+    beq ScummV5_MsuRoom_Service_Far__validation_marker_preserved
     lda #$91
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
+ScummV5_MsuRoom_Service_Far__validation_marker_preserved:
+    .a8
     .endif
     lda #SCUMM_MSU_ROOM_FAILED
     sta.l SAME_SCUMM_MSU_ROOM_STATE

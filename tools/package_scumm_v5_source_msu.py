@@ -29,7 +29,11 @@ from same.engines.scumm_v5.full_source_backend import (
     build_lowering_report, validate_emitted_program_directory,
 )
 from same.engines.scumm_v5.game_analysis import analyze_game, canonical_json, game_analysis_hash
-from same.engines.scumm_v5.live_room_resources import decode_live_room
+from same.engines.scumm_v5.live_room_resources import (
+    MAX_ACTIVE_BYTES as MAX_ACTIVE_LIVE_ROOM_BYTES,
+    MAX_PENDING_BYTES as MAX_PENDING_LIVE_ROOM_BYTES,
+    decode_live_room,
+)
 from same.engines.scumm_v5.native_residency import NativeProgramDirectory
 from same.engines.scumm_v5.policy import parse_game_policy
 from same.engines.scumm_v5.resources import LucasartsScummV5ResourceProvider
@@ -86,6 +90,7 @@ def package_room_preflight(
 ) -> dict[str, Any]:
     raw = package_path.read_bytes()
     live_by_room = {int(row["room"]): row for row in storage["live_room_records"]}
+    route_by_room = {int(row["room"]): row for row in storage.get("live_route_records", [])}
     visual_by_room = {int(row["room"]): row for row in storage["visual_records"]}
     source_by_room = {int(row["room"]): row for row in storage["source_room_records"]}
     cooked_rooms = {int(row["room"]): row for row in cooked["records"]}
@@ -98,10 +103,17 @@ def package_room_preflight(
         source_row = source_by_room.get(room_id)
         live = None
         visual = None
+        route = None
         if live_row is not None:
             start, size = int(live_row["package_offset"]), int(live_row["length"])
+            route_row = route_by_room.get(room_id)
+            route = None
+            if route_row is not None:
+                route_start, route_size = (int(route_row["package_offset"]),
+                                           int(route_row["length"]))
+                route = raw[route_start:route_start + route_size]
             live = decode_live_room(raw[start:start + size], expected_room=room_id,
-                                    max_size=0xFFFF)
+                                    max_size=0xFFFF, route_data=route)
         if visual_row is not None:
             start, size = int(visual_row["package_offset"]), int(visual_row["length"])
             visual = decode_room_visual(raw[start:start + size], expected_room=room_id)
@@ -132,6 +144,13 @@ def package_room_preflight(
             "sc5live": {
                 "status": "PACKAGED" if live is not None else "MISSING",
                 "bytes": None if live_row is None else int(live_row["length"]),
+                "normalized_v3_semantic_bytes": (
+                    None if live_row is None else
+                    int(live_row.get("normalized_v3_semantic_bytes", 0))
+                ),
+                "external_route_bytes": (
+                    None if live_row is None else int(live_row.get("external_route_bytes", 0))
+                ),
                 "sha256": None if live_row is None else str(live_row["sha256"]),
                 "package_offset": None if live_row is None else int(live_row["package_offset"]),
                 "objects": None if live is None else live.object_count,
@@ -150,6 +169,15 @@ def package_room_preflight(
                     "runtime_consumed": False,
                 },
                 "table_bytes": None if live is None else dict(live.section_sizes),
+                "storage_representation": None if live is None else {
+                    "schema_version": int(live.payload[8]) | (int(live.payload[9]) << 8),
+                    "active_record_bytes": len(live.payload),
+                    "normalized_v3_semantic_bytes": sum(live.section_sizes.values()),
+                    "external_route_bytes": 0 if route is None else len(route),
+                    "active_metadata_capacity_bytes": MAX_ACTIVE_LIVE_ROOM_BYTES,
+                    "pending_route_capacity_bytes": MAX_PENDING_LIVE_ROOM_BYTES,
+                    "whole_record_contiguous_in_wram": False,
+                },
                 "runtime_consumers": None if live is None else {
                     "walkbox_flags": "copied to mutable active walkbox flag table",
                     "walkbox_geometry": "immutable; one 18-byte geometry record is loaded on demand",
@@ -410,7 +438,7 @@ def main() -> int:
     storage_file = package_path.read_bytes()
     package_info = inspect_package(package_path, verify=True)
     package_sections = {row.name: row for row in package_info.sections}
-    required_sections = {"SC5ROOM", "SC5LIVE", "SC5VIS", "SC5CODE"}
+    required_sections = {"SC5ROOM", "SC5LIVE", "SC5ROUT", "SC5VIS", "SC5CODE"}
     if not required_sections <= set(package_sections):
         raise ValueError(f"complete source package is missing sections: {sorted(required_sections - set(package_sections))}")
 
@@ -621,30 +649,71 @@ def main() -> int:
         "byte_ledger": package_ledger,
         "runtime_resident_selectors": 178,
         "native_room_capacity": {
-            "active_sc5live_bytes": 4096,
-            "pending_sc5live_bytes": 3132,
+            "active_sc5live_bytes": MAX_ACTIVE_LIVE_ROOM_BYTES,
+            "pending_checked_section_bytes": MAX_PENDING_LIVE_ROOM_BYTES,
             "sc5live_chunk_bytes": int(storage["live_room_chunk_size"]),
             "sc5live_chunk_count": int(storage["live_room_chunk_count"]),
-            "large_record_policy": "whole-record staging only; per-chunk checksums are host-side preflight metadata and are not consumed by the native loader",
+            "large_record_policy": (
+                "SC5LIVE is fetched in checked chunks into pending staging, validated, "
+                "then installed as a bounded active sectioned record; SC5ROUT is a "
+                "separate checked resource and expanded by the existing movement consumer"
+            ),
             "max_sc5live_bytes": max((int(row["length"]) for row in live_rows), default=0),
+            "max_normalized_v3_semantic_bytes": max((
+                int(row.get("normalized_v3_semantic_bytes", 0)) for row in live_rows
+            ), default=0),
+            "max_external_route_bytes": max((
+                int(row.get("external_route_bytes", 0)) for row in live_rows
+            ), default=0),
             "max_sc5room_bytes": max((int(row["length"]) for row in source_room_rows), default=0),
             "oversized_live_rooms": [int(row["room"]) for row in live_rows
                                      if not row["native_loadable"]],
             "oversized_active_records": [int(row["room"]) for row in live_rows
-                                         if int(row["length"]) > 4096],
+                                         if int(row["length"]) > MAX_ACTIVE_LIVE_ROOM_BYTES],
+            "normalized_v3_records_exceeding_contiguous_active_capacity": [
+                int(row["room"]) for row in live_rows
+                if int(row.get("normalized_v3_semantic_bytes", 0))
+                > MAX_ACTIVE_LIVE_ROOM_BYTES
+            ],
             "room0_policy": "RESOURCE_LESS_LIFECYCLE_ONLY",
+        },
+        "live_metadata_validation": {
+            "indexed_nonzero_rooms": len(indexed_room_ids),
+            "sc5live_records_structurally_decoded": len(live_rows),
+            "sc5route_records_structurally_decoded": len(storage.get("live_route_records", [])),
+            "active_records_within_native_window": sum(
+                int(row["length"]) <= MAX_ACTIVE_LIVE_ROOM_BYTES for row in live_rows
+            ),
+            "route_records_within_native_staging": sum(
+                bool(row.get("native_loadable"))
+                for row in storage.get("live_route_records", [])
+            ),
+            "records_native_loadable_by_descriptor_and_capacity": sum(
+                bool(row.get("native_loadable")) for row in live_rows
+            ),
+            "all_live_metadata_descriptors_loadable": all(
+                bool(row.get("native_loadable")) for row in live_rows
+            ),
+            "native_runtime_installation_sweep_performed": False,
+            "note": (
+                "Host validation proves format, hashes, ranges and native capacity. "
+                "This is not a claim that every room was installed by the emulator."
+            ),
         },
         "selected_corpus_reconciliation": selected_compare,
         "release_status": "NOT_READY",
         "release_blockers": [
             "package completeness does not certify execution semantics",
-            f"{len([row for row in live_rows if not row['native_loadable']])} SC5LIVE records exceed current pending staging capacity: "
-            + ",".join(str(row["room"]) for row in live_rows if not row["native_loadable"]),
+            *([f"{len([row for row in live_rows if not row['native_loadable']])} live-room records "
+               "exceed active/route checked capacities: "
+               + ",".join(str(row["room"]) for row in live_rows if not row["native_loadable"])]
+              if any(not row["native_loadable"] for row in live_rows) else []),
             f"{lowered_status_counts.get('UNVERIFIED', 0)} ProgramUnits remain unverified and "
             f"{lowered_status_counts.get('BLOCKED', 0)} are blocked by lowering/capability status",
             f"dependency closure remains uncertain: {edge_counts.get('DYNAMIC', 0)} dynamic and "
             f"{edge_counts.get('UNRESOLVED', 0)} unresolved edges",
             "graphics, sound/iMUSE, text/charset and portable-state coverage remain partial",
+            "native all-room SC5LIVE installation sweep has not been performed",
         ],
     }
     write_json(output / "whole-source-msu-readiness.json", readiness)

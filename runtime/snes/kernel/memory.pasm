@@ -67,7 +67,8 @@ SAME_MSU1_STATE               = $7E2F00
 SAME_MSU1_STATUS              = $7E2F00 ; u8 provider/init/read state
 SAME_MSU1_ERROR               = $7E2F01 ; u8 explicit provider error
 SAME_MSU1_FLAGS               = $7E2F02 ; u8 stream/ring flags
-SAME_MSU1_INIT_INDEX          = $7E2F03 ; u8 initialization phase
+SAME_MSU1_INIT_INDEX          = $7E2F03 ; u8 provider initialization phase
+SAME_MSU1_LAST_CHECK_STAGE    = $7E2F03 ; post-init ReadBegin validation stage
 SAME_MSU1_REQUEST_OFFSET      = $7E2F04 ; u32 package byte offset
 SAME_MSU1_REQUEST_LENGTH      = $7E2F08 ; u32 requested bytes
 SAME_MSU1_DESTINATION         = $7E2F0C ; 24-bit WRAM address
@@ -98,8 +99,8 @@ SAME_MSU1_SECTION_TEMP         = $7E2F46 ; u16 generated-section index math
 SAME_MSU1_STATE_END            = $7E2F48 ; exclusive
 
 .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
-; Three bounded executable-body windows. The third SA-1 cache page is a
-; feature-exclusive alias of the unused Mode-3 conformance fixture workspace.
+; Three bounded executable-body windows. Page 2 uses the audited bank-$7F
+; gap immediately after the object-name table and before C10 state.
 SAME_SCUMM_MSU_PROGRAM_CACHE_BASE       = $7E1000
 SAME_SCUMM_MSU_PROGRAM_CACHE_SLOT_SIZE = $0800
 SAME_SCUMM_MSU_PROGRAM_CACHE0           = $7E1000
@@ -107,9 +108,9 @@ SAME_SCUMM_MSU_PROGRAM_CACHE1           = $7E1800
 SAME_SCUMM_MSU_PROGRAM_CACHE_END        = $7E2000
 ; Mode-3 conformance and streamed SCUMM are mutually exclusive personalities.
 .if SAME_BUILD_SCUMM_MSU1_PROGRAMS && SAME_CARRIER_IS_SA1_BWRAM
-SAME_SCUMM_MSU_PROGRAM_CACHE2           = $41E800
-SAME_SCUMM_MSU_PROGRAM_CACHE2_BANK      = $41
-SAME_SCUMM_MSU_PROGRAM_CACHE2_END       = $41F000
+SAME_SCUMM_MSU_PROGRAM_CACHE2           = $7F1000
+SAME_SCUMM_MSU_PROGRAM_CACHE2_BANK      = $7F
+SAME_SCUMM_MSU_PROGRAM_CACHE2_END       = $7F1800
 SAME_SCUMM_MSU_CACHE_HAS_PAGE2           = $01
 .else
 SAME_SCUMM_MSU_PROGRAM_CACHE2           = $000000
@@ -117,6 +118,8 @@ SAME_SCUMM_MSU_PROGRAM_CACHE2_BANK      = $00
 SAME_SCUMM_MSU_PROGRAM_CACHE2_END       = $000000
 SAME_SCUMM_MSU_CACHE_HAS_PAGE2           = $00
 .endif
+SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_START = $7F1000
+SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_END   = $7F1800
 ; Page-fault lookup/request scratch in the audited gap before provider cache
 ; metadata. Logical PCs remain source-body offsets; no cache address is saved.
 SAME_SCUMM_MSU_PAGE_REQUEST_PC          = $7E2EAC ; u16 current logical PC
@@ -286,6 +289,10 @@ SAME_SCUMM_LAST_OPCODE        = $7E2306 ; u8 last decoded opcode
 SAME_SCUMM_FRAME_COUNT        = $7E2308 ; u16 adapter frames
 SAME_SCUMM_FRAME_OPS          = $7E230A ; u16 operations this frame
 SAME_SCUMM_TOTAL_OPS          = $7E230C ; u16 operations since boot
+; The profile-generated variable table and low-WRAM guard end immediately
+; before the first streamed ProgramUnit cache page.
+SAME_SCUMM_VARIABLES_RESERVED_START = $7E0800
+SAME_SCUMM_VARIABLES_RESERVED_END   = $7E1000
 ; Authored SCUMM profiles use the complete generated variable table.  Keep
 ; the compact bootstrap window for the small conformance fixtures, but do not
 ; let VAR_SENTENCE_SCRIPT (or any other variable above 15) alias the live
@@ -953,6 +960,8 @@ SAME_SCUMM_M23B_NEST_STATE_END           = $7FF948
 ; Program selection is live interpreter context, not merely slot-owned state.
 ; It must remain exact across a long nested child and intervening NMIs.
 SAME_SCUMM_M23B_NEST_PROGRAMS            = $7E5420 ; 24 x u8 program identity
+SAME_SCUMM_M23B_NEST_CHILD_SLOTS        = $7E5438 ; 24 x u8 allocated child slot
+SAME_SCUMM_M23B_NEST_CHILD_SLOTS_END    = $7E5450
 SAME_SCUMM_M23B_STATE_END                = $7FF467
 ; Room-return activation metadata is in the audited gap after M23B's
 ; seven-byte diagnostic block and before the optional $7FF500 variable table.

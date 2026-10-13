@@ -1001,11 +1001,21 @@ ScummV5_Engine_Frame__synthetic_bootstrap_done:
     .a8
     .endif
     .if SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    ; Keep the optional diagnostic bootstrap out of bank zero on large live
+    ; resource builds. Its bounded body is in the already reserved far service
+    ; bank; it still enters the ordinary C4 scheduler through generated IDs.
+    jsl ScummV5_AuthenticBootstrap_Far
+    bcc ScummV5_Engine_Frame__authentic_bootstrap_done
+    lda #SCUMM_ERR_SCRIPT
+    jsr ScummV5_SetError
+    jmp ScummV5_Engine_Frame__m23a_error
+    .else
     ; Cold-start diagnostic matching SAME's host boot contract: room zero is
     ; the active null scene and the authentic boot global is a normal top-level
     ; C4 activation, not a child of a synthetic room ENCD. The executable
-    ; selector comes from the generated resolver; local0 receives the DOS-CD
-    ; boot parameter.
+    ; selector comes from the generated resolver; local0 receives the boot
+    ; parameter.
     lda.l SAME_SCUMM_AUTHENTIC_BOOTSTRAP_STARTED
     beq ScummV5_Engine_Frame__authentic_bootstrap_check_phase
     jmp ScummV5_Engine_Frame__authentic_bootstrap_done
@@ -1083,9 +1093,10 @@ ScummV5_Engine_Frame__authentic_bootstrap_clear_locals:
     sta.l SAME_SCUMM_C22_CURRENT_ROOM
     sta.l SAME_SCUMM_C22_OBJECT_COUNT
     sta.l SAME_SCUMM_C22_QUEUE_COUNT
+    .endif
+    .endif
 ScummV5_Engine_Frame__authentic_bootstrap_done:
     .a8
-    .endif
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     ; Request once, from the normal frame boundary, after boot has initialized
     ; services.  The storage/lifecycle code owns installation and ENCD.
@@ -1240,6 +1251,18 @@ ScummV5_Engine_Frame__m23a_continue:
     beq ScummV5_Engine_Frame__m23a_run_room_script
     jmp ScummV5_Engine_Frame__m23a_driver
 ScummV5_Engine_Frame__m23a_run_room_script:
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; Lifecycle slot zero is run directly rather than through the ordinary C4
+    ; scheduler. Service a child parked on its first checked bytecode page
+    ; before re-entering ENCD/EXCD, or the direct path can advance its parent
+    ; while the scheduler-only pending-child gate is never visited.
+    jsl ScummV5_M23A_RunPendingLifecycleChild_FarEntry
+    sep #$20
+    .a8
+    bcs ScummV5_Engine_Frame__m23a_error
+    cmp #$01
+    beq ScummV5_Engine_Frame__m23a_wait
+    .endif
     ; Room ENCD/EXCD owns scheduler slot zero, but nested startScript calls
     ; temporarily leave the shared interpreter registers pointing at a child.
     ; Reload the lifecycle slot on every pass before running it so a child
@@ -1333,6 +1356,22 @@ ScummV5_Engine_Frame__m23a_room_runnable:
     sta.l SAME_SCUMM_MSU_DIRECT_ROOM_CALL
 .endif
     jmp ScummV5_Engine_RunSelected
+
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+; Far-bank helper callbacks into bank-zero routines.  The lifecycle child
+; service itself lives with the room-service far code to preserve bank-zero
+; header margin; these thunks retain the existing near-call ABI.
+ScummV5_M23A_RunSelected_FarThunk:
+    jsr ScummV5_Engine_RunSelected
+    rtl
+ScummV5_M23A_SaveCurrentSlot_FarThunk:
+    jsr ScummV5_C4_SaveCurrentSlot
+    rtl
+ScummV5_M23A_SetError_FarThunk:
+    jsr ScummV5_SetError
+    rtl
+.endif
+
 ScummV5_Engine_Frame__m23a_driver:
     .a8
     .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
