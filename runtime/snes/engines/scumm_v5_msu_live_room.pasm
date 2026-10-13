@@ -157,7 +157,7 @@ ScummV5_MsuLiveRoom_Start_Far__metadata_room_ok:
     jmp ScummV5_MsuLiveRoom_Start_Far__invalid
 ScummV5_MsuLiveRoom_Start_Far__metadata_length_ok:
     .a16
-    lda #SCUMM_LIVE_ROOM_MAX_SIZE
+    lda #SAME_SCUMM_LIVE_ROOM_PENDING_CAPACITY
     sta.l SAME_MSU1_DEST_CAPACITY
     sep #$20
     .a8
@@ -479,6 +479,8 @@ ScummV5_LiveRoom_Validate_Far__magic_match:
     lda.l SCUMM_LIVE_ROOM_PENDING+$08
     cmp #$0002
     beq ScummV5_LiveRoom_Validate_Far__version_ok
+    cmp #$0003
+    beq ScummV5_LiveRoom_Validate_Far__version_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__version_ok:
     .a16
@@ -525,6 +527,134 @@ ScummV5_LiveRoom_Validate_Far__maximum_size_ok:
     beq ScummV5_LiveRoom_Validate_Far__first_offset_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__first_offset_ok:
+    .a16
+    ; SC5LIVE v3 replaces the dense pair-index matrix with a sorted
+    ; (pair-key, descriptor-index) directory. Validate its checked section
+    ; extent before any live movement consumer can use binary search.
+    lda.l SCUMM_LIVE_ROOM_PENDING+$08
+    cmp #$0003
+    beq ScummV5_LiveRoom_Validate_Far__portal_v3_start
+    jmp ScummV5_LiveRoom_Validate_Far__portal_v3_done
+ScummV5_LiveRoom_Validate_Far__portal_v3_start:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_PENDING+$22
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; portal section
+    lda.l SCUMM_LIVE_ROOM_PENDING+$24
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; object section
+    cmp.l SCUMM_LIVE_ROOM_TEMP0
+    bcs ScummV5_LiveRoom_Validate_Far__portal_section_order_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_section_order_ok:
+    .a16
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP0
+    cmp #$0004
+    bcs ScummV5_LiveRoom_Validate_Far__portal_header_available
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_header_available:
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    tax
+    lda.l SCUMM_LIVE_ROOM_PENDING,x
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; edge count
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_PENDING,x
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; unique descriptor count
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcc ScummV5_LiveRoom_Validate_Far__portal_count_ok
+    beq ScummV5_LiveRoom_Validate_Far__portal_count_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_count_ok:
+    .a16
+    ; edge_count cannot exceed box_count squared.
+    lda.l SCUMM_LIVE_ROOM_PENDING+$0E
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+ScummV5_LiveRoom_Validate_Far__portal_box_square:
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    beq ScummV5_LiveRoom_Validate_Far__portal_pair_bound
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    lda.l SCUMM_LIVE_ROOM_TEMP5
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+    bra ScummV5_LiveRoom_Validate_Far__portal_box_square
+ScummV5_LiveRoom_Validate_Far__portal_pair_bound:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_PENDING+$20
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP0
+    bcc ScummV5_LiveRoom_Validate_Far__portal_offset_no_overflow
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_offset_no_overflow:
+    .a16
+    cmp.l SCUMM_LIVE_ROOM_PENDING+$22
+    beq ScummV5_LiveRoom_Validate_Far__portal_offset_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_offset_ok:
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    cmp.l SCUMM_LIVE_ROOM_TEMP0
+    bcc ScummV5_LiveRoom_Validate_Far__portal_pairs_fit
+    beq ScummV5_LiveRoom_Validate_Far__portal_pairs_fit
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_pairs_fit:
+    .a16
+    ; Prove edge_count*4 fits between the portal header and object section,
+    ; then prove descriptors occupy the exact remaining bytes.
+    lda.l SCUMM_LIVE_ROOM_PENDING+$22
+    clc
+    adc #$0004
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    lda.l SCUMM_LIVE_ROOM_PENDING+$24
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP0
+    lsr
+    lsr
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    bcs ScummV5_LiveRoom_Validate_Far__portal_rows_fit
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_rows_fit:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    asl
+    asl
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; pair-row byte count
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    asl
+    asl
+    asl
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP3 ; descriptor_count * 7
+    sta.l SCUMM_LIVE_ROOM_TEMP5
+    lda.l SCUMM_LIVE_ROOM_PENDING+$22
+    clc
+    adc #$0004
+    bcc ScummV5_LiveRoom_Validate_Far__portal_start_no_overflow
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_start_no_overflow:
+    .a16
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    bcc ScummV5_LiveRoom_Validate_Far__portal_rows_no_overflow
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_rows_no_overflow:
+    .a16
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP5
+    bcc ScummV5_LiveRoom_Validate_Far__portal_descriptors_no_overflow
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_descriptors_no_overflow:
+    .a16
+    cmp.l SCUMM_LIVE_ROOM_PENDING+$24
+    beq ScummV5_LiveRoom_Validate_Far__portal_v3_done
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__portal_v3_done:
     .a16
     ; SC5LIVE v2 stores one (u8 byte length, bytes) name row per object, in
     ; object-table order. Walk exactly object_count rows and require the table
@@ -1097,6 +1227,9 @@ ScummV5_LiveRoom_Portal_Far__index:
     clc
     adc.l SCUMM_LIVE_ROOM_TEMP5
     sta.l SCUMM_LIVE_ROOM_TEMP2
+    lda.l SCUMM_LIVE_ROOM_BASE+$08
+    cmp #$0003
+    beq ScummV5_LiveRoom_Portal_Far__v3
     ; Pair matrix stores a sparse portal-record index, FFFF means no portal.
     asl
     clc
@@ -1104,8 +1237,89 @@ ScummV5_LiveRoom_Portal_Far__index:
     tax
     lda.l SCUMM_LIVE_ROOM_BASE,x
     cmp #$FFFF
-    bne ScummV5_LiveRoom_Portal_Far__has_portal
+    beq ScummV5_LiveRoom_Portal_Far__v2_no_portal
+    jmp ScummV5_LiveRoom_Portal_Far__has_portal
+ScummV5_LiveRoom_Portal_Far__v2_no_portal:
     jmp ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_Portal_Far__v3:
+    .a16
+    ; Binary search the sorted v3 pair directory by source*box_count+next.
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; high = edge_count
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; low
+ScummV5_LiveRoom_Portal_Far__v3_search:
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    cmp.l SCUMM_LIVE_ROOM_TEMP1
+    bcc ScummV5_LiveRoom_Portal_Far__v3_search_step
+    jmp ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_Portal_Far__v3_search_step:
+    .a16
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP1
+    lsr
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; midpoint
+    asl
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    clc
+    adc #$0004
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; pair row offset
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    cmp.l SCUMM_LIVE_ROOM_TEMP2
+    beq ScummV5_LiveRoom_Portal_Far__v3_found
+    bcc ScummV5_LiveRoom_Portal_Far__v3_search_lower
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    bra ScummV5_LiveRoom_Portal_Far__v3_search
+ScummV5_LiveRoom_Portal_Far__v3_search_lower:
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    inc
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    bra ScummV5_LiveRoom_Portal_Far__v3_search
+ScummV5_LiveRoom_Portal_Far__v3_found:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; descriptor index
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; edge count
+    inx
+    inx
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    cmp.l SCUMM_LIVE_ROOM_TEMP3
+    bcc ScummV5_LiveRoom_Portal_Far__v3_bad_descriptor_index
+    bne ScummV5_LiveRoom_Portal_Far__v3_descriptor_index_ok
+ScummV5_LiveRoom_Portal_Far__v3_bad_descriptor_index:
+    jmp ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_Portal_Far__v3_descriptor_index_ok:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    asl
+    clc
+    adc #$0004
+    clc
+    adc.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    sta.l SCUMM_LIVE_ROOM_TEMP4
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    asl
+    asl
+    asl
+    sec
+    sbc.l SCUMM_LIVE_ROOM_TEMP3
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    tax
+    jmp ScummV5_LiveRoom_Portal_Far__load_descriptor
 ScummV5_LiveRoom_Portal_Far__has_portal:
     .a16
     sta.l SCUMM_LIVE_ROOM_TEMP3 ; sparse portal record index
@@ -1142,11 +1356,16 @@ ScummV5_LiveRoom_Portal_Far__records:
     clc
     adc.l SCUMM_LIVE_ROOM_TEMP4
     tax
+ScummV5_LiveRoom_Portal_Far__load_descriptor:
     sep #$20
     .a8
     lda.l SCUMM_LIVE_ROOM_BASE,x
     sta.l SAME_SCUMM_MOVE_PORTAL_TYPE
-    beq ScummV5_LiveRoom_Portal_Far__bad
+    cmp #$01
+    beq ScummV5_LiveRoom_Portal_Far__descriptor_kind_ok
+    cmp #$02
+    bne ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_Portal_Far__descriptor_kind_ok:
     inx
     rep #$20
     .a16

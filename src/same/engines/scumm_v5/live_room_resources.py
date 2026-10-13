@@ -17,10 +17,13 @@ from ...errors import ResourceError
 
 
 MAGIC = b"SC5LIVE\0"
-VERSION = 2
+VERSION = 3
 HEADER = struct.Struct("<8sHHBB" + "H" * 18 + "32s")
 MAX_ACTIVE_BYTES = 0x1000
+MAX_SOURCE_RECORD_BYTES = 0xFFFF
 MAX_PENDING_BYTES = 0x0C3C  # Packed SA-1 backend allocation, after renderer/live-room state.
+MAX_LIVE_RECORD_BYTES = MAX_SOURCE_RECORD_BYTES
+LIVE_ROOM_CHUNK_BYTES = 0x0800  # Checked MSU read quantum for oversized live records.
 OBJECT = struct.Struct("<HhhhhB")
 NAME_LENGTH = struct.Struct("<B")
 SOURCE_OBJECT_WALK = struct.Struct("<HhhBhhB")
@@ -42,6 +45,7 @@ class LiveRoomRecord:
     entry_program_unit: int
     exit_program_unit: int
     offsets: Mapping[str, int]
+    section_sizes: Mapping[str, int]
     object_names: tuple[tuple[int, bytes], ...]
     portal_indices: tuple[int | None, ...]
     portal_records: tuple[bytes, ...]
@@ -58,36 +62,40 @@ def _checked_u16(value: int, what: str) -> int:
 
 
 def _encode_portal_directory(dense: bytes, box_count: int, room: int) -> bytes:
-    """Pack the dense compiler projection into a sparse pair directory.
-
-    Each pair keeps a u16 portal-record index (FFFF means no shared edge).
-    Only nonempty seven-byte portal descriptors follow the index matrix.
-    """
+    """Encode v3 sorted sparse pairs and deduplicated portal descriptors."""
     pair_count = box_count * box_count
     if len(dense) != pair_count * PORTAL.size:
         raise ResourceError(f"room {room} portal table geometry differs")
-    indices: list[int] = []
-    records = bytearray()
-    portal_count = 0
+    descriptors: list[bytes] = []
+    descriptor_ids: dict[bytes, int] = {}
+    pairs: list[tuple[int, int]] = []
     for offset in range(0, len(dense), PORTAL.size):
         record = dense[offset:offset + PORTAL.size]
         kind, fixed, low, high = PORTAL.unpack(record)
         if kind == 0:
             if fixed or low or high:
                 raise ResourceError(f"room {room} has noncanonical empty portal data")
-            indices.append(0xFFFF)
             continue
         if kind not in (1, 2):
             raise ResourceError(f"room {room} has unsupported portal kind {kind}")
-        indices.append(portal_count)
-        portal_count += 1
-        records.extend(record)
-    return b"".join(struct.pack("<H", index) for index in indices) + bytes(records)
+        descriptor_id = descriptor_ids.get(record)
+        if descriptor_id is None:
+            descriptor_id = len(descriptors)
+            descriptor_ids[record] = descriptor_id
+            descriptors.append(record)
+        pair_index = offset // PORTAL.size
+        source, destination = divmod(pair_index, box_count)
+        pairs.append((source * box_count + destination, descriptor_id))
+    if len(pairs) > 0xFFFF or len(descriptors) > 0xFFFF:
+        raise ResourceError(f"room {room} portal directory exceeds u16 counts")
+    return (struct.pack("<HH", len(pairs), len(descriptors))
+            + b"".join(struct.pack("<HH", key, value) for key, value in pairs)
+            + b"".join(descriptors))
 
 
 def encode_live_room(
     record: Mapping[str, object], *, program_units: Sequence[Mapping[str, object]],
-    max_size: int = MAX_PENDING_BYTES,
+    max_size: int = MAX_LIVE_RECORD_BYTES,
 ) -> bytes:
     """Serialize cooked backend tables while preserving source identities.
 
@@ -208,10 +216,7 @@ def encode_live_room(
     if max_size <= 0 or max_size > 0xFFFF:
         raise ResourceError("live-room encoding limit must fit a nonzero u16")
     if len(body) > max_size:
-        limit_detail = (
-            f"audited pending room buffer is {max_size} bytes"
-            if max_size == MAX_PENDING_BYTES else f"selected limit is {max_size} bytes"
-        )
+        limit_detail = f"selected live-room record limit is {max_size} bytes"
         raise ResourceError(
             f"room {room} live metadata is {len(body)} bytes; {limit_detail}"
         )
@@ -229,13 +234,13 @@ def encode_live_room(
 
 def decode_live_room(
     data: bytes, *, expected_room: int | None = None,
-    max_size: int = MAX_ACTIVE_BYTES,
+    max_size: int = MAX_SOURCE_RECORD_BYTES,
 ) -> LiveRoomRecord:
     if len(data) < HEADER.size:
         raise ResourceError("live room record is truncated")
     values = HEADER.unpack_from(data)
     magic, version, header_size, room, flags = values[:5]
-    if magic != MAGIC or version != VERSION or header_size != HEADER.size or flags & ~0x01:
+    if magic != MAGIC or version not in (2, VERSION) or header_size != HEADER.size or flags & ~0x01:
         raise ResourceError("live room identity, schema, or flags differ")
     if expected_room is not None and room != expected_room:
         raise ResourceError("live room canonical room identity differs")
@@ -262,29 +267,61 @@ def decode_live_room(
         expected += length
 
     portals_offset, objects_offset = offsets_raw[3:5]
-    portal_index_bytes = box_count * box_count * 2
-    portal_values_offset = portals_offset + portal_index_bytes
-    if (portals_offset != expected or portal_values_offset > objects_offset
-            or objects_offset + object_count * OBJECT.size > total_size):
+    if portals_offset != expected or objects_offset > total_size:
         raise ResourceError("live room portal directory is out of bounds or noncanonical")
-    portal_value_bytes = objects_offset - portal_values_offset
-    if portal_value_bytes % PORTAL.size:
-        raise ResourceError("live room sparse portal payload has a partial record")
-    portal_count = portal_value_bytes // PORTAL.size
-    portal_indices: list[int | None] = []
-    for index in range(box_count * box_count):
-        value = struct.unpack_from("<H", data, portals_offset + index * 2)[0]
-        if value == 0xFFFF:
-            portal_indices.append(None)
-        elif value >= portal_count:
-            raise ResourceError("live room portal index exceeds sparse portal records")
-        else:
-            portal_indices.append(value)
-    portal_records = tuple(
-        bytes(data[portal_values_offset + index * PORTAL.size:
-                   portal_values_offset + (index + 1) * PORTAL.size])
-        for index in range(portal_count)
-    )
+    portal_indices: list[int | None] = [None] * (box_count * box_count)
+    if version == 2:
+        portal_index_bytes = box_count * box_count * 2
+        portal_values_offset = portals_offset + portal_index_bytes
+        if (portal_values_offset > objects_offset
+                or objects_offset + object_count * OBJECT.size > total_size):
+            raise ResourceError("live room portal directory is out of bounds or noncanonical")
+        portal_value_bytes = objects_offset - portal_values_offset
+        if portal_value_bytes % PORTAL.size:
+            raise ResourceError("live room sparse portal payload has a partial record")
+        portal_count = portal_value_bytes // PORTAL.size
+        for index in range(box_count * box_count):
+            value = struct.unpack_from("<H", data, portals_offset + index * 2)[0]
+            if value == 0xFFFF:
+                continue
+            if value >= portal_count:
+                raise ResourceError("live room portal index exceeds sparse portal records")
+            portal_indices[index] = value
+        portal_records = tuple(
+            bytes(data[portal_values_offset + index * PORTAL.size:
+                       portal_values_offset + (index + 1) * PORTAL.size])
+            for index in range(portal_count)
+        )
+        portal_storage_size = objects_offset - portals_offset
+    else:
+        if portals_offset + 4 > objects_offset:
+            raise ResourceError("live room v3 portal header is truncated")
+        edge_count, portal_count = struct.unpack_from("<HH", data, portals_offset)
+        pair_rows_offset = portals_offset + 4
+        portal_values_offset = pair_rows_offset + edge_count * 4
+        expected_objects_offset = portal_values_offset + portal_count * PORTAL.size
+        if (expected_objects_offset != objects_offset
+                or objects_offset + object_count * OBJECT.size > total_size):
+            raise ResourceError("live room v3 portal sections overlap or escape record")
+        previous_key = -1
+        for row_index in range(edge_count):
+            key, value = struct.unpack_from("<HH", data, pair_rows_offset + row_index * 4)
+            if key <= previous_key or key >= box_count * box_count or value >= portal_count:
+                raise ResourceError("live room v3 portal pair row is invalid or noncanonical")
+            previous_key = key
+            portal_indices[key] = value
+        portal_records = tuple(
+            bytes(data[portal_values_offset + index * PORTAL.size:
+                       portal_values_offset + (index + 1) * PORTAL.size])
+            for index in range(portal_count)
+        )
+        if len(set(portal_records)) != len(portal_records):
+            raise ResourceError("live room v3 portal descriptors are not deduplicated")
+        for descriptor in portal_records:
+            kind, _fixed, _low, _high = PORTAL.unpack(descriptor)
+            if kind not in (1, 2):
+                raise ResourceError("live room v3 portal descriptor kind is invalid")
+        portal_storage_size = objects_offset - portals_offset
     decoded_offsets["portals"] = portals_offset
     decoded_offsets["objects"] = objects_offset
     expected = objects_offset + object_count * OBJECT.size
@@ -328,9 +365,22 @@ def decode_live_room(
         expected += length
     if expected != total_size:
         raise ResourceError("live room has unclaimed trailing bytes")
+    section_sizes = {
+        "header": HEADER.size,
+        "flags": box_count,
+        "geometry": box_count * 18,
+        "routes": box_count * box_count,
+        "portals": portal_storage_size,
+        "objects": object_count * OBJECT.size,
+        "names": object_walk_offset - names_offset,
+        "object_walk": object_count * OBJECT_WALK.size,
+        "verbs": verb_count * VERB.size,
+        "locals": local_count * LOCAL.size,
+        "bundles": bundle_count * 2,
+    }
     return LiveRoomRecord(
         room, flags, box_count, object_count, verb_count, local_count, bundle_count,
-        entry, exit_, decoded_offsets, tuple(object_names), tuple(portal_indices),
+        entry, exit_, decoded_offsets, section_sizes, tuple(object_names), tuple(portal_indices),
         portal_records, bytes(data), source_hash.hex(),
         zlib.crc32(data) & 0xFFFFFFFF, hashlib.sha256(data).hexdigest(),
     )

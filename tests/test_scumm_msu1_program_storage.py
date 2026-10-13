@@ -219,7 +219,7 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
             self.assertEqual(result["live_room_resource_count"], 1)
             self.assertEqual(result["visual_resource_count"], 1)
 
-    def test_package_retains_large_source_rooms_and_reports_live_staging_limits(self) -> None:
+    def test_package_chunks_large_compact_live_room_records(self) -> None:
         directory = self.directory()
         bodies = {
             "GlobalProgram(4)": b"\0",
@@ -242,9 +242,7 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
         room_units = [{"id": 1, "room": 2, "unit_identity": "RoomEntryProgram(2)"}]
         live = encode_live_room(room, program_units=room_units, max_size=0xFFFF)
         self.assertGreater(len(live), MAX_PENDING_BYTES)
-        with self.assertRaisesRegex(Exception, "length exceeds"):
-            decode_live_room(live, expected_room=2)
-        self.assertEqual(decode_live_room(live, expected_room=2, max_size=0xFFFF).room, 2)
+        self.assertEqual(decode_live_room(live, expected_room=2).room, 2)
 
         source_room = bytes((index * 7) & 0xFF for index in range(100_000))
         with tempfile.TemporaryDirectory() as temporary:
@@ -261,6 +259,11 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
             live_row = result["live_room_records"][0]
             self.assertFalse(source_row["native_loadable"])
             self.assertFalse(live_row["native_loadable"])
+            self.assertIn("exceeds audited pending metadata capacity",
+                          live_row["native_loadability_reason"])
+            self.assertEqual(live_row["chunk_count"],
+                             (len(live) + 0x7FF) // 0x800)
+            self.assertEqual(len(live_row["chunks"]), live_row["chunk_count"])
             raw = (root / "scumm-programs.msu").read_bytes()
             source_offset = int(source_row["package_offset"])
             self.assertEqual(raw[source_offset:source_offset + len(source_room)], source_room)

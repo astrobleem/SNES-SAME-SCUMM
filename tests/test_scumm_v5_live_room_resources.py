@@ -13,7 +13,7 @@ from same.msu1 import (
 )
 from same.package import build_package
 from same.engines.scumm_v5.live_room_resources import (
-    HEADER, MAX_ACTIVE_BYTES, MAX_PENDING_BYTES, OBJECT_WALK,
+    HEADER, MAX_ACTIVE_BYTES, MAX_PENDING_BYTES, MAX_SOURCE_RECORD_BYTES, OBJECT_WALK,
     decode_live_room, encode_live_room,
 )
 from same.engines.scumm_v5.room_visual import decode_room_visual, encode_room_visual
@@ -73,7 +73,38 @@ class LiveRoomResourceTests(unittest.TestCase):
         self.assertEqual(struct.unpack_from("<HHHH", raw, verb_offset + 8), (22, 10, 12, 5))
         self.assertEqual(raw[0:8], b"SC5LIVE\0")
         self.assertLessEqual(len(raw), MAX_ACTIVE_BYTES)
+        self.assertEqual(struct.unpack_from("<H", raw, 8)[0], 3)
         self.assertEqual(live.source_room_sha256, hashlib.sha256(record["raw"]).hexdigest())
+
+    def test_v2_dense_portal_records_remain_decodable(self) -> None:
+        record, units = self.source_record()
+        record["portals"] = b"".join(
+            struct.pack("<Bhhh", 1, 0, 0, 0)
+            if (src, dst) == (0, 1) else bytes(7)
+            for src in range(2) for dst in range(2)
+        )
+        v3 = encode_live_room(record, program_units=units)
+        decoded_v3 = decode_live_room(v3)
+        portal_offset = decoded_v3.offsets["portals"]
+        object_offset = decoded_v3.offsets["objects"]
+        dense = b"".join(
+            struct.pack("<H", 0xFFFF if index is None else index)
+            for index in decoded_v3.portal_indices
+        )
+        old_portals = dense + b"".join(decoded_v3.portal_records)
+        delta = len(old_portals) - (object_offset - portal_offset)
+        v2 = bytearray(v3[:portal_offset] + old_portals + v3[object_offset:])
+        header_values = list(HEADER.unpack_from(v2))
+        header_values[1] = 2
+        for offset_index in range(4, 10):
+            header_values[12 + offset_index] += delta
+        header_values[22] = len(v2)
+        v2[:HEADER.size] = HEADER.pack(*header_values)
+
+        decoded_v2 = decode_live_room(bytes(v2), expected_room=4)
+        self.assertEqual(decoded_v2.portal_indices, decoded_v3.portal_indices)
+        self.assertEqual(decoded_v2.portal_records, decoded_v3.portal_records)
+        self.assertEqual(decoded_v2.object_names, decoded_v3.object_names)
 
     def test_decoder_rejects_noncanonical_offsets_and_trailing_payload(self) -> None:
         record, units = self.source_record()
@@ -177,7 +208,7 @@ class LiveRoomResourceTests(unittest.TestCase):
             self.assertEqual(raised.exception.status, ReadStatus.SECTION_CRC)
             self.assertEqual(destination, bytearray([0xA7] * section.size))
 
-    def test_live_room_metadata_capacity_failure_is_explicit(self) -> None:
+    def test_large_live_room_compacts_portals_but_reports_runtime_capacity_separately(self) -> None:
         record, units = self.source_record()
         object_ids = range(22, 222)
         record["objects"] = b"".join(
@@ -190,8 +221,12 @@ class LiveRoomResourceTests(unittest.TestCase):
             struct.pack("<HhhBhhB", object_id, 0, 0, 0, 0, 0, 0)
             for object_id in object_ids
         )
-        with self.assertRaisesRegex(Exception, "audited pending room buffer is 3132 bytes"):
-            encode_live_room(record, program_units=units)
+        raw = encode_live_room(record, program_units=units)
+        self.assertGreater(len(raw), MAX_PENDING_BYTES)
+        self.assertGreater(len(raw), MAX_ACTIVE_BYTES)
+        self.assertLessEqual(len(raw), MAX_SOURCE_RECORD_BYTES)
+        live = decode_live_room(raw, expected_room=4)
+        self.assertEqual(live.object_count, 200)
 
     def test_metadata_record_fits_packed_pending_capacity(self) -> None:
         record, units = self.source_record()

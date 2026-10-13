@@ -141,6 +141,28 @@ def package_room_preflight(
                 "movement_matrix_bytes": None if live is None else live.box_count ** 2,
                 "native_loadable": bool(live_row and live_row["native_loadable"]),
                 "native_loadability_reason": None if live_row is None else live_row["native_loadability_reason"],
+                "chunk_integrity": None if live_row is None else {
+                    "chunk_size": int(storage["live_room_chunk_size"]),
+                    "first_chunk": int(live_row["first_chunk"]),
+                    "chunk_count": int(live_row["chunk_count"]),
+                    "checksums": [str(chunk["crc32"]) for chunk in live_row["chunks"]],
+                    "whole_record_sha256": str(live_row["sha256"]),
+                    "runtime_consumed": False,
+                },
+                "table_bytes": None if live is None else dict(live.section_sizes),
+                "runtime_consumers": None if live is None else {
+                    "walkbox_flags": "copied to mutable active walkbox flag table",
+                    "walkbox_geometry": "immutable; one 18-byte geometry record is loaded on demand",
+                    "route_matrix": "read by active movement next-box lookup",
+                    "portal_directory": "read by active movement portal lookup",
+                    "objects": "installed into ordinary SCUMM object-state records",
+                    "names": "copied to the shared bounded object-name cache",
+                    "object_walk": "read by current object/walkbox geometry queries",
+                    "verbs": "read by existing shared object-carrier dispatch",
+                    "locals": "read by the current-room local-script resolver",
+                    "bundles": "consumed during bundle bind/release at lifecycle boundary",
+                    "header": "identity/count/offset validation and provenance; not a script body",
+                },
             },
             "sc5vis": {
                 "status": "PACKAGED_INDEXED_PROJECTION" if visual is not None else "MISSING_CODEC_OR_SOURCE",
@@ -601,17 +623,22 @@ def main() -> int:
         "native_room_capacity": {
             "active_sc5live_bytes": 4096,
             "pending_sc5live_bytes": 3132,
+            "sc5live_chunk_bytes": int(storage["live_room_chunk_size"]),
+            "sc5live_chunk_count": int(storage["live_room_chunk_count"]),
+            "large_record_policy": "whole-record staging only; per-chunk checksums are host-side preflight metadata and are not consumed by the native loader",
             "max_sc5live_bytes": max((int(row["length"]) for row in live_rows), default=0),
             "max_sc5room_bytes": max((int(row["length"]) for row in source_room_rows), default=0),
             "oversized_live_rooms": [int(row["room"]) for row in live_rows
                                      if not row["native_loadable"]],
+            "oversized_active_records": [int(row["room"]) for row in live_rows
+                                         if int(row["length"]) > 4096],
             "room0_policy": "RESOURCE_LESS_LIFECYCLE_ONLY",
         },
         "selected_corpus_reconciliation": selected_compare,
         "release_status": "NOT_READY",
         "release_blockers": [
             "package completeness does not certify execution semantics",
-            f"{len([row for row in live_rows if not row['native_loadable']])} SC5LIVE records exceed current native staging capacity: "
+            f"{len([row for row in live_rows if not row['native_loadable']])} SC5LIVE records exceed current pending staging capacity: "
             + ",".join(str(row["room"]) for row in live_rows if not row["native_loadable"]),
             f"{lowered_status_counts.get('UNVERIFIED', 0)} ProgramUnits remain unverified and "
             f"{lowered_status_counts.get('BLOCKED', 0)} are blocked by lowering/capability status",

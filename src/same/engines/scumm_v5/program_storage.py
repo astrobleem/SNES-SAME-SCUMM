@@ -14,7 +14,10 @@ import zlib
 from typing import Mapping
 
 from same.package import build_package, inspect_package
-from .live_room_resources import MAX_PENDING_BYTES as MAX_PENDING_LIVE_ROOM_BYTES
+from .live_room_resources import (
+    LIVE_ROOM_CHUNK_BYTES,
+    MAX_PENDING_BYTES as MAX_PENDING_LIVE_ROOM_BYTES,
+)
 
 
 PROGRAM_SECTION = "SC5CODE"
@@ -25,7 +28,7 @@ LIVE_ROOM_SECTION = "SC5LIVE"
 LIVE_ROOM_SECTION_KIND = "SCVL"
 VISUAL_SECTION = "SC5VIS"
 VISUAL_SECTION_KIND = "SCVV"
-PROGRAM_STORAGE_SCHEMA = "same_scumm_v5_msu1_program_storage_v2"
+PROGRAM_STORAGE_SCHEMA = "same_scumm_v5_msu1_program_storage_v3"
 ROOM_RECORD_LIMIT = 0x0800
 LIVE_ROOM_DIRECTORY_RECORD_SIZE = 10
 VISUAL_DIRECTORY_RECORD_SIZE = 26
@@ -521,6 +524,7 @@ def build_program_storage(
             "flags": ["streamable", "read_only"],
         })
     live_room_rows: list[dict[str, object]] = []
+    live_room_chunks: list[dict[str, object]] = []
     live_room_payload = bytearray()
     live_by_id = dict(live_room_resources or {})
     if any(isinstance(room, bool) or not 0 <= int(room) <= 255 for room in live_by_id):
@@ -540,15 +544,29 @@ def build_program_storage(
                 raise ValueError(f"live room {room_id} exceeds directory length field")
             offset = len(live_room_payload)
             live_room_payload.extend(body)
+            first_chunk = len(live_room_chunks)
+            chunks = []
+            for chunk_start in range(0, len(body), LIVE_ROOM_CHUNK_BYTES):
+                chunk_body = body[chunk_start:chunk_start + LIVE_ROOM_CHUNK_BYTES]
+                chunk = {
+                    "start": chunk_start,
+                    "length": len(chunk_body),
+                    "crc32": f"{zlib.crc32(chunk_body) & 0xFFFFFFFF:08x}",
+                }
+                chunks.append(chunk)
+                live_room_chunks.append({"room": int(room_id), **chunk})
             live_room_rows.append({
                 "room": int(room_id), "section_relative_offset": offset,
                 "length": len(body), "crc32": f"{decoded_live.crc32:08x}",
                 "sha256": decoded_live.sha256,
+                "first_chunk": first_chunk, "chunk_count": len(chunks),
+                "chunks": chunks,
                 "native_loadable": len(body) <= MAX_PENDING_LIVE_ROOM_BYTES,
                 "native_loadability_reason": (
                     None if len(body) <= MAX_PENDING_LIVE_ROOM_BYTES else
-                    f"SC5LIVE record exceeds audited pending staging capacity "
-                    f"{MAX_PENDING_LIVE_ROOM_BYTES} bytes"
+                    f"SC5LIVE record exceeds audited pending metadata capacity "
+                    f"{MAX_PENDING_LIVE_ROOM_BYTES} bytes; native loader requires a "
+                    "section-aware transactional consumer"
                 ),
             })
         live_file.write_bytes(live_room_payload)
@@ -698,6 +716,10 @@ def build_program_storage(
         "live_room_resource_bytes": len(live_room_payload),
         "live_room_section": None if live_room_section is None else live_room_section.to_dict(),
         "live_room_records": live_room_rows,
+        "live_room_chunk_size": LIVE_ROOM_CHUNK_BYTES,
+        "live_room_chunk_count": len(live_room_chunks),
+        "live_room_chunk_directory_bytes": 0,
+        "live_room_chunks": live_room_chunks,
         "visual_resource_count": len(visual_rows),
         "visual_resource_bytes": len(visual_payload),
         "visual_section": None if visual_section is None else visual_section.to_dict(),

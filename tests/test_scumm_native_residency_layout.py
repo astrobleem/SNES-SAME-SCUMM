@@ -97,6 +97,8 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         layout = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json")
                             .read_text(encoding="utf-8"))
         active = layout["live_room_active"]
+        self.assertEqual(LIVE_ROOM_ACTIVE_BASE, 0x41F000)
+        self.assertEqual(LIVE_ROOM_ACTIVE_CAPACITY, 0x1000)
         self.assertEqual(int(active["address"].replace(":", ""), 16),
                          LIVE_ROOM_ACTIVE_BASE)
         self.assertEqual(active["bytes"], LIVE_ROOM_ACTIVE_CAPACITY)
@@ -145,6 +147,31 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         next_u8, adjacent_portal_type = 1, 24
         self.assertEqual(20 * 20 + next_u8, 401)
         self.assertNotEqual(20 * 20 + (adjacent_portal_type << 8 | next_u8), 401)
+
+    def test_live_room_v3_uses_validated_sparse_portal_directory(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm")
+        source = runtime.read_text(encoding="utf-8")
+        validator = source.split("ScummV5_LiveRoom_Validate_Far:", 1)[1]
+        validator = validator.split("ScummV5_LiveRoom_Validate_Far__bad:", 1)[0]
+        portal = source.split("ScummV5_LiveRoom_Portal_Far:", 1)[1]
+        portal = portal.split("ScummV5_LiveRoom_Portal_Far__bad:", 1)[0]
+
+        # V2 remains accepted; v3 is validated as a bounded pair-row and
+        # descriptor section, then queried without expanding the dense matrix.
+        self.assertIn("cmp #$0002", validator)
+        self.assertIn("cmp #$0003", validator)
+        self.assertIn("ScummV5_LiveRoom_Validate_Far__portal_v3_start:", validator)
+        self.assertIn("ScummV5_LiveRoom_Validate_Far__portal_descriptors_no_overflow:", validator)
+        self.assertIn("cmp #$0003", portal)
+        self.assertIn("ScummV5_LiveRoom_Portal_Far__v3_search:", portal)
+        self.assertIn("ScummV5_LiveRoom_Portal_Far__v3_found:", portal)
+        self.assertIn("ScummV5_LiveRoom_Portal_Far__load_descriptor:", portal)
+
+        layout = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json")
+                            .read_text(encoding="utf-8"))
+        self.assertEqual(layout["backend_reserved"]["allocations"]["live_room_pending"]["bytes"],
+                         3132)
+        self.assertEqual(layout["live_room_active"]["bytes"], 4096)
 
     def test_winston_storage_personality_keeps_its_generated_package_directory(self) -> None:
         source = (ROOT / "runtime/snes/main.pasm").read_text()
