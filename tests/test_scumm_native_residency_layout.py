@@ -39,6 +39,22 @@ class NativeResidencyLayoutTests(unittest.TestCase):
                          LIVE_ROOM_ACTIVE_BASE)
         self.assertEqual(active["bytes"], LIVE_ROOM_ACTIVE_CAPACITY)
 
+    def test_rom_backed_build_emits_inert_msu_program_include(self) -> None:
+        build = (ROOT / "tools/build_snes.sh").read_text(encoding="utf-8")
+        main = (ROOT / "runtime/snes/main.pasm").read_text(encoding="utf-8")
+        self.assertIn(
+            "Generated empty SCUMM ProgramUnit directory (MSU programs disabled).",
+            build,
+        )
+        self.assertIn(
+            '> runtime/snes/generated/scumm_v5_msu_programs.inc.pasm',
+            build,
+        )
+        self.assertIn(
+            '.include "generated/scumm_v5_msu_programs.inc.pasm"',
+            main,
+        )
+
     def test_winston_storage_personality_keeps_its_generated_package_directory(self) -> None:
         source = (ROOT / "runtime/snes/main.pasm").read_text()
         self.assertIn(".if SAME_BUILD_MSU1_STORAGE\n", source)
