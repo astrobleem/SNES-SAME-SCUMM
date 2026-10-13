@@ -73,10 +73,12 @@ class SnesCarrierTests(unittest.TestCase):
         for left, right in zip(regions, regions[1:]):
             self.assertLessEqual(left.end, right.address)
         allocations = carrier.layout["backend_reserved"]["allocations"]
-        self.assertEqual(allocations["live_room_palette_stage"]["offset"], 0x100)
+        self.assertEqual(allocations["mode3_control"]["bytes"], 0x40)
+        self.assertEqual(allocations["video_surface_state"]["offset"], 0x40)
+        self.assertEqual(allocations["live_room_palette_stage"]["offset"], 0x84)
         self.assertEqual(allocations["live_room_palette_stage"]["bytes"], 768)
-        self.assertEqual(allocations["live_room_pending"]["offset"], 0x600)
-        self.assertEqual(allocations["live_room_pending"]["bytes"], 2560)
+        self.assertEqual(allocations["live_room_pending"]["offset"], 0x3C4)
+        self.assertEqual(allocations["live_room_pending"]["bytes"], 3132)
         self.assertEqual(carrier.layout["live_room_active"], {
             "address": "41:F000", "bytes": 4096,
             "owner": "SCUMM active room metadata",
@@ -102,6 +104,8 @@ class SnesCarrierTests(unittest.TestCase):
             self.assertNotIn("lda", boot)
             self.assertNotIn(".bank", (root / "carrier_code.inc.pasm").read_text())
             self.assertIn("SAME_SAVE_STORAGE_BASE = $700000", (root / "carrier_constants.inc.pasm").read_text())
+            self.assertIn("SAME_BWRAM_VIDEO_SURFACE_STATE = $000000",
+                          (root / "carrier_constants.inc.pasm").read_text())
 
     def test_generated_sa1_carrier_binds_reset_layout_control_and_save(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -123,14 +127,39 @@ class SnesCarrierTests(unittest.TestCase):
                 "SAME_SAVE_STORAGE_BASE = $400800",
                 "SAME_BWRAM_SURFACE_BASE = $402000",
                 "SAME_BWRAM_TILE_SHADOW_BASE = $410000",
-                "SAME_BWRAM_LIVE_ROOM_PALETTE_STAGE = SAME_BWRAM_BACKEND_BASE+$0100",
+                "SAME_BWRAM_VIDEO_SURFACE_STATE = SAME_BWRAM_BACKEND_BASE+$0040",
+                "SAME_BWRAM_VIDEO_SURFACE_STATE_SIZE = $0044",
+                "SAME_BWRAM_LIVE_ROOM_PALETTE_STAGE = SAME_BWRAM_BACKEND_BASE+$0084",
                 "SAME_BWRAM_CGRAM_SHADOW_BASE = $41E000",
                 "SAME_SCUMM_LIVE_ROOM_STAGING_BASE = $41F000",
                 "SAME_SCUMM_LIVE_ROOM_PENDING_BASE = SAME_BWRAM_LIVE_ROOM_PENDING",
+                "SAME_SCUMM_LIVE_ROOM_PENDING_CAPACITY = SAME_BWRAM_LIVE_ROOM_PENDING_SIZE",
                 "SAME_SCUMM_LIVE_ROOM_PENDING_BANK = $40",
             ):
                 self.assertIn(line, constants)
             self.assertNotIn("PROGRAM_CACHE_PAGE2", constants)
+            video_surface = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()
+            self.assertIn(
+                "SAME_VIDEO_SURFACE_STATE              = SAME_BWRAM_VIDEO_SURFACE_STATE",
+                video_surface,
+            )
+            video_mode3 = (ROOT / "runtime/snes/services/video_mode3.pasm").read_text()
+            reset_start = video_mode3.rindex(
+                "    ldx #SAME_BWRAM_VIDEO_SURFACE_STATE-SAME_BWRAM_BACKEND_BASE",
+                0,
+                video_mode3.index("Same_Mode3_Reset__clear_surface_facade:"),
+            )
+            reset_end = video_mode3.index(".endif", reset_start)
+            reset_loop = video_mode3[reset_start:reset_end]
+            self.assertIn(
+                "ldx #SAME_BWRAM_VIDEO_SURFACE_STATE-SAME_BWRAM_BACKEND_BASE",
+                reset_loop,
+            )
+            self.assertIn(
+                "SAME_BWRAM_VIDEO_SURFACE_STATE-SAME_BWRAM_BACKEND_BASE+SAME_VIDEO_SURFACE_STATE_SIZE",
+                reset_loop,
+            )
+            self.assertNotIn("ldx #$0080", reset_loop)
             boot = (root / "carrier_boot.inc.pasm").read_text(encoding="utf-8")
             self.assertIn("jsl Same_Carrier_Boot", boot)
             code = (root / "carrier_code.inc.pasm").read_text(encoding="utf-8")

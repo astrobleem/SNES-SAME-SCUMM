@@ -202,10 +202,15 @@ ScummV5_Resident_ResolveProgramUnit_Far__candidate:
     lda #$0001
 ScummV5_Resident_ResolveProgramUnit_Far__generation_ready:
     sta.l SAME_SCUMM_RESIDENT_GENERATIONS,x
-    sep #$20
-    .a8
+    ; ProgramUnit IDs are 16-bit. After the request ID load, A's hidden B
+    ; accumulator byte may be nonzero; widen the pool-index load before TAX so
+    ; it cannot leak that stale high byte into the flags-table index.
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_RESIDENT_POOL_INDEX
     tax
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_RESIDENT_FLAGS,x
     and #SCUMM_RESIDENT_FLAG_VALID
     bne ScummV5_Resident_ResolveProgramUnit_Far__reuse
@@ -231,8 +236,12 @@ ScummV5_Resident_ResolveProgramUnit_Far__reuse:
     .a8
 ScummV5_Resident_ResolveProgramUnit_Far__set_valid:
     .a8
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_RESIDENT_POOL_INDEX
     tax
+    sep #$20
+    .a8
     lda #SCUMM_RESIDENT_FLAG_VALID
     sta.l SAME_SCUMM_RESIDENT_FLAGS,x
     rep #$20
@@ -340,10 +349,14 @@ ScummV5_Resident_SetPin_Far:
     lda.l SAME_SCUMM_RESIDENT_UNIT_IDS,x
     cmp #$FFFF
     beq ScummV5_Resident_SetPin_Far__bad16
-    sep #$20
-    .a8
+    ; The loaded canonical ID may have set the hidden high accumulator byte.
+    ; Use the full pool-index word for the X16 flags lookup.
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_RESIDENT_POOL_INDEX
     tax
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_RESIDENT_FLAGS,x
     and #SCUMM_RESIDENT_FLAG_VALID
     beq ScummV5_Resident_SetPin_Far__bad
@@ -849,7 +862,9 @@ ScummV5_Resident_LoadRoomBundle_Far:
     sep #$20
     .a8
     cmp #ScummV5_Resident_RoomBundleCount
-    bcs ScummV5_Resident_LoadRoomBundle_Far__bad
+    bcc ScummV5_Resident_LoadRoomBundle_Far__record_valid
+    jmp ScummV5_Resident_LoadRoomBundle_Far__bad
+ScummV5_Resident_LoadRoomBundle_Far__record_valid:
     sta.l SAME_SCUMM_RESIDENT_BUNDLE_RECORD
     rep #$20
     .a16
@@ -880,7 +895,16 @@ ScummV5_Resident_LoadRoomBundle_Far__loop:
     jsl ScummV5_Resident_ResolveProgramUnit_Far
     bcc ScummV5_Resident_LoadRoomBundle_Far__rollback
     jsl ScummV5_Resident_PinRoomBundle_Far
-    bcs ScummV5_Resident_LoadRoomBundle_Far__rollback
+    bcc ScummV5_Resident_LoadRoomBundle_Far__pinned
+    ; Keep resolver and pin failures distinguishable.  PinRoomBundle's carry
+    ; contract is clear-on-success, so this site identifies a selector that
+    ; resolved but could not be made bundle-owned before rollback.
+    lda #$05
+    sta.l SAME_SCUMM_RESIDENT_BUNDLE_FAILURE
+    lda #SCUMM_ERR_RESIDENCY_ID
+    sta.l SAME_SCUMM_ERROR
+    bra ScummV5_Resident_LoadRoomBundle_Far__rollback
+ScummV5_Resident_LoadRoomBundle_Far__pinned:
     rep #$20
     .a16
     lda.l SAME_SCUMM_RESIDENT_BUNDLE_OFFSET

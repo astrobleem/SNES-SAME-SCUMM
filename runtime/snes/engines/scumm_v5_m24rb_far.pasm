@@ -1651,9 +1651,14 @@ ScummV5_M23A_RecordLifecycleChain__done:
 ScummV5_M23A_PollLifecycleChain:
     sep #$20
     .a8
+    ; The target is an 8-bit C4 slot number. X may be 16-bit with an unrelated
+    ; high byte left by the caller, so force TAX to zero-extend before the
+    ; status-table index is formed.
+    sep #$10
+    .i8
     lda.l SAME_SCUMM_M23A_CHAIN_SLOT
     cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
-    bcs ScummV5_M23A_PollLifecycleChain__invalid
+    bcs ScummV5_M23A_PollLifecycleChain__invalid_slot
     tax
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
     cmp #SCUMM_VM_RUNNING
@@ -1669,7 +1674,7 @@ ScummV5_M23A_PollLifecycleChain:
     cmp #SCUMM_VM_STOPPED
     beq ScummV5_M23A_PollLifecycleChain__complete
     cmp #$00
-    bne ScummV5_M23A_PollLifecycleChain__invalid
+    bne ScummV5_M23A_PollLifecycleChain__invalid_status
 ScummV5_M23A_PollLifecycleChain__complete:
     .a8
     lda.l SAME_SCUMM_M23A_CHAIN_PHASE
@@ -1687,28 +1692,66 @@ ScummV5_M23A_PollLifecycleChain__complete:
     bcs ScummV5_M23A_PollLifecycleChain__return_error
     lda #$01
     clc
+    rep #$10
+    .i16
     rts
 ScummV5_M23A_PollLifecycleChain__entry_done:
     .a8
     lda #$01
     clc
+    rep #$10
+    .i16
     rts
 ScummV5_M23A_PollLifecycleChain__waiting:
     .a8
     lda #$00
     clc
+    rep #$10
+    .i16
     rts
 ScummV5_M23A_PollLifecycleChain__failed:
     .a8
     lda.l SAME_SCUMM_ERROR
     bne ScummV5_M23A_PollLifecycleChain__return_error
-ScummV5_M23A_PollLifecycleChain__invalid:
+    lda #$03
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_KIND
+    lda.l SAME_SCUMM_M23A_CHAIN_SLOT
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_SLOT
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_STATUS
+    lda.l SAME_SCUMM_M23A_CHAIN_PHASE
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_PHASE
+    bra ScummV5_M23A_PollLifecycleChain__invalid_error
+ScummV5_M23A_PollLifecycleChain__invalid_slot:
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_KIND
+    lda.l SAME_SCUMM_M23A_CHAIN_SLOT
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_SLOT
+    lda #$FF
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_STATUS
+    lda.l SAME_SCUMM_M23A_CHAIN_PHASE
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_PHASE
+    bra ScummV5_M23A_PollLifecycleChain__invalid_error
+ScummV5_M23A_PollLifecycleChain__invalid_status:
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_KIND
+    lda.l SAME_SCUMM_M23A_CHAIN_SLOT
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_SLOT
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_STATUS
+    lda.l SAME_SCUMM_M23A_CHAIN_PHASE
+    sta.l SAME_SCUMM_M23A_CHAIN_ERROR_PHASE
+ScummV5_M23A_PollLifecycleChain__invalid_error:
     .a8
     lda #SCUMM_ERR_SCRIPT
     jsl ScummV5_M24RB_FarCall_SetError
 ScummV5_M23A_PollLifecycleChain__return_error:
     .a8
     sec
+    rep #$10
+    .i16
     rts
 
 ScummV5_M23A_HandoffLifecycleChain_FarEntry:
@@ -1764,7 +1807,7 @@ ScummV5_M24RB_Far_ResumeVisualCommit_FarEntry:
     rtl
 .endif
 
-.if SAME_BUILD_SCUMM_M23B
+.if SAME_BUILD_SCUMM_M23B || SAME_BUILD_M24RB
 ; M25A bounded nested-script context switch. This is the same interpreter and
 ; authoritative slot table used in bank 0; only the cold suspend/restore
 ; helper is relocated. DBR-independent state accesses remain explicit long
@@ -1827,6 +1870,13 @@ ScummV5_M25A_RunNestedChild__parent_mode_packed:
     inc
     sta.l SAME_SCUMM_M23B_NEST_DEPTH
     jsl ScummV5_M25A_FarCall_SaveCurrentSlot
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; M25A's banked nested-call path must obey the same transient bytecode
+    ; ownership contract as the bank-0 C4 path.  The caller's canonical
+    ; selector and logical PC are already saved in its C4 slot, so release
+    ; only the active page pin while the child resolves/runs.
+    jsl ScummV5_MsuProgram_SuspendActive_Far
+.endif
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     lda.l SAME_SCUMM_C4_CURRENT_SLOT
     sta.l SAME_SCUMM_SCENARIO_START_RETURN_SLOT
@@ -1891,6 +1941,45 @@ ScummV5_M25A_RunNestedChild__parent_mode_packed:
     sta.l $7E563B
     .endif
     php
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; Remember whether the child could not acquire its first checked page.
+    ; A blocked child must park its exact parent, otherwise the parent can run
+    ; past StartScript before the child has a validated body.  Keep this
+    ; separate from the nested frame's saved processor flags.
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_MSU_CACHE_RETURN_P
+    lda.l SAME_SCUMM_STATUS
+    cmp #SCUMM_VM_WAIT_RESOURCE
+    bne ScummV5_M25A_RunNestedChild__msu_check_child_error
+    lda.l SAME_SCUMM_C4_LAST_ALLOCATED
+    sta.l SAME_SCUMM_MSU_CACHE_TEMP
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    sta.l SAME_SCUMM_MSU_CACHE_TEMP+1
+    lda.l SAME_SCUMM_M23B_NEST_DEPTH
+    dec
+    jsr ScummV5_M25A_NestFrameX
+    lda.l SAME_SCUMM_M23B_NEST_FRAMES,x
+    and #$7F
+    tax
+    lda.l SAME_SCUMM_MSU_CACHE_TEMP
+    inc
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    lda.l SAME_SCUMM_MSU_CACHE_TEMP+1
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    lda #$01
+    sta.l SAME_SCUMM_MSU_CACHE_RETURN_P
+    bra ScummV5_M25A_RunNestedChild__msu_child_state_saved
+ScummV5_M25A_RunNestedChild__msu_check_child_error:
+    .a8
+    cmp #SCUMM_VM_ERROR
+    bne ScummV5_M25A_RunNestedChild__msu_child_state_saved
+    lda #$02
+    sta.l SAME_SCUMM_MSU_CACHE_RETURN_P
+ScummV5_M25A_RunNestedChild__msu_child_state_saved:
+.endif
     .if SAME_BUILD_SCUMM_M25A_VALIDATOR
     sep #$20
     .a8
@@ -1965,10 +2054,49 @@ ScummV5_M25A_RunNestedChild__restore_mode:
     sta.l SAME_SCUMM_PC
     lda.l SAME_SCUMM_C4_SLOT_DELAY,x
     sta.l SAME_SCUMM_DELAY
-    lda #$00
-    sta.l SAME_SCUMM_C18_NESTED
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda.l SAME_SCUMM_MSU_CACHE_RETURN_P
+    cmp #$01
+    beq ScummV5_M25A_RunNestedChild__msu_parent_wait
+    cmp #$02
+    beq ScummV5_M25A_RunNestedChild__msu_parent_error
+    ; The child may have reclaimed the suspended caller's page.  Re-resolve
+    ; the parent's canonical selector only after its owning slot and logical
+    ; PC have been restored.
+    rep #$30
+    .a16
+    .i16
+    jsl ScummV5_MsuProgram_ResumeActive_Far
+    bcs ScummV5_M25A_RunNestedChild__msu_parent_ready
     sep #$20
     .a8
+    cmp #$02
+    beq ScummV5_M25A_RunNestedChild__msu_parent_error
+    lda #$01
+    sta.l SAME_SCUMM_MSU_CACHE_RETURN_P
+ScummV5_M25A_RunNestedChild__msu_parent_wait:
+    .a8
+    lda #SCUMM_VM_WAIT_RESOURCE
+    sta.l SAME_SCUMM_STATUS
+    lda.l SAME_SCUMM_C4_PARENT_SLOT
+    tax
+    lda #SCUMM_VM_WAIT_RESOURCE
+    sta.l SAME_SCUMM_C4_SLOT_STATUS,x
+    bra ScummV5_M25A_RunNestedChild__msu_parent_ready
+ScummV5_M25A_RunNestedChild__msu_parent_error:
+    .a8
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_STATUS
+    lda.l SAME_SCUMM_C4_PARENT_SLOT
+    tax
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_C4_SLOT_STATUS,x
+ScummV5_M25A_RunNestedChild__msu_parent_ready:
+.endif
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C18_NESTED
     lda.l SAME_SCUMM_M23B_NEST_DEPTH
     jsr ScummV5_M25A_NestFrameX
     rep #$20
@@ -1982,6 +2110,22 @@ ScummV5_M25A_RunNestedChild__restore_mode:
     jsl ScummV5_M25A_FarCall_Trace
     .endif
     plp
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    bcs ScummV5_M25A_RunNestedChild__child_error
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MSU_CACHE_RETURN_P
+    cmp #$02
+    beq ScummV5_M25A_RunNestedChild__child_error
+    bra ScummV5_M25A_RunNestedChild__success
+ScummV5_M25A_RunNestedChild__child_error:
+    sep #$20
+    .a8
+    lda #SCUMM_VM_ERROR
+    sta.l SAME_SCUMM_STATUS
+    sec
+    rtl
+.else
     bcc ScummV5_M25A_RunNestedChild__success
     sep #$20
     .a8
@@ -1989,6 +2133,7 @@ ScummV5_M25A_RunNestedChild__restore_mode:
     sta.l SAME_SCUMM_STATUS
     sec
     rtl
+.endif
 ScummV5_M25A_RunNestedChild__success:
     clc
     rtl

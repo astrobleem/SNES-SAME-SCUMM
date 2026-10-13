@@ -24,6 +24,11 @@ SEMANTIC_STATE_FIELDS = (
     "bit64_71", "bit69", "object61_state", "object61_owner",
 )
 
+PROGRESSION_CONTEXT_FIELDS = (
+    "selected_variables", "set_bits", "objects",
+    "inventory_owner1_objects", "book_inventory_object937_owner",
+)
+
 
 def _snapshot(report: dict[str, Any], checkpoint: str) -> dict[str, Any]:
     value = report.get(checkpoint)
@@ -50,13 +55,10 @@ def _program_unit_identity(slot: dict[str, Any]) -> str:
     return f"RoomLocalProgram(room={owner},local={script})"
 
 
-def _active_slots(
-    snapshot: dict[str, Any], *, peer_slots: list[dict[str, Any]] | None = None,
-) -> list[dict[str, Any]]:
+def _active_slots(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     slots = snapshot.get("slots")
     if not isinstance(slots, list):
         raise ValueError("snapshot has no activation slot list")
-    peers = {row.get("slot"): row for row in peer_slots or []}
     active = []
     for slot in slots:
         status = slot.get("status", 0)
@@ -64,19 +66,9 @@ def _active_slots(
             continue
         identity = slot.get("program_unit_identity")
         provenance = "native canonical binding" if identity else "source fields"
-        if not identity and peer_slots is not None:
-            peer = peers.get(slot.get("slot"))
-            if peer is None or peer.get("script") != slot.get("script"):
-                raise ValueError(
-                    "static activation cannot be paired to a matching dynamic "
-                    f"C4 owner (slot={slot.get('slot')})"
-                )
-            identity = peer.get("identity")
-            if not isinstance(identity, str) or not identity:
-                raise ValueError("paired dynamic activation lacks canonical identity")
-            provenance = "paired dynamic identity; static slot/script/status verified"
         if not identity:
             identity = _program_unit_identity(slot)
+            provenance = "canonical identity derived from source script and owner"
         active.append({
             "identity": identity,
             "identity_provenance": provenance,
@@ -107,6 +99,42 @@ def compare_replay_reports(
     all_live_script_match = True
     continuation_pc_differences = []
     scheduler_delay_differences = []
+    slot_assignment_differences = []
+    static_progression = static.get("room7_after_cat118_context")
+    dynamic_progression = dynamic.get("room7_after_cat118_context")
+    progression_context_available = (
+        isinstance(static_progression, dict)
+        or isinstance(dynamic_progression, dict)
+    )
+    progression_context_differences: dict[str, Any] = {}
+    progression_context_complete = not progression_context_available
+    if progression_context_available:
+        if not isinstance(static_progression, dict) or not isinstance(
+            dynamic_progression, dict
+        ):
+            progression_context_differences["context"] = {
+                "static_present": isinstance(static_progression, dict),
+                "dynamic_present": isinstance(dynamic_progression, dict),
+            }
+        else:
+            missing = [field for field in PROGRESSION_CONTEXT_FIELDS
+                       if field not in static_progression
+                       or field not in dynamic_progression]
+            progression_context_differences.update({
+                field: {
+                    "static": static_progression.get(field),
+                    "dynamic": dynamic_progression.get(field),
+                }
+                for field in PROGRESSION_CONTEXT_FIELDS
+                if field in static_progression and field in dynamic_progression
+                and static_progression[field] != dynamic_progression[field]
+            })
+            if missing:
+                progression_context_differences["missing_fields"] = missing
+            progression_context_complete = not missing
+    progression_context_match = (
+        progression_context_complete and not progression_context_differences
+    )
     for checkpoint in CHECKPOINTS:
         left = _snapshot(static, checkpoint)
         right = _snapshot(dynamic, checkpoint)
@@ -119,18 +147,32 @@ def compare_replay_reports(
             for field in compared_fields if left[field] != right[field]
         }
         right_slots = _active_slots(right)
-        left_slots = _active_slots(left, peer_slots=right_slots)
-        # Selector and generation are intentionally excluded. Preserve the
-        # physical activation slot, scheduler status, room ownership and
-        # freeze state, but compare delay as runnable-vs-waiting: exact ticks
-        # are timing-sensitive and are reported independently below.
+        left_slots = _active_slots(left)
+        # Selector, binding generation, and physical C4 slot assignment are
+        # runtime allocation details. Compare canonical ProgramUnit identity,
+        # scheduler status, room ownership, runnable-vs-waiting, and freeze
+        # state. Keep slot-number differences as diagnostic evidence because
+        # parent/continuation ownership is checked separately by the runtime
+        # checkpoint fields.
         slot_projection = lambda rows: Counter((
             row["identity"], row["status"], row["room_owner"],
             row["delay_active"], row["freeze_resistant"],
-            row["freeze_count"], row["slot"],
+            row["freeze_count"],
         ) for row in rows)
         slot_match = slot_projection(left_slots) == slot_projection(right_slots)
         all_live_script_match &= slot_match
+        left_assignment = Counter((row["identity"], row["slot"]) for row in left_slots)
+        right_assignment = Counter((row["identity"], row["slot"]) for row in right_slots)
+        if left_assignment != right_assignment:
+            slot_assignment_differences.append({
+                "checkpoint": checkpoint,
+                "static": [{"identity": identity, "slot": slot}
+                           for identity, slot in sorted(left_assignment.elements(),
+                                                        key=str)],
+                "dynamic": [{"identity": identity, "slot": slot}
+                           for identity, slot in sorted(right_assignment.elements(),
+                                                        key=str)],
+            })
         left_pc = Counter((row["identity"], row["saved_pc"]) for row in left_slots)
         right_pc = Counter((row["identity"], row["saved_pc"]) for row in right_slots)
         pc_match = left_pc == right_pc
@@ -177,16 +219,21 @@ def compare_replay_reports(
         "dynamic_route_result": dynamic.get("result"),
         "all_semantic_acceptance_checks_pass": bool(
             all_semantic_match and static.get("result") == "pass"
-            and dynamic.get("result") == "pass"
+            and dynamic.get("result") == "pass" and progression_context_match
         ),
         # Keep the aggregate activation claim separate from the full state and
         # route-result gate. This lets evidence consumers tell a live-script
         # mismatch from an unrelated semantic field or final-result failure.
         "all_live_script_checks_pass": bool(all_live_script_match),
+        "room7_progression_context_checked": progression_context_available,
+        "room7_progression_context_match": progression_context_match,
+        "room7_progression_context_differences": progression_context_differences,
         "identity_rule": (
             "Compare active canonical ProgramUnit identity, status, owner and "
-            "lifetime fields per checkpoint; never compare ephemeral selectors "
-            "or a route-wide union of observed scripts."
+            "lifetime fields per checkpoint; never compare ephemeral selectors, "
+            "binding generations, physical C4 slot assignment, or a route-wide "
+            "union of observed scripts. Slot assignment differences are retained "
+            "as diagnostics."
         ),
         "continuation_pc_rule": (
             "PC equality is reported independently: timing-sensitive transient "
@@ -195,4 +242,5 @@ def compare_replay_reports(
         "checkpoints": checkpoint_rows,
         "continuation_pc_differences": continuation_pc_differences,
         "scheduler_delay_differences": scheduler_delay_differences,
+        "physical_slot_assignment_differences": slot_assignment_differences,
     }

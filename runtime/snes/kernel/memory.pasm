@@ -128,6 +128,7 @@ SAME_SCUMM_MSU_CACHE_PAGE_START0        = $7E2EB6 ; u16 logical start in slot 0
 SAME_SCUMM_MSU_CACHE_PAGE_START1        = $7E2EB8 ; u16 logical start in slot 1
 SAME_SCUMM_MSU_PAGE_BODY_LENGTH         = $7E2EBA ; u16 canonical full-body size
 SAME_SCUMM_MSU_PAGE_REQUEST_CRC         = $7E2EBC ; u32 segment CRC-32
+SAME_SCUMM_MSU_PAGE_REQUEST_ID          = $7E2ECD ; u16 current lookup identity; never owns an in-flight read
 SAME_SCUMM_MSU_CACHE_LRU0               = $7E2EC0 ; u8 relative LRU rank, 0 oldest
 SAME_SCUMM_MSU_CACHE_LRU1               = $7E2EC1
 SAME_SCUMM_MSU_CACHE_LRU2               = $7E2EC2 ; u8 rank 2 is most recent
@@ -138,6 +139,15 @@ SAME_SCUMM_MSU_CACHE_PINS2              = $7E2EC8
 SAME_SCUMM_MSU_CACHE_GENERATION2        = $7E2EC9 ; u16
 SAME_SCUMM_MSU_CACHE_PAGE_START2        = $7E2ECB ; u16 logical body PC
 SAME_SCUMM_MSU_PAGE_LOOKUP_END          = $7E2ECD
+; One completion owner per executable page, so independent WAIT_RESOURCE
+; activations cannot overwrite one another's validated-page protection.
+SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR0   = $7E2ED0 ; u8 selector owning page-0 completion hold
+SAME_SCUMM_MSU_CACHE_WAITER_SLOT0       = $7E2ED1 ; u8 C4 slot owning page-0 completion hold
+SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR1   = $7E2ED2
+SAME_SCUMM_MSU_CACHE_WAITER_SLOT1       = $7E2ED3
+SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR2   = $7E2ED4
+SAME_SCUMM_MSU_CACHE_WAITER_SLOT2       = $7E2ED5
+SAME_SCUMM_MSU_CACHE_WAITER_END         = $7E2ED6
 ; Cache metadata stays in the provider's audited WRAM gap.
 SAME_SCUMM_MSU_CACHE_STATE0              = $7E2F48
 SAME_SCUMM_MSU_CACHE_STATE1              = $7E2F49
@@ -373,6 +383,12 @@ SAME_SCUMM_C4_STATE_END        = $7E2B26 ; rounded for the 16-bit clear loop
 SAME_SCUMM_C4_PARENT_RETURN_MODE    = $7E2B27 ; u8 nested caller return mode
 SAME_SCUMM_C4_STATE_SIZE       = $07A6
 SAME_SCUMM_LOCAL_COUNT         = $0020
+; Streamed body cache misses share one checked-read cursor. Rotate the first
+; scheduler slot per frame so a later WAIT_RESOURCE activation cannot starve
+; behind earlier scripts which repeatedly fault different cache pages.
+SAME_SCUMM_C4_SCHED_CURSOR     = $7E2B2A ; u8 next streamed scheduler start slot
+SAME_SCUMM_C4_SCHED_REMAINING  = $7E2B2B ; u8 slots left in this scan
+SAME_SCUMM_C4_SCHED_FAIR_END   = $7E2B2C
 
 ; Backend-owned normalized-audio trace for bounded service evidence. This is
 ; not engine state and contains no SPC/TAD implementation detail.
@@ -759,7 +775,8 @@ SAME_SCUMM_C25_SELECTOR                  = $7FD8EE ; u8 scratch
 SAME_SCUMM_C25_RECORD_OFFSET             = $7FD8EF ; u16 scratch
 SAME_SCUMM_C25_WORD_INDEX                = $7FD8F1 ; u8 scratch
 SAME_SCUMM_C25_QUEUE_WORDS_USED          = $7FD8F2 ; u16, includes each record count word
-SAME_SCUMM_C25_STATE_END                 = $7FD8F4
+SAME_SCUMM_C25_CLEAR_QUEUE_COUNT          = $7FD8F4 ; u16 observed iMUSE clear-queue ops
+SAME_SCUMM_C25_STATE_END                 = $7FD8F6
 SAME_SCUMM_C25_STATE_SIZE                = $049B
 
 ; C26 canonical saveRestoreVerbs storage. Active verbs remain dense in the
@@ -895,6 +912,12 @@ SAME_SCUMM_M23A_RETURN_PC                = $7FF2E5 ; u16 driver continuation
 SAME_SCUMM_M23A_SLOT_ROOMS               = $7FF2E7 ; 25 room-owner bytes
 SAME_SCUMM_M23A_CHAIN_SLOT               = $7FF2D8 ; lifecycle chain target, $FF when idle
 SAME_SCUMM_M23A_CHAIN_PHASE              = $7FF2D9 ; nonzero while slot-zero continuation is chained
+; First malformed lifecycle-poll witness; occupies the final six bytes of the
+; M23A block before its declared STATE_END. Written only on a poll error.
+SAME_SCUMM_M23A_CHAIN_ERROR_KIND         = $7FF2FA ; 1 bad slot, 2 unknown status, 3 error status without engine error
+SAME_SCUMM_M23A_CHAIN_ERROR_SLOT         = $7FF2FB ; captured chain slot
+SAME_SCUMM_M23A_CHAIN_ERROR_STATUS       = $7FF2FC ; captured C4 status, $FF if slot invalid
+SAME_SCUMM_M23A_CHAIN_ERROR_PHASE        = $7FF2FD ; captured chain phase
 SAME_SCUMM_M23A_STATE_END                = $7FF300
 SAME_SCUMM_M23A_STATE_SIZE               = $0042
 SAME_SAVE_STAGING                        = $7FF300 ; complete versioned save record
@@ -999,6 +1022,11 @@ SAME_SCUMM_STREAM_ZERO_SLOT_STATUS      = $7E5F1C ; u8 owner slot status
 SAME_SCUMM_STREAM_ZERO_SCHED_SLOT       = $7E5F1D ; u8 scheduler slot
 SAME_SCUMM_STREAM_ZERO_LAST_ALLOCATED   = $7E5F1E ; u8 latest allocator result
 SAME_SCUMM_STREAM_ZERO_SCAN_SLOT        = $7E5F1F ; u8 allocation/scheduler scratch
+; Site-0x14 shares the selector-zero witness bytes as a typed error union.
+SAME_SCUMM_STREAM_LENGTH_SUBSITE         = $7E5F19 ; u8 1..6 length check stage
+SAME_SCUMM_STREAM_LENGTH_PAGE_START     = $7E5F1A ; u16 page logical start
+SAME_SCUMM_STREAM_LENGTH_PAGE_SIZE      = $7E5F1C ; u16 page bytes
+SAME_SCUMM_STREAM_LENGTH_BODY_SIZE      = $7E5F1E ; u16 canonical body bytes
 ; The render scratch occupies the documented diagnostic gap $7E5E10-$7E5E21,
 ; after the opcode trace ($7E5A02-$7E5E01) and before the persistent
 ; scenario breadcrumbs ($7E5F00+).
@@ -1677,6 +1705,7 @@ SAME_SCUMM_SCENARIO_C25_PRODUCER_PC         = $7E5F53 ; u16 queued producer PC
 SAME_SCUMM_SCENARIO_C25_PRODUCER_COUNT      = $7E5F55 ; u8 queued word count
 SAME_SCUMM_SCENARIO_C25_PRODUCER_WORDS      = $7E5F56 ; 8 bytes queued words
 SAME_SCUMM_SCENARIO_C25_ERROR_QUEUE_RECORD  = $7E5F60 ; first 16 bytes of failing record
+SAME_SCUMM_STREAM_LENGTH_REQUEST_HIGH      = $7E5F5E ; u16 site-0x14 request-length high word
 SAME_SCUMM_SCENARIO_C25_DISPATCH_COMMAND    = $7E5F80 ; u16 command loaded by flush
 SAME_SCUMM_SCENARIO_C25_DISPATCH_OFFSET     = $7E5F82 ; u16 record offset
 SAME_SCUMM_SCENARIO_C25_DISPATCH_COUNT      = $7E5F84 ; u8 record count

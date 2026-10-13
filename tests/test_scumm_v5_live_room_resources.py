@@ -13,9 +13,11 @@ from same.msu1 import (
 )
 from same.package import build_package
 from same.engines.scumm_v5.live_room_resources import (
-    HEADER, MAX_ACTIVE_BYTES, decode_live_room, encode_live_room,
+    HEADER, MAX_ACTIVE_BYTES, MAX_PENDING_BYTES, OBJECT_WALK,
+    decode_live_room, encode_live_room,
 )
 from same.engines.scumm_v5.room_visual import decode_room_visual, encode_room_visual
+from tools.generate_snes_carrier import generate as generate_carrier
 from tools.validate_scumm_native_residency_nexen import live_room_ppu_generation_ready
 
 
@@ -57,6 +59,13 @@ class LiveRoomResourceTests(unittest.TestCase):
         self.assertEqual(live.verb_count, 2)
         self.assertEqual(live.local_count, 1)
         self.assertEqual(live.bundle_count, 4)
+        self.assertEqual(live.object_names, ((22, b"multi-verb"),))
+        self.assertEqual(
+            live.offsets["verbs"] - live.offsets["object_walk"],
+            live.object_count * OBJECT_WALK.size,
+        )
+        self.assertEqual(live.portal_indices, (None, None, None, None))
+        self.assertEqual(live.portal_records, ())
         self.assertEqual(live.entry_program_unit, 3)
         self.assertEqual(live.exit_program_unit, 4)
         verb_offset = live.offsets["verbs"]
@@ -76,6 +85,64 @@ class LiveRoomResourceTests(unittest.TestCase):
         raw = encode_live_room(record, program_units=units) + b"x"
         with self.assertRaisesRegex(Exception, "length exceeds"):
             decode_live_room(raw)
+
+    def test_compact_name_rows_cover_empty_and_full_width_names(self) -> None:
+        record, units = self.source_record()
+        record["object_names"] = ((22, b""),)
+        raw = encode_live_room(record, program_units=units)
+        live = decode_live_room(raw)
+        self.assertEqual(live.object_names, ((22, b""),))
+        self.assertEqual(
+            live.offsets["object_walk"] - live.offsets["names"], 1,
+        )
+
+        record["object_names"] = ((22, b"x" * 32),)
+        raw = encode_live_room(record, program_units=units)
+        self.assertEqual(decode_live_room(raw).object_names, ((22, b"x" * 32),))
+        self.assertEqual(
+            decode_live_room(raw).offsets["object_walk"]
+            - decode_live_room(raw).offsets["names"], 33,
+        )
+
+    def test_encoder_rejects_object_walk_identity_drift(self) -> None:
+        record, units = self.source_record()
+        record["object_walk"] = struct.pack("<HhhBhhB", 23, 10, 20, 2, 11, 21, 1)
+        with self.assertRaisesRegex(Exception, "object-walk row 0 does not match"):
+            encode_live_room(record, program_units=units)
+
+    def test_live_resource_preserves_u16_object_ids_beyond_name_cache(self) -> None:
+        record, units = self.source_record()
+        record["objects"] = struct.pack("<HhhhhB", 1200, 1, 2, 3, 4, 0)
+        record["object_names"] = ((1200, b"external object"),)
+        record["object_walk"] = struct.pack("<HhhBhhB", 1200, 10, 20, 2, 11, 21, 1)
+        live = decode_live_room(encode_live_room(record, program_units=units))
+        self.assertEqual(live.object_names, ((1200, b"external object"),))
+
+    def test_sparse_portal_directory_preserves_shared_edge_descriptor(self) -> None:
+        record, units = self.source_record()
+        descriptor = struct.pack("<Bhhh", 1, 40, 10, 20)
+        record["portals"] = b"\0" * 7 + descriptor + b"\0" * 14
+        live = decode_live_room(encode_live_room(record, program_units=units))
+        self.assertEqual(live.portal_indices, (None, 0, None, None))
+        self.assertEqual(live.portal_records, (descriptor,))
+        self.assertEqual(
+            live.offsets["objects"] - live.offsets["portals"],
+            2 * 2 * 2 + 7,
+        )
+
+    def test_decoder_rejects_invalid_compact_name_rows(self) -> None:
+        record, units = self.source_record()
+        raw = bytearray(encode_live_room(record, program_units=units))
+        names_offset = struct.unpack_from("<H", raw, 38)[0]
+        raw[names_offset] = 33
+        with self.assertRaisesRegex(Exception, "name length exceeds"):
+            decode_live_room(bytes(raw))
+
+        raw = bytearray(encode_live_room(record, program_units=units))
+        object_walk_offset = struct.unpack_from("<H", raw, 40)[0]
+        struct.pack_into("<H", raw, 40, object_walk_offset - 1)
+        with self.assertRaisesRegex(Exception, "name length exceeds|unclaimed bytes|truncated"):
+            decode_live_room(bytes(raw))
 
     def test_checked_live_room_crc_failure_does_not_publish_staging(self) -> None:
         record, units = self.source_record()
@@ -112,7 +179,7 @@ class LiveRoomResourceTests(unittest.TestCase):
 
     def test_live_room_metadata_capacity_failure_is_explicit(self) -> None:
         record, units = self.source_record()
-        object_ids = range(22, 122)
+        object_ids = range(22, 222)
         record["objects"] = b"".join(
             struct.pack("<HhhhhB", object_id, 0, 0, 1, 1, 0)
             for object_id in object_ids
@@ -123,8 +190,31 @@ class LiveRoomResourceTests(unittest.TestCase):
             struct.pack("<HhhBhhB", object_id, 0, 0, 0, 0, 0, 0)
             for object_id in object_ids
         )
-        with self.assertRaisesRegex(Exception, "audited active room buffer is 2560 bytes"):
+        with self.assertRaisesRegex(Exception, "audited pending room buffer is 3132 bytes"):
             encode_live_room(record, program_units=units)
+
+    def test_metadata_record_fits_packed_pending_capacity(self) -> None:
+        record, units = self.source_record()
+        object_ids = range(22, 74)
+        record["objects"] = b"".join(
+            struct.pack("<HhhhhB", object_id, 0, 0, 1, 1, 0)
+            for object_id in object_ids
+        )
+        record["object_names"] = tuple(
+            (object_id, f"fixture-{object_id}".encode()) for object_id in object_ids
+        )
+        record["object_walk"] = b"".join(
+            struct.pack("<HhhBhhB", object_id, 0, 0, 0, 0, 0, 0)
+            for object_id in object_ids
+        )
+        raw = encode_live_room(record, program_units=units)
+        self.assertLessEqual(len(raw), MAX_PENDING_BYTES)
+        live = decode_live_room(raw, expected_room=4)
+        self.assertEqual(live.object_count, len(object_ids))
+        self.assertLess(
+            live.offsets["object_walk"] - live.offsets["names"],
+            len(object_ids) * 34,
+        )
 
     def test_visual_source_record_is_checked_before_storage_projection(self) -> None:
         identities = [hashlib.sha256(name.encode()).hexdigest()
@@ -152,13 +242,24 @@ class LiveRoomResourceTests(unittest.TestCase):
                 control[3] = 1
                 control[4] = 0
                 control[8:10] = b"\x00\x00"
-                values = {0x401010: bytes(control)}
+                values = {
+                    0x401010: bytes(control),
+                    0x401013: bytes((1,)),
+                    0x401014: bytes((0,)),
+                    0x401018: b"\x00\x00",
+                }
                 return values[address][:length]
 
         # The caller must still compare actual VRAM/CGRAM with SC5VIS. This
         # only says presentation is idle; an older ticket may have been
         # superseded by a later room generation before the sampler observed it.
-        self.assertTrue(live_room_ppu_generation_ready(Session(), 1))
+        inputs = {"rom_symbols": {
+            "SAME_BWRAM_BACKEND_BASE": 0x401000,
+            "SAME_MODE3_CONTROL_STATE": 0x401013,
+            "SAME_MODE3_CONTROL_SURFACE_LOCKED": 0x401014,
+            "SAME_MODE3_CONTROL_COMMITTED_GENERATION_HI": 0x401018,
+        }}
+        self.assertTrue(live_room_ppu_generation_ready(Session(), inputs, 1))
 
     def test_active_visual_validity_is_not_the_incoming_transfer_validity(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -205,6 +306,82 @@ class LiveRoomResourceTests(unittest.TestCase):
             "Same_VideoSurface_ComposeRoom__presented:", 1,
         )[0]
         self.assertIn("lda.l SCUMM_LIVE_ROOM_ACTIVE_VISUAL_VALID", compose)
+
+    def test_live_camera_reprojection_uses_installed_surface_not_rom_directory(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        video = (root / "runtime/snes/services/video_surface.pasm").read_text()
+        service = video.split("Same_VideoSurface_ServicePending__generation_ok:", 1)[1]
+        live_path = service.split(".else", 1)[0]
+        self.assertIn("jsr Same_VideoSurface_ComputeCameraProjection", live_path)
+        self.assertIn("jsr Same_VideoSurface_BlitProjection", live_path)
+        self.assertIn("jsr Same_VideoSurface_PushDirtyPresent", live_path)
+        self.assertNotIn("Same_VideoSurface_FindVisual", live_path)
+        self.assertIn("Same_VideoSurface_ServicePending__live_defer", live_path)
+
+        # These exits are shared by static and live-resource personalities.
+        shared_exits = video.split(".endif\n\n; Shared exits", 1)[1].split(
+            "Same_VideoSurface_ServicePending__initial:", 1,
+        )[0]
+        for label in ("Same_VideoSurface_ServicePending__defer:",
+                      "Same_VideoSurface_ServicePending__stale:",
+                      "Same_VideoSurface_ServicePending__stale16:"):
+            self.assertIn(label, shared_exits)
+
+    def test_external_pixel_stage_invalidates_mode3_tile_shadow_on_room_present(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        layout = json.loads(
+            (root / "runtime/snes/carriers/sa1_bwram_layout.json").read_text()
+        )
+        # Generated includes are build outputs: another test/build personality
+        # may have most recently generated the ordinary LoROM constants there.
+        # Generate the SA-1 contract in an isolated directory so this test is
+        # independent of suite order and stale ignored files.
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary)
+            generate_carrier(
+                carrier_name="sa1_bwram",
+                save_enabled=True,
+                rom_size_code=8,
+                output_dir=generated,
+                manifest_path=generated / "carrier-manifest.json",
+            )
+            constants = (generated / "carrier_constants.inc.pasm").read_text()
+        mode3 = (root / "runtime/snes/services/video_mode3.pasm").read_text()
+        self.assertEqual(layout["tile_shadow"]["address"], "41:0000")
+        self.assertIn(
+            "SAME_SCUMM_LIVE_ROOM_PIXEL_STAGE_BASE = SAME_BWRAM_TILE_SHADOW_BASE",
+            constants,
+        )
+        accepted = mode3.split("Same_Mode3_HandlePresent__accept:", 1)[1].split(
+            "Same_Mode3_HandlePresent__reject:", 1,
+        )[0]
+        self.assertIn(
+            ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES", accepted,
+        )
+        self.assertIn("sta.l SAME_BWRAM_CONTROL_TILE_VALID", accepted)
+        self.assertLess(
+            accepted.index("sta.l SAME_BWRAM_CONTROL_TILE_VALID"),
+            accepted.index("SAME_MODE3_STATE_CONVERTING"),
+        )
+
+    def test_invalid_mode3_tile_shadow_forces_upload_of_blank_and_nonblank_tiles(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        mode3 = (root / "runtime/snes/services/video_mode3.pasm").read_text()
+        present = mode3.split("Same_Mode3_HandlePresent__accept:", 1)[1].split(
+            "Same_Mode3_HandlePresent__reject:", 1,
+        )[0]
+        invalidate = present.split(
+            "Same_Mode3_HandlePresent__invalidate_all_tiles:", 1,
+        )[0]
+        self.assertIn("lda.l SAME_BWRAM_CONTROL_TILE_VALID", invalidate)
+        self.assertIn("sta.l SAME_MODE3_CANDIDATE_TILES,x", present)
+        self.assertIn("cpx #SAME_MODE3_CANDIDATE_TILES_SIZE", present)
+        self.assertIn("lda #SAME_MODE3_TILE_COUNT", present)
+        self.assertIn("sta.l SAME_MODE3_CONTROL_CANDIDATE_COUNT", present)
+        self.assertLess(
+            present.index("Same_Mode3_HandlePresent__tile_candidates_ready:"),
+            present.index("lda #$01\n    sta.l SAME_MODE3_CONTROL_SURFACE_LOCKED"),
+        )
 
     def test_video_wait_holds_scheduler_until_room_commit_can_resume(self) -> None:
         root = Path(__file__).resolve().parents[1]

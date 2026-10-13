@@ -21,12 +21,16 @@ REGIONS = (
     ("event_queue", "SAME_EVENT_HEAD", "SAME_INPUT_HELD"),
     ("program_cache_page_lookup", "SAME_SCUMM_MSU_PAGE_REQUEST_PC",
      "SAME_SCUMM_MSU_PAGE_LOOKUP_END"),
+    ("program_cache_waiters", "SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR0",
+     "SAME_SCUMM_MSU_CACHE_WAITER_END"),
     ("program_cache_metadata", "SAME_SCUMM_MSU_CACHE_STATE0",
      "SAME_SCUMM_MSU_ROOM_STATE_END"),
     ("input_edges", "SAME_INPUT_HELD", "SAME_FRAME_COUNTER"),
     ("kernel_frame_tad", "SAME_FRAME_COUNTER", "SAME_TAD_STATE_END"),
     ("c4_scheduler", "SAME_SCUMM_C4_SLOT_STATUS", "SAME_SCUMM_C4_STATE_END"),
     ("owner_scratch", "SAME_SCUMM_OWNER_INDEX", "SAME_SCUMM_OWNER_INDEX_END"),
+    ("streamed_scheduler_fairness", "SAME_SCUMM_C4_SCHED_CURSOR",
+     "SAME_SCUMM_C4_SCHED_FAIR_END"),
     ("controller_and_interaction", "SAME_SCUMM_CONTROLLER_RENDER_X",
      "SAME_SCUMM_OBJECT_COUNT"),
     ("c19", "SAME_SCUMM_C19_STACK_POINTER", "SAME_SCUMM_C19_STATE_END"),
@@ -101,6 +105,20 @@ def audit() -> dict[str, Any]:
     runtime_source = (ROOT / "runtime/snes/services/video_mode3.pasm").read_text()
     if "SAME_BUILD_SCUMM_MSU1_PROGRAMS && SAME_CARRIER_IS_SA1_BWRAM" not in runtime_source:
         raise ValueError("Mode-3 reset does not preserve the aliased streamed code page")
+    live_constants = (ROOT / "tools/generate_snes_carrier.py").read_text()
+    video_surface_source = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()
+    if "SAME_VIDEO_SURFACE_STATE              = SAME_BWRAM_VIDEO_SURFACE_STATE" not in video_surface_source:
+        raise ValueError("video surface state must use its generated BWRAM allocation")
+    if "SAME_BWRAM_VIDEO_SURFACE_STATE" not in live_constants:
+        raise ValueError("carrier generator omits the video surface state allocation")
+    tile_shadow = bwram["tile_shadow"]
+    pixel_stage_address = parse_address(str(tile_shadow["address"]))
+    if "SAME_SCUMM_LIVE_ROOM_PIXEL_STAGE_BASE = SAME_BWRAM_TILE_SHADOW_BASE" not in live_constants:
+        raise ValueError("live SC5VIS staging must declare its tile-shadow alias")
+    if "SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES" not in runtime_source or (
+        "sta.l SAME_BWRAM_CONTROL_TILE_VALID" not in runtime_source
+    ):
+        raise ValueError("live SC5VIS publication must invalidate the aliased tile shadow")
     return {
         "format": "same-scumm-residency-wram-ownership-v1",
         "result": "pass",
@@ -114,6 +132,14 @@ def audit() -> dict[str, Any]:
             "bytes": alias["bytes"],
             "exclusive_with": "Mode-3 conformance fixture engine",
             "active_mode3_staging_unaffected": True,
+        }],
+        "bwram_lifetime_aliases": [{
+            "owner": "SCUMM checked SC5VIS pixel staging",
+            "address": f"${pixel_stage_address:06X}",
+            "bytes": tile_shadow["bytes"],
+            "aliases": "Mode-3 encoded tile shadow",
+            "lifetime": "incoming visual transfer through checked publication",
+            "coherency": "full room present invalidates shadow before re-encoding",
         }],
         "regions": intervals,
         "overlaps": [],

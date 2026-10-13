@@ -2405,7 +2405,7 @@ def main() -> int:
         "ScummV5_Movement_NextBox_Far__static:",
         ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
         "    jml ScummV5_LiveRoom_NextBox_Far",
-        ".endif",
+        ".else",
         "    .a8",
         "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2444,12 +2444,12 @@ def main() -> int:
             f"ScummV5_Movement_NextBox_Far__success_{index}:", "    sec", "    rtl",
             f"ScummV5_Movement_NextBox_Far__next_{index}:", "    .a8",
         ))
-    data_lines.extend(("ScummV5_Movement_NextBox_Far__fail:", "    clc", "    rtl"))
+    data_lines.extend(("ScummV5_Movement_NextBox_Far__fail:", "    clc", "    rtl", ".endif"))
     data_lines.extend((
         "ScummV5_Movement_Portal_Far:",
         ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
         "    jml ScummV5_LiveRoom_Portal_Far",
-        ".endif",
+        ".else",
         "; Inputs route source and route-next; publishes canonical shared edge.",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2502,12 +2502,12 @@ def main() -> int:
             "    sep #$20", "    .a8", "    sec", "    rtl",
             f"ScummV5_Movement_Portal_Far__next_{index}:", "    .a8",
         ))
-    data_lines.extend(("ScummV5_Movement_Portal_Far__fail:", "    sep #$20", "    .a8", "    clc", "    rtl"))
+    data_lines.extend(("ScummV5_Movement_Portal_Far__fail:", "    sep #$20", "    .a8", "    clc", "    rtl", ".endif"))
     data_lines.extend((
         "ScummV5_Movement_ObjectWalk_Far:",
         ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
         "    jml ScummV5_LiveRoom_ObjectWalk_Far",
-        ".endif",
+        ".else",
         "; Input object in scratch; output walk x/y/direction in scratch, carry set.",
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
     ))
@@ -2549,7 +2549,7 @@ def main() -> int:
             "    sta.l SAME_SCUMM_PUT_ACTOR_RESULT_BOX", "    sec", "    rtl",
             f"ScummV5_Movement_ObjectWalk_Far__next_{index}:", "    .a8",
         ))
-    data_lines.extend(("ScummV5_Movement_ObjectWalk_Far__fail:", "    sep #$20", "    .a8", "    clc", "    rtl"))
+    data_lines.extend(("ScummV5_Movement_ObjectWalk_Far__fail:", "    sep #$20", "    .a8", "    clc", "    rtl", ".endif"))
     # Generic room-coordinate hit testing over the same source-backed object
     # records used by setState.  The records are copied to RAM at room load;
     # no room-specific hotspot or object policy is encoded here.  Reverse
@@ -2563,7 +2563,12 @@ def main() -> int:
             "    rep #$30", "    .a16", "    .i16",
         )
 
-    interaction_records = []
+    # These static lookup services use the same dense record index as the
+    # active-room directory and the tables emitted above.  Keeping a second,
+    # accidentally empty list made ROM-backed builds emit empty hit-test and
+    # verb-query dispatchers while the live-room provider path worked from
+    # its validated resource.  Preserve one source of truth for both paths.
+    interaction_records = records
     data_lines.extend((
         "ScummV5_Object_HitTest_Far:",
         "; Input SAME_SCUMM_INTERACTION_X/Y; output object/flags, carry on hit.",
@@ -2909,10 +2914,12 @@ def main() -> int:
             # The scan leaves A holding the last verb-table value.  Reload
             # the room generation's active record before selecting the next
             # table; otherwise a miss in an earlier room can dispatch based
-            # on arbitrary table data instead of the current room.
+            # on arbitrary table data instead of the current room. The load
+            # is 8-bit, but the generated record comparisons are 16-bit:
+            # explicitly clear A's stale high byte before widening it.
             "    sep #$20", "    .a8",
             "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD",
-            "    rep #$20", "    .a16",
+            "    rep #$20", "    .a16", "    and #$00FF",
         ))
         data_lines.extend(lookup)
     data_lines.extend((

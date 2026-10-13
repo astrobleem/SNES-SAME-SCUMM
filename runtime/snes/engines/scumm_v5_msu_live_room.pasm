@@ -1,7 +1,7 @@
 ; Feature-gated live SCUMM room resources backed by checked SAMEPKG reads.
 ; The existing code-window cache remains reserved for executable bodies and
-; the short SC5ROOM validation record.  Live metadata is staged in the SA-1
-; dedicated 2-KiB incoming buffer, committed only after outgoing EXCD, and
+; the short SC5ROOM validation record. Live metadata is staged in the packed
+; SA-1 incoming-room allocation, committed only after outgoing EXCD, and
 ; retained in the mode-3 diagnostic-fixture alias (mutually exclusive with
 ; its conformance engine). Visual pixels and
 ; palette are fetched into their own audited BWRAM allocations.
@@ -45,6 +45,12 @@ ScummV5_MsuLiveRoom_Start_Far:
     bne ScummV5_MsuLiveRoom_Start_Far__not_waiting
     jmp ScummV5_MsuLiveRoom_Start_Far__wait
 ScummV5_MsuLiveRoom_Start_Far__not_waiting:
+    .a8
+    lda.l SAME_SCUMM_MSU_CACHE_REQUEST_SLOT
+    cmp #$FF
+    beq ScummV5_MsuLiveRoom_Start_Far__provider_idle
+    jmp ScummV5_MsuLiveRoom_Start_Far__wait
+ScummV5_MsuLiveRoom_Start_Far__provider_idle:
     .a8
     lda.l SCUMM_LIVE_ROOM_STAGE
     cmp #SCUMM_LIVE_ROOM_STAGE_METADATA
@@ -461,38 +467,134 @@ ScummV5_LiveRoom_Validate_Far__magic:
     .a8
     lda.l SCUMM_LIVE_ROOM_PENDING,x
     cmp.l ScummV5_LiveRoom_Magic,x
-    bne ScummV5_LiveRoom_Validate_Far__bad
+    beq ScummV5_LiveRoom_Validate_Far__magic_match
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__magic_match:
+    .a8
     inx
     cpx #$0008
     bcc ScummV5_LiveRoom_Validate_Far__magic
     rep #$20
     .a16
     lda.l SCUMM_LIVE_ROOM_PENDING+$08
-    cmp #$0001
-    bne ScummV5_LiveRoom_Validate_Far__bad
+    cmp #$0002
+    beq ScummV5_LiveRoom_Validate_Far__version_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__version_ok:
+    .a16
     lda.l SCUMM_LIVE_ROOM_PENDING+$0A
     cmp #SCUMM_LIVE_ROOM_HEADER_SIZE
-    bne ScummV5_LiveRoom_Validate_Far__bad
+    beq ScummV5_LiveRoom_Validate_Far__header_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__header_ok:
+    .a16
     sep #$20
     .a8
     lda.l SCUMM_LIVE_ROOM_PENDING+$0C
     cmp.l SAME_SCUMM_LIVE_ROOM_CONTROL+$0C
-    bne ScummV5_LiveRoom_Validate_Far__bad
+    beq ScummV5_LiveRoom_Validate_Far__room_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__room_ok:
+    .a8
     lda.l SCUMM_LIVE_ROOM_PENDING+$0D
     and #$FE
-    bne ScummV5_LiveRoom_Validate_Far__bad
+    beq ScummV5_LiveRoom_Validate_Far__flags_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__flags_ok:
+    .a8
     rep #$20
     .a16
     lda.l SCUMM_LIVE_ROOM_PENDING+$30
     cmp.l SCUMM_LIVE_ROOM_READ_LENGTH
-    bne ScummV5_LiveRoom_Validate_Far__bad
+    beq ScummV5_LiveRoom_Validate_Far__length_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__length_ok:
+    .a16
     cmp #SCUMM_LIVE_ROOM_HEADER_SIZE
-    bcc ScummV5_LiveRoom_Validate_Far__bad
+    bcs ScummV5_LiveRoom_Validate_Far__minimum_size_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__minimum_size_ok:
+    .a16
     cmp #SCUMM_LIVE_ROOM_MAX_SIZE+1
-    bcs ScummV5_LiveRoom_Validate_Far__bad
+    bcc ScummV5_LiveRoom_Validate_Far__maximum_size_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__maximum_size_ok:
+    .a16
     lda.l SCUMM_LIVE_ROOM_PENDING+$1C
     cmp #SCUMM_LIVE_ROOM_HEADER_SIZE
-    bne ScummV5_LiveRoom_Validate_Far__bad
+    beq ScummV5_LiveRoom_Validate_Far__first_offset_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__first_offset_ok:
+    .a16
+    ; SC5LIVE v2 stores one (u8 byte length, bytes) name row per object, in
+    ; object-table order. Walk exactly object_count rows and require the table
+    ; to end at object-walk. Package CRC authenticates bytes; these checks
+    ; protect the native consumer offsets.
+    lda.l SCUMM_LIVE_ROOM_PENDING+$26
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; names cursor
+    lda.l SCUMM_LIVE_ROOM_PENDING+$28
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; object-walk offset
+    cmp.l SCUMM_LIVE_ROOM_TEMP0
+    bcs ScummV5_LiveRoom_Validate_Far__names_order_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__names_order_ok:
+    .a16
+    cmp.l SCUMM_LIVE_ROOM_PENDING+$30
+    bcc ScummV5_LiveRoom_Validate_Far__names_bound_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__names_bound_ok:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_PENDING+$10
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; name rows remaining
+ScummV5_LiveRoom_Validate_Far__name_row:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    beq ScummV5_LiveRoom_Validate_Far__names_done
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    clc
+    adc #$0001
+    cmp.l SCUMM_LIVE_ROOM_TEMP1
+    bcc ScummV5_LiveRoom_Validate_Far__name_length_available
+    beq ScummV5_LiveRoom_Validate_Far__name_length_available
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__name_length_available:
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    tax
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_PENDING,x
+    rep #$20
+    .a16
+    and #$00FF
+    cmp #$0021
+    bcc ScummV5_LiveRoom_Validate_Far__name_size_ok
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__name_size_ok:
+    .a16
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; name byte count
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    clc
+    adc #$0001
+    adc.l SCUMM_LIVE_ROOM_TEMP2
+    cmp.l SCUMM_LIVE_ROOM_TEMP1
+    bcc ScummV5_LiveRoom_Validate_Far__name_within_table
+    beq ScummV5_LiveRoom_Validate_Far__name_within_table
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__name_within_table:
+    .a16
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    lda.l SCUMM_LIVE_ROOM_TEMP3
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP3
+    jmp ScummV5_LiveRoom_Validate_Far__name_row
+ScummV5_LiveRoom_Validate_Far__names_done:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    cmp.l SCUMM_LIVE_ROOM_TEMP1
+    beq ScummV5_LiveRoom_Validate_Far__names_exact
+    jmp ScummV5_LiveRoom_Validate_Far__bad
+ScummV5_LiveRoom_Validate_Far__names_exact:
+    .a16
     ; The final bundle table must terminate exactly at total_size. This also
     ; rejects malformed counts/offsets before any native consumer indexes it.
     lda.l SCUMM_LIVE_ROOM_PENDING+$2E
@@ -708,7 +810,7 @@ ScummV5_LiveRoom_LoadActiveRoom_Far__names:
     plp
     rtl
 
-; Translate the compiler-owned OBNA table into SAME's existing object-name
+; Translate the compiler-owned compact OBNA table into SAME's existing object-name
 ; cache. Names remain resource-owned but consumers keep their established API.
 ScummV5_LiveRoom_LoadNames_Far:
     php
@@ -719,9 +821,9 @@ ScummV5_LiveRoom_LoadNames_Far:
     and #$00FF
     sta.l SCUMM_LIVE_ROOM_TEMP3 ; object rows remaining
     lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_NAMES_OFFSET
-    sta.l SCUMM_LIVE_ROOM_TEMP0 ; current 34-byte row
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; current variable-length row
     lda #$0000
-    sta.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP1 ; parallel object-table row index
 ScummV5_LiveRoom_LoadNames_Far__row:
     .a16
     lda.l SCUMM_LIVE_ROOM_TEMP3
@@ -729,7 +831,20 @@ ScummV5_LiveRoom_LoadNames_Far__row:
     jmp ScummV5_LiveRoom_LoadNames_Far__done
 ScummV5_LiveRoom_LoadNames_Far__has_row:
     .a16
-    lda.l SCUMM_LIVE_ROOM_TEMP0
+    ; Name rows follow the existing object table exactly; recover the canonical
+    ; object ID from that record rather than duplicating it in SC5LIVE.
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    asl
+    sta.l SCUMM_LIVE_ROOM_TEMP2
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    asl
+    asl
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP2
+    adc.l SCUMM_LIVE_ROOM_TEMP1
+    clc
+    adc.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_OBJECTS_OFFSET
     tax
     lda.l SCUMM_LIVE_ROOM_BASE,x
     sta.l SCUMM_LIVE_ROOM_TEMP2 ; object id
@@ -740,16 +855,47 @@ ScummV5_LiveRoom_LoadNames_Far__has_row:
     asl
     sta.l SCUMM_LIVE_ROOM_TEMP4 ; destination name offset
     lda.l SCUMM_LIVE_ROOM_TEMP0
+    tax
+    sep #$20
+    .a8
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    rep #$20
+    .a16
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_WIDTH ; name length
+    lda.l SCUMM_LIVE_ROOM_TEMP0
     clc
-    adc #$0002
+    adc #$0001
     sta.l SCUMM_LIVE_ROOM_TEMP5 ; source string offset
+    ; Clear the previous room's tail so shorter names cannot expose stale bytes.
     lda #$0000
     sta.l SCUMM_LIVE_ROOM_COPY_INDEX
-    sta.l SCUMM_LIVE_ROOM_WIDTH ; name length
-ScummV5_LiveRoom_LoadNames_Far__char:
+ScummV5_LiveRoom_LoadNames_Far__clear:
     .a16
     lda.l SCUMM_LIVE_ROOM_COPY_INDEX
     cmp #$0020
+    bcs ScummV5_LiveRoom_LoadNames_Far__copy_start
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP4
+    tax
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_OBJECT_NAMES,x
+    rep #$20
+    .a16
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    inc
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX
+    bra ScummV5_LiveRoom_LoadNames_Far__clear
+ScummV5_LiveRoom_LoadNames_Far__copy_start:
+    .a16
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_COPY_INDEX
+ScummV5_LiveRoom_LoadNames_Far__char:
+    .a16
+    lda.l SCUMM_LIVE_ROOM_COPY_INDEX
+    cmp.l SCUMM_LIVE_ROOM_WIDTH
     bcs ScummV5_LiveRoom_LoadNames_Far__store_length
     clc
     adc.l SCUMM_LIVE_ROOM_TEMP5
@@ -768,13 +914,6 @@ ScummV5_LiveRoom_LoadNames_Far__char:
     .a8
     lda.l SCUMM_LIVE_ROOM_TEMP_BYTE
     sta.l SAME_SCUMM_OBJECT_NAMES,x
-    beq ScummV5_LiveRoom_LoadNames_Far__length_done
-    rep #$20
-    .a16
-    lda.l SCUMM_LIVE_ROOM_WIDTH
-    inc
-    sta.l SCUMM_LIVE_ROOM_WIDTH
-ScummV5_LiveRoom_LoadNames_Far__length_done:
     rep #$20
     .a16
     lda.l SCUMM_LIVE_ROOM_COPY_INDEX
@@ -797,8 +936,13 @@ ScummV5_LiveRoom_LoadNames_Far__next:
     .a16
     lda.l SCUMM_LIVE_ROOM_TEMP0
     clc
-    adc #$0022
+    adc #$0001
+    clc
+    adc.l SCUMM_LIVE_ROOM_WIDTH
     sta.l SCUMM_LIVE_ROOM_TEMP0
+    lda.l SCUMM_LIVE_ROOM_TEMP1
+    inc
+    sta.l SCUMM_LIVE_ROOM_TEMP1
     lda.l SCUMM_LIVE_ROOM_TEMP3
     dec
     sta.l SCUMM_LIVE_ROOM_TEMP3
@@ -945,17 +1089,58 @@ ScummV5_LiveRoom_Portal_Far__multiply:
     sta.l SCUMM_LIVE_ROOM_TEMP0
     bra ScummV5_LiveRoom_Portal_Far__multiply
 ScummV5_LiveRoom_Portal_Far__index:
+    .a16
+    lda.l SAME_SCUMM_MOVE_ROUTE_NEXT
+    and #$00FF ; ROUTE_NEXT is u8 and is adjacent to PORTAL_TYPE.
+    sta.l SCUMM_LIVE_ROOM_TEMP5
     lda.l SCUMM_LIVE_ROOM_TEMP2
     clc
-    adc.l SAME_SCUMM_MOVE_ROUTE_NEXT
+    adc.l SCUMM_LIVE_ROOM_TEMP5
     sta.l SCUMM_LIVE_ROOM_TEMP2
+    ; Pair matrix stores a sparse portal-record index, FFFF means no portal.
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    tax
+    lda.l SCUMM_LIVE_ROOM_BASE,x
+    cmp #$FFFF
+    bne ScummV5_LiveRoom_Portal_Far__has_portal
+    jmp ScummV5_LiveRoom_Portal_Far__bad
+ScummV5_LiveRoom_Portal_Far__has_portal:
+    .a16
+    sta.l SCUMM_LIVE_ROOM_TEMP3 ; sparse portal record index
+    ; Portal records follow the u16 pair-index matrix (box_count squared).
+    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_BOX_COUNT
+    and #$00FF
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    sta.l SCUMM_LIVE_ROOM_TEMP1
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP2
+ScummV5_LiveRoom_Portal_Far__square:
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    beq ScummV5_LiveRoom_Portal_Far__records
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP1
+    sta.l SCUMM_LIVE_ROOM_TEMP2
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    dec
+    sta.l SCUMM_LIVE_ROOM_TEMP0
+    bra ScummV5_LiveRoom_Portal_Far__square
+ScummV5_LiveRoom_Portal_Far__records:
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    sta.l SCUMM_LIVE_ROOM_TEMP4 ; sparse descriptor-array offset
+    lda.l SCUMM_LIVE_ROOM_TEMP3
     asl
     asl
     asl
     sec
-    sbc.l SCUMM_LIVE_ROOM_TEMP2 ; index * 7
+    sbc.l SCUMM_LIVE_ROOM_TEMP3 ; record index * 7
     clc
-    adc.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_PORTALS_OFFSET
+    adc.l SCUMM_LIVE_ROOM_TEMP4
     tax
     sep #$20
     .a8
@@ -992,20 +1177,33 @@ ScummV5_LiveRoom_ObjectWalk_Far:
     lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_OBJECT_COUNT
     and #$00FF
     sta.l SCUMM_LIVE_ROOM_TEMP1
-    lda.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_OBJECT_WALK_OFFSET
-    sta.l SCUMM_LIVE_ROOM_TEMP0
+    lda #$0000
+    sta.l SCUMM_LIVE_ROOM_TEMP0 ; parallel object row index
 ScummV5_LiveRoom_ObjectWalk_Far__loop:
     .a16
     lda.l SCUMM_LIVE_ROOM_TEMP1
-    beq ScummV5_LiveRoom_ObjectWalk_Far__bad
+    bne ScummV5_LiveRoom_ObjectWalk_Far__has_row
+    jmp ScummV5_LiveRoom_ObjectWalk_Far__bad
+ScummV5_LiveRoom_ObjectWalk_Far__has_row:
+    .a16
     lda.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; object index * 2
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    asl
+    asl
+    clc
+    adc.l SCUMM_LIVE_ROOM_TEMP2
+    adc.l SCUMM_LIVE_ROOM_TEMP0 ; object index * 11
+    clc
+    adc.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_OBJECTS_OFFSET
     tax
     lda.l SCUMM_LIVE_ROOM_BASE,x
     cmp.l SAME_SCUMM_MOVE_OBJECT
     beq ScummV5_LiveRoom_ObjectWalk_Far__found
     lda.l SCUMM_LIVE_ROOM_TEMP0
-    clc
-    adc #$000C
+    inc
     sta.l SCUMM_LIVE_ROOM_TEMP0
     lda.l SCUMM_LIVE_ROOM_TEMP1
     dec
@@ -1013,9 +1211,17 @@ ScummV5_LiveRoom_ObjectWalk_Far__loop:
     bra ScummV5_LiveRoom_ObjectWalk_Far__loop
 ScummV5_LiveRoom_ObjectWalk_Far__found:
     .a16
-    txa
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    sta.l SCUMM_LIVE_ROOM_TEMP2 ; object index * 2
+    lda.l SCUMM_LIVE_ROOM_TEMP0
+    asl
+    asl
+    asl
     clc
-    adc #$0002
+    adc.l SCUMM_LIVE_ROOM_TEMP2
+    clc
+    adc.l SCUMM_LIVE_ROOM_BASE+SCUMM_LIVE_ROOM_OBJECT_WALK_OFFSET
     tax
     lda.l SCUMM_LIVE_ROOM_BASE,x
     sta.l SAME_SCUMM_MOVE_REQUEST_X

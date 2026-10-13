@@ -32,6 +32,12 @@ from fate_replay import (  # noqa: E402
 from validate_fate_authentic_startup_nexen import _button_names  # noqa: E402
 from replay_fate_room4_cold_nexen import (  # noqa: E402
     _snapshot as cold_startup_snapshot,
+    _SnapshotReader,
+    _bounded_observation_step,
+    _has_watched_resource_wait,
+    _has_live_watched_activation,
+    _activation_identity_by_slot,
+    _require_room4_object_dispatch,
     _native_directory_for_build,
     _observed_pinned_selectors,
     _known_resident_bindings,
@@ -40,7 +46,10 @@ from replay_fate_room4_cold_nexen import (  # noqa: E402
     _parse_global_script_selector,
     _parse_room_local_program_table,
     _parse_rom_variable_layout,
+    _room_lifecycle_is_idle,
     _room7_runtime_context,
+    _room_entry_failure_summary,
+    _selected_executable_object_identities,
 )
 import replay_fate_room4_cold_nexen as cold_startup_module  # noqa: E402
 
@@ -84,6 +93,7 @@ class FakeSession:
 class SparseSnapshotSession:
     def __init__(self, values: dict[int, int]) -> None:
         self.values = values
+        self.reads: list[tuple[str, int, int]] = []
 
     def get_state(self) -> dict[str, int]:
         return {"frameCount": 0}
@@ -91,6 +101,7 @@ class SparseSnapshotSession:
     def read_memory(self, space: str, address: int, length: int) -> bytes:
         if space != "snesMemory":
             raise AssertionError(space)
+        self.reads.append((space, address, length))
         return bytes(self.values.get(address + offset, 0) for offset in range(length))
 
 
@@ -317,8 +328,8 @@ class FakeRoom5Session(FakeRoom4Session):
 class FakeRoom6Session(FakeRoom4Session):
     """Copyright-free controller fixture for the room6 authored books verb."""
 
-    def __init__(self) -> None:
-        super().__init__(cursor=(226, 139))
+    def __init__(self, cursor: tuple[int, int] = (226, 139)) -> None:
+        super().__init__(cursor=cursor)
         self.values.update({
             0x7FF2BF: 6,
             0x7E5FE5: 0,
@@ -358,8 +369,8 @@ class FakeRoom7Session(FakeRoom4Session):
     VARIABLE_BASE = 0x7E0800
     VARIABLE_COUNT = 0x0320
 
-    def __init__(self) -> None:
-        super().__init__(cursor=(162, 129))
+    def __init__(self, cursor: tuple[int, int] = (162, 129)) -> None:
+        super().__init__(cursor=cursor)
         self.values.update({
             0x7FF2BF: 7,
             0x7E5FE5: 0,
@@ -404,8 +415,8 @@ class FakeRoom7CatSession(FakeRoom4Session):
     VARIABLE_BASE = 0x7E0800
     VARIABLE_COUNT = 0x0320
 
-    def __init__(self) -> None:
-        super().__init__(cursor=(188, 125))
+    def __init__(self, cursor: tuple[int, int] = (188, 125)) -> None:
+        super().__init__(cursor=cursor)
         self.values.update({
             0x7FF2BF: 7, 0x7FF2C2: 0, 0x7E2303: 0, 0x7E2221: 2,
             0x7E5E8A: 1, 0x7E7A20: 0, 0x7E5FE0: 1,
@@ -481,6 +492,185 @@ class FakeRoom7CatSession(FakeRoom4Session):
 
 
 class FateReplayTests(unittest.TestCase):
+    def test_room_entry_failure_keeps_program_page_ownership_diagnostics(self) -> None:
+        cache = {
+            "slots": [{"slot": 2, "program_unit_id": 19,
+                       "pins": 0x80, "generation": 7}],
+            "completion_waiters": [{"page": 2, "selector": 0xD3,
+                                    "c4_slot": 4, "held": True}],
+            "page_lookup": {"pc": 0x2345, "remaining": 0},
+            "provider": {"status": 4, "error": 0, "bytes_read": 8192},
+        }
+        result = _room_entry_failure_summary({
+            "status": "bounded-observation-limit",
+            "final": {"program_cache": cache},
+        })
+        self.assertEqual(result["program_cache"], cache)
+
+    def test_snapshot_reader_batches_room_observer_wram_windows(self) -> None:
+        session = SparseSnapshotSession({})
+        reader = _SnapshotReader(session)
+        reads_after_capture = len(session.reads)
+        self.assertEqual(reads_after_capture, 5)
+        for address in (
+            0x7E2200, 0x7E5F19, 0x7E5F92, 0x7E5FE0, 0x7E6000,
+            0x7E7A20, 0x7E8C00, 0x7FD300, 0x7FF100, 0x7F3700,
+        ):
+            self.assertEqual(reader.read_memory("snesMemory", address, 1), b"\x00")
+        self.assertEqual(len(session.reads), reads_after_capture)
+
+    def test_room_entry_observation_chunks_never_exceed_frame_budget(self) -> None:
+        start = 100
+        budget = 33
+        steps = []
+        current = start
+        while True:
+            step = _bounded_observation_step(start, current, budget)
+            if step == 0:
+                break
+            steps.append(step)
+            current += step
+        self.assertEqual(steps, [16, 16, 1])
+        self.assertEqual(current - start, budget)
+        self.assertEqual(_bounded_observation_step(start, current, budget), 0)
+        self.assertEqual(_bounded_observation_step(start, current + 1, budget), 0)
+
+    def test_room7_cat_selection_unions_both_object_program_tiers(self) -> None:
+        selected = _selected_executable_object_identities({
+            "SAME_SCUMM_APPEND_EXECUTABLE_LOCAL_OBJECTS": "4:60,7:118,7:119",
+            "SAME_SCUMM_APPEND_TERMINAL_EXECUTABLE_LOCAL_OBJECTS": "7:133",
+        })
+        self.assertEqual(selected, {"4:60", "7:118", "7:119", "7:133"})
+
+    def test_room_action_quiescence_requires_idle_committed_lifecycle(self) -> None:
+        settled = {
+            "room": 6,
+            "phase": 0,
+            "active_record": 3,
+            "pending_record": 3,
+            "pending_room": 6,
+        }
+        self.assertTrue(_room_lifecycle_is_idle(settled))
+
+        exiting = {
+            **settled,
+            "phase": 1,
+            "pending_record": 4,
+            "pending_room": 7,
+        }
+        self.assertFalse(_room_lifecycle_is_idle(exiting))
+
+        pending_before_phase_advance = {
+            **settled,
+            "pending_room": 7,
+        }
+        self.assertFalse(_room_lifecycle_is_idle(pending_before_phase_advance))
+
+        record_mismatch = {
+            **settled,
+            "pending_record": 4,
+        }
+        self.assertFalse(_room_lifecycle_is_idle(record_mismatch))
+
+    def test_room4_replay_requires_normalized_object_carrier_dispatch(self) -> None:
+        result = {
+            "final": {"start_object": {
+                "exec_count": 5, "object": 61, "entry": 10,
+                "program": 214, "entry_offset": 203,
+            }},
+            "frame_boundary_execution_samples": [{
+                "frame": 1234,
+                "start_object": {
+                    "exec_count": 5, "object": 61, "entry": 10,
+                    "program": 214, "entry_offset": 203,
+                },
+                "slots": [{
+                    "program": 214,
+                    "program_unit_identity": "ObjectProgram(room=4,object=61)",
+                }],
+            }],
+        }
+        evidence = _require_room4_object_dispatch(
+            result, before_count=4, verb=10, entry_offset=203,
+        )
+        self.assertEqual(evidence["semantic_identity"],
+                         "ObjectVerb(room=4,object=61,verb=10)")
+        self.assertEqual(evidence["dispatch_count"], 1)
+        result["frame_boundary_execution_samples"][0]["slots"] = []
+        with self.assertRaisesRegex(RuntimeError, "canonical carrier"):
+            _require_room4_object_dispatch(
+                result, before_count=4, verb=10, entry_offset=203,
+            )
+
+    def test_room4_replay_accepts_completed_verb_with_canonical_resident_binding(self) -> None:
+        result = {
+            "final": {"start_object": {
+                "exec_count": 9, "object": 61, "entry": 10,
+                "program": 214, "entry_offset": 203,
+            }},
+            "frame_boundary_execution_samples": [{
+                "frame": 2870,
+                "start_object": {
+                    "exec_count": 9, "object": 61, "entry": 10,
+                    "program": 214, "entry_offset": 203,
+                },
+                # The tiny OBCD activation completed between samples.
+                "slots": [],
+                "start_object_program_binding": {
+                    "selector": 214,
+                    "identity": "ObjectProgram(room=4,object=61)",
+                    "generation": 2,
+                },
+            }],
+        }
+        evidence = _require_room4_object_dispatch(
+            result, before_count=8, verb=10, entry_offset=203,
+        )
+        self.assertEqual(evidence["carrier_evidence"], ["resident-binding"])
+        self.assertEqual(evidence["sample_frames"], [2870])
+
+        result["frame_boundary_execution_samples"][0][
+            "start_object_program_binding"
+        ]["identity"] = "RoomEntryProgram(5)"
+        with self.assertRaisesRegex(RuntimeError, "canonical carrier"):
+            _require_room4_object_dispatch(
+                result, before_count=8, verb=10, entry_offset=203,
+            )
+
+    def test_action_wait_resource_is_not_a_quiescent_boundary(self) -> None:
+        slots = [
+            {"slot": 2, "status": 5},
+            {"slot": 4, "status": 2},
+        ]
+        self.assertTrue(_has_watched_resource_wait(slots, {2, 7}))
+        self.assertFalse(_has_watched_resource_wait(slots, {4, 7}))
+        self.assertFalse(_has_watched_resource_wait(
+            [{"slot": 2, "status": 2}], {2},
+        ))
+
+    def test_action_owned_yielded_activation_is_not_quiescent(self) -> None:
+        slots = [
+            {"slot": 2, "status": 2},
+            {"slot": 4, "status": 4},
+        ]
+        self.assertTrue(_has_live_watched_activation(slots, {2, 7}))
+        self.assertFalse(_has_live_watched_activation(slots, {4, 7}))
+        self.assertFalse(_has_live_watched_activation(
+            [{"slot": 2, "status": 0}], {2},
+        ))
+
+    def test_activation_baseline_includes_canonical_binding_generation(self) -> None:
+        slots = [{
+            "slot": 3, "script": 2, "program": 252,
+            "program_unit_id": 97, "binding_generation": 1,
+        }]
+        baseline = _activation_identity_by_slot(slots)
+        self.assertEqual(baseline[3], (2, 252, 97, 1))
+        slots[0]["binding_generation"] = 2
+        self.assertNotEqual(
+            baseline[3], _activation_identity_by_slot(slots)[3],
+        )
+
     def test_room4_cursor_world_coordinates_follow_native_camera_transform(self) -> None:
         session = FakeRoom4Session(cursor=(-31, 140), camera=(148, 98))
         state = room4_controller_snapshot(session)
@@ -515,6 +705,7 @@ class FateReplayTests(unittest.TestCase):
         room_requests = 0x1234
         room_validations = 0x5678
         values = {
+            0x7E2FB0: 3,
             0x7E2FED: room_requests & 0xFF,
             0x7E2FEE: room_requests >> 8,
             0x7E2FEF: room_validations & 0xFF,
@@ -524,6 +715,7 @@ class FateReplayTests(unittest.TestCase):
             0x7E2FF4: 0xBB,
             0x7E2FF5: 0xCC,
             0x7E2FF6: 0xDD,
+            0x7E2347: 0xA5,
         }
         with (
             patch("replay_fate_room4_cold_nexen.ACTIVE_DYNAMIC_RESIDENCY", True),
@@ -531,9 +723,11 @@ class FateReplayTests(unittest.TestCase):
         ):
             observed = cold_startup_snapshot(SparseSnapshotSession(values))
         self.assertEqual(observed["program_cache"]["room_requests"], room_requests)
+        self.assertEqual(observed["program_cache"]["execution_depth"], 3)
         self.assertEqual(
             observed["program_cache"]["room_validations"], room_validations
         )
+        self.assertEqual(observed["condition"], 0xA5)
 
     def test_rom_backed_dynamic_snapshot_does_not_read_msu_only_state(self) -> None:
         session = SparseSnapshotSession({})
@@ -636,6 +830,67 @@ class FateReplayTests(unittest.TestCase):
         self.assertEqual(result["by_identity"]["RoomEntryProgram(room=4)"][
             "program_unit_id"
         ], 9)
+
+    def test_dynamic_report_ignores_stale_shared_native_directory(self) -> None:
+        import hashlib
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            build_root = root / "isolated-dynamic-output"
+            build_root.mkdir()
+            report_directory = build_root / "native-directory.json"
+            report_bytes = (json.dumps({"entries": [{
+                "program_unit_id": 42,
+                "identity": "GlobalProgram(42)",
+            }]}, sort_keys=True) + "\n").encode()
+            report_directory.write_bytes(report_bytes)
+            (build_root / "cooked-rooms.json").write_text(json.dumps({
+                "native_program_directory": "native-directory.json",
+                "native_program_directory_sha256": hashlib.sha256(
+                    report_bytes
+                ).hexdigest(),
+            }), encoding="utf-8")
+
+            # Simulate a later build replacing the old shared generated file.
+            shared = root / "runtime/snes/generated"
+            shared.mkdir(parents=True)
+            (shared / "scumm_v5_native_program_directory.json").write_text(
+                json.dumps({"entries": [{
+                    "program_unit_id": 7,
+                    "identity": "GlobalProgram(7)",
+                }]}), encoding="utf-8",
+            )
+
+            identity_path = root / "route.build_identity.json"
+            identity_path.write_text(json.dumps({
+                "explicit_environment": {
+                    "SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY": "1",
+                    "SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR": str(build_root),
+                },
+            }), encoding="utf-8")
+            result = _native_directory_for_build(identity_path)
+
+        self.assertEqual(result["by_identity"]["GlobalProgram(42)"][
+            "program_unit_id"
+        ], 42)
+
+    def test_dynamic_build_writes_native_directory_inside_owned_root(self) -> None:
+        build_script = (ROOT / "tools/build_snes.sh").read_text(encoding="utf-8")
+        dynamic_start = build_script.index(
+            'if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then',
+            build_script.index("ROOM_GENERATOR_REPORT=")
+        )
+        dynamic_block = build_script[dynamic_start:]
+        self.assertIn(
+            '--native-directory-output "$M23A_BUILD/scumm_v5_native_program_directory.json"',
+            dynamic_block,
+        )
+        self.assertIn(
+            '--native-directory-include "$M23A_BUILD/scumm_v5_native_program_directory.inc.pasm"',
+            dynamic_block,
+        )
 
     def test_generated_input_provenance_uses_sealed_manifest_not_mutable_workspace(self) -> None:
         import hashlib
@@ -856,6 +1111,17 @@ ScummV5_M23A_FetchProgramByte_Far:
         self.assertEqual(world_point_direction_mask(223, 124, 226, 130, tolerance=1), 0x080)
         self.assertIsNone(world_point_direction_mask(227, 125, 226, 124, tolerance=1))
 
+    def test_cursor_diagonal_is_explicit_and_uses_both_native_direction_bits(self) -> None:
+        self.assertEqual(world_point_direction_mask(124, 30, 224, 124), 0x080)
+        self.assertEqual(
+            world_point_direction_mask(124, 30, 224, 124, allow_diagonal=True),
+            0x0A0,
+        )
+        self.assertEqual(
+            world_point_direction_mask(124, 130, 120, 124, allow_diagonal=True),
+            0x050,
+        )
+
     def test_activation_batch_keeps_event_times_separate_from_drain_snapshot(self) -> None:
         batch = [
             activation_observation(
@@ -1048,6 +1314,16 @@ ScummV5_M23A_FetchProgramByte_Far:
             for start, end, count, _mask in session.advances
         ))
 
+    def test_room6_books_accepts_streamed_entry_cursor_parity(self) -> None:
+        session = FakeRoom6Session(cursor=(228, 124))
+        result = replay_room6_books_interaction(session)
+        self.assertEqual(result["precondition"]["room"], 6)
+        self.assertEqual(result["target"]["requested_world"], [4, 81])
+        self.assertEqual(result["target"]["world"], [4, 80])
+        self.assertEqual(result["target"]["selected_hit_object"], 91)
+        self.assertEqual(result["submission_count_after"], 71)
+        self.assertEqual(result["submission"]["attempts"], 1)
+
     def test_room5_rope_step_rejects_non_authentic_branch_before_input(self) -> None:
         session = FakeRoom5Session()
         session.values[0x7E2BA8] = 0x20
@@ -1105,6 +1381,19 @@ ScummV5_M23A_FetchProgramByte_Far:
         self.assertEqual(result["submission_count_after"], 91)
         self.assertEqual(result["submission"]["after"]["mode"], 2)
         self.assertEqual(result["submission"]["attempts"], 1)
+
+    def test_room7_book_accepts_streamed_entry_cursor_parity(self) -> None:
+        session = FakeRoom7Session(cursor=(4, 80))
+        result = replay_room7_lost_dialogue_interaction(
+            session,
+            variable_base=session.VARIABLE_BASE,
+            variable_count=session.VARIABLE_COUNT,
+        )
+        self.assertEqual(result["target"]["requested_world"], [188, 125])
+        self.assertEqual(result["target"]["world"], [188, 124])
+        self.assertEqual(result["target"]["selected_hit_object"], 133)
+        self.assertEqual(result["submission_count_after"], 91)
+        self.assertEqual(result["submission"]["attempts"], 1)
         self.assertEqual(session.dangerous_set_input_calls, [])
         self.assertEqual(session.held_buttons, 0)
         self.assertEqual(session.values[0x7E2303], 0)
@@ -1157,6 +1446,22 @@ ScummV5_M23A_FetchProgramByte_Far:
         self.assertEqual(session.values[0x7E2303], 0)
         self.assertEqual(session.held_buttons, 0)
         self.assertEqual(session.dangerous_set_input_calls, [])
+
+    def test_room7_cat_accepts_streamed_entry_cursor_parity(self) -> None:
+        session = FakeRoom7CatSession(cursor=(188, 124))
+        result = replay_room7_cat_figure_use(
+            session, object_id=118,
+            variable_base=session.VARIABLE_BASE,
+            variable_count=session.VARIABLE_COUNT,
+        )
+        self.assertEqual(result["target"]["requested_world"], [112, 123])
+        self.assertEqual(result["target"]["world"], [112, 122])
+        self.assertEqual(result["selection"]["after"]["object"], 118)
+        self.assertEqual(result["selected_verb_cycle"]["after"]["verb"], 10)
+        self.assertEqual(result["submission"]["attempts"], 1)
+        self.assertEqual(result["submission_count_after"], 129)
+        self.assertEqual(session.dangerous_set_input_calls, [])
+        self.assertEqual(session.held_buttons, 0)
 
     def test_room7_cat_replay_rejects_unjustified_order_without_input(self) -> None:
         session = FakeRoom7CatSession()

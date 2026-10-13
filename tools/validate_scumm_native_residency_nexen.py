@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -83,6 +84,59 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
+def audit_runtime_walkbox_flags(
+    source_flags: bytes,
+    active_flags: bytes,
+    *,
+    successful_matrix_mutations: int,
+    matrix_trace: list[dict[str, int]],
+) -> dict[str, Any]:
+    """Validate immutable room flags without mistaking SCUMM state for source.
+
+    SC5LIVE carries the initial BOXD flag bytes.  The active matrix table is
+    mutable: SCUMM v5 ``matrixOps`` sub-op 1 may overwrite individual flags,
+    while sub-op 4 rebuilds the derived route matrix. Therefore exact equality
+    is a valid assertion only if no successful flag mutation occurred. When
+    values differ, require the engine's mutation counter and decoded-operation
+    trace as evidence. The trace also records valid createBoxMatrix calls with
+    the runtime's no-operand sentinel (box/flags = $FF/$FF).
+    """
+    require(len(active_flags) == len(source_flags),
+            "active walkbox flag length differs from the published BOXD table")
+    differences = [
+        {"box": index, "source": source, "active": active}
+        for index, (source, active) in enumerate(zip(source_flags, active_flags))
+        if source != active
+    ]
+    if differences:
+        require(successful_matrix_mutations > 0 and bool(matrix_trace),
+                "active walkbox flags diverged from SC5LIVE without successful "
+                "matrixOps evidence: "
+                f"differences={differences[:12]!r}, "
+                f"mutation_count={successful_matrix_mutations}, "
+                f"trace={matrix_trace!r}")
+        require(all(
+            (row.get("subop") == 1
+             and 0 <= row.get("box", -1) < len(source_flags))
+            or (row.get("subop") == 4
+                and row.get("box") == 0xFF
+                and row.get("flags") == 0xFF)
+            for row in matrix_trace
+        ),
+                f"walkbox mutation trace contains invalid records: {matrix_trace!r}")
+    else:
+        require(successful_matrix_mutations >= 0,
+                "matrix mutation counter cannot be negative")
+    return {
+        "source_initial_flags_hex": source_flags.hex(),
+        "active_runtime_flags_hex": active_flags.hex(),
+        "matches_source_initial_flags": not differences,
+        "runtime_mutation_count": successful_matrix_mutations,
+        "runtime_mutation_trace": matrix_trace,
+        "runtime_mutated_boxes": differences,
+    }
+
+
 def git_identity() -> dict[str, Any]:
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
@@ -135,6 +189,13 @@ def load_inputs(rom: Path, manifest_path: Path, directory_path: Path,
     map_path = rom.with_suffix(".map")
     require(build_identity_path.is_file(), f"missing build identity: {build_identity_path}")
     require(map_path.is_file(), f"missing ROM map: {map_path}")
+    listing_path = rom.with_suffix(".lst")
+    require(listing_path.is_file(), f"missing ROM listing: {listing_path}")
+    rom_symbols: dict[str, int] = {}
+    for line in listing_path.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"; ([A-Z][A-Z0-9_]*) = \$([0-9A-Fa-f]+)\s+\(Constant\)$", line)
+        if match:
+            rom_symbols[match.group(1)] = int(match.group(2), 16)
     build_identity = json.loads(build_identity_path.read_text(encoding="utf-8"))
     entries = directory.get("entries", [])
     identity_to_id = {str(row["identity"]): int(row["program_unit_id"]) for row in entries}
@@ -259,6 +320,7 @@ def load_inputs(rom: Path, manifest_path: Path, directory_path: Path,
         "global_units": global_bundle_units,
         "build_identity": build_identity,
         "rom_path": str(rom.resolve()),
+        "rom_symbols": rom_symbols,
         "hashes": {
             "source_manifest_sha256": sha256(manifest_path),
             "program_unit_directory_sha256": sha256(directory_path),
@@ -326,6 +388,18 @@ def active_slots(session: Any) -> list[dict[str, int]]:
     ]
 
 
+def live_room_control_base(inputs: dict[str, Any]) -> int:
+    """Return this ROM's generated live-room control address."""
+    return int(inputs["rom_symbols"]["SAME_SCUMM_LIVE_ROOM_CONTROL"])
+
+
+def read_live_room_control(session: Any, inputs: dict[str, Any],
+                           length: int = 0x20) -> list[int]:
+    return list(session.read_memory(
+        "snesMemory", live_room_control_base(inputs), length,
+    ))
+
+
 def stats(session: Any) -> dict[str, int]:
     # Binding-event counters are live. Pinned census counters are snapshots
     # written only by RefreshDiagnostics and are reported separately.
@@ -347,14 +421,15 @@ def owned_pin_census(session: Any) -> dict[str, int]:
     return {"current_owned_pins": u16(raw), "peak_owned_pins": u16(raw, 2)}
 
 
-def msu_program_diagnostics(session: Any) -> dict[str, Any]:
+def msu_program_diagnostics(session: Any, inputs: dict[str, Any] | None = None) -> dict[str, Any]:
     """Capture provider and bytecode-cache state for native streaming evidence."""
     provider = session.read_memory("snesMemory", 0x7E2F00, 0x48)
     cache = session.read_memory("snesMemory", 0x7E2F48, 0x5A)
     cache_page2 = session.read_memory("snesMemory", 0x7E2EC3, 10)
     c19 = session.read_memory("snesMemory", 0x7E2FA2, 14)
     room = session.read_memory("snesMemory", 0x7E2FEB, 0x15)
-    live = session.read_memory("snesMemory", 0x401400, 0x0C)
+    live_base = 0x401400 if inputs is None else live_room_control_base(inputs)
+    live = session.read_memory("snesMemory", live_base, 0x0C)
     return {
         "provider_status": provider[0],
         "provider_error": provider[1],
@@ -402,6 +477,14 @@ def msu_program_diagnostics(session: Any) -> dict[str, Any]:
                 "address": 0x41E800,
             },
         ],
+        # Low seven bits are transient execution pins; bit 7 is an independent
+        # checked-page completion hold owned by a WAIT_RESOURCE activation.
+        # No interpreter code pointer survives a scheduler return, so at a
+        # stable host-frame boundary with execution_depth == 0 these counts
+        # must be zero even when yielded C4 activations remain live.
+        "transient_execution_pins": [cache[10] & 0x7F,
+                                     cache[11] & 0x7F,
+                                     cache_page2[5] & 0x7F],
         "cache_current_bytes": u16(cache, 0x18),
         "cache_peak_bytes": u16(cache, 0x1A),
         "cache_loads": u16(cache, 0x1C),
@@ -409,6 +492,14 @@ def msu_program_diagnostics(session: Any) -> dict[str, Any]:
         "cache_failures": u16(cache, 0x20),
         "cache_request_id": u16(cache, 0x10),
         "cache_request_slot": cache[0x12],
+        "cache_completion_waiters": [
+            {
+                "selector": session.read_memory("snesMemory", 0x7E2ED0 + page * 2, 1)[0],
+                "c4_slot": session.read_memory("snesMemory", 0x7E2ED1 + page * 2, 1)[0],
+                "held": bool(session.read_memory("snesMemory", pin_address, 1)[0] & 0x80),
+            }
+            for page, pin_address in enumerate((0x7E2F52, 0x7E2F53, 0x7E2EC8))
+        ],
         "active_cache_slot": cache[0x13],
         "active_program_unit_id": u16(cache, 0x14),
         "active_generation": u16(cache, 0x16),
@@ -494,7 +585,7 @@ def external_live_room_payloads(inputs: dict[str, Any], room: int) -> dict[str, 
 
 def check_live_room_native(session: Any, inputs: dict[str, Any], room: int) -> dict[str, Any]:
     expected = external_live_room_payloads(inputs, room)
-    control = msu_program_diagnostics(session)["live_room"]
+    control = msu_program_diagnostics(session, inputs)["live_room"]
     # READ_LENGTH is shared by the staged metadata, palette, and pixel fetches;
     # after the visual reads it describes the last 57-KiB surface, not the
     # retained SC5LIVE record. Its canonical committed size is in the header.
@@ -509,7 +600,35 @@ def check_live_room_native(session: Any, inputs: dict[str, Any], room: int) -> d
                             active_length - 82)
     )
     pixels = bytes(session.read_memory("snesMemory", 0x402000, 256 * 224))
-    palette = bytes(session.read_memory("snesMemory", 0x41E200, 768))
+    carrier_path = Path(inputs["rom_path"]).with_suffix(".carrier.json")
+    require(carrier_path.is_file(),
+            f"room {room} carrier layout manifest is missing: {carrier_path}")
+    carrier = json.loads(carrier_path.read_text(encoding="utf-8"))
+    reserved = carrier["layout"]["backend_reserved"]
+    high, low = str(reserved["address"]).split(":", 1)
+    palette_stage_offset = ((int(high, 16) << 16) | int(low, 16)) + int(
+        reserved["allocations"]["live_room_palette_stage"]["offset"]
+    )
+    palette_length = int(
+        reserved["allocations"]["live_room_palette_stage"]["bytes"]
+    )
+    require(palette_length == len(expected["visual"].palette),
+            f"room {room} carrier palette stage has unexpected size {palette_length}")
+    # The staging allocation is transaction scratch and may be reused after
+    # publication. Validate the palette the video backend actually owns. Read
+    # its exact address from this ROM's assembler listing so the check remains
+    # bound to the build under test.
+    listing_path = Path(inputs["rom_path"]).with_suffix(".lst")
+    palette_constants = []
+    for line in listing_path.read_text(encoding="utf-8").splitlines():
+        prefix = "; SAME_MODE3_LIVE_PALETTE = $"
+        if line.startswith(prefix) and line.endswith("(Constant)"):
+            palette_constants.append(int(line[len(prefix):].split()[0], 16))
+    require(len(palette_constants) == 1,
+            f"ROM listing must define exactly one SAME_MODE3_LIVE_PALETTE constant: "
+            f"{listing_path}")
+    palette_offset = palette_constants[0]
+    palette = bytes(session.read_memory("snesMemory", palette_offset, palette_length))
     # The live SC5LIVE flags must reach the existing movement subsystem, not
     # merely remain present in the retained metadata buffer.  Matrix_LoadActiveRoom
     # installs these exact bytes into the engine's active walkbox table.
@@ -521,6 +640,23 @@ def check_live_room_native(session: Any, inputs: dict[str, Any], room: int) -> d
     active_box_flags = bytes(session.read_memory(
         "snesMemory", 0x7FFA41, expected["live"].box_count,
     ))
+    matrix_mutation_count = session.read_memory("snesMemory", 0x7FFB43, 1)[0]
+    matrix_trace_count = min(
+        session.read_memory("snesMemory", 0x7FFB44, 1)[0], 4,
+    )
+    raw_matrix_trace = bytes(session.read_memory(
+        "snesMemory", 0x7FFB45, matrix_trace_count * 8,
+    ))
+    matrix_trace = [
+        {
+            "subop": raw_matrix_trace[offset],
+            "box": raw_matrix_trace[offset + 1],
+            "flags": raw_matrix_trace[offset + 2],
+            "source_pc_before": u16(raw_matrix_trace, offset + 3),
+            "source_pc_after": u16(raw_matrix_trace, offset + 5),
+        }
+        for offset in range(0, len(raw_matrix_trace), 8)
+    ]
     # The staging transaction is reusable and may already have been reset for
     # the following request by the time the route sampler notices this room
     # value.  The published active record, exact external pixels, and palette
@@ -550,14 +686,20 @@ def check_live_room_native(session: Any, inputs: dict[str, Any], room: int) -> d
                 f"surface={hashlib.sha256(pixels).hexdigest()} "
                 f"expected={expected['visual'].decoded_pixels_sha256} "
                 f"first_differences={differences}")
-    require(palette == expected["visual"].palette,
-            f"room {room} live mode-3 palette differs from SC5VIS source")
+    palette_differences = [
+            {"offset": index, "active": palette[index],
+             "expected": expected["visual"].palette[index]}
+            for index in range(len(palette))
+            if palette[index] != expected["visual"].palette[index]
+        ]
     require(active_box_count == expected["live"].box_count,
             f"room {room} active walkbox count {active_box_count} differs from "
             f"SC5LIVE {expected['live'].box_count}")
-    require(active_box_flags == expected_box_flags,
-            f"room {room} active movement walkbox flags differ from SC5LIVE: "
-            f"active={active_box_flags.hex()} expected={expected_box_flags.hex()}")
+    walkbox_flag_audit = audit_runtime_walkbox_flags(
+        expected_box_flags, active_box_flags,
+        successful_matrix_mutations=matrix_mutation_count,
+        matrix_trace=matrix_trace,
+    )
 
     # Resource publication is checked at the transition boundary. PPU work is
     # intentionally asynchronous, so the route sampler must not advance the
@@ -593,7 +735,7 @@ def check_live_room_native(session: Any, inputs: dict[str, Any], room: int) -> d
         "walkbox_count": expected["live"].box_count,
         "active_walkbox_count": active_box_count,
         "active_walkbox_flags_hex": active_box_flags.hex(),
-        "active_walkbox_flags_match_sc5live": True,
+        "walkbox_flag_audit": walkbox_flag_audit,
         "surface_base": VIDEO_SURFACE_BASE,
         "surface_bytes": len(pixels),
         "surface_sha256": hashlib.sha256(pixels).hexdigest(),
@@ -601,8 +743,13 @@ def check_live_room_native(session: Any, inputs: dict[str, Any], room: int) -> d
         "ppu_verified_after_settlement": False,
         "pcm_during_room_load": audio_state if pcm_track else None,
         "palette_bytes": len(palette),
+        "palette_stage_address": f"${palette_stage_offset:06X}",
+        "active_palette_address": f"${palette_offset:06X}",
+        "palette_stage": "transaction scratch; not inspected after publication",
         "palette_sha256": hashlib.sha256(palette).hexdigest(),
-        "palette_matches_sc5vis": True,
+        "palette_matches_sc5vis": not palette_differences,
+        "palette_difference_count": len(palette_differences),
+        "palette_differences": palette_differences[:32],
     }
 
 
@@ -612,7 +759,19 @@ def check_live_room_ppu(session: Any, inputs: dict[str, Any], room: int,
     """Compare committed PPU pixels/palette with this room's checked SC5VIS."""
     if expected is None:
         expected = external_live_room_payloads(inputs, room)
-    from same.snes_surface import build_static_tilemap, encode_cgram, encode_surface_tiles
+    carrier_path = Path(inputs["rom_path"]).with_suffix(".carrier.json")
+    carrier_layout = json.loads(carrier_path.read_text(encoding="utf-8"))["layout"]
+
+    def layout_address(key: str) -> int:
+        high, low = str(carrier_layout[key]["address"]).split(":", 1)
+        return (int(high, 16) << 16) | int(low, 16)
+
+    tile_shadow_base = layout_address("tile_shadow")
+    cgram_shadow_base = layout_address("cgram_shadow")
+    from same.snes_surface import (
+        build_static_tilemap, decode_snes_8bpp_tile, encode_cgram,
+        encode_surface_tiles,
+    )
     from same.video import IndexedSurface
     expected_palette = [
         tuple(expected["visual"].palette[index:index + 3])
@@ -627,6 +786,33 @@ def check_live_room_ppu(session: Any, inputs: dict[str, Any], room: int,
                                                256 * 224))
     vram = bytes(session.read_memory("snesVideoRam", 0, 0x10000))
     cgram = bytes(session.read_memory("snesCgRam", 0, 0x0200))
+    active_palette_address = inputs["rom_symbols"]["SAME_MODE3_LIVE_PALETTE"]
+    active_palette_bytes = bytes(session.read_memory(
+        "snesMemory", active_palette_address, 256 * 3,
+    ))
+    palette_presence = bytes(session.read_memory(
+        "snesMemory", inputs["rom_symbols"]["SAME_SCUMM_C10_PALETTE_PRESENT"], 32,
+    ))
+    scumm_palette_rgb = bytes(session.read_memory(
+        "snesMemory", inputs["rom_symbols"]["SAME_SCUMM_C10_PALETTE_RGB"], 256 * 3,
+    ))
+    expected_effective_palette = bytearray(expected["visual"].palette)
+    palette_overrides = []
+    for color_index in range(256):
+        if palette_presence[color_index >> 3] & (1 << (color_index & 7)):
+            start = color_index * 3
+            rgb = scumm_palette_rgb[start:start + 3]
+            expected_effective_palette[start:start + 3] = rgb
+            palette_overrides.append({"index": color_index, "rgb": list(rgb)})
+    expected_effective_cgram = encode_cgram([
+        tuple(expected_effective_palette[index:index + 3])
+        for index in range(0, len(expected_effective_palette), 3)
+    ])
+    cgram_shadow = bytes(session.read_memory("snesMemory", cgram_shadow_base, 512))
+    actual_palette_cgram = encode_cgram([
+        tuple(active_palette_bytes[index:index + 3])
+        for index in range(0, len(active_palette_bytes), 3)
+    ])
     # SCUMM's compositor may have drawn actors or foreground content over the
     # room surface by the time the route reaches this observation. Discover
     # exact background tiles by comparing the full PPU character set, then
@@ -649,14 +835,98 @@ def check_live_room_ppu(session: Any, inputs: dict[str, Any], room: int,
         if vram[index * 64:(index + 1) * 64]
         == expected_tiles[index * 64:(index + 1) * 64]
     ]
+    matching_set = set(matching_tile_indices)
+    active_surface_view = IndexedSurface.wrap(
+        256, 224, 256, active_surface, palette=expected_palette,
+    )
+    active_surface_tiles = encode_surface_tiles(active_surface_view)
+    mismatched_tiles = []
+    for index in range(896):
+        if index in matching_set:
+            continue
+        start = index * 64
+        expected_tile = expected_tiles[start:start + 64]
+        actual_tile = vram[start:start + 64]
+        tile_x, tile_y = index % 32, index // 32
+        expected_pixels = decode_snes_8bpp_tile(expected_tile)
+        actual_pixels = decode_snes_8bpp_tile(actual_tile)
+        source_pixels = [
+            list(active_surface[(tile_y * 8 + row) * 256 + tile_x * 8:
+                                (tile_y * 8 + row) * 256 + tile_x * 8 + 8])
+            for row in range(8)
+        ]
+        mismatched_tiles.append({
+            "index": index,
+            "tile_xy": [tile_x, tile_y],
+            "pixel_xy": [tile_x * 8, tile_y * 8],
+            "actual_sha256": hashlib.sha256(actual_tile).hexdigest(),
+            "expected_sha256": hashlib.sha256(expected_tile).hexdigest(),
+            "actual_equals_active_surface_encoding": (
+                actual_tile == active_surface_tiles[start:start + 64]
+            ),
+            "tile_shadow_equals_expected": (
+                bytes(session.read_memory(
+                    "snesMemory", tile_shadow_base + start, 64,
+                )) == expected_tile
+            ),
+            "tile_shadow_sha256": hashlib.sha256(bytes(session.read_memory(
+                "snesMemory", tile_shadow_base + start, 64,
+            ))).hexdigest(),
+            "active_surface_tile_equals_sc5vis": (
+                source_pixels == expected_pixels
+            ),
+            "differing_pixels": sum(
+                actual_pixels[y][x] != expected_pixels[y][x]
+                for y in range(8) for x in range(8)
+            ),
+            "expected_palette_indices": expected_pixels,
+            "actual_palette_indices": actual_pixels,
+            "active_surface_palette_indices": source_pixels,
+        })
     require(matching_tile_indices,
             f"room {room} PPU contains no exact SC5VIS character tiles: "
             f"active_surface_matches_sc5vis={active_surface == expected['visual'].pixels}, "
-            f"live_room={live_room_presentation_diagnostics(session)['live_room']}")
-    require(vram[0xE000:0xE800] == build_static_tilemap(),
-            f"room {room} PPU tilemap differs from the live surface backend")
-    require(cgram == expected_cgram,
-            f"room {room} PPU CGRAM is not the realization of checked SC5VIS palette")
+                f"live_room={live_room_presentation_diagnostics(session, inputs)['live_room']}")
+    expected_tilemap = build_static_tilemap()
+    tilemap_differences = [
+        {"offset": index, "actual": vram[0xE000 + index],
+         "expected": expected_tilemap[index]}
+        for index in range(len(expected_tilemap))
+        if vram[0xE000 + index] != expected_tilemap[index]
+    ]
+    require(not tilemap_differences,
+            f"room {room} PPU tilemap differs from the live surface backend: "
+            f"differences={tilemap_differences[:16]}")
+    cgram_differences = [
+        {"color": index // 2, "byte": index % 2,
+         "actual": cgram[index], "expected": expected_effective_cgram[index]}
+        for index in range(len(expected_cgram))
+        if cgram[index] != expected_effective_cgram[index]
+    ]
+    active_palette_differences = [
+        {"offset": index, "active": active_palette_bytes[index],
+         "expected": expected_effective_palette[index]}
+        for index in range(len(expected_effective_palette))
+        if active_palette_bytes[index] != expected_effective_palette[index]
+    ]
+    cgram_shadow_differences = [
+        {"offset": index, "shadow": cgram_shadow[index],
+         "expected": expected_effective_cgram[index]}
+        for index in range(len(expected_effective_cgram))
+        if cgram_shadow[index] != expected_effective_cgram[index]
+    ]
+    require(not active_palette_differences and not cgram_differences
+            and not cgram_shadow_differences and cgram == actual_palette_cgram,
+            f"room {room} active SCUMM palette/CGRAM is not the exact SC5VIS plus "
+            f"recorded SCUMM override realization: "
+            f"differences={cgram_differences[:32]}, "
+            f"active_palette_differs_from_sc5vis="
+            f"{active_palette_bytes != expected['visual'].palette}, "
+            f"scumm_palette_overrides={palette_overrides}, "
+            f"active_palette_unexplained_differences={active_palette_differences[:32]}, "
+            f"palette_shadow_differences={cgram_shadow_differences[:16]}, "
+            f"matching_tiles={len(matching_tile_indices)}, "
+            f"mismatched_tiles={[{key: tile[key] for key in ('index', 'actual_sha256', 'expected_sha256', 'tile_shadow_equals_expected', 'tile_shadow_sha256')} for tile in mismatched_tiles]}")
     return {
         "room": room,
         "generation": target_generation,
@@ -665,6 +935,8 @@ def check_live_room_ppu(session: Any, inputs: dict[str, Any], room: int,
         "unoccluded_background_tiles": sampled_tiles,
         "matching_tile_count": len(matching_tile_indices),
         "matching_tile_indices": matching_tile_indices,
+        "mismatched_background_tiles": mismatched_tiles,
+        "active_surface_matches_sc5vis": active_surface == expected["visual"].pixels,
         "matching_tile_sha256": {
             str(index): hashlib.sha256(
                 vram[index * 64:(index + 1) * 64]
@@ -677,29 +949,57 @@ def check_live_room_ppu(session: Any, inputs: dict[str, Any], room: int,
         ).hexdigest(),
         "tilemap_sha256": hashlib.sha256(vram[0xE000:0xE800]).hexdigest(),
         "cgram_sha256": hashlib.sha256(cgram).hexdigest(),
+        "cgram_matches_active_palette": cgram == actual_palette_cgram,
+        "cgram_shadow_matches_active_palette": cgram_shadow == actual_palette_cgram,
+        "active_palette_matches_sc5vis": active_palette_bytes == expected["visual"].palette,
+        "active_palette_sha256": hashlib.sha256(active_palette_bytes).hexdigest(),
+        "active_palette_overrides": palette_overrides,
+        "active_palette_differences_from_sc5vis": [
+            {"offset": index, "active": active_palette_bytes[index],
+             "sc5vis": expected["visual"].palette[index]}
+            for index in range(len(active_palette_bytes))
+            if active_palette_bytes[index] != expected["visual"].palette[index]
+        ],
+        "active_palette_matches_scumm_semantic_palette": not active_palette_differences,
         "background_samples_match_sc5vis_realization": True,
         "cgram_matches_sc5vis_realization": True,
     }
 
 
-def live_room_ppu_status(session: Any) -> dict[str, int]:
+def live_room_ppu_status(session: Any, inputs: dict[str, Any]) -> dict[str, int]:
     """Read the compact presentation state used to schedule exact PPU checks."""
-    control = bytes(session.read_memory("snesMemory", 0x401010, 10))
+    symbols = inputs["rom_symbols"]
+    control_base = symbols["SAME_BWRAM_BACKEND_BASE"]
     return {
-        "committed_generation": u16(control, 0),
-        "state": control[3],
-        "locked": control[4],
-        "committed_generation_high": u16(control, 8),
+        "committed_generation": u16(session.read_memory(
+            "snesMemory", control_base + 0x10, 2,
+        )),
+        "state": session.read_memory(
+            "snesMemory", symbols["SAME_MODE3_CONTROL_STATE"], 1,
+        )[0],
+        "locked": session.read_memory(
+            "snesMemory", symbols["SAME_MODE3_CONTROL_SURFACE_LOCKED"], 1,
+        )[0],
+        "committed_generation_high": u16(session.read_memory(
+            "snesMemory", symbols["SAME_MODE3_CONTROL_COMMITTED_GENERATION_HI"], 2,
+        )),
     }
 
 
-def live_room_presentation_diagnostics(session: Any) -> dict[str, Any]:
-    surface = bytes(session.read_memory("snesMemory", 0x401080, 0x2C))
+def live_room_presentation_diagnostics(session: Any, inputs: dict[str, Any]) -> dict[str, Any]:
+    symbols = inputs["rom_symbols"]
+    surface = bytes(session.read_memory(
+        "snesMemory", symbols["SAME_VIDEO_SURFACE_STATE"], 0x2C,
+    ))
     video = bytes(session.read_memory("snesMemory", 0x7E5E90, 0x46))
-    live = bytes(session.read_memory("snesMemory", 0x401400, 0x22))
+    live = bytes(session.read_memory(
+        "snesMemory", symbols["SAME_SCUMM_LIVE_ROOM_CONTROL"], 0x22,
+    ))
     return {
         "mode3": {
-            "control": list(session.read_memory("snesMemory", 0x401000, 0x40)),
+            "control": list(session.read_memory(
+                "snesMemory", symbols["SAME_BWRAM_BACKEND_BASE"], 0x40,
+            )),
             "work": list(session.read_memory("snesMemory", 0x41E750, 0x30)),
             "event_count": u16(session.read_memory("snesMemory", 0x7E2004, 2)),
             "dma_pending": u16(session.read_memory("snesMemory", 0x7E223C, 2)),
@@ -740,7 +1040,8 @@ def live_room_presentation_diagnostics(session: Any) -> dict[str, Any]:
     }
 
 
-def live_room_ppu_generation_ready(session: Any, target_generation: int) -> bool:
+def live_room_ppu_generation_ready(session: Any, inputs: dict[str, Any],
+                                  target_generation: int) -> bool:
     """Return true when presentation is idle; the PPU bytes are authoritative.
 
     A room transition can capture the surface's next-generation counter before
@@ -750,7 +1051,7 @@ def live_room_ppu_generation_ready(session: Any, target_generation: int) -> bool
     so idle state is only a sampling gate, not acceptance by itself.
     """
     del target_generation  # retained in the API/report as transition provenance
-    status = live_room_ppu_status(session)
+    status = live_room_ppu_status(session, inputs)
     return status["committed_generation_high"] == 0 \
         and status["state"] == 1 and status["locked"] == 0
 
@@ -758,31 +1059,90 @@ def live_room_ppu_generation_ready(session: Any, target_generation: int) -> bool
 def drain_and_check_live_room_ppu(session: Any, inputs: dict[str, Any], room: int,
                                   *, max_frames: int = 4096) -> dict[str, Any]:
     """Drain a final asynchronous presentation without changing route input."""
-    target_generation = u16(session.read_memory("snesMemory", 0x40109C, 2))
+    target_generation = u16(session.read_memory(
+        "snesMemory", inputs["rom_symbols"]["SAME_VIDEO_SURFACE_STATE"] + 0x1C, 2,
+    ))
     expected = external_live_room_payloads(inputs, room)
+    from same.snes_surface import encode_surface_tiles
+    from same.video import IndexedSurface
+    palette = [
+        tuple(expected["visual"].palette[index:index + 3])
+        for index in range(0, len(expected["visual"].palette), 3)
+    ]
+    expected_surface = IndexedSurface.wrap(
+        256, 224, 256, expected["visual"].pixels, palette=palette,
+    )
+    expected_tiles = encode_surface_tiles(expected_surface)
+    initial_vram = bytes(session.read_memory("snesVideoRam", 0, 0x10000))
+    initial_surface = bytes(session.read_memory(
+        "snesMemory", VIDEO_SURFACE_BASE, 256 * 224,
+    ))
+    initial_mismatches = []
+    for index in range(896):
+        start = index * 64
+        actual = initial_vram[start:start + 64]
+        reference = expected_tiles[start:start + 64]
+        if actual != reference:
+            initial_mismatches.append({
+                "tile": index,
+                "xy": [index % 32, index // 32],
+                "different_pixels": sum(a != b for a, b in zip(actual, reference)),
+                "actual_sha256": hashlib.sha256(actual).hexdigest(),
+                "expected_sha256": hashlib.sha256(reference).hexdigest(),
+            })
+    initial_presentation = {
+        "target_generation": target_generation,
+        "ppu_status": live_room_ppu_status(session, inputs),
+        "matching_background_tiles": 896 - len(initial_mismatches),
+        "mismatched_background_tiles": initial_mismatches,
+        "active_surface_matches_sc5vis": (
+            initial_surface == expected["visual"].pixels
+        ),
+        "active_surface_sha256": hashlib.sha256(initial_surface).hexdigest(),
+        "expected_surface_sha256": hashlib.sha256(
+            expected["visual"].pixels
+        ).hexdigest(),
+    }
     frames_advanced = 0
+    last_validation_error: str | None = None
     while frames_advanced < max_frames:
-        if live_room_ppu_generation_ready(session, target_generation):
+        if live_room_ppu_generation_ready(session, inputs, target_generation):
             try:
-                return check_live_room_ppu(
+                result = check_live_room_ppu(
                     session, inputs, room, target_generation,
                     frames_advanced=frames_advanced, expected=expected,
                 )
-            except RuntimeError:
+                result["initial_presentation"] = initial_presentation
+                return result
+            except RuntimeError as exc:
                 # An idle interval can precede a deferred surface publication.
                 # Continue bounded frame progression; only exact VRAM/CGRAM
                 # equality constitutes successful presentation.
-                pass
+                message = str(exc)
+                if message == last_validation_error:
+                    raise RuntimeError(
+                        f"room {room} live PPU validation remained stable after "
+                        f"{frames_advanced} frames: {message}; "
+                        f"presentation={live_room_presentation_diagnostics(session, inputs)!r}"
+                    ) from exc
+                last_validation_error = message
         step = min(32, max_frames - frames_advanced)
         result = _run_exact(session, step)
         require(result["framesAdvanced"] == step and not result.get("timedOut"),
                 f"live-room PPU drain did not advance exactly {step} frames: {result}")
         frames_advanced += step
-    scan = session.read_memory("snesMemory", 0x401020, 0x30)
-    state = session.read_memory("snesMemory", 0x401013, 1)[0]
-    committed_low = u16(session.read_memory("snesMemory", 0x401010, 2))
-    committed_high = u16(session.read_memory("snesMemory", 0x401018, 2))
-    locked = session.read_memory("snesMemory", 0x401014, 1)[0]
+    backend = inputs["rom_symbols"]["SAME_BWRAM_BACKEND_BASE"]
+    scan = session.read_memory("snesMemory", backend + 0x20, 0x30)
+    state = session.read_memory(
+        "snesMemory", inputs["rom_symbols"]["SAME_MODE3_CONTROL_STATE"], 1,
+    )[0]
+    committed_low = u16(session.read_memory("snesMemory", backend + 0x10, 2))
+    committed_high = u16(session.read_memory(
+        "snesMemory", inputs["rom_symbols"]["SAME_MODE3_CONTROL_COMMITTED_GENERATION_HI"], 2,
+    ))
+    locked = session.read_memory(
+        "snesMemory", inputs["rom_symbols"]["SAME_MODE3_CONTROL_SURFACE_LOCKED"], 1,
+    )[0]
     raise RuntimeError(
         f"room {room} live visual generation {target_generation} did not commit "
         f"within {max_frames} post-route frames: state={state}, "
@@ -1076,7 +1436,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                               if item["script_number"] == 1), None)
             binding = identity_binding(valid_bindings(session), identity_to_id,
                                        "GlobalProgram(1)")
-            storage = msu_program_diagnostics(session)
+            storage = msu_program_diagnostics(session, inputs)
             cache_ready = any(
                 slot["state"] == 2 and slot["program_unit_id"] == boot_id
                 for slot in storage["cache_slots"]
@@ -1161,7 +1521,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                     "m23a_pending_record": session.read_memory("snesMemory", 0x7FF2C0, 1)[0],
                     "m23a_pending_room": session.read_memory("snesMemory", 0x7FF2C1, 1)[0],
                     "m23a_phase": session.read_memory("snesMemory", 0x7FF2C2, 1)[0],
-                    "live_resource_diagnostics": msu_program_diagnostics(session)["room_resource"],
+                    "live_resource_diagnostics": msu_program_diagnostics(session, inputs)["room_resource"],
                     "interpreter": {
                         "program_select": session.read_memory("snesMemory", 0x7E2362, 1)[0],
                         "pc": u16(session.read_memory("snesMemory", 0x7E2300, 2)),
@@ -1171,12 +1531,12 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                         "error_opcode": session.read_memory("snesMemory", 0x7E5F25, 1)[0],
                         "error_slot": session.read_memory("snesMemory", 0x7E5F8D, 1)[0],
                     },
-                    "live_control": list(session.read_memory("snesMemory", 0x401400, 0x20)),
+                    "live_control": read_live_room_control(session, inputs),
                     "live_room_header": list(session.read_memory(
                         "snesMemory", LIVE_ROOM_ACTIVE_BASE, 82,
                     )),
                     "bundle_cursor": {
-                        "directory_offset": u16(session.read_memory("snesMemory", 0x40140E, 2)),
+                        "directory_offset": u16(bytes(read_live_room_control(session, inputs)), 0x0E),
                         "index": u16(session.read_memory("snesMemory", 0x7E8FA0, 2)),
                         "remaining": session.read_memory("snesMemory", 0x7E8F9F, 1)[0],
                     },
@@ -1287,10 +1647,8 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                 "reset_diagnostics": list(session.read_memory(
                     "snesMemory", 0x7FF46B, 0x80
                 )),
-                "provider": msu_program_diagnostics(session),
-                "live_control": list(session.read_memory(
-                    "snesMemory", 0x401400, 0x20
-                )),
+                "provider": msu_program_diagnostics(session, inputs),
+                "live_control": read_live_room_control(session, inputs),
                 "m23a": list(session.read_memory(
                     "snesMemory", 0x7FF2BE, 16
                 )),
@@ -1321,7 +1679,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
             # per-logical-frame 64-byte service budget; observe metadata,
             # palette, state transitions, and script execution one frame at
             # a time. This changes harness polling cost, not emulated time.
-            live_control = session.read_memory("snesMemory", 0x401400, 1)[0]
+            live_control = read_live_room_control(session, inputs, 1)[0]
             step = min(64 if live_control == LIVE_ROOM_STAGE_PIXELS else 1,
                        args.frames - elapsed)
             result = session.run_frames(step)
@@ -1334,7 +1692,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
             frame = int(session.get_state()["frameCount"])
             room = session.read_memory("snesMemory", ROOM, 1)[0]
             error = session.read_memory("snesMemory", ERROR, 1)[0]
-            storage_frame = msu_program_diagnostics(session)
+            storage_frame = msu_program_diagnostics(session, inputs)
             room_storage = storage_frame["room_resource"]
             if error:
                 runtime_error_observations.append({
@@ -1342,7 +1700,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                     "room": room,
                     "error": error,
                     "provider": storage_frame,
-                    "live_control": list(session.read_memory("snesMemory", 0x401400, 0x20)),
+                    "live_control": read_live_room_control(session, inputs),
                     "m23a": list(session.read_memory("snesMemory", 0x7FF2BE, 16)),
                     "interpreter": {
                         "program_select": session.read_memory("snesMemory", 0x7E2362, 1)[0],
@@ -1357,7 +1715,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                         "snesMemory", LIVE_ROOM_ACTIVE_BASE, 82,
                     )),
                     "bundle_cursor": {
-                        "directory_offset": u16(session.read_memory("snesMemory", 0x40140E, 2)),
+                        "directory_offset": u16(bytes(read_live_room_control(session, inputs)), 0x0E),
                         "index": u16(session.read_memory("snesMemory", 0x7E8FA0, 2)),
                         "remaining": session.read_memory("snesMemory", 0x7E8F9F, 1)[0],
                     },
@@ -1454,9 +1812,11 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                     if inputs.get("program_storage") is not None \
                             and inputs["program_storage"].get("live_room_resource_count"):
                         live_observation = check_live_room_native(session, inputs, room)
-                        target_video_generation = u16(
-                            session.read_memory("snesMemory", 0x40109C, 2)
-                        )
+                        target_video_generation = u16(session.read_memory(
+                            "snesMemory",
+                            inputs["rom_symbols"]["SAME_VIDEO_SURFACE_STATE"] + 0x1C,
+                            2,
+                        ))
                         live_observation["ppu_target_generation"] = target_video_generation
                         live_room_observations.append(live_observation)
                         live_room_ppu_pending[room] = target_video_generation
@@ -1465,14 +1825,14 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                             "idle_samples": 0, "ppu_checks": 0,
                             "last_status": None, "last_check_frame": None,
                             "was_idle": False,
-                            "transition_diagnostics": live_room_presentation_diagnostics(session),
+                            "transition_diagnostics": live_room_presentation_diagnostics(session, inputs),
                             "last_presentation_diagnostics": None,
                         }
                     bindings = valid_bindings(session)
                     transition_events.append({
                         "frame": frame, "room": room, "error": error,
                         "m23a": list(session.read_memory("snesMemory", 0x7FF2BE, 16)),
-                        "storage": msu_program_diagnostics(session),
+                        "storage": msu_program_diagnostics(session, inputs),
                         "reset_diag": list(session.read_memory("snesMemory", 0x7FF46B, 0x20)),
                         "variables": variables(session, (5, 6, 8, 9, 10, 20, 24)),
                         "slots": slots, "bindings": bindings,
@@ -1509,7 +1869,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                                           "global1": g1_binding,
                                           "global1_activation": g1_slot,
                                           "continuation_state": continuation_state,
-                                          "storage": msu_program_diagnostics(session),
+                                          "storage": msu_program_diagnostics(session, inputs),
                                           "stats": stats(session),
                                           "resident_bindings": bindings})
                     if room == 4:
@@ -1540,7 +1900,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
             for pending_room, target_generation in list(live_room_ppu_pending.items()):
                 if pending_room != room:
                     continue
-                status = live_room_ppu_status(session)
+                status = live_room_ppu_status(session, inputs)
                 sampling = live_room_ppu_sampling[pending_room]
                 sampling["last_status"] = status
                 ready = (status["committed_generation_high"] == 0
@@ -1553,7 +1913,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                 if not should_check:
                     continue
                 sampling["last_presentation_diagnostics"] = (
-                    live_room_presentation_diagnostics(session)
+                    live_room_presentation_diagnostics(session, inputs)
                 )
                 sampling["ppu_checks"] += 1
                 sampling["last_check_frame"] = frame
@@ -1594,7 +1954,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                     f"runtime_error_observations={runtime_error_observations}; "
                     f"last_transition={transition_events[-1:]}; "
                     f"m23a={list(session.read_memory('snesMemory', 0x7FF2BE, 16))}; "
-                    f"live={live_room_presentation_diagnostics(session)}")
+                    f"live={live_room_presentation_diagnostics(session, inputs)}")
             live_room_ppu_observation = drain_and_check_live_room_ppu(
                 session, inputs, settled_before_drain["room"],
             )
@@ -1664,7 +2024,7 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
         variables_final = variables(session, marker_indices)
         final_error = session.read_memory("snesMemory", ERROR, 1)[0]
         final_stats = stats(session)
-        final_storage = msu_program_diagnostics(session)
+        final_storage = msu_program_diagnostics(session, inputs)
         c4_count = session.read_memory("snesMemory", 0x7E2A8A, 1)[0]
         name_cache_byte = session.read_memory("snesMemory", OBJECT_NAME_LENGTH + 70, 1)[0]
         sp = cpu_sp(session)
@@ -1734,6 +2094,10 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
                 and final_storage["cache_failures"] == 0
                 and final_storage["timeout_count"] == 0,
                 "native bytecode cache did not exercise both bounded windows cleanly: "
+                f"{final_storage}")
+        require(final_storage["execution_depth"] == 0
+                and not any(final_storage["transient_execution_pins"]),
+                "transient bytecode execution pins survived a scheduler boundary: "
                 f"{final_storage}")
         room_transition_validations = [
             row["storage"]["room_resource"]["validated"] for row in transition_events
@@ -2095,7 +2459,7 @@ def run_large_program_body(args: argparse.Namespace,
                     ),
                 }
             final_room = session.read_memory("snesMemory", ROOM, 1)[0]
-            final_storage = msu_program_diagnostics(session)
+            final_storage = msu_program_diagnostics(session, inputs)
             final_stats = stats(session)
             final_sp = cpu_sp(session)
             timeline.append({
@@ -2141,6 +2505,9 @@ def run_large_program_body(args: argparse.Namespace,
             and final_storage["cache_failures"] == 0
             and final_storage["provider_error"] == 0,
             f"large body exceeded or failed the bounded page cache: {final_storage}")
+    require(final_storage["execution_depth"] == 0
+            and not any(final_storage["transient_execution_pins"]),
+            f"large-body completion leaked transient page pins: {final_storage}")
     require(final_storage["bytes_read"] >= length
             and final_storage["cache_loads"] >= int(body_record["page_count"]),
             "native execution did not fetch the complete large body through MSU pages")
@@ -2171,6 +2538,258 @@ def run_large_program_body(args: argparse.Namespace,
         "bytes_read": final_storage["bytes_read"],
         "resident_stats": final_stats,
         "stack_pointer": final_sp,
+        "result": "PASS",
+    }
+
+
+def run_program_page_failure(args: argparse.Namespace,
+                             inputs: dict[str, Any]) -> dict[str, Any]:
+    """Corrupt an executable page and prove it is rejected before dispatch."""
+    case = inputs["manifest"].get("large_program_body")
+    storage = inputs.get("program_storage")
+    require(isinstance(case, dict) and storage is not None,
+            "program-page-failure requires the compiler large-body fixture")
+    record = next((row for row in storage.get("records", [])
+                   if row.get("identity") == case.get("identity")), None)
+    require(record is not None, "large ProgramUnit is absent from MSU storage")
+    unit_id = int(record["program_unit_id"])
+    page_index = storage["page_indices"][unit_id]
+    first_page = int(page_index["first_page"])
+    page_count = int(page_index["page_count"])
+    pages = storage["page_records"][first_page:first_page + page_count]
+    require(len(pages) == page_count and page_count >= 4,
+            "large body does not have the expected checked page directory")
+    branch_target = int(case["branch_targets"][0])
+    target_page = next((row for row in pages
+                        if int(row["start_pc"]) <= branch_target
+                        < int(row["start_pc"]) + int(row["length"])), None)
+    require(target_page is not None,
+            "cross-page branch target is not covered by a generated page")
+    page_start = int(target_page["start_pc"])
+    page_length = int(target_page["length"])
+    package_path = Path(inputs["program_storage_package"]["path"])
+    original_package = package_path.read_bytes()
+    package_offset = int(record["package_offset"])
+    mutate_at = package_offset + page_start + min(32, page_length - 1)
+    require(package_offset <= mutate_at < package_offset + int(record["length"]),
+            "page corruption offset escapes its ProgramUnit body")
+    damaged = bytearray(original_package)
+    damaged[mutate_at] ^= 0x80
+    require(damaged[mutate_at] != original_package[mutate_at],
+            "page corruption injection did not modify a byte")
+
+    original_rom = Path(inputs["rom_path"])
+    terminal: dict[str, Any] | None = None
+    with tempfile.TemporaryDirectory(prefix="same-scumm-program-page-crc-") as raw:
+        root = Path(raw)
+        fault_rom = root / "program-page-fault.sfc"
+        shutil.copyfile(original_rom, fault_rom)
+        shutil.copyfile(original_rom.with_suffix(".map"),
+                        root / "program-page-fault.map")
+        identity_path = original_rom.with_name(
+            original_rom.stem + ".build_identity.json")
+        shutil.copyfile(identity_path, root / "program-page-fault.build_identity.json")
+        fault_package = root / "program-page-fault.msu"
+        fault_package.write_bytes(damaged)
+
+        original_args_rom = args.rom
+        args.rom = fault_rom
+        try:
+            with _session(args) as session:
+                _cold_reset(session)
+                _run_exact(session, 10)
+                elapsed = 0
+                while elapsed < args.frames:
+                    step = min(16, args.frames - elapsed)
+                    _run_exact(session, step)
+                    elapsed += step
+                    error = session.read_memory("snesMemory", ERROR, 1)[0]
+                    if error:
+                        stream = bytes(session.read_memory("snesMemory", 0x7E5F13, 7))
+                        terminal = {
+                            "frame": int(session.get_state()["frameCount"]),
+                            "error": error,
+                            "room": session.read_memory("snesMemory", ROOM, 1)[0],
+                            "variables": variables(session, (50, 51, 53, 54)),
+                            "stream_error": {
+                                "program_unit_id": u16(stream, 0),
+                                "pc": u16(stream, 2),
+                                "site": stream[4],
+                                "valid": stream[5],
+                            },
+                            "cache": msu_program_diagnostics(session, inputs),
+                            "slots": active_slots(session),
+                            "stack_pointer": cpu_sp(session),
+                        }
+                        break
+        finally:
+            args.rom = original_args_rom
+
+    require(terminal is not None,
+            "corrupted executable page was not rejected within the frame bound")
+    require(terminal["error"] != 0,
+            "corrupted page did not produce an explicit SCUMM resource error")
+    # The provider's first failing event is the checked-read CRC error (site
+    # $16).  SetError's separate capture-valid latch is intentionally not
+    # required here: this path reports the resource error directly from the
+    # scheduler and still retains its source-bound page request fields.
+    failed_pages = [row for row in terminal["cache"]["cache_slots"]
+                    if row["program_unit_id"] == unit_id
+                    and row["logical_page_start"] == page_start]
+    require(terminal["stream_error"]["site"] == 0x16
+            and terminal["stream_error"]["program_unit_id"] == unit_id
+            and page_start <= terminal["stream_error"]["pc"]
+            < page_start + page_length,
+            f"failure did not identify the corrupted ProgramUnit page: {terminal}")
+    require(terminal["cache"]["provider_error"] == 0x06
+            and terminal["cache"]["cache_failures"] > 0
+            and len(failed_pages) == 1
+            and failed_pages[0]["state"] == 0xFF,
+            f"corrupted page was not kept out of READY state: {terminal}")
+    require(terminal["variables"].get("50") == 0
+            and terminal["variables"].get("53") == 0
+            and terminal["variables"].get("54") == 0,
+            f"code after the corrupted page executed: {terminal['variables']}")
+    require(terminal["cache"]["cache_failures"] > 0
+            and terminal["stack_pointer"] >= args.stack_floor,
+            f"page failure was not safely counted/returned: {terminal}")
+    return {
+        "format": "same-scumm-native-program-page-failure-v1",
+        "mode": "program-page-failure",
+        **inputs["hashes"],
+        "identity": record["identity"],
+        "program_unit_id": unit_id,
+        "body_sha256": record["sha256"],
+        "page": {"start_pc": page_start, "length": page_length,
+                 "crc32": target_page["crc32"], "branch_target": branch_target},
+        "corruption": {"package_relative_offset": mutate_at,
+                       "original_byte": original_package[mutate_at],
+                       "fault_byte": damaged[mutate_at],
+                       "fault_package_sha256": hashlib.sha256(damaged).hexdigest()},
+        "body_not_published_as_ready": True,
+        "terminal": terminal,
+        "result": "PASS",
+    }
+
+
+def run_program_page_generation_failure(
+    args: argparse.Namespace, inputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Corrupt a live cache-page generation and require stale-fetch rejection.
+
+    The hook stops the native CPU at the real byte-fetch entry after a checked
+    page for the fixture's large GlobalProgram(2) is READY. The test then
+    changes only that page's generation metadata while leaving the active
+    generation untouched. The interpreter must reject the next byte before
+    any instruction from the stale page can run.
+    """
+    case = inputs["manifest"].get("large_program_body")
+    storage = inputs.get("program_storage")
+    require(isinstance(case, dict) and storage is not None,
+            "page-generation-failure requires the compiler large-body fixture")
+    record = next((row for row in storage.get("records", [])
+                   if row.get("identity") == case.get("identity")), None)
+    require(record is not None,
+            "large ProgramUnit is absent from the MSU page directory")
+    program_id = int(record["program_unit_id"])
+    generation_addresses = (0x7E2F54, 0x7E2F56, 0x7E2EC9)
+    from validate_scumm_startup42_nexen import mapped_cpu_address_for_rom
+
+    fetch_pc = mapped_cpu_address_for_rom(
+        Path(inputs["rom_path"]), "ScummV5_MsuProgram_FetchByte_Far", bank=9,
+    )
+    injected: dict[str, int] | None = None
+    terminal: dict[str, Any] | None = None
+    with _session(args) as session:
+        _cold_reset(session)
+        _run_exact(session, 10)
+        hook = session.add_exec_hook(fetch_pc)
+        try:
+            for _ in range(args.frames):
+                wait = session.run_until(max_frames=1, hook_handle=hook)
+                events = [row for row in session.drain_notifications(timeout=0.01)
+                          if row.get("method") == "notifications/mesen/hookFired"
+                          and int(row.get("params", {}).get("handle", -1)) == hook]
+                active_id = u16(session.read_memory(
+                    "snesMemory", 0x7E2F5C, 2,
+                ))
+                if not events or active_id != program_id:
+                    if wait.get("framesElapsed", 0) == 0 and not events:
+                        _run_exact(session, 1)
+                    continue
+                slot = session.read_memory("snesMemory", 0x7E2F5B, 1)[0]
+                require(slot < len(generation_addresses),
+                        f"active cache slot is invalid at fetch: {slot}")
+                generation_address = generation_addresses[slot]
+                cached_generation = u16(session.read_memory(
+                    "snesMemory", generation_address, 2,
+                ))
+                active_generation = u16(session.read_memory(
+                    "snesMemory", 0x7E2F5E, 2,
+                ))
+                require(cached_generation == active_generation,
+                        "fixture reached fetch with an already stale page")
+                replacement = (cached_generation + 1) & 0xFFFF
+                if replacement == active_generation:
+                    replacement = (replacement + 1) & 0xFFFF
+                session.write_memory(
+                    "snesMemory", generation_address,
+                    bytes((replacement & 0xFF, replacement >> 8)).hex(),
+                )
+                injected = {
+                    "program_unit_id": active_id,
+                    "cache_slot": slot,
+                    "cache_generation_before": cached_generation,
+                    "active_generation": active_generation,
+                    "cache_generation_injected": replacement,
+                }
+                break
+            require(injected is not None,
+                    "large ProgramUnit did not reach the native fetch hook")
+        finally:
+            session.remove_hook(hook)
+
+        for _ in range(min(args.frames, 120)):
+            _run_exact(session, 1)
+            error = session.read_memory("snesMemory", ERROR, 1)[0]
+            if error:
+                stream = bytes(session.read_memory("snesMemory", 0x7E5F13, 7))
+                terminal = {
+                    "error": error,
+                    "room": session.read_memory("snesMemory", ROOM, 1)[0],
+                    "variables": variables(session, (50, 51, 53, 54)),
+                    "stream_error": {
+                        "program_unit_id": u16(stream, 0),
+                        "pc": u16(stream, 2),
+                        "site": stream[4],
+                        "valid": session.read_memory("snesMemory", 0x7E5F18, 1)[0],
+                    },
+                    "cache": msu_program_diagnostics(session, inputs),
+                    "stack_pointer": cpu_sp(session),
+                }
+                break
+
+    require(terminal is not None and terminal["error"] != 0,
+            f"stale page generation was not rejected: {terminal}")
+    require(terminal["stream_error"]["valid"] != 0
+            and terminal["stream_error"]["site"] == 0x17
+            and terminal["stream_error"]["program_unit_id"] == program_id,
+            f"stale page rejection lacks source-bound failure evidence: {terminal}")
+    require(all(terminal["variables"].get(str(index), 0) == 0
+                for index in (50, 51, 53, 54)),
+            f"execution continued through stale page data: {terminal['variables']}")
+    require(terminal["stack_pointer"] >= args.stack_floor,
+            f"stale page rejection unbalanced native stack: {terminal}")
+    return {
+        "format": "same-scumm-native-program-page-generation-failure-v1",
+        "mode": "page-generation-failure",
+        **inputs["hashes"],
+        "identity": record["identity"],
+        "program_unit_id": program_id,
+        "fetch_entry_cpu_address": f"${fetch_pc:06X}",
+        "generation_injection": injected,
+        "terminal": terminal,
+        "partial_page_executed": False,
         "result": "PASS",
     }
 
@@ -2287,8 +2906,8 @@ def run_room_resource_failure(args: argparse.Namespace,
                             "room_resource_failure_count": u16(
                                 session.read_memory("snesMemory", 0x7E2FF1, 2),
                             ),
-                            "room_resource": msu_program_diagnostics(session)["room_resource"],
-                            "msu": msu_program_diagnostics(session),
+                            "room_resource": msu_program_diagnostics(session, inputs)["room_resource"],
+                            "msu": msu_program_diagnostics(session, inputs),
                             "active_slots": active_slots(session),
                             "scumm_context": {
                                 "common": list(session.read_memory(
@@ -2310,7 +2929,7 @@ def run_room_resource_failure(args: argparse.Namespace,
                         "sample": samples[-1] if samples else None,
                         "slots": active_slots(session),
                         "variables": variables(session, (1, 5, 6, 15, 24, 38)),
-                        "msu": msu_program_diagnostics(session),
+                        "msu": msu_program_diagnostics(session, inputs),
                         "room_lifecycle": list(session.read_memory(
                             "snesMemory", 0x7FF2BE, 26,
                         )),
@@ -2844,7 +3463,10 @@ def run_draw_box(args: argparse.Namespace,
             "drawBox native acceptance requires the SA-1 indexed surface carrier")
     bank_text, offset_text = str(layout["backend_reserved"]["address"]).split(":", 1)
     backend_base = (int(bank_text, 16) << 16) | int(offset_text, 16)
-    surface_state = backend_base + 0x80
+    surface_offset = int(layout["backend_reserved"].get("allocations", {}).get(
+        "video_surface_state", {},
+    ).get("offset", 0x80))
+    surface_state = backend_base + surface_offset
     timeline: list[dict[str, Any]] = []
     observed_ids: set[int] = set()
     with _session(args) as session:
@@ -2862,7 +3484,9 @@ def run_draw_box(args: argparse.Namespace,
                 "draw_box_complete": variables(session, (60,))["60"],
                 "nested_depth": session.read_memory("snesMemory", 0x7FD335, 1)[0],
                 "draw_box_scratch": session.read_memory("snesMemory", 0x7F34F0, 10).hex(),
-                "surface_service_state": session.read_memory("snesMemory", 0x401084, 0x20).hex(),
+                "surface_service_state": session.read_memory(
+                    "snesMemory", surface_state, 0x20,
+                ).hex(),
                 "last_opcode": session.read_memory("snesMemory", 0x7E2306, 1)[0],
                 "common_pc": u16(session.read_memory("snesMemory", 0x7E2300, 2)),
                 "program_select": session.read_memory("snesMemory", 0x7E2362, 1)[0],
@@ -3019,6 +3643,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("dynamic-route", "dynamic-candidates",
                                             "large-program-body",
+                                            "program-page-failure",
+                                            "page-generation-failure",
                                             "room-resource-failure",
                                             "exhaustion", "load-room-with-ego",
                                             "find-inventory", "draw-box",
@@ -3052,6 +3678,10 @@ def main() -> int:
         report = run_dynamic_route(args, inputs)
     elif args.mode == "large-program-body":
         report = run_large_program_body(args, inputs)
+    elif args.mode == "program-page-failure":
+        report = run_program_page_failure(args, inputs)
+    elif args.mode == "page-generation-failure":
+        report = run_program_page_generation_failure(args, inputs)
     elif args.mode == "room-resource-failure":
         report = run_room_resource_failure(args, inputs)
     elif args.mode == "dynamic-candidates":
