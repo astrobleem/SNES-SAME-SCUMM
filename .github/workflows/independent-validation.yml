@@ -25,10 +25,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
+      - name: Checkout workflow support files
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: ci-support
+          fetch-depth: 1
+
       - name: Checkout source under test
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.source_ref || github.sha }}
+          path: source
           fetch-depth: 0
 
       - name: Set up Python
@@ -37,17 +44,21 @@ jobs:
           python-version: 3.12.10
 
       - name: Install declared project dependencies
+        working-directory: source
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
 
       - name: Run the repository unittest suite
+        working-directory: source
         run: make test
 
       - name: Run static and generated-source validation
+        working-directory: source
         run: make validate
 
       - name: Compile Python, check shell syntax, and validate tracked JSON
+        working-directory: source
         shell: bash
         run: |
           python -m compileall -q src tools tests labs/vdp/src
@@ -59,6 +70,7 @@ jobs:
           git diff --check HEAD^ HEAD
 
       - name: Run WRAM ownership audit when present in the tested source
+        working-directory: source
         shell: bash
         run: |
           if [[ -f tools/audit_scumm_residency_wram.py ]]; then
@@ -69,7 +81,10 @@ jobs:
           fi
 
       - name: Rebuild and corrupt-check the copyright-free SAMEPKG fixture
-        run: python tools/validate_synthetic_package_ci.py
+        working-directory: source
+        env:
+          PYTHONPATH: src
+        run: python ../ci-support/tools/validate_synthetic_package_ci.py
 
       - name: Record hosted-run scope
         run: |
@@ -85,10 +100,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
+      - name: Checkout workflow support files
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: ci-support
+          fetch-depth: 1
+
       - name: Checkout source under test
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ inputs.source_ref || github.sha }}
+          path: source
           fetch-depth: 0
 
       - name: Set up Python
@@ -97,6 +119,7 @@ jobs:
           python-version: 3.12.10
 
       - name: Install declared project dependencies
+        working-directory: source
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
@@ -113,6 +136,7 @@ jobs:
           cache: false
 
       - name: Check out exact public Poppy, Pansy, and TAD sources
+        working-directory: source
         shell: bash
         run: |
           set -euo pipefail
@@ -136,6 +160,7 @@ jobs:
             822164b09cb3d4750bd4c1960a430dc35b6ae04a
 
       - name: Build and verify the pinned Poppy binary
+        working-directory: source
         shell: bash
         run: |
           set -euo pipefail
@@ -162,6 +187,7 @@ jobs:
           retention-days: 1
 
       - name: Generate validation inputs and copyright-free M24RA audio
+        working-directory: source
         env:
           POPPY_ROOT: /tmp/poppy-jsl-address-fix
           POPPY_DLL: /tmp/poppy-jsl-address-fix/src/Poppy.CLI/bin/Release/net10.0/poppy.dll
@@ -169,7 +195,8 @@ jobs:
         run: make validate m24ra-audio
 
       - name: Build the copyright-free large-room personality when available
-        if: ${{ hashFiles('tools/build_scumm_native_residency_fixture.py') != '' }}
+        if: ${{ hashFiles('source/tools/build_scumm_native_residency_fixture.py') != '' }}
+        working-directory: source
         shell: bash
         env:
           POPPY_ROOT: /tmp/poppy-jsl-address-fix
@@ -206,5 +233,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record emulator limitation when native tool is absent
-        if: ${{ hashFiles('tools/build_scumm_native_residency_fixture.py') == '' }}
+        if: ${{ hashFiles('source/tools/build_scumm_native_residency_fixture.py') == '' }}
+        working-directory: source
         run: echo 'Native Nexen acceptance is not part of this baseline workflow run.' >> "$GITHUB_STEP_SUMMARY"
