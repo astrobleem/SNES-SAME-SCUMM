@@ -204,6 +204,7 @@ jobs:
           SAME_TAD_DONOR_DIR: ${{ runner.temp }}/terrific-audio-driver
         run: |
           set -euo pipefail
+          mkdir -p build/ci-large-room
           python tools/build_scumm_native_residency_fixture.py \
             --output-dir "$RUNNER_TEMP/large-room/source" \
             --live-room-resources --large-live-room
@@ -221,11 +222,11 @@ jobs:
             SAME_SCUMM_DYNAMIC_FIXTURE_BINARY_DIR="$RUNNER_TEMP/large-room/cooked/segments" \
             SAME_SCUMM_DYNAMIC_BUILD_DIR="$RUNNER_TEMP/large-room/native-build" \
             SAME_SCUMM_TITLE_START_ROOM=0 SAME_SCUMM_TITLE_TARGET_ROOM=1 \
-            SAME_SNES_OUTPUT="$RUNNER_TEMP/large-room/large-room.sfc" \
+            SAME_SNES_OUTPUT="build/ci-large-room/large-room.sfc" \
             tools/build_snes.sh
           python tools/audit_snes_rom.py \
-            "$RUNNER_TEMP/large-room/large-room.sfc" --carrier sa1_bwram \
-            --map "$RUNNER_TEMP/large-room/large-room.map"
+            "build/ci-large-room/large-room.sfc" --carrier sa1_bwram \
+            --map "build/ci-large-room/large-room.map"
           {
             echo '### Large-room hosted assembly'
             echo '- Copyright-free MSU live-room personality assembled and ROM-audited.'
