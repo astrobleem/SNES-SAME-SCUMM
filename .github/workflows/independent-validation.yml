@@ -4,7 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # The feature stack is intentionally based one PR on the previous PR.
+    # Run the same read-only checks there as well as on PRs to main. Include
+    # edited so retargeting a stacked PR after its parent merges re-runs CI.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   workflow_dispatch:
     inputs:
       source_ref:
