@@ -109,3 +109,49 @@ Leakage to address incrementally:
 
 FATE remains a valuable build-scoped behavioral reference. This audit does not
 extend its gameplay path or promote its room order to a language rule.
+
+## Integration checkpoint (2026-10-13)
+
+The merged implementation is an experimental SCUMM v5 toolchain/runtime, not a
+whole-game release. The accepted bounded DOS-CD FATE replay is
+`0 → 68 → 0 → 4 → 5 → 6 → 7 → 3`; its static and dynamic runs were compared at
+normalized semantic checkpoints. The complete source package represents the
+currently parsed corpus through compiler-generated ProgramUnit and room
+directories, with executable and supported room payloads stored in SAMEPKG.
+The package directory is not a claim that every operation, resource, or room
+can execute.
+
+The native contract remains a 178-selector resident window over stable 16-bit
+ProgramUnit identities. Checked MSU reads feed instruction-aligned bytecode
+pages and versioned live-room metadata; ROM-backed operation remains available.
+SC5LIVE v4 separates compact active metadata from checked route data, and route
+values are validated as walkbox indices or the `0xFF` no-route sentinel. The
+focused boundary controls accept 6,143- and 6,144-byte active records and reject
+6,145 before publication. This does not imply portable streamed-script save
+restoration.
+
+Current evidence and limits:
+
+- The source analyzer reports 96 indexed/parsed rooms, 4,108 semantic
+  executable identities, 2,203 selector-bearing ProgramUnits, and 2,376
+  checked code pages. The full-source package and directory are deterministic;
+  native execution remains bounded to the documented controls.
+- Native live-room metadata probes are established for rooms 4, 40, 43, 51,
+  55, and 66. Diagnostic native startup probes for rooms 78 and 98 remain
+  unverified; host structural/capacity validation is not counted as native
+  consumption.
+- SCUMM semantic families remain unsupported or unverified; original graphics,
+  costume/charset/font and general text conversion, broad audio/iMUSE service,
+  dynamic resource closure, and portable save reconstruction remain incomplete.
+  Full-game execution readiness is **NOT_READY**.
+- GitHub-hosted CI runs the host suite, static/package checks, WRAM audit, and
+  pinned Poppy SNES assembly/ROM audit. It does not run Nexen; assembly is not
+  native emulator acceptance. No physical FXPAK result is claimed.
+- The pinned Poppy dependency restore reports ImageSharp NU1902/NU1903
+  advisories. Follow-up is tracked in repository issue
+  [#11](https://github.com/astrobleem/SNES-SAME-SCUMM/issues/11); auditing is
+  not disabled or suppressed.
+
+No FATE-specific production hooks were added. FATE room/script/object IDs and
+the bounded replay remain integration evidence only; SCUMM v5 semantics and
+storage interfaces are generic.
