@@ -167,7 +167,7 @@ jobs:
           POPPY_DLL: /tmp/poppy-jsl-address-fix/src/Poppy.CLI/bin/Release/net10.0/poppy.dll
           M24RA_TAD_DONOR_DIR: ${{ runner.temp }}/terrific-audio-driver
         run: |
-          make snes
+          make s5-snes
           python tools/audit_snes_rom.py build/same-scumm-v5.sfc \
             --carrier lorom --map build/same-scumm-v5.map
 
