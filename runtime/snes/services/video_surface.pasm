@@ -3,7 +3,7 @@
 .bank 20
 .org $8000
 
-SAME_VIDEO_SURFACE_STATE              = SAME_BWRAM_BACKEND_BASE+$0080
+SAME_VIDEO_SURFACE_STATE              = SAME_BWRAM_VIDEO_SURFACE_STATE
 SAME_VIDEO_SURFACE_ROOM               = SAME_VIDEO_SURFACE_STATE+$00
 SAME_VIDEO_SURFACE_ROOM_GENERATION    = SAME_VIDEO_SURFACE_STATE+$02
 SAME_VIDEO_SURFACE_STATUS             = SAME_VIDEO_SURFACE_STATE+$04
@@ -45,7 +45,7 @@ SAME_VIDEO_SURFACE_DAMAGE_Y1          = SAME_VIDEO_SURFACE_STATE+$3E
 ; validated source pointer; this service alone knows the selected backend's
 ; palette storage and copies the fixed 256-entry palette into it.
 SAME_VIDEO_SURFACE_PALETTE_SOURCE      = SAME_VIDEO_SURFACE_STATE+$40
-SAME_VIDEO_SURFACE_STATE_SIZE         = $0043
+SAME_VIDEO_SURFACE_STATE_SIZE         = SAME_BWRAM_VIDEO_SURFACE_STATE_SIZE
 ; Debug-only service pipeline witness.  This is in the unused tail of the
 ; backend-reserved block, after the surface descriptor/state and before no
 ; other published service allocation.  It is not visible to SCUMM.
@@ -1669,6 +1669,65 @@ Same_VideoSurface_ServicePending__room_ok:
 Same_VideoSurface_ServicePending__generation_ok:
     jsl Same_VideoSurface_CanWrite_Far
     bcs Same_VideoSurface_ServicePending__defer
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; The live-resource room is already a checked, installed indexed surface.
+    ; A deferred camera notification must never re-enter the ROM visual
+    ; directory (which is deliberately not authoritative in this build).
+    ; Reproject only from the active surface and publish only when the
+    ; computed source window actually changes.
+    jsr Same_VideoSurface_ComputeCameraProjection
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_SURFACE_SOURCE_X
+    cmp.l SAME_VIDEO_SURFACE_PRESENTED_SOURCE_X
+    beq Same_VideoSurface_ServicePending__live_nochange
+    sep #$20
+    .a8
+    jsr Same_VideoSurface_ClearForProjection
+    jsr Same_VideoSurface_BlitProjection
+    jsr Same_VideoSurface_PushDirtyPresent
+    bcs Same_VideoSurface_ServicePending__live_defer
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_SURFACE_SOURCE_X
+    sta.l SAME_VIDEO_SURFACE_PRESENTED_SOURCE_X
+    lda.l SAME_VIDEO_SURFACE_CAMERA_PRESENT_COUNT
+    inc
+    sta.l SAME_VIDEO_SURFACE_CAMERA_PRESENT_COUNT
+    sep #$20
+    .a8
+    lda #SAME_VIDEO_SURFACE_STATUS_OK
+    sta.l SAME_VIDEO_SURFACE_STATUS
+    lda #$00
+    sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+    clc
+    rts
+Same_VideoSurface_ServicePending__live_nochange:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_CAMERA_NOCHANGE_COUNT
+    inc
+    sta.l SAME_VIDEO_SURFACE_CAMERA_NOCHANGE_COUNT
+    sep #$20
+    .a8
+    lda #SAME_VIDEO_SURFACE_STATUS_OK
+    sta.l SAME_VIDEO_SURFACE_STATUS
+    lda #$00
+    sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+    clc
+    rts
+Same_VideoSurface_ServicePending__live_defer:
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_SURFACE_CAMERA_DEFER_COUNT
+    inc
+    sta.l SAME_VIDEO_SURFACE_CAMERA_DEFER_COUNT
+    sep #$20
+    .a8
+    lda #SAME_VIDEO_SURFACE_STATUS_LOCKED
+    sta.l SAME_VIDEO_SURFACE_STATUS
+    clc
+    rts
+.else
     sep #$20
     .a8
     lda.l SAME_VIDEO_SURFACE_PENDING_ROOM
@@ -1716,6 +1775,10 @@ Same_VideoSurface_ServicePending__nochange:
     sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
     clc
     rts
+.endif
+
+; Shared exits stay outside the live/static conditional so either assembled
+; personality can validate room ownership and defer a locked presentation.
 Same_VideoSurface_ServicePending__defer:
     rep #$20
     .a16

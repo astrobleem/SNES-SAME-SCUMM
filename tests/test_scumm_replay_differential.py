@@ -26,6 +26,13 @@ def _report(*, dynamic: bool, pc: int = 12, status: int = 2,
     return {
         "result": "pass", "dynamic_residency": dynamic,
         "rom_sha256": "a" * 64 if dynamic else "b" * 64,
+        "room7_after_cat118_context": {
+            "selected_variables": {"214": 1, "217": 1, "218": 0},
+            "set_bits": [35],
+            "objects": [{"object": 118, "state": 1, "owner": 0}],
+            "inventory_owner1_objects": [],
+            "book_inventory_object937_owner": 1,
+        },
         **route,
     }
 
@@ -37,6 +44,17 @@ class ScummReplayDifferentialTests(unittest.TestCase):
         self.assertTrue(result["all_live_script_checks_pass"])
         self.assertTrue(all(row["active_program_units_match"]
                             for row in result["checkpoints"]))
+
+    def test_physical_activation_slot_reassignment_is_diagnostic_only(self) -> None:
+        static = _report(dynamic=False)
+        dynamic = _report(dynamic=True)
+        dynamic["post_use"]["final"]["slots"][0]["slot"] = 7
+        result = compare_replay_reports(static, dynamic)
+        self.assertTrue(result["all_semantic_acceptance_checks_pass"])
+        self.assertTrue(result["all_live_script_checks_pass"])
+        self.assertEqual(
+            len(result["physical_slot_assignment_differences"]), len(CHECKPOINTS)
+        )
 
     def test_transient_pc_difference_is_reported_separately(self) -> None:
         result = compare_replay_reports(
@@ -73,6 +91,17 @@ class ScummReplayDifferentialTests(unittest.TestCase):
         self.assertFalse(result["all_live_script_checks_pass"])
         self.assertFalse(first["semantic_state_match"])
         self.assertFalse(first["active_program_units_match"])
+
+    def test_room7_progression_variables_and_object_state_are_compared(self) -> None:
+        static = _report(dynamic=False)
+        dynamic = _report(dynamic=True)
+        dynamic["room7_after_cat118_context"]["selected_variables"]["217"] = 0
+        result = compare_replay_reports(static, dynamic)
+        self.assertTrue(result["room7_progression_context_checked"])
+        self.assertFalse(result["room7_progression_context_match"])
+        self.assertFalse(result["all_semantic_acceptance_checks_pass"])
+        self.assertIn("selected_variables",
+                      result["room7_progression_context_differences"])
 
 
 if __name__ == "__main__":

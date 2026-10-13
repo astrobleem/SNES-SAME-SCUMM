@@ -496,9 +496,8 @@ Same_Msu1_ReadBegin__dest_pending_high_ok:
     rep #$20
     .a16
     lda.l SAME_MSU1_DEST_CAPACITY
-    ; The audited pending allocation is currently 0x0A00 bytes. Bind the
-    ; provider limit to the carrier layout instead of retaining the former
-    ; synthetic 2-KiB ceiling after the allocation was enlarged.
+    ; Bind the provider limit to the packed carrier allocation rather than
+    ; duplicating a fixed room-resource staging limit here.
     cmp #SAME_BWRAM_LIVE_ROOM_PENDING_SIZE+1
     bcc Same_Msu1_ReadBegin__dest_pending_capacity_ok16
     jml Same_Msu1_ReadBegin__capacity_error16

@@ -16,6 +16,7 @@ from typing import Any
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 RECIPE = ROOT / "examples/replays/fate-room4-open-trapdoor.json"
 DEFAULT_NEXEN = Path(
     "/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/linux-x64/publish/Nexen"
@@ -23,6 +24,7 @@ DEFAULT_NEXEN = Path(
 ACTIVE_DYNAMIC_RESIDENCY = False
 ACTIVE_MSU_PROGRAMS = False
 ACTIVE_LIVE_ROOM_RESOURCES = False
+LIVE_ROOM_CONTROL_ADDRESS = 0x401400
 ACTIVE_PROGRAM_DIRECTORY: dict[int, dict[str, Any]] = {}
 RESIDENCY_EVENTS: list[dict[str, Any]] = []
 RESIDENCY_LAST: dict[int, dict[str, Any]] = {}
@@ -178,16 +180,12 @@ class _SnapshotReader:
     """Batch WRAM reads into a few frame-consistent Nexen memory transfers."""
 
     _BLOCKS = (
-        ("snesMemory", 0x7E2200, 0x0A00),
-        ("snesMemory", 0x7E5F13, 0x0006),
-        ("snesMemory", 0x7E5F20, 0x0072),
-        ("snesMemory", 0x7E5FE0, 0x0020),
-        ("snesMemory", 0x7E6000, 0x0040),
-        ("snesMemory", 0x7E7A20, 0x0030),
-        ("snesMemory", 0x7E8000, 0x0040),
-        ("snesMemory", 0x7E8C00, 0x03C0),
-        ("snesMemory", 0x7FD300, 0x0100),
-        ("snesMemory", 0x7FF100, 0x0400),
+        # These are ordinary WRAM windows. Keep gaps inside each window in
+        # the same read so a four-frame lifecycle observation uses a handful
+        # of Nexen RPCs instead of one request per diagnostic island.
+        ("snesMemory", 0x7E2200, 0x3E40),
+        ("snesMemory", 0x7E7A20, 0x15A0),
+        ("snesMemory", 0x7FD300, 0x2200),
         ("snesMemory", 0x7F3700, 0x0040),
     )
 
@@ -362,8 +360,17 @@ def _snapshot(session: Any, *, include_live_room: bool = False) -> dict[str, Any
         "m23a_current_kind": session.read_u8(0x7FF2CF),
         "m23a_chain_slot": session.read_u8(0x7FF2D8),
         "m23a_chain_phase": session.read_u8(0x7FF2D9),
+        "m23a_chain_error": {
+            "kind": session.read_u8(0x7FF2FA),
+            "slot": session.read_u8(0x7FF2FB),
+            "status": session.read_u8(0x7FF2FC),
+            "phase": session.read_u8(0x7FF2FD),
+        },
         "bit69": int(bool(bit69_byte & (1 << (69 & 7)))),
         "bit35": int(bool(bit35_byte & (1 << (35 & 7)))),
+        "bit_variables_0_31": session.read_memory(
+            "snesMemory", 0x7E2BA0, 4
+        ).hex(),
         "bit64_71": [
             int(bool(bit69_byte & (1 << bit))) for bit in range(8)
         ],
@@ -374,6 +381,20 @@ def _snapshot(session: Any, *, include_live_room: bool = False) -> dict[str, Any
         "actor1_x": int.from_bytes(actor1_position[:2], "little", signed=True),
         "actor1_y": int.from_bytes(actor1_position[2:], "little", signed=True),
         "actor1_moving": session.read_u8(0x7FF221),
+        "movement_wait": {
+            "blocks": _u16(session, 0x7E7EBB),
+            "releases": _u16(session, 0x7E7EBD),
+        },
+        "start_object": {
+            "exec_count": session.read_u8(0x7E7F9D),
+            "object": _u16(session, 0x7E7F91),
+            "entry": session.read_u8(0x7E7F93),
+            "program": session.read_u8(0x7E7F94),
+            "entry_offset": _u16(session, 0x7E7F95),
+            "pc_before": _u16(session, 0x7E7F97),
+            "pc_after_args": _u16(session, 0x7E7F99),
+            "slot": session.read_u8(0x7E7F9B),
+        },
         "camera": {
             "current_x": _u16(session, 0x7E7FA8),
             "current_y": _u16(session, 0x7E7FAA),
@@ -405,10 +426,71 @@ def _snapshot(session: Any, *, include_live_room: bool = False) -> dict[str, Any
         },
         "shared_vm_pc": _u16(session, 0x7E2300),
         "last_opcode": session.read_u8(0x7E2306),
+        # The ordinary slot summary omits stopped/empty entries. Keep the
+        # scheduler-owned lifecycle slot explicit so a completed EXCD can be
+        # distinguished from a yielded body at its final logical PC.
+        "interpreter_status": session.read_u8(0x7E2302),
+        "return_mode": session.read_u8(0x7E2363),
+        "slot0": {
+            "status": session.read_u8(0x7E2380),
+            "script": session.read_u8(0x7E2399),
+            "program": session.read_u8(0x7E23B2),
+            "pc": _u16(session, 0x7E23E4),
+            "delay": _u16(session, 0x7E2416),
+            "where": session.read_u8(0x7E7F46),
+            "room_owner": session.read_u8(0x7FF2E7),
+        },
+        "m23a_lifecycle_trace": {
+            "count": session.read_u8(0x7FF2D6),
+            "codes": list(session.read_memory("snesMemory", 0x7FF2D7, 14)),
+        },
+        "m23a_hold": session.read_u8(0x7FF2C4),
+        "c4_parent": {
+            "slot": session.read_u8(0x7E2A8C),
+            "status": session.read_u8(0x7E2A8D),
+            "program": session.read_u8(0x7E2A8E),
+            "pc": _u16(session, 0x7E2A90),
+        },
+        "c25_diagnostic": {
+            "queue_count": session.read_u8(0x7FD459),
+            "pending_count": session.read_u8(0x7FD8AC),
+            "command_index": session.read_u8(0x7FD8ED),
+            "record_offset": _u16(session, 0x7FD8EF),
+            "queue_words_used": _u16(session, 0x7FD8F2),
+            "last_count": session.read_u8(0x7FD86A),
+            "last_words": session.read_memory(
+                "snesMemory", 0x7FD86B, 64
+            ).hex(),
+            "queue_prefix": session.read_memory(
+                "snesMemory", 0x7FD45A, 64
+            ).hex(),
+        },
+        # Preserve the most recent script operand when a mapping failure
+        # retires its provisional C4 slot.  This is particularly useful for
+        # distinguishing an omitted room-local ProgramUnit from a missing
+        # global in bounded route diagnostics.
+        "condition": session.read_u8(0x7E2347),
+        "class_evaluation_trace": {
+            "count": session.read_u8(0x7E57F0),
+            "records_ring_order": [
+                {
+                    "object": _u16(session, 0x7E5800 + index * 8),
+                    "class": _u16(session, 0x7E5802 + index * 8),
+                    "matched": session.read_u8(0x7E5804 + index * 8),
+                }
+                for index in range(8)
+            ],
+        },
         "verb_query": {
             "object": _u16(session, 0x7E7EBF),
             "verb": _u16(session, 0x7E7EC1),
             "result": _u16(session, 0x7E7EC3),
+            "native_dispatch": {
+                "active_room_record": session.read_u8(0x7E5465),
+                "object": _u16(session, 0x7E5466),
+                "verb": _u16(session, 0x7E5468),
+                "entry_table_address": _u16(session, 0x7E546A),
+            },
             "error_object": _u16(session, 0x7E7EB5),
             "error_verb": _u16(session, 0x7E7EB7),
         },
@@ -475,11 +557,15 @@ def _snapshot(session: Any, *, include_live_room: bool = False) -> dict[str, Any
                 "selector": session.read_u8(0x7E8F7C),
                 "pool_index": _u16(session, 0x7E8F7D),
                 "bundle_record": session.read_u8(0x7E8F9E),
+                "bundle_offset": _u16(session, 0x7E8FA0),
+                "bundle_remaining": session.read_u8(0x7E8F9F),
+                "bundle_failure": session.read_u8(0x7E8FAB),
             },
             "resident_binding_violations": missing_live,
         } if ACTIVE_DYNAMIC_RESIDENCY else {}),
         **({
             "program_cache": {
+                "execution_depth": session.read_u8(0x7E2FB0),
                 "active_selector": session.read_u8(0x7E2F6F),
                 "active_slot": session.read_u8(0x7E2F5B),
                 "active_id": _u16(session, 0x7E2F5C),
@@ -504,6 +590,19 @@ def _snapshot(session: Any, *, include_live_room: bool = False) -> dict[str, Any
                         (2, 0x7E2EC3, 0x7E2EC4, 0x7E2EC6, 0x7E2EC8, 0x7E2EC9, 0x7E2ECB),
                     )
                 ],
+                "completion_waiters": [
+                    {
+                        "page": page,
+                        "selector": session.read_u8(selector_address),
+                        "c4_slot": session.read_u8(waiter_slot_address),
+                        "held": bool(session.read_u8(pin_address) & 0x80),
+                    }
+                    for page, selector_address, waiter_slot_address, pin_address in (
+                        (0, 0x7E2ED0, 0x7E2ED1, 0x7E2F52),
+                        (1, 0x7E2ED2, 0x7E2ED3, 0x7E2F53),
+                        (2, 0x7E2ED4, 0x7E2ED5, 0x7E2EC8),
+                    )
+                ],
                 "page_lookup": {
                     "pc": _u16(session, 0x7E2EAC),
                     "start": _u16(session, 0x7E2EAE),
@@ -514,6 +613,7 @@ def _snapshot(session: Any, *, include_live_room: bool = False) -> dict[str, Any
                 },
                 "request": {
                     "id": _u16(session, 0x7E2F58),
+                    "lookup_id": _u16(session, 0x7E2ECD),
                     "slot": session.read_u8(0x7E2F5A),
                     "status": session.read_u8(0x7E2FAA),
                 },
@@ -557,7 +657,9 @@ def _snapshot(session: Any, *, include_live_room: bool = False) -> dict[str, Any
                     "return_valid": session.read_u8(0x7FF467),
                 },
                 "live_room_control": list(
-                    session.read_memory("snesMemory", 0x401400, 64)
+                    session.read_memory(
+                        "snesMemory", LIVE_ROOM_CONTROL_ADDRESS, 64
+                    )
                 ),
             }
         } if ACTIVE_MSU_PROGRAMS else {}),
@@ -1197,9 +1299,7 @@ def _authentic_room7_cat_source(
 
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
     explicit = identity.get("explicit_environment", {})
-    selected = set(explicit.get(
-        "SAME_SCUMM_APPEND_TERMINAL_EXECUTABLE_LOCAL_OBJECTS", ""
-    ).split(","))
+    selected = _selected_executable_object_identities(explicit)
     if not {"7:118", "7:119"}.issubset(selected):
         raise RuntimeError("current ROM identity does not select both room7 cat OBCDs")
     room_data = ROOT / "runtime/snes/generated/scumm_v5_room_data.inc.pasm"
@@ -1285,6 +1385,20 @@ def _authentic_room7_cat_source(
             "native_program_directory_sha256": native_directory["sha256"]}
            if native_directory is not None else {}),
     }
+
+
+def _selected_executable_object_identities(explicit_environment: dict[str, Any]) -> set[str]:
+    """Union all compiler selection tiers that can emit executable OBCDs."""
+    selected: set[str] = set()
+    for key in (
+        "SAME_SCUMM_APPEND_EXECUTABLE_LOCAL_OBJECTS",
+        "SAME_SCUMM_APPEND_TERMINAL_EXECUTABLE_LOCAL_OBJECTS",
+    ):
+        selected.update(
+            item for item in str(explicit_environment.get(key, "")).split(",")
+            if item
+        )
+    return selected
 
 
 def _authentic_room_source(archive: Path, room_number: int) -> dict[str, Any]:
@@ -1434,10 +1548,52 @@ def _room4_source_probe(
         for index in range(count)
     ]
     slots = _snapshot(session)["slots"]
+    dynamic_class_records = session.read_memory("snesMemory", 0x7F5F10, 0x1000)
+    object61_class_record = next((
+        {
+            "slot": offset // 8,
+            "object": int.from_bytes(dynamic_class_records[offset + 2:offset + 4], "little"),
+            "mask": f"0x{int.from_bytes(dynamic_class_records[offset + 4:offset + 8], 'little'):08x}",
+        }
+        for offset in range(0, len(dynamic_class_records), 8)
+        if dynamic_class_records[offset]
+        and int.from_bytes(dynamic_class_records[offset + 2:offset + 4], "little") == 61
+    ), None)
+    lifecycle_trace_count = session.read_u8(0x7E5EC7, "snesMemory")
+    lifecycle_trace_bytes = session.read_memory("snesMemory", 0x7E5EC8, 8 * 4)
+    lifecycle_trace = [
+        {
+            "program_selector": lifecycle_trace_bytes[offset],
+            "pc": int.from_bytes(lifecycle_trace_bytes[offset + 1:offset + 3], "little"),
+            "opcode": lifecycle_trace_bytes[offset + 3],
+        }
+        for offset in range(0, len(lifecycle_trace_bytes), 4)
+    ]
     return {
         "global_variables_0_31": variables,
         "global_5": variables[5] if len(variables) > 5 else None,
+        "interaction_variables": {
+            str(index): session.read_u16(variable_base + index * 2, "snesMemory")
+            for index in (1, 3, 20, 21, 33, 69, 442, 443)
+            if index < variable_count
+        },
         "bit_variables_0_31": session.read_memory("snesMemory", 0x7E2BA0, 4).hex(),
+        "object_class_runtime": {
+            "initialized": session.read_u8(0x7F6F1B),
+            # setClass keeps its last decoded target and class in these
+            # engine scratch fields. They are useful for distinguishing an
+            # authored entry path that never reached setClass from a C16
+            # mutation defect, without instrumenting or changing bytecode.
+            "last_set_class_object": session.read_u16(0x7E5476, "snesMemory"),
+            "last_set_class_value": session.read_u16(0x7E5478, "snesMemory"),
+            "object61_record": object61_class_record,
+        },
+        "recent_lifecycle_opcodes": {
+            "write_count_mod_256": lifecycle_trace_count,
+            "records_ring_order": lifecycle_trace,
+            "last_record": lifecycle_trace[(lifecycle_trace_count - 1) & 0x07]
+            if lifecycle_trace_count else None,
+        },
         "live_slot_locals": _live_slot_locals(session, slots),
     }
 
@@ -1756,6 +1912,7 @@ def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], lis
             }
             global1 = slot_by_script.get(1, {})
             global74 = slot_by_script.get(74, {})
+            global75 = slot_by_script.get(75, {})
             sample = {
                 "frame": int(session.get_state()["frameCount"]),
                 "room": room,
@@ -1765,9 +1922,19 @@ def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], lis
                 "global74_status": global74.get("status"),
                 "global74_pc": global74.get("saved_pc"),
                 "global74_delay": global74.get("delay"),
+                "global75_status": global75.get("status"),
+                "global75_pc": global75.get("saved_pc"),
+                "global75_delay": global75.get("delay"),
                 "global1_status": global1.get("status"),
                 "global1_pc": global1.get("saved_pc"),
                 "global1_delay": global1.get("delay"),
+                "current_slot": session.read_u8(0x7E2A88),
+                "scheduler_slot": session.read_u8(0x7E2B22),
+                "slot2_didexec": session.read_u8(0x7E23CB + 2),
+                "slot2_freeze": session.read_u8(0x7E2B08 + 2),
+                "engine_frame_ops": _u16(session, 0x7E2224),
+                "engine_frame_busy": session.read_u8(0x7E2231),
+                "c25_clear_queue_count": _u16(session, 0x7FD8F4),
             }
             if ACTIVE_MSU_PROGRAMS:
                 sample.update({
@@ -1840,12 +2007,17 @@ def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], lis
                     sample["active_cache_slot"] = session.read_u8(0x7E2F5B)
                 sample["active_program_select"] = session.read_u8(0x7E2362)
             progress.append(sample)
-        advanced = advance_bounded(session, min(60, max_frames - elapsed))
+        # Keep debugger-assisted/native-frame batches below the emulator's
+        # wall-clock timeout even while room scripts and checked IO are busy.
+        advanced = advance_bounded(session, min(16, max_frames - elapsed))
         elapsed += int(advanced["frames_advanced"])
+    last = _snapshot(session)
+    cpu = session.get_cpu_state("Snes")
+    trace = session.trace_log(count=128, cpu_type="Snes")
     raise TimeoutError(
         f"cold authentic startup did not reach room4 readiness within {max_frames} "
         f"frames; transitions={transitions!r}; progress={progress!r}; "
-        f"last={_snapshot(session)!r}"
+        f"last={last!r}; cpu={cpu!r}; trace_tail={trace!r}"
     )
 
 
@@ -1993,10 +2165,65 @@ def _send_talk_owned_a_edge(
     }
 
 
+def _has_watched_resource_wait(
+    slots: list[dict[str, Any]], watched_activation_slots: set[int],
+) -> bool:
+    """Whether an action-owned C4 activation still waits on a resource."""
+    return any(
+        item["slot"] in watched_activation_slots and item["status"] == 5
+        for item in slots
+    )
+
+
+def _room_lifecycle_is_idle(state: dict[str, Any]) -> bool:
+    """Whether a snapshot is at a committed, stable room boundary.
+
+    The action-owned C4 slot can stop just before its final scheduler pass
+    starts EXCD.  Script/actor quiescence alone therefore cannot finish an
+    observation while M23A still owns a pending room transaction.
+    """
+    return (
+        state["phase"] == 0
+        and state["pending_room"] == state["room"]
+        and state["active_record"] == state["pending_record"]
+    )
+
+
+def _has_live_watched_activation(
+    slots: list[dict[str, Any]], watched_activation_slots: set[int],
+) -> bool:
+    """Whether an action-owned activation is still running or suspended.
+
+    Yielded and delayed C4 slots still own continuations.  Treating those as
+    quiescent loses precisely the wait/resume boundary that a sentence action
+    may be waiting for.
+    """
+    terminal_statuses = {0, 4, 6, 0xFF}
+    return any(
+        item["slot"] in watched_activation_slots
+        and item["status"] not in terminal_statuses
+        for item in slots
+    )
+
+
+def _activation_identity_by_slot(
+    slots: list[dict[str, Any]],
+) -> dict[int, tuple[Any, ...]]:
+    """Capture canonical activation identity before a sentence is submitted."""
+    return {
+        item["slot"]: (
+            item["script"], item["program"], item.get("program_unit_id"),
+            item.get("binding_generation"),
+        )
+        for item in slots
+    }
+
+
 def _observe_action(session: Any, *, baseline: int,
                     max_frames: int, rom: Path,
                     symbol_banks: dict[str, int],
-                    exact_frame_observation: bool = False,
+                    baseline_slots: list[dict[str, Any]] | None = None,
+                    capture_execution_trace: bool = False,
                     variable_base: int | None = None,
                     variable_count: int = 0,
                     object_count: int = 0,
@@ -2011,10 +2238,9 @@ def _observe_action(session: Any, *, baseline: int,
     last_ack_generation: int | None = None
     previous = _snapshot(session)
     action_room = previous["room"]
-    baseline_activation_identity = {
-        item["slot"]: (item["script"], item["program"])
-        for item in previous["slots"]
-    }
+    baseline_activation_identity = _activation_identity_by_slot(
+        previous["slots"] if baseline_slots is None else baseline_slots
+    )
     watched_activation_slots: set[int] = set()
     previous_watched_signature: tuple[Any, ...] = ()
     transitions: list[dict[str, Any]] = []
@@ -2023,20 +2249,35 @@ def _observe_action(session: Any, *, baseline: int,
         # sampling every emulated frame caused hundreds of thousands of MCP
         # reads without improving the semantic comparison.
     execution_samples: list[dict[str, Any]] = []
+    observation_stride_frames = 4
     start_frame = previous["frame"]
     stable_frames = 0
+
+    def has_owned_resource_wait(state: dict[str, Any]) -> bool:
+        # WAIT_RESOURCE is not a settled activation: in an MSU build it means
+        # that the authored action still owns an unresolved checked fetch.
+        # Stable slot bytes while the provider is blocked must not be mistaken
+        # for completion (the next lifecycle step may be in that fetched body).
+        return _has_watched_resource_wait(
+            state["slots"], watched_activation_slots,
+        )
+
     while int(session.get_state()["frameCount"]) - start_frame < max_frames:
         state = _snapshot(session)
         for item in state["slots"]:
             original = baseline_activation_identity.get(item["slot"])
-            if original != (item["script"], item["program"]):
+            current_identity = (
+                item["script"], item["program"], item.get("program_unit_id"),
+                item.get("binding_generation"),
+            )
+            if original != current_identity:
                 watched_activation_slots.add(item["slot"])
         watched_signature = tuple(
             tuple(sorted(item.items()))
             for item in state["slots"]
             if item["slot"] in watched_activation_slots
         )
-        if exact_frame_observation:
+        if capture_execution_trace:
             sample = {
                 "frame": state["frame"],
                 "room": state["room"],
@@ -2047,10 +2288,23 @@ def _observe_action(session: Any, *, baseline: int,
                 "object": state["object"],
                 "hit_object": state["hit_object"],
                 "bit69": state["bit69"],
+                "bit_variables_0_31": state["bit_variables_0_31"],
                 "actor1_room": state["actor1_room"],
                 "actor1_visible": state["actor1_visible"],
                 "actor1_x": state["actor1_x"],
                 "actor1_y": state["actor1_y"],
+                "actor1_moving": state["actor1_moving"],
+                "movement_wait": state["movement_wait"],
+                "movement": state["movement"],
+                "start_object": state["start_object"],
+                # Object verbs can complete between frame-boundary samples.
+                # Preserve the canonical owner of the selector recorded by
+                # the StartObject diagnostic at this same sample, even when
+                # the short-lived C4 slot is already stopped.
+                "start_object_program_binding": next((
+                    binding for binding in state.get("resident_bindings", [])
+                    if binding.get("selector") == state["start_object"].get("program")
+                ), None),
                 "talk_active": state["talk_active"],
                 "talk_generation": state["talk_generation"],
                 "talk_delay": state["talk_delay"],
@@ -2067,6 +2321,57 @@ def _observe_action(session: Any, *, baseline: int,
                 "submissions": state["submissions"],
                 "slots": state["slots"],
             }
+            if variable_base is not None and variable_count > 33:
+                sentence_script = session.read_u16(
+                    variable_base + 33 * 2, "snesMemory"
+                ) & 0xFF
+                sentence_slots = [
+                    item for item in state["slots"]
+                    if item["script"] == sentence_script
+                    and item["status"] not in (0, 4, 6)
+                ]
+                if sentence_slots:
+                    sample["sentence_script_number"] = sentence_script
+                    sample["sentence_script_locals"] = _live_slot_locals(
+                        session, sentence_slots
+                    )
+                if sentence_slots:
+                    sample["interaction_probe"] = {
+                        "global0": session.read_u16(variable_base, "snesMemory"),
+                        "global1": session.read_u16(
+                            variable_base + 2, "snesMemory"
+                        ),
+                        "global20": session.read_u16(
+                            variable_base + 20 * 2, "snesMemory"
+                        ),
+                        "global21": session.read_u16(
+                            variable_base + 21 * 2, "snesMemory"
+                        ),
+                        "class_condition": session.read_u8(0x7E568E),
+                        "class_object": session.read_u16(0x7E568F),
+                        "class_value": session.read_u16(0x7E5691),
+                        "class_evaluation_trace": {
+                            "count": session.read_u8(0x7E57F0),
+                            "records_ring_order": [
+                                {
+                                    "object": _u16(session, 0x7E5800 + index * 8),
+                                    "class": _u16(session, 0x7E5802 + index * 8),
+                                    "matched": session.read_u8(0x7E5804 + index * 8),
+                                }
+                                for index in range(8)
+                            ],
+                        },
+                        "get_distance": {
+                            "stage": session.read_u8(0x7E7F45),
+                            "type1": session.read_u8(0x7E7F2F),
+                            "type2": session.read_u8(0x7E7F30),
+                            "x1": session.read_u16(0x7E7F31),
+                            "y1": session.read_u16(0x7E7F33),
+                            "x2": session.read_u16(0x7E7F39),
+                            "y2": session.read_u16(0x7E7F3B),
+                            "result": session.read_u16(0x7E7F41),
+                        },
+                    }
             active_trace_slots = [
                 item for item in state["slots"]
                 if item["slot"] in watched_activation_slots
@@ -2095,6 +2400,7 @@ def _observe_action(session: Any, *, baseline: int,
                 "messages": messages,
                 "lifecycle_events": transitions,
                 "frame_boundary_execution_samples": execution_samples,
+                "observation_stride_frames": observation_stride_frames,
             }
         if any(state[key] != previous[key] for key in (
             "room", "phase", "active_record", "pending_record", "pending_room",
@@ -2122,6 +2428,8 @@ def _observe_action(session: Any, *, baseline: int,
                 continue
         if (
             state["room"] == previous["room"]
+            and _room_lifecycle_is_idle(state)
+            and _room_lifecycle_is_idle(previous)
             # Track activations created/replaced by this sentence, but ignore
             # unrelated recurring globals whose delay counters legitimately
             # change every frame.  This prevents the old false-quiescent
@@ -2145,10 +2453,10 @@ def _observe_action(session: Any, *, baseline: int,
             state["submissions"] == ((baseline + 1) & 0xFF)
             and state["sentence_pending"] == 0 and state["c20_count"] == 0
             and state["talk_active"] == 0 and stable_frames >= 120
-            and not any(
-                item["slot"] in watched_activation_slots and item["status"] == 1
-                for item in state["slots"]
+            and not _has_live_watched_activation(
+                state["slots"], watched_activation_slots,
             )
+            and not has_owned_resource_wait(state)
         ):
             result = {
                 "status": f"authored-action-quiescent-in-room{action_room}",
@@ -2161,6 +2469,7 @@ def _observe_action(session: Any, *, baseline: int,
                 "messages": messages,
                 "lifecycle_events": transitions,
                 "frame_boundary_execution_samples": execution_samples,
+                "observation_stride_frames": observation_stride_frames,
             }
             result["final_live_slot_locals"] = _live_slot_locals(
                 session, state["slots"]
@@ -2176,7 +2485,12 @@ def _observe_action(session: Any, *, baseline: int,
         previous_watched_signature = watched_signature
         remaining = max_frames - (state["frame"] - start_frame)
         step = min(
-            1 if state["talk_active"] and state["talk_delay"] <= 1 else 4,
+            # Passive observation never owns input edges.  Four-frame batches
+            # keep the semantic state timeline useful while avoiding one MCP
+            # round trip per emulated frame on long-running room scripts.
+            # Message acknowledgements are still delivered synchronously
+            # above, before advancing the scheduler.
+            observation_stride_frames,
             remaining,
         )
         advanced = advance_bounded(session, step)
@@ -2204,6 +2518,27 @@ def _observe_action(session: Any, *, baseline: int,
             "messages": messages,
             "lifecycle_events": transitions,
             "frame_boundary_execution_samples": execution_samples,
+            "observation_stride_frames": observation_stride_frames,
+        }
+    if capture_execution_trace:
+        # Keep failed bounded controls inspectable.  In particular, an MSU
+        # WAIT_RESOURCE timeout must preserve the last instruction/activation
+        # observations; raising with only a raw WRAM snapshot discarded the
+        # timeline needed to distinguish a stalled fetch from a semantic
+        # branch.  The caller still marks the replay failed below.
+        return {
+            "status": "action-timeout",
+            "initial_submission_count": baseline,
+            "observed_frames": final["frame"] - start_frame,
+            "watched_activation_slots": sorted(watched_activation_slots),
+            "final": final,
+            "final_live_slot_locals": _live_slot_locals(session, final["slots"]),
+            "acknowledgements": acknowledgements,
+            "talk_edge_probes": talk_edge_probes,
+            "messages": messages,
+            "lifecycle_events": transitions,
+            "frame_boundary_execution_samples": execution_samples[-512:],
+            "observation_stride_frames": observation_stride_frames,
         }
     raise TimeoutError(
         f"room{action_room} action did not reach a room transition or quiescent boundary in "
@@ -2211,11 +2546,77 @@ def _observe_action(session: Any, *, baseline: int,
     )
 
 
+def _require_room4_object_dispatch(
+    result: dict[str, Any], *, before_count: int, verb: int, entry_offset: int,
+) -> dict[str, Any]:
+    """Reject controller-quiescence evidence without the authored OBCD call."""
+    expected_count = (before_count + 1) & 0xFF
+    observations = [
+        sample for sample in result.get("frame_boundary_execution_samples", [])
+        if isinstance(sample, dict)
+        and isinstance(sample.get("start_object"), dict)
+        and sample["start_object"].get("exec_count") == expected_count
+        and sample["start_object"].get("object") == 61
+        and sample["start_object"].get("entry") == verb
+        and sample["start_object"].get("entry_offset") == entry_offset
+    ]
+    final = result.get("final")
+    final_start = final.get("start_object") if isinstance(final, dict) else None
+    if (not isinstance(final_start, dict)
+            or final_start.get("exec_count") != expected_count
+            or final_start.get("object") != 61
+            or final_start.get("entry") != verb
+            or final_start.get("entry_offset") != entry_offset):
+        raise RuntimeError(
+            "room-4 authored sentence became quiescent without the expected "
+            f"object61 verb dispatch: expected count/object/verb/entry="
+            f"{expected_count}/61/{verb}/{entry_offset}, got {final_start!r}"
+        )
+    carrier_identity = "ObjectProgram(room=4,object=61)"
+    carrier_samples = []
+    for sample in observations:
+        active_owner = any(
+            slot.get("program_unit_identity") == carrier_identity
+            and slot.get("program") == sample["start_object"].get("program")
+            for slot in sample.get("slots", []) if isinstance(slot, dict)
+        )
+        binding = sample.get("start_object_program_binding")
+        resident_owner = (
+            isinstance(binding, dict)
+            and binding.get("selector") == sample["start_object"].get("program")
+            and binding.get("identity") == carrier_identity
+        )
+        if active_owner or resident_owner:
+            carrier_samples.append(sample)
+    if not carrier_samples:
+        raise RuntimeError(
+            "room-4 StartObject counter advanced but no sampled live slot or "
+            f"resident binding resolves the canonical carrier {carrier_identity!r} "
+            f"at verb {verb}: "
+            f"{observations[:2]!r}"
+        )
+    return {
+        "semantic_identity": f"ObjectVerb(room=4,object=61,verb={verb})",
+        "carrier_identity": carrier_identity,
+        "entry_offset": entry_offset,
+        "dispatch_count": 1,
+        "sample_frames": [item.get("frame") for item in carrier_samples],
+        "carrier_evidence": [
+            "active-slot" if any(
+                slot.get("program_unit_identity") == carrier_identity
+                and slot.get("program") == item["start_object"].get("program")
+                for slot in item.get("slots", []) if isinstance(slot, dict)
+            ) else "resident-binding"
+            for item in carrier_samples
+        ],
+    }
+
+
 def _observe_no_input_lifecycle(
     session: Any, *, rom: Path, symbol_banks: dict[str, int],
     archive: Path, variable_base: int, variable_count: int,
     object_count: int,
-    max_frames: int = 10000, stable_frames_required: int = 120,
+    max_frames: int = 20000, stable_frames_required: int = 120,
 ) -> dict[str, Any]:
     """Follow authored room-entry work until it finishes or changes rooms."""
     from fate_replay import advance_bounded, room4_message_ready
@@ -2263,9 +2664,10 @@ def _observe_no_input_lifecycle(
         )
 
     previous_signature = signature(start)
-    for _ in range(max_frames):
+    while True:
         state = _snapshot(session)
         if state["error"] != 0:
+            state["live_slot_locals"] = _live_slot_locals(session, state["slots"])
             raise RuntimeError(f"SCUMM error during no-input room lifecycle: {state!r}")
         if state["input_held"] or state["input_pressed"]:
             raise RuntimeError(
@@ -2391,7 +2793,11 @@ def _observe_no_input_lifecycle(
         # Message ownership is checked at the exact ready boundary above.
         # Room lifecycle observation can therefore advance in small bounded
         # groups while still detecting transitions and authored state changes.
-        step = min(4, max_frames - (int(session.get_state()["frameCount"]) - start_frame))
+        step = _bounded_observation_step(
+            start_frame, int(session.get_state()["frameCount"]), max_frames
+        )
+        if step == 0:
+            break
         result = advance_bounded(session, step)
         if result["frames_advanced"] != step:
             raise RuntimeError(f"room-entry observation frame drifted: {result!r}")
@@ -2422,6 +2828,75 @@ def _observe_no_input_lifecycle(
             int(session.read_u8(0x7E5FE9)) - start["submissions"]
         ) & 0xFF,
         "controller_input_sent_outside_authored_message_ack": False,
+    }
+
+
+def _bounded_observation_step(start_frame: int, current_frame: int,
+                              max_frames: int, *, chunk: int = 16) -> int:
+    """Return the next positive chunk without exceeding the frame budget."""
+    remaining = max_frames - (current_frame - start_frame)
+    if remaining <= 0:
+        return 0
+    return min(chunk, remaining)
+
+
+def _room_entry_failure_summary(entry: dict[str, Any]) -> dict[str, Any]:
+    """Keep bounded room-entry failures useful without dumping every trace row."""
+    final = entry.get("final", {})
+    state_keys = (
+        "frame", "room", "phase", "error", "lifecycle", "active_record",
+        "pending_record", "pending_room", "actor1_room", "actor1_x",
+        "actor1_y", "actor1_moving", "talk_active", "talk_generation",
+        "submissions", "input_held", "input_pressed",
+    )
+    cache = final.get("program_cache", {})
+    residency = final.get("residency", {})
+    return {
+        "status": entry.get("status"),
+        "frames_observed": entry.get("frames_observed"),
+        "stable_frames": entry.get("stable_frames"),
+        "start_frame": entry.get("start", {}).get("frame"),
+        "final": {key: final.get(key) for key in state_keys},
+        "active_slots": [
+            {
+                key: slot.get(key) for key in
+                ("slot", "script", "program", "program_unit_identity",
+                 "binding_generation", "status", "saved_pc", "delay",
+                 "room_owner")
+            }
+            for slot in final.get("slots", [])
+        ],
+        "residency": {
+            key: residency.get(key) for key in
+            ("current_resident", "peak_resident", "current_pinned",
+             "peak_pinned", "bind_count", "reuse_count", "bundle_loads",
+             "bundle_releases", "dynamic_global_resolutions", "exhaustions",
+             "stale_reference_detections")
+        },
+        "program_cache": {
+            # Keep the three resident-page identities, pins/generations,
+            # completion waiters, pending lookup, and provider status in the
+            # bounded failure artifact. Aggregate counters alone cannot tell
+            # a cache-capacity wait from a lost completion or stale page.
+            **cache,
+        },
+        "last_state_change_samples": [
+            {
+                key: sample.get(key) for key in
+                ("frame", "room", "phase", "lifecycle", "actor1_room",
+                 "actor1_x", "actor1_y", "actor1_moving", "talk_active")
+            } | {
+                "slots": [
+                    {
+                        key: slot.get(key) for key in
+                        ("script", "program_unit_identity", "status",
+                         "saved_pc", "delay", "room_owner")
+                    }
+                    for slot in sample.get("slots", [])
+                ]
+            }
+            for sample in entry.get("state_change_samples", [])[-24:]
+        ],
     }
 
 
@@ -2456,10 +2931,21 @@ def main() -> int:
     parser.add_argument("--room5-action-frames", type=int, default=9000)
     parser.add_argument("--room6-action-frames", type=int, default=12000)
     parser.add_argument("--room7-action-frames", type=int, default=12000)
+    # The bounded authentic room-5 entry control has taken 25,408 frames on
+    # the same ROM; retain margin without weakening its stable-state predicate.
+    parser.add_argument("--room-entry-frames", type=int, default=30000)
+    parser.add_argument(
+        "--failure-state-output", type=Path,
+        help="optional ROM-specific state captured when a room-entry bound is exhausted",
+    )
     parser.add_argument("--room7-save-state", type=Path)
     parser.add_argument(
         "--room4-settled-state-output", type=Path,
         help="optional ROM-specific native state captured at the verified room4 C19 checkpoint",
+    )
+    parser.add_argument(
+        "--room4-final-state-output", type=Path,
+        help="optional ROM-specific state captured after the bounded room4 action, before visual drain",
     )
     parser.add_argument("--archive", type=Path, default=Path("/home/chad/ATLANTIS.zip"))
     parser.add_argument(
@@ -2470,6 +2956,8 @@ def main() -> int:
     args = parser.parse_args()
     if not 1 <= args.diagnostic_trace_rows <= 1000:
         parser.error("--diagnostic-trace-rows must be in 1..1000 (Nexen limit)")
+    if args.room_entry_frames <= 0:
+        parser.error("--room-entry-frames must be positive")
     if args.continue_room5_rope and not args.continue_trapdoor_use:
         parser.error("--continue-room5-rope requires --continue-trapdoor-use")
     if args.continue_room6_books and not args.continue_room5_rope:
@@ -2491,6 +2979,7 @@ def main() -> int:
     build_identity = json.loads(identity_path.read_text(encoding="utf-8"))
     global ACTIVE_DYNAMIC_RESIDENCY, ACTIVE_MSU_PROGRAMS
     global ACTIVE_LIVE_ROOM_RESOURCES, ACTIVE_PROGRAM_DIRECTORY
+    global LIVE_ROOM_CONTROL_ADDRESS
     global RESIDENCY_PINNED_PEAK
     global RESIDENCY_OBSERVER_READY, RESIDENCY_PREINIT_UNKNOWN_ROWS
     ACTIVE_DYNAMIC_RESIDENCY = (
@@ -2505,6 +2994,24 @@ def main() -> int:
     ACTIVE_LIVE_ROOM_RESOURCES = (
         explicit_environment.get("SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES") == "1"
     )
+    pcm_track = int(explicit_environment.get("SAME_MSU1_LIVE_ROOM_PCM_TRACK", "0") or 0)
+    pcm_capture_path = args.output.with_suffix(".pcm.wav") if pcm_track else None
+    if ACTIVE_LIVE_ROOM_RESOURCES:
+        listing_path = rom.with_suffix(".lst")
+        if not listing_path.is_file():
+            parser.error(f"ROM-bound assembler listing is missing: {listing_path}")
+        control_addresses = []
+        for line in listing_path.read_text(encoding="utf-8").splitlines():
+            prefix = "; SAME_SCUMM_LIVE_ROOM_CONTROL = $"
+            if line.startswith(prefix) and line.endswith("(Constant)"):
+                control_addresses.append(
+                    int(line[len(prefix):].split()[0], 16)
+                )
+        if len(control_addresses) != 1:
+            parser.error(
+                "live-resource ROM must define exactly one generated control address"
+            )
+        LIVE_ROOM_CONTROL_ADDRESS = control_addresses[0]
     RESIDENCY_EVENTS.clear()
     RESIDENCY_LAST.clear()
     RESIDENCY_HISTORY.clear()
@@ -2552,9 +3059,15 @@ def main() -> int:
 
     map_path, _symbols = verified_symbol_map_for_rom(rom)
     listing_path = rom.with_suffix(".lst")
-    variable_layout = _parse_rom_variable_layout(
-        listing_path.read_text(encoding="utf-8")
-    )
+    listing_text = listing_path.read_text(encoding="utf-8")
+    variable_layout = _parse_rom_variable_layout(listing_text)
+    rom_symbols = {}
+    for line in listing_text.splitlines():
+        match = re.match(
+            r"; ([A-Z][A-Z0-9_]*) = \$([0-9A-Fa-f]+)\s+\(Constant\)$", line,
+        )
+        if match:
+            rom_symbols[match.group(1)] = int(match.group(2), 16)
     map_sha = hashlib.sha256(map_path.read_bytes()).hexdigest()
     identity_sha = hashlib.sha256(identity_path.read_bytes()).hexdigest()
     nexen_sha = hashlib.sha256(nexen.read_bytes()).hexdigest()
@@ -2622,11 +3135,58 @@ def main() -> int:
             stderr_log=(args.nexen_stderr_log.resolve()
                         if args.nexen_stderr_log else Path("/dev/null")),
         )
+    palette_write_trace: list[dict[str, int]] = []
     try:
         with owned_session as session:
             session.pause()
             session.tool("reset_emulator", {"power": True})
             session.pause()
+            if pcm_capture_path is not None:
+                # The experimental ROM starts this generic diagnostic track
+                # during the first checked live-room transaction. Capture
+                # from cold boot so the recording includes both the loading
+                # interval and subsequent authored route activity.
+                session.record_audio(pcm_capture_path)
+            listing = listing_path.read_text(encoding="utf-8").splitlines()
+            palette_symbols = [
+                int(line.split("= $", 1)[1].split()[0], 16)
+                for line in listing
+                if line.startswith("; SAME_MODE3_LIVE_PALETTE = $")
+                and line.endswith("(Constant)")
+            ]
+            if len(palette_symbols) != 1:
+                raise RuntimeError(
+                    "build listing must contain one SAME_MODE3_LIVE_PALETTE address"
+                )
+            # Watch only the five bytes which differed in the first room-4
+            # capture. This is replay diagnostics, not production engine
+            # behavior; it distinguishes a bad palette install from a later
+            # live write without flooding Nexen with all 768 copy events.
+            palette_offsets = (80, 92, 106, 107, 108)
+            palette_hooks = {
+                session.add_write_hook(palette_symbols[0] + offset): offset
+                for offset in palette_offsets
+            }
+            drain_notifications = session.drain_notifications
+
+            def drain_with_palette_trace(timeout: float = 0.1) -> list[dict[str, Any]]:
+                messages = drain_notifications(timeout=timeout)
+                retained = []
+                for message in messages:
+                    event = message.get("params", message)
+                    offset = palette_hooks.get(int(event.get("handle", -1)))
+                    if offset is None:
+                        retained.append(message)
+                    else:
+                        palette_write_trace.append({
+                            "offset": offset,
+                            "address": int(event.get("address", 0)),
+                            "value": int(event.get("value", 0)),
+                            "frame": int(event.get("frame", -1)),
+                        })
+                return retained
+
+            session.drain_notifications = drain_with_palette_trace
             if ACTIVE_DYNAMIC_RESIDENCY:
                 from validate_scumm_startup42_nexen import mapped_cpu_address_for_rom
 
@@ -2862,7 +3422,7 @@ def main() -> int:
                         break
                     before = int(session.get_state()["frameCount"])
                     advanced = advance_bounded(
-                        session, min(600, settle_deadline - before),
+                        session, min(32, settle_deadline - before),
                         error_hook=override_pc_hook,
                     )
                     if advanced["hook_fired"]:
@@ -3012,11 +3572,25 @@ def main() -> int:
                 },
                 "result_detail": report["room4_intro"]["result"],
             }
+            action_baseline_slots: list[dict[str, Any]] = []
+
+            def remember_submission_baseline(
+                pulse_session: Any, mask: int,
+            ) -> None:
+                if mask != 0x001:
+                    return
+                controller_state = room4_controller_snapshot(pulse_session)
+                if (controller_state["mode"] == 1
+                        and controller_state["talk_active"] == 0):
+                    action_baseline_slots.clear()
+                    action_baseline_slots.extend(_snapshot(pulse_session)["slots"])
+
             def exact_edge_pulse(
                 pulse_session: Any,
                 mask: int,
                 predicate: Any,
             ) -> dict[str, Any]:
+                remember_submission_baseline(pulse_session, mask)
                 return room4_synchronous_input_edge(
                     pulse_session, mask, predicate,
                     poll_interval_frames=2,
@@ -3036,6 +3610,98 @@ def main() -> int:
                     f"checkpoint: {room4_ready_for_input!r}"
                 )
             report["room4_cursor_checkpoint"] = room4_ready_for_input
+            live_room_inputs: dict[str, Any] | None = None
+            record_live_room: Any | None = None
+            if ACTIVE_DYNAMIC_RESIDENCY and ACTIVE_LIVE_ROOM_RESOURCES:
+                explicit = build_identity.get("explicit_environment", {})
+                storage_root = Path(
+                    explicit["SAME_SCUMM_MSU1_PROGRAM_STORAGE_DIR"]
+                )
+                if not storage_root.is_absolute():
+                    storage_root = ROOT / storage_root
+                storage_manifest = json.loads(
+                    (storage_root / "program-storage.json").read_text(encoding="utf-8")
+                )
+                storage_package = storage_root / "scumm-programs.msu"
+                live_inputs = {
+                    "program_storage": storage_manifest,
+                    "program_storage_package": {"path": str(storage_package)},
+                    "rom_path": str(rom),
+                    "build_identity": build_identity,
+                    "rom_symbols": rom_symbols,
+                }
+                from validate_scumm_native_residency_nexen import (
+                    check_live_room_native, drain_and_check_live_room_ppu,
+                    check_live_room_ppu, live_room_ppu_status,
+                    live_room_ppu_generation_ready,
+                    live_room_presentation_diagnostics,
+                    msu_program_diagnostics,
+                )
+                live_room_inputs = live_inputs
+
+                def record_live_room(room_number: int) -> dict[str, Any]:
+                    assert live_room_inputs is not None
+                    consumption = check_live_room_native(
+                        session, live_room_inputs, room_number,
+                    )
+                    target_generation = _u16(
+                        session,
+                        live_room_inputs["rom_symbols"]["SAME_VIDEO_SURFACE_STATE"] + 0x1C,
+                    )
+                    ppu_ready = live_room_ppu_generation_ready(
+                        session, live_room_inputs, target_generation,
+                    )
+                    frame = int(session.get_state()["frameCount"])
+                    resource_metrics = msu_program_diagnostics(
+                        session, live_room_inputs,
+                    )
+                    request_start = _u16(session, 0x7E2FF5)
+                    presentation = {
+                        "frame": frame,
+                        "status": live_room_ppu_status(session, live_room_inputs),
+                        "diagnostics": live_room_presentation_diagnostics(
+                            session, live_room_inputs,
+                        ),
+                        "target_generation": target_generation,
+                        "full_vram_check": (
+                            check_live_room_ppu(
+                                session, live_room_inputs, room_number,
+                                target_generation,
+                            ) if ppu_ready else None
+                        ),
+                        "full_vram_match_checked": ppu_ready,
+                    }
+                    report.setdefault("msu_room_observations", {})[
+                        str(room_number)
+                    ] = {
+                        "external_resource_consumption": consumption,
+                        "load_timing": {
+                            "last_checked_request_start_frame": request_start,
+                            "observed_frame": frame,
+                            "request_to_checkpoint_frames": (
+                                frame - request_start if request_start <= frame else None
+                            ),
+                            "resource_metrics": resource_metrics["room_resource"],
+                            "bytes_read_total": resource_metrics["bytes_read"],
+                            "bytecode_cache_current_bytes": (
+                                resource_metrics["cache_current_bytes"]
+                            ),
+                            "bytecode_cache_peak_bytes": resource_metrics[
+                                "cache_peak_bytes"
+                            ],
+                            "bytecode_page_loads": resource_metrics["cache_loads"],
+                        },
+                        "presentation_at_checkpoint": presentation,
+                    }
+                    return consumption
+
+                report["room4_external_resource_consumption_at_entry"] = (
+                    record_live_room(4)
+                )
+                report["room4_visual_ppu_at_entry"] = drain_and_check_live_room_ppu(
+                    session, live_room_inputs, 4, max_frames=4096
+                )
+            action_baseline_slots.clear()
             replay = replay_room4_open_trapdoor_prefix(
                 session, pulse=exact_edge_pulse
             )
@@ -3051,13 +3717,24 @@ def main() -> int:
                 session, baseline=baseline,
                 max_frames=args.action_frames, rom=rom,
                 symbol_banks=symbols,
+                baseline_slots=list(action_baseline_slots) or None,
+                capture_execution_trace=True,
+                variable_base=variable_layout["base"],
+                variable_count=variable_layout["count"],
+                object_count=variable_layout["object_count"],
             )
-            if ACTIVE_DYNAMIC_RESIDENCY:
+            report["room4_open_dispatch"] = _require_room4_object_dispatch(
+                report["post_action"],
+                before_count=int(
+                    report["room4_ready"].get(
+                        "final", report["room4_ready"]
+                    )["start_object"]["exec_count"]
+                ),
+                verb=3,
+                entry_offset=130,
+            )
+            if ACTIVE_DYNAMIC_RESIDENCY and ACTIVE_LIVE_ROOM_RESOURCES:
                 explicit = build_identity.get("explicit_environment", {})
-                if explicit.get("SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES") != "1":
-                    raise RuntimeError(
-                        "authentic streamed-room acceptance requires live MSU room resources"
-                    )
                 storage_root = Path(
                     explicit["SAME_SCUMM_MSU1_PROGRAM_STORAGE_DIR"]
                 )
@@ -3072,16 +3749,20 @@ def main() -> int:
                     "program_storage_package": {"path": str(storage_package)},
                     "rom_path": str(rom),
                     "build_identity": build_identity,
+                    "rom_symbols": rom_symbols,
                 }
-                from validate_scumm_native_residency_nexen import (
-                    check_live_room_native, drain_and_check_live_room_ppu,
-                )
+                from validate_scumm_native_residency_nexen import check_live_room_native
                 report["room4_external_resource_consumption"] = check_live_room_native(
                     session, inputs, 4
                 )
-                report["room4_visual_ppu"] = drain_and_check_live_room_ppu(
-                    session, inputs, 4, max_frames=4096
-                )
+                if args.room4_final_state_output is not None:
+                    final_state_path = args.room4_final_state_output.resolve()
+                    final_state_path.parent.mkdir(parents=True, exist_ok=True)
+                    report["room4_final_native_state"] = {
+                        "path": str(final_state_path),
+                        "rom_sha256": rom_sha,
+                        "save_result": session.save_state(final_state_path),
+                    }
             if args.continue_trapdoor_use:
                 if report["post_action"]["status"] != "authored-action-quiescent-in-room4":
                     raise RuntimeError(
@@ -3097,20 +3778,44 @@ def main() -> int:
                     mask: int,
                     predicate: Any,
                 ) -> dict[str, Any]:
+                    remember_submission_baseline(pulse_session, mask)
                     return room4_synchronous_input_edge(
                         pulse_session, mask, predicate,
                         poll_interval_frames=2,
                     )
 
+                pre_use_snapshot = _snapshot(session)
+                slots_before_use = pre_use_snapshot["slots"]
+                action_baseline_slots.clear()
                 report["room4_use_action"] = replay_room4_trapdoor_use(
                     session, pulse=exact_use_edge
+                )
+                report["room4_use_action"]["slot_state_before_action"] = slots_before_use
+                report["room4_use_action"]["slot_state_after_action"] = (
+                    _snapshot(session)["slots"]
                 )
                 use_baseline = report["room4_use_action"]["submission_count_before"]
                 report["post_use"] = _observe_action(
                     session, baseline=use_baseline,
                     max_frames=args.action_frames, rom=rom,
-                    symbol_banks=symbols, exact_frame_observation=True,
+                    symbol_banks=symbols,
+                    baseline_slots=list(action_baseline_slots) or None,
+                    capture_execution_trace=True,
+                    variable_base=variable_layout["base"],
+                    variable_count=variable_layout["count"],
+                    object_count=variable_layout["object_count"],
                 )
+                report["room4_use_dispatch"] = _require_room4_object_dispatch(
+                    report["post_use"],
+                    before_count=int(pre_use_snapshot["start_object"]["exec_count"]),
+                    verb=10,
+                    entry_offset=203,
+                )
+                if report["post_use"]["status"] == "action-timeout":
+                    raise RuntimeError(
+                        "bounded room-4 Use action did not settle or transition: "
+                        f"{report['post_use']!r}"
+                    )
                 if report["post_use"]["status"] == "room-transition":
                     report["post_transition_idle"] = _observe_no_input_lifecycle(
                         session, rom=rom, symbol_banks=symbols,
@@ -3118,22 +3823,41 @@ def main() -> int:
                         variable_base=variable_layout["base"],
                         variable_count=variable_layout["count"],
                         object_count=variable_layout["object_count"],
+                        max_frames=args.room_entry_frames,
                     )
                 if args.continue_room5_rope:
                     idle = report.get("post_transition_idle", {})
                     if idle.get("status") != "authored-room-entry-complete":
+                        failure = _room_entry_failure_summary(idle)
+                        failure_path = args.output.resolve().with_name(
+                            args.output.stem + ".failure.json"
+                        )
+                        failure_path.parent.mkdir(parents=True, exist_ok=True)
+                        failure_path.write_text(json.dumps({
+                            "rom_sha256": rom_sha,
+                            "build_identity_sha256": identity_sha,
+                            "failure": failure,
+                        }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                        if args.failure_state_output is not None:
+                            failure_state = args.failure_state_output.resolve()
+                            failure_state.parent.mkdir(parents=True, exist_ok=True)
+                            session.pause()
+                            session.save_state(failure_state)
                         raise RuntimeError(
                             "cannot follow room5 rope before authentic room5 entry "
-                            f"completes: {idle!r}"
+                            f"completes: {failure!r}; diagnostic={failure_path}"
                         )
                     if idle["final"]["room"] != 5:
                         raise RuntimeError(
                             "expected room5 after the room4 action, got "
                             f"{idle['final']!r}"
                         )
+                    if record_live_room is not None:
+                        record_live_room(5)
                     report["room5_rope_source"] = _authentic_room5_rope_source(
                         args.archive.resolve()
                     )
+                    action_baseline_slots.clear()
                     report["room5_rope_action"] = replay_room5_rope_to_room6(
                         session, pulse=exact_edge_pulse
                     )
@@ -3150,7 +3874,12 @@ def main() -> int:
                     report["post_room5_rope"] = _observe_action(
                         session, baseline=room5_baseline,
                         max_frames=args.room5_action_frames, rom=rom,
-                        symbol_banks=symbols, exact_frame_observation=True,
+                        symbol_banks=symbols,
+                        baseline_slots=list(action_baseline_slots) or None,
+                        capture_execution_trace=True,
+                        variable_base=variable_layout["base"],
+                        variable_count=variable_layout["count"],
+                        object_count=variable_layout["object_count"],
                     )
                     if report["post_room5_rope"]["status"] == "room-transition":
                         report["room6_entry"] = _observe_no_input_lifecycle(
@@ -3159,6 +3888,7 @@ def main() -> int:
                             variable_base=variable_layout["base"],
                             variable_count=variable_layout["count"],
                             object_count=variable_layout["object_count"],
+                            max_frames=args.room_entry_frames,
                         )
                 if args.continue_room6_books:
                     entry = report.get("room6_entry", {})
@@ -3172,9 +3902,12 @@ def main() -> int:
                             "expected room6 before the books interaction, got "
                             f"{entry['final']!r}"
                         )
+                    if record_live_room is not None:
+                        record_live_room(6)
                     report["room6_books_source"] = _authentic_room6_books_source(
                         args.archive.resolve()
                     )
+                    action_baseline_slots.clear()
                     report["room6_books_action"] = replay_room6_books_interaction(
                         session, pulse=exact_edge_pulse
                     )
@@ -3191,7 +3924,12 @@ def main() -> int:
                     report["post_room6_books"] = _observe_action(
                         session, baseline=books_baseline,
                         max_frames=args.room6_action_frames, rom=rom,
-                        symbol_banks=symbols, exact_frame_observation=True,
+                        symbol_banks=symbols,
+                        baseline_slots=list(action_baseline_slots) or None,
+                        capture_execution_trace=True,
+                        variable_base=variable_layout["base"],
+                        variable_count=variable_layout["count"],
+                        object_count=variable_layout["object_count"],
                     )
                     dispatches = [
                         {"frame": sample["frame"], "room": sample["room"],
@@ -3290,6 +4028,7 @@ def main() -> int:
                             variable_base=variable_layout["base"],
                             variable_count=variable_layout["count"],
                             object_count=variable_layout["object_count"],
+                            max_frames=args.room_entry_frames,
                         )
                         if report["room7_entry"]["status"] != (
                             "authored-room-entry-complete"
@@ -3300,6 +4039,8 @@ def main() -> int:
                                 f"{report['room7_entry'].get('status')!r}, "
                                 f"final={report['room7_entry'].get('final')!r}"
                             )
+                        if record_live_room is not None:
+                            record_live_room(7)
                         if args.room7_save_state is not None:
                             session.pause()
                             room7_state_path = args.room7_save_state.resolve()
@@ -3317,6 +4058,7 @@ def main() -> int:
                             report["room7_book_source"] = _authentic_room7_book_source(
                                 args.archive.resolve(), identity_path,
                             )
+                            action_baseline_slots.clear()
                             report["room7_book_action"] = (
                                 replay_room7_lost_dialogue_interaction(
                                     session,
@@ -3341,7 +4083,8 @@ def main() -> int:
                                 max_frames=args.room7_action_frames,
                                 rom=rom,
                                 symbol_banks=symbols,
-                                exact_frame_observation=True,
+                                baseline_slots=list(action_baseline_slots) or None,
+                                capture_execution_trace=True,
                                 variable_base=variable_layout["base"],
                                 variable_count=variable_layout["count"],
                                 object_count=variable_layout["object_count"],
@@ -3377,6 +4120,7 @@ def main() -> int:
                                         variable_base=variable_layout["base"],
                                         variable_count=variable_layout["count"],
                                         object_count=variable_layout["object_count"],
+                                        max_frames=args.room_entry_frames,
                                     )
                                 )
                             else:
@@ -3402,6 +4146,7 @@ def main() -> int:
                                 report["room7_cat_source"] = _authentic_room7_cat_source(
                                     args.archive.resolve(), identity_path,
                                 )
+                                action_baseline_slots.clear()
                                 report["room7_cat118_action"] = (
                                     replay_room7_cat_figure_use(
                                         session, object_id=118,
@@ -3425,7 +4170,8 @@ def main() -> int:
                                     max_frames=args.room7_action_frames,
                                     rom=rom,
                                     symbol_banks=symbols,
-                                    exact_frame_observation=True,
+                                    baseline_slots=list(action_baseline_slots) or None,
+                                    capture_execution_trace=True,
                                     variable_base=variable_layout["base"],
                                     variable_count=variable_layout["count"],
                                     object_count=variable_layout["object_count"],
@@ -3454,6 +4200,7 @@ def main() -> int:
                                         "state (V214=1, V217=1, V218=0): "
                                         f"{context_after_first_cat!r}"
                                     )
+                                action_baseline_slots.clear()
                                 report["room7_cat119_action"] = (
                                     replay_room7_cat_figure_use(
                                         session, object_id=119,
@@ -3477,7 +4224,8 @@ def main() -> int:
                                     max_frames=args.room7_action_frames,
                                     rom=rom,
                                     symbol_banks=symbols,
-                                    exact_frame_observation=True,
+                                    baseline_slots=list(action_baseline_slots) or None,
+                                    capture_execution_trace=True,
                                     variable_base=variable_layout["base"],
                                     variable_count=variable_layout["count"],
                                     object_count=variable_layout["object_count"],
@@ -3547,6 +4295,8 @@ def main() -> int:
                                         object_count=variable_layout["object_count"],
                                     )
                                 )
+                                if record_live_room is not None:
+                                    record_live_room(3)
             report["final_snapshot"] = _snapshot(session)
             if args.continue_room7_cats:
                 final = report["final_snapshot"]
@@ -3612,7 +4362,27 @@ def main() -> int:
                     "selector_alias_events": 0,
                     "invalid_generation_dispatches": 0,
                 }
+            report["room4_palette_write_trace"] = palette_write_trace
+            if pcm_capture_path is not None:
+                report["pcm_capture_stop"] = session.stop_audio()
             report["result"] = "pass"
+        if pcm_capture_path is not None and pcm_capture_path.is_file():
+            from validate_scumm_native_residency_nexen import pcm_capture_evidence
+            transitions = report.get("room_transitions", [])
+            first_external_room_frame = next(
+                (int(item["frame"]) for item in transitions
+                 if int(item.get("room", 0)) != 0), 0,
+            )
+            report["pcm_data_concurrency"] = pcm_capture_evidence(
+                pcm_capture_path,
+                active_start_frame=first_external_room_frame,
+                transition_frames=[
+                    int(item["frame"]) for item in transitions
+                    if int(item.get("room", 0)) != 0
+                ],
+            )
+            report["pcm_data_concurrency"]["track"] = pcm_track
+            report["pcm_data_concurrency"]["capture_path"] = str(pcm_capture_path)
     except Exception as exc:
         # McpSession.__enter__ can fail after Popen succeeds, before Python's
         # with-statement owns cleanup. Reap only the process this runner started.
@@ -3626,6 +4396,7 @@ def main() -> int:
                 process.wait(timeout=5)
         report["result"] = "fail"
         report["error"] = f"{type(exc).__name__}: {exc}"
+        report["room4_palette_write_trace"] = palette_write_trace
         if ACTIVE_DYNAMIC_RESIDENCY:
             # Keep the event-time ownership evidence even when a bounded
             # replay stops at an explicit engine/resource error.  This is

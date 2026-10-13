@@ -399,7 +399,7 @@ else
     if [[ "${SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT:-0}" == "1" ]]; then
         M23A_BUILD="${SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR:-$ROOT/build/fate-dynamic-residency}"
     else
-        M23A_BUILD="$ROOT/build/m23a-rooms"
+        M23A_BUILD="${SAME_SCUMM_M23A_BUILD_DIR:-$ROOT/build/m23a-rooms}"
     fi
     mkdir -p "$M23A_BUILD/authentic" "$M23A_BUILD/lifecycle" "$M23A_BUILD/segments"
     if [[ "$M25A_CONTENT_PROFILE" == "1" ]]; then
@@ -966,6 +966,8 @@ else
     if [[ "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" == "1" ]]; then
         ROOM_GENERATOR_ARGS+=(--far-programs --dynamic-program-residency
             --far-validator-output runtime/snes/generated/scumm_v5_room_validator_far.inc.pasm
+            --native-directory-output "$M23A_BUILD/scumm_v5_native_program_directory.json"
+            --native-directory-include "$M23A_BUILD/scumm_v5_native_program_directory.inc.pasm"
             --reserved-bank 9 --reserved-bank 83)
     elif [[ "${SAME_SCUMM_FAR_PROGRAMS:-0}" == "1" ]]; then
         # Keep the legacy global selector ABI while placing selected source

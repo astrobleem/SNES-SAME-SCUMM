@@ -40,7 +40,7 @@ SCUMM_LIVE_ROOM_ACTIVE_VISUAL_VALID = SAME_SCUMM_LIVE_ROOM_CONTROL+$21
 SCUMM_LIVE_ROOM_OLD_BUNDLE_RELEASED = SAME_SCUMM_LIVE_ROOM_CONTROL+$22
 SCUMM_LIVE_ROOM_MAGIC = $004C ; 'SC5LIVE' prefix checked bytewise
 SCUMM_LIVE_ROOM_HEADER_SIZE = $0052
-SCUMM_LIVE_ROOM_MAX_SIZE = $0A00
+SCUMM_LIVE_ROOM_MAX_SIZE = SAME_SCUMM_LIVE_ROOM_PENDING_CAPACITY
 SCUMM_LIVE_ROOM_STAGE_COOKED = $00
 SCUMM_LIVE_ROOM_STAGE_METADATA = $01
 SCUMM_LIVE_ROOM_STAGE_PREFLIGHT_READY = $02
@@ -94,6 +94,8 @@ ScummV5_MsuProgram_Reset_Far:
     sta.l SAME_SCUMM_MSU_CACHE_PAGE_START1
     sta.l SAME_SCUMM_MSU_CACHE_PAGE_START2
     sta.l SAME_SCUMM_MSU_PAGE_BODY_LENGTH
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
+    sta.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
     sep #$20
     .a8
     lda #$00
@@ -158,6 +160,13 @@ ScummV5_MsuProgram_Reset_Far:
     sta.l SAME_SCUMM_MSU_ROOM_TEMP
     sep #$20
     .a8
+    lda #$FF
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR0
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT0
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR1
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT1
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR2
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT2
     sta.l SAME_SCUMM_MSU_PROCESS_LAST_STATUS
     sta.l SAME_SCUMM_MSU_FRAME_STAGE
     ldx #$0000
@@ -215,8 +224,28 @@ ScummV5_MsuProgram_Reset_Far__failed:
 ; Carry set only after the provider has authenticated the package prefix and
 ; reached READY/READ_OK. Initialization and body transfer are frame-driven.
 ScummV5_MsuProgram_FrameReady_Far:
+    ; The SAME provider has one serialized checked-read cursor. Reconcile a
+    ; completed executable page before the room state machine can start its
+    ; next metadata/palette/pixel read; otherwise a room read could inherit
+    ; the executable cache's pending destination/identity.
+    jsl ScummV5_MsuProgram_ReconcileRead_Far
+    bcc ScummV5_MsuProgram_FrameReady_Far__reconciled
+    jml ScummV5_MsuProgram_FrameReady_Far__failed
+ScummV5_MsuProgram_FrameReady_Far__reconciled:
+    .a8
+    lda #$00
+    jsl ScummV5_MsuProgram_ValidatePageWaiter_Far
+    lda #$01
+    jsl ScummV5_MsuProgram_ValidatePageWaiter_Far
+    .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+    lda #$02
+    jsl ScummV5_MsuProgram_ValidatePageWaiter_Far
+    .endif
     jsl ScummV5_MsuRoom_Service_Far
-    bcs ScummV5_MsuProgram_FrameReady_Far__provider
+    bcc ScummV5_MsuProgram_FrameReady_Far__room_result
+    jml ScummV5_MsuProgram_FrameReady_Far__provider
+ScummV5_MsuProgram_FrameReady_Far__room_result:
+    .a8
     cmp #$FF
     beq ScummV5_MsuProgram_FrameReady_Far__room_failed
 ScummV5_MsuProgram_FrameReady_Far__room_failed:
@@ -229,6 +258,293 @@ ScummV5_MsuProgram_FrameReady_Far__room_failed:
     sta.l SAME_SCUMM_STATUS
 ScummV5_MsuProgram_FrameReady_Far__not_ready:
     clc
+    rtl
+
+; Completion holds are per page. A validated page remains protected until its
+; exact WAIT_RESOURCE owner resumes; unrelated reads can use the other windows.
+; Retired or rebound owners release only the hold associated with that page.
+ScummV5_MsuProgram_ValidatePageWaiter_Far:
+    php
+    phx
+    sep #$20
+    .a8
+    sep #$10
+    .i8
+    cmp #$00
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__page0
+    cmp #$01
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__page1
+    .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+    cmp #$02
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__page2
+    .endif
+    jmp ScummV5_MsuProgram_ValidatePageWaiter_Far__done
+ScummV5_MsuProgram_ValidatePageWaiter_Far__page0:
+    .a8
+    lda.l SAME_SCUMM_MSU_CACHE_PINS0
+    and #$80
+    bne ScummV5_MsuProgram_ValidatePageWaiter_Far__page0_held
+    jmp ScummV5_MsuProgram_ValidatePageWaiter_Far__done
+ScummV5_MsuProgram_ValidatePageWaiter_Far__page0_held:
+    lda.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT0
+    jmp ScummV5_MsuProgram_ValidatePageWaiter_Far__check0
+ScummV5_MsuProgram_ValidatePageWaiter_Far__page1:
+    .a8
+    lda.l SAME_SCUMM_MSU_CACHE_PINS1
+    and #$80
+    bne ScummV5_MsuProgram_ValidatePageWaiter_Far__page1_held
+    jmp ScummV5_MsuProgram_ValidatePageWaiter_Far__done
+ScummV5_MsuProgram_ValidatePageWaiter_Far__page1_held:
+    lda.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT1
+    jmp ScummV5_MsuProgram_ValidatePageWaiter_Far__check1
+.if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+ScummV5_MsuProgram_ValidatePageWaiter_Far__page2:
+    .a8
+    lda.l SAME_SCUMM_MSU_CACHE_PINS2
+    and #$80
+    bne ScummV5_MsuProgram_ValidatePageWaiter_Far__page2_held
+    jmp ScummV5_MsuProgram_ValidatePageWaiter_Far__done
+ScummV5_MsuProgram_ValidatePageWaiter_Far__page2_held:
+    lda.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT2
+    jmp ScummV5_MsuProgram_ValidatePageWaiter_Far__check2
+.endif
+ScummV5_MsuProgram_ValidatePageWaiter_Far__check0:
+    .a8
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_MsuProgram_ValidatePageWaiter_Far__drop0
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__drop0
+    cmp #SCUMM_VM_STOPPED
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__drop0
+    cmp #SCUMM_VM_ERROR
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__drop0
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    cmp.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR0
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__done
+ScummV5_MsuProgram_ValidatePageWaiter_Far__drop0:
+    .a8
+    lda #$00
+    jsl ScummV5_MsuProgram_ClearPageWaiter_Far
+    jmp ScummV5_MsuProgram_ValidatePageWaiter_Far__done
+ScummV5_MsuProgram_ValidatePageWaiter_Far__check1:
+    .a8
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_MsuProgram_ValidatePageWaiter_Far__drop1
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__drop1
+    cmp #SCUMM_VM_STOPPED
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__drop1
+    cmp #SCUMM_VM_ERROR
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__drop1
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    cmp.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR1
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__done
+ScummV5_MsuProgram_ValidatePageWaiter_Far__drop1:
+    .a8
+    lda #$01
+    jsl ScummV5_MsuProgram_ClearPageWaiter_Far
+    jmp ScummV5_MsuProgram_ValidatePageWaiter_Far__done
+.if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+ScummV5_MsuProgram_ValidatePageWaiter_Far__check2:
+    .a8
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_MsuProgram_ValidatePageWaiter_Far__drop2
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__drop2
+    cmp #SCUMM_VM_STOPPED
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__drop2
+    cmp #SCUMM_VM_ERROR
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__drop2
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    cmp.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR2
+    beq ScummV5_MsuProgram_ValidatePageWaiter_Far__done
+ScummV5_MsuProgram_ValidatePageWaiter_Far__drop2:
+    .a8
+    lda #$02
+    jsl ScummV5_MsuProgram_ClearPageWaiter_Far
+.endif
+ScummV5_MsuProgram_ValidatePageWaiter_Far__done:
+    rep #$10
+    .i16
+    plx
+    plp
+    rtl
+
+; A=cache-page index. Preserve the low execution-pin count while dropping the
+; completion bit and its owner tuple.
+ScummV5_MsuProgram_ClearPageWaiter_Far:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_ClearPageWaiter_Far__page0
+    cmp #$01
+    beq ScummV5_MsuProgram_ClearPageWaiter_Far__page1
+    .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+    cmp #$02
+    beq ScummV5_MsuProgram_ClearPageWaiter_Far__page2
+    .endif
+    rtl
+ScummV5_MsuProgram_ClearPageWaiter_Far__page0:
+    .a8
+    lda.l SAME_SCUMM_MSU_CACHE_PINS0
+    and #$7F
+    sta.l SAME_SCUMM_MSU_CACHE_PINS0
+    lda #$FF
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR0
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT0
+    rtl
+ScummV5_MsuProgram_ClearPageWaiter_Far__page1:
+    .a8
+    lda.l SAME_SCUMM_MSU_CACHE_PINS1
+    and #$7F
+    sta.l SAME_SCUMM_MSU_CACHE_PINS1
+    lda #$FF
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR1
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT1
+    rtl
+.if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+ScummV5_MsuProgram_ClearPageWaiter_Far__page2:
+    .a8
+    lda.l SAME_SCUMM_MSU_CACHE_PINS2
+    and #$7F
+    sta.l SAME_SCUMM_MSU_CACHE_PINS2
+    lda #$FF
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR2
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT2
+    rtl
+.endif
+
+; A=page. Only the exact requesting activation releases the completion hold.
+ScummV5_MsuProgram_ReleasePageWaiter_Far:
+    php
+    phx
+    sep #$20
+    .a8
+    sep #$10
+    .i8
+    cmp #$00
+    beq ScummV5_MsuProgram_ReleasePageWaiter_Far__page0
+    cmp #$01
+    beq ScummV5_MsuProgram_ReleasePageWaiter_Far__page1
+    .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+    cmp #$02
+    beq ScummV5_MsuProgram_ReleasePageWaiter_Far__page2
+    .endif
+    jmp ScummV5_MsuProgram_ReleasePageWaiter_Far__done
+ScummV5_MsuProgram_ReleasePageWaiter_Far__page0:
+    .a8
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    cmp.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT0
+    bne ScummV5_MsuProgram_ReleasePageWaiter_Far__done
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    cmp.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR0
+    bne ScummV5_MsuProgram_ReleasePageWaiter_Far__done
+    lda #$00
+    jsl ScummV5_MsuProgram_ClearPageWaiter_Far
+    jmp ScummV5_MsuProgram_ReleasePageWaiter_Far__done
+ScummV5_MsuProgram_ReleasePageWaiter_Far__page1:
+    .a8
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    cmp.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT1
+    bne ScummV5_MsuProgram_ReleasePageWaiter_Far__done
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    cmp.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR1
+    bne ScummV5_MsuProgram_ReleasePageWaiter_Far__done
+    lda #$01
+    jsl ScummV5_MsuProgram_ClearPageWaiter_Far
+    jmp ScummV5_MsuProgram_ReleasePageWaiter_Far__done
+.if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+ScummV5_MsuProgram_ReleasePageWaiter_Far__page2:
+    .a8
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    cmp.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT2
+    bne ScummV5_MsuProgram_ReleasePageWaiter_Far__done
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    cmp.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR2
+    bne ScummV5_MsuProgram_ReleasePageWaiter_Far__done
+    lda #$02
+    jsl ScummV5_MsuProgram_ClearPageWaiter_Far
+.endif
+ScummV5_MsuProgram_ReleasePageWaiter_Far__done:
+    rep #$10
+    .i16
+    plx
+    plp
+    rtl
+
+; A=cache-page index. Associate a provider request with its C4 owner.
+ScummV5_MsuProgram_RecordPageWaiter_Far:
+    php
+    phx
+    sep #$20
+    .a8
+    sep #$10
+    .i8
+    cmp #$00
+    beq ScummV5_MsuProgram_RecordPageWaiter_Far__page0
+    cmp #$01
+    beq ScummV5_MsuProgram_RecordPageWaiter_Far__page1
+    .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+    cmp #$02
+    beq ScummV5_MsuProgram_RecordPageWaiter_Far__page2
+    .endif
+    jmp ScummV5_MsuProgram_RecordPageWaiter_Far__done
+ScummV5_MsuProgram_RecordPageWaiter_Far__page0:
+    .a8
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT0
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_MsuProgram_RecordPageWaiter_Far__invalid0
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR0
+    jmp ScummV5_MsuProgram_RecordPageWaiter_Far__done
+ScummV5_MsuProgram_RecordPageWaiter_Far__invalid0:
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR0
+    jmp ScummV5_MsuProgram_RecordPageWaiter_Far__done
+ScummV5_MsuProgram_RecordPageWaiter_Far__page1:
+    .a8
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT1
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_MsuProgram_RecordPageWaiter_Far__invalid1
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR1
+    jmp ScummV5_MsuProgram_RecordPageWaiter_Far__done
+ScummV5_MsuProgram_RecordPageWaiter_Far__invalid1:
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR1
+    jmp ScummV5_MsuProgram_RecordPageWaiter_Far__done
+.if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
+ScummV5_MsuProgram_RecordPageWaiter_Far__page2:
+    .a8
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT2
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_MsuProgram_RecordPageWaiter_Far__invalid2
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR2
+    jmp ScummV5_MsuProgram_RecordPageWaiter_Far__done
+ScummV5_MsuProgram_RecordPageWaiter_Far__invalid2:
+    .a8
+    lda #$FF
+    sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR2
+.endif
+ScummV5_MsuProgram_RecordPageWaiter_Far__done:
+    rep #$10
+    .i16
+    plx
+    plp
     rtl
 ScummV5_MsuProgram_FrameReady_Far__provider:
     sep #$20
@@ -468,6 +784,12 @@ ScummV5_MsuRoom_Start_Far__legacy:
     clc
     rtl
 ScummV5_MsuRoom_Start_Far__provider_idle:
+    .a8
+    lda.l SAME_SCUMM_MSU_CACHE_REQUEST_SLOT
+    cmp #$FF
+    beq ScummV5_MsuRoom_Start_Far__no_program_request
+    jmp ScummV5_MsuRoom_Start_Far__window_busy
+ScummV5_MsuRoom_Start_Far__no_program_request:
     .a8
     lda.l SAME_SCUMM_MSU_CACHE_PINS0
     beq ScummV5_MsuRoom_Start_Far__window_free
@@ -774,7 +1096,7 @@ ScummV5_MsuProgram_FindPage_Far:
     rep #$30
     .a16
     .i16
-    lda.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
     cmp #SCUMM_MSU1_PROGRAM_PAGE_INDEX_COUNT
     bcc ScummV5_MsuProgram_FindPage_Far__id_ok
     jmp ScummV5_MsuProgram_FindPage_Far__not_found
@@ -834,7 +1156,7 @@ ScummV5_MsuProgram_FindPage_Far__terminal_candidate:
     lda.l SAME_SCUMM_MSU_PAGE_SCAN_COUNT
     cmp #$0001
     bne ScummV5_MsuProgram_FindPage_Far__next
-    lda.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
     asl
     sta.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
     asl
@@ -994,7 +1316,7 @@ ScummV5_MsuProgram_EnsureSelected_Far__selector_valid:
     rep #$20
     .a16
     lda.l SAME_SCUMM_RESIDENT_EXPECTED_ID
-    sta.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
     lda.l SAME_SCUMM_PC
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
     jsl ScummV5_MsuProgram_FindPage_Far
@@ -1014,7 +1336,7 @@ ScummV5_MsuProgram_EnsureSelected_Far__read_reconciled:
     rep #$20
     .a16
     lda.l SAME_SCUMM_MSU_CACHE_ID0
-    cmp.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
+    cmp.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
     bne ScummV5_MsuProgram_EnsureSelected_Far__check_slot1
     lda.l SAME_SCUMM_MSU_CACHE_PAGE_START0
     cmp.l SAME_SCUMM_MSU_PAGE_REQUEST_START
@@ -1035,7 +1357,7 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot1_present:
     rep #$20
     .a16
     lda.l SAME_SCUMM_MSU_CACHE_ID1
-    cmp.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
+    cmp.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
     beq ScummV5_MsuProgram_EnsureSelected_Far__slot1_id_match
     .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
     jml ScummV5_MsuProgram_EnsureSelected_Far__check_slot2
@@ -1062,7 +1384,7 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot2_present:
     rep #$20
     .a16
     lda.l SAME_SCUMM_MSU_CACHE_ID2
-    cmp.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
+    cmp.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
     beq ScummV5_MsuProgram_EnsureSelected_Far__slot2_id_match
     jml ScummV5_MsuProgram_EnsureSelected_Far__find_slot
 ScummV5_MsuProgram_EnsureSelected_Far__slot2_id_match:
@@ -1100,7 +1422,10 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot2_match:
     .a8
     lda.l SAME_SCUMM_MSU_CACHE_STATE2
     cmp #SCUMM_MSU_CACHE_READY
-    beq ScummV5_MsuProgram_EnsureSelected_Far__slot2_ready
+    bne ScummV5_MsuProgram_EnsureSelected_Far__slot2_not_ready
+    jml ScummV5_MsuProgram_EnsureSelected_Far__slot2_ready
+ScummV5_MsuProgram_EnsureSelected_Far__slot2_not_ready:
+    .a8
     cmp #SCUMM_MSU_CACHE_FAILED
     bne ScummV5_MsuProgram_EnsureSelected_Far__slot2_pending
     jmp ScummV5_MsuProgram_EnsureSelected_Far__provider_failed
@@ -1110,6 +1435,8 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot2_pending:
 ScummV5_MsuProgram_EnsureSelected_Far__slot0_ready:
     .a8
     lda #$00
+    jsl ScummV5_MsuProgram_ReleasePageWaiter_Far
+    lda #$00
     jsl ScummV5_MsuProgram_TouchSlot_Far
     lda #$00
     plp
@@ -1117,6 +1444,8 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot0_ready:
     rtl
 ScummV5_MsuProgram_EnsureSelected_Far__slot1_ready:
     .a8
+    lda #$01
+    jsl ScummV5_MsuProgram_ReleasePageWaiter_Far
     lda #$01
     jsl ScummV5_MsuProgram_TouchSlot_Far
     lda #$01
@@ -1126,6 +1455,8 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot1_ready:
     .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
 ScummV5_MsuProgram_EnsureSelected_Far__slot2_ready:
     .a8
+    lda #$02
+    jsl ScummV5_MsuProgram_ReleasePageWaiter_Far
     lda #$02
     jsl ScummV5_MsuProgram_TouchSlot_Far
     lda #$02
@@ -1323,9 +1654,15 @@ ScummV5_MsuProgram_EnsureSelected_Far__choose2:
     .endif
 ScummV5_MsuProgram_EnsureSelected_Far__chosen:
     .a8
-    ; Validate the indexed generated record and enforce the exact WRAM bound.
+    ; CACHE_REQUEST_ID belongs to the single provider transfer until its
+    ; request slot is reconciled. Only replace it after __find_slot observed
+    ; that the provider is idle; PAGE_REQUEST_ID is per-activation lookup
+    ; scratch and may change while another checked read is in flight.
     rep #$20
     .a16
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
+    sta.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
+    ; Validate the indexed generated record and enforce the exact WRAM bound.
     lda.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
     cmp #SCUMM_MSU1_PROGRAM_COUNT
     bcc ScummV5_MsuProgram_EnsureSelected_Far__directory_id_valid
@@ -1378,35 +1715,61 @@ ScummV5_MsuProgram_EnsureSelected_Far__directory_id_valid:
     ; the page CRC/range into the fixed 2 KiB cache window.
     rep #$20
     .a16
+    ; REQUEST_LENGTH+2 is already the complete upper u16. A second 16-bit
+    ; read at +3 would overlap the following destination field and reject
+    ; otherwise valid pages whenever that destination is nonzero.
     lda.l SAME_MSU1_REQUEST_LENGTH+2
-    ora.l SAME_MSU1_REQUEST_LENGTH+3
     beq ScummV5_MsuProgram_EnsureSelected_Far__body_length_high_zero
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_STREAM_LENGTH_SUBSITE
     jmp ScummV5_MsuProgram_EnsureSelected_Far__bad_length
 ScummV5_MsuProgram_EnsureSelected_Far__body_length_high_zero:
     lda.l SAME_MSU1_REQUEST_LENGTH
     bne ScummV5_MsuProgram_EnsureSelected_Far__body_length_nonzero
+    sep #$20
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_STREAM_LENGTH_SUBSITE
     jmp ScummV5_MsuProgram_EnsureSelected_Far__bad_length
 ScummV5_MsuProgram_EnsureSelected_Far__body_length_nonzero:
     sta.l SAME_SCUMM_MSU_PAGE_BODY_LENGTH
     lda.l SAME_SCUMM_MSU_PAGE_REQUEST_LENGTH
     bne ScummV5_MsuProgram_EnsureSelected_Far__page_length_nonzero
+    sep #$20
+    .a8
+    lda #$03
+    sta.l SAME_SCUMM_STREAM_LENGTH_SUBSITE
     jmp ScummV5_MsuProgram_EnsureSelected_Far__bad_length
 ScummV5_MsuProgram_EnsureSelected_Far__page_length_nonzero:
     .a16
     cmp #SAME_SCUMM_MSU_PROGRAM_CACHE_SLOT_SIZE+1
     bcc ScummV5_MsuProgram_EnsureSelected_Far__length_in_bounds
+    sep #$20
+    .a8
+    lda #$04
+    sta.l SAME_SCUMM_STREAM_LENGTH_SUBSITE
     jmp ScummV5_MsuProgram_EnsureSelected_Far__bad_length
 ScummV5_MsuProgram_EnsureSelected_Far__length_in_bounds:
     ; Reject a generated page that escapes its canonical ProgramUnit body.
     clc
     adc.l SAME_SCUMM_MSU_PAGE_REQUEST_START
     bcc ScummV5_MsuProgram_EnsureSelected_Far__page_add_ok
+    sep #$20
+    .a8
+    lda #$05
+    sta.l SAME_SCUMM_STREAM_LENGTH_SUBSITE
     jmp ScummV5_MsuProgram_EnsureSelected_Far__bad_length
 ScummV5_MsuProgram_EnsureSelected_Far__page_add_ok:
     .a16
     cmp.l SAME_SCUMM_MSU_PAGE_BODY_LENGTH
     bcc ScummV5_MsuProgram_EnsureSelected_Far__page_body_bounds_ok
     beq ScummV5_MsuProgram_EnsureSelected_Far__page_body_bounds_ok
+    sep #$20
+    .a8
+    lda #$06
+    sta.l SAME_SCUMM_STREAM_LENGTH_SUBSITE
     jmp ScummV5_MsuProgram_EnsureSelected_Far__bad_length
 ScummV5_MsuProgram_EnsureSelected_Far__page_body_bounds_ok:
     .a16
@@ -1598,6 +1961,8 @@ ScummV5_MsuProgram_EnsureSelected_Far__install0_empty:
     sta.l SAME_SCUMM_MSU_CACHE_REQUEST_SLOT
 ScummV5_MsuProgram_EnsureSelected_Far__request:
     .a8
+    lda.l SAME_SCUMM_MSU_CACHE_REQUEST_SLOT
+    jsl ScummV5_MsuProgram_RecordPageWaiter_Far
     lda #$00
     sta.l SAME_MSU1_FLAGS
     rep #$20
@@ -1667,6 +2032,21 @@ ScummV5_MsuProgram_EnsureSelected_Far__bad_length:
     sep #$20
     .a8
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; Preserve the compare operands in the first-error diagnostic union. These
+    ; bytes overlap the selector-zero witness and are interpreted by error
+    ; site, so a page-length failure keeps its operands at the first latch.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_START
+    sta.l SAME_SCUMM_STREAM_LENGTH_PAGE_START
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_LENGTH
+    sta.l SAME_SCUMM_STREAM_LENGTH_PAGE_SIZE
+    lda.l SAME_SCUMM_MSU_PAGE_BODY_LENGTH
+    sta.l SAME_SCUMM_STREAM_LENGTH_BODY_SIZE
+    lda.l SAME_MSU1_REQUEST_LENGTH+2
+    sta.l SAME_SCUMM_STREAM_LENGTH_REQUEST_HIGH
+    sep #$20
+    .a8
     lda #$14
     jsl ScummV5_Stream_RecordErrorSite_FarEntry
     .a8
@@ -1707,7 +2087,7 @@ ScummV5_MsuProgram_EnsureSelected_Far__report_error:
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     rep #$20
     .a16
-    lda.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_ID
     lda.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_PC
@@ -1725,16 +2105,10 @@ ScummV5_MsuProgram_EnsureSelected_Far__report_error:
     clc
     rtl
 ScummV5_MsuProgram_EnsureSelected_Far__exhausted:
-    sep #$20
-    .a8
-    lda #SCUMM_ERR_RESIDENCY_EXHAUSTED
-    sta.l SAME_SCUMM_ERROR
-    rep #$20
-    .a16
-    lda #$FFFF
-    plp
-    clc
-    rtl
+    ; All cache pages can be temporarily pinned by nested/parallel activations.
+    ; This is back-pressure, not canonical selector-pool exhaustion: leave the
+    ; logical PC untouched and retry on a later frame after a page is released.
+    jml ScummV5_MsuProgram_EnsureSelected_Far__pending
 ScummV5_MsuProgram_EnsureSelected_Far__pending:
     rep #$20
     .a16
@@ -1942,6 +2316,9 @@ ScummV5_MsuProgram_ReconcileRead_Far__latency_done:
     jmp ScummV5_MsuProgram_ReconcileRead_Far__error
 ScummV5_MsuProgram_ReconcileRead_Far__ready1:
     .a8
+    lda.l SAME_SCUMM_MSU_CACHE_PINS1
+    ora #$80 ; completion/waiter hold, released when a matching activation resumes
+    sta.l SAME_SCUMM_MSU_CACHE_PINS1
     lda #SCUMM_MSU_CACHE_READY
     sta.l SAME_SCUMM_MSU_CACHE_STATE1
     rep #$20
@@ -1951,6 +2328,9 @@ ScummV5_MsuProgram_ReconcileRead_Far__ready1:
     .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
 ScummV5_MsuProgram_ReconcileRead_Far__ready2:
     .a8
+    lda.l SAME_SCUMM_MSU_CACHE_PINS2
+    ora #$80
+    sta.l SAME_SCUMM_MSU_CACHE_PINS2
     lda #SCUMM_MSU_CACHE_READY
     sta.l SAME_SCUMM_MSU_CACHE_STATE2
     rep #$20
@@ -1960,6 +2340,9 @@ ScummV5_MsuProgram_ReconcileRead_Far__ready2:
     .endif
 ScummV5_MsuProgram_ReconcileRead_Far__ready0:
     .a8
+    lda.l SAME_SCUMM_MSU_CACHE_PINS0
+    ora #$80
+    sta.l SAME_SCUMM_MSU_CACHE_PINS0
     lda #SCUMM_MSU_CACHE_READY
     sta.l SAME_SCUMM_MSU_CACHE_STATE0
     rep #$20
@@ -2012,6 +2395,16 @@ ScummV5_MsuProgram_ReconcileRead_Far__error0:
     sta.l SAME_SCUMM_MSU_CACHE_STATE0
 ScummV5_MsuProgram_ReconcileRead_Far__failed_count:
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; Preserve the canonical owner and logical byte PC for the first failed
+    ; checked page before error unwind can replace the active cache context.
+    ; The provider cursor may already have moved on, so use the request
+    ; identity/PC captured when this page was selected.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
+    sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_ID
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
+    sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_PC
     sep #$20
     .a8
     lda #$16
@@ -2025,6 +2418,8 @@ ScummV5_MsuProgram_ReconcileRead_Far__failed_count:
     sta.l SAME_SCUMM_MSU_CACHE_FAILURES
     sep #$20
     .a8
+    lda.l SAME_SCUMM_MSU_CACHE_REQUEST_SLOT
+    jsl ScummV5_MsuProgram_ClearPageWaiter_Far
     lda #$FF
     sta.l SAME_SCUMM_MSU_CACHE_REQUEST_SLOT
     lda #SCUMM_ERR_RESOURCE
@@ -2184,6 +2579,21 @@ ScummV5_MsuProgram_FetchByte_Far__range16:
 ScummV5_MsuProgram_FetchByte_Far__stale:
     .a8
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; X is still the logical source PC and the active cache ID is canonical.
+    ; Record them before returning the explicit resource error; selector or
+    ; page-generation failures must not lose their source-bound diagnosis.
+    lda.l SAME_SCUMM_STREAM_ERROR_SITE
+    bne ScummV5_MsuProgram_FetchByte_Far__stale_site_recorded
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_ACTIVE_ID
+    sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_ID
+    txa
+    sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_PC
+    sep #$20
+    .a8
+ScummV5_MsuProgram_FetchByte_Far__stale_site_recorded:
+    .a8
     lda #$17
     jsl ScummV5_Stream_RecordErrorSite_FarEntry
     .a8
@@ -2220,6 +2630,11 @@ ScummV5_MsuProgram_Leave_Far__active:
     .a8
     dec
     sta.l SAME_SCUMM_MSU_EXEC_DEPTH
+    ; The depth is a byte index.  Leave may be entered with a word-sized X
+    ; carrying an unrelated source PC; clear its high byte before reading the
+    ; matching saved parent cache context.
+    sep #$10
+    .i8
     tax
     lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
     beq ScummV5_MsuProgram_Leave_Far__unpin0

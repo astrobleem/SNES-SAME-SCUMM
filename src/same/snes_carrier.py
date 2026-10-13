@@ -105,6 +105,23 @@ def _validate_layout(layout: dict[str, Any]) -> tuple[MemoryRegion, ...]:
     for left, right in zip(occupied, occupied[1:]):
         if left[1] > right[0]:
             raise ValueError(f"backend allocations overlap: {left[2]} and {right[2]}")
+    expected_allocations = {
+        "mode3_control": (0x000, 0x040),
+        "video_surface_state": (0x040, 0x044),
+        "live_room_palette_stage": (0x084, 0x300),
+        "live_room_control": (0x384, 0x040),
+        "live_room_pending": (0x3C4, 0xC3C),
+    }
+    for name, expected_bounds in expected_allocations.items():
+        allocation = subregions.get(name)
+        if not isinstance(allocation, dict):
+            raise ValueError(f"backend allocation {name} is missing")
+        actual_bounds = (allocation.get("offset"), allocation.get("bytes"))
+        if actual_bounds != expected_bounds:
+            raise ValueError(
+                f"backend allocation {name} differs: {actual_bounds!r} != "
+                f"{expected_bounds!r}"
+            )
     # The SCUMM live-room personality owns the mode-3 layout's explicitly
     # reserved 4 KiB tail. It must never overlap active palette/work state.
     live_room = layout.get("live_room_active")
@@ -134,9 +151,9 @@ def _validate_layout(layout: dict[str, Any]) -> tuple[MemoryRegion, ...]:
     ):
         raise ValueError("live-room active metadata must declare its reserved Mode-3 alias")
     pending = subregions.get("live_room_pending")
-    if pending != {"offset": 0x600, "bytes": 0xA00,
+    if pending != {"offset": 0x3C4, "bytes": 0xC3C,
                    "owner": "SCUMM live-room incoming metadata transaction"}:
-        raise ValueError("live-room pending metadata must use its audited 2.5 KiB backend allocation")
+        raise ValueError("live-room pending metadata must use its packed 3,132-byte backend allocation")
     return tuple(ordered)
 
 

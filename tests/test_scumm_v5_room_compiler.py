@@ -669,6 +669,31 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
             self.assertIn("room.1/object.100/OBCD", identities)
             self.assertEqual(len(set(identities.values())), len(identities))
 
+            # The ROM-backed controller/verb services must be generated from
+            # the same dense room records as the room directory.  The live
+            # resource path has its own adapter; this assertion prevents the
+            # static path from silently emitting empty interaction tables.
+            tables = (temp / "tables.pasm").read_text()
+            data_tables = (temp / "data.pasm").read_text()
+            generated = tables + data_tables
+            self.assertIn("ScummV5_Object_HitTest_Far__record_0:", generated)
+            self.assertIn("ScummV5_Verb_First_Far__record_0:", generated)
+            self.assertIn("ScummV5_Verb_Query_Far__found_0_0:", generated)
+            self.assertIn(
+                "ScummV5_Verb_Query_Far__next_0:\n"
+                "    sep #$20\n"
+                "    .a8\n"
+                "    lda.l SAME_SCUMM_M23A_ACTIVE_RECORD\n"
+                "    rep #$20\n"
+                "    .a16\n"
+                "    and #$00FF",
+                generated,
+            )
+            first_entry = compilation.record_manifest["objects"][0]["verb_entries"][0]
+            self.assertIn(
+                f"lda #${first_entry['entry_offset']:04X}", generated,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

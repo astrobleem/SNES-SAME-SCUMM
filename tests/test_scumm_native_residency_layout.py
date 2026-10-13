@@ -11,7 +11,8 @@ import tempfile
 import unittest
 
 from tools.validate_scumm_native_residency_nexen import (
-    LIVE_ROOM_ACTIVE_BASE, LIVE_ROOM_ACTIVE_CAPACITY, git_identity,
+    LIVE_ROOM_ACTIVE_BASE, LIVE_ROOM_ACTIVE_CAPACITY,
+    audit_runtime_walkbox_flags, git_identity,
 )
 from tools.audit_scumm_residency_wram import audit as audit_wram
 
@@ -31,6 +32,67 @@ def symbols() -> dict[str, int]:
 
 
 class NativeResidencyLayoutTests(unittest.TestCase):
+    def test_mutable_walkbox_flags_require_runtime_matrixops_evidence(self) -> None:
+        initial = bytes([0, 0, 0, 0])
+        same = audit_runtime_walkbox_flags(
+            initial, initial, successful_matrix_mutations=0, matrix_trace=[],
+        )
+        self.assertTrue(same["matches_source_initial_flags"])
+
+        with self.assertRaisesRegex(RuntimeError, "without successful matrixOps"):
+            audit_runtime_walkbox_flags(
+                initial, bytes([0, 0x80, 0, 0]),
+                successful_matrix_mutations=0, matrix_trace=[],
+            )
+
+        changed = audit_runtime_walkbox_flags(
+            initial, bytes([0, 0x80, 0, 0]),
+            successful_matrix_mutations=1,
+            matrix_trace=[{
+                "subop": 1, "box": 1, "flags": 0x80,
+                "source_pc_before": 0x10, "source_pc_after": 0x14,
+            }],
+        )
+        self.assertFalse(changed["matches_source_initial_flags"])
+        self.assertEqual(changed["runtime_mutated_boxes"], [
+            {"box": 1, "source": 0, "active": 0x80},
+        ])
+
+    def test_walkbox_mutation_trace_must_name_valid_matrixops_box(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "invalid records"):
+            audit_runtime_walkbox_flags(
+                bytes([0]), bytes([0x80]), successful_matrix_mutations=1,
+                matrix_trace=[{
+                    "subop": 1, "box": 2, "flags": 0x80,
+                    "source_pc_before": 0, "source_pc_after": 4,
+                }],
+            )
+
+    def test_walkbox_trace_accepts_create_box_matrix_sentinel(self) -> None:
+        result = audit_runtime_walkbox_flags(
+            bytes([0, 0, 0, 0]), bytes([0, 0x80, 0, 0]),
+            successful_matrix_mutations=1,
+            matrix_trace=[
+                {"subop": 1, "box": 1, "flags": 0x80,
+                 "source_pc_before": 0x10, "source_pc_after": 0x14},
+                {"subop": 4, "box": 0xFF, "flags": 0xFF,
+                 "source_pc_before": 0x14, "source_pc_after": 0x16},
+            ],
+        )
+        self.assertEqual(len(result["runtime_mutation_trace"]), 2)
+        self.assertEqual(result["runtime_mutated_boxes"], [
+            {"box": 1, "source": 0, "active": 0x80},
+        ])
+
+        with self.assertRaisesRegex(RuntimeError, "invalid records"):
+            audit_runtime_walkbox_flags(
+                bytes([0]), bytes([0x80]), successful_matrix_mutations=1,
+                matrix_trace=[{
+                    "subop": 4, "box": 0, "flags": 0xFF,
+                    "source_pc_before": 0, "source_pc_after": 2,
+                }],
+            )
+
     def test_live_room_validator_reads_the_audited_active_record_region(self) -> None:
         layout = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json")
                             .read_text(encoding="utf-8"))
@@ -38,6 +100,52 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         self.assertEqual(int(active["address"].replace(":", ""), 16),
                          LIVE_ROOM_ACTIVE_BASE)
         self.assertEqual(active["bytes"], LIVE_ROOM_ACTIVE_CAPACITY)
+
+    def test_live_object_walk_uses_the_ten_byte_compact_row_stride(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm")
+        source = runtime.read_text(encoding="utf-8")
+        body = source.split("ScummV5_LiveRoom_ObjectWalk_Far__found:\n", 1)[1]
+        body = body.split("ScummV5_LiveRoom_ObjectWalk_Far__bad:", 1)[0]
+        body = "\n".join(line.split(";", 1)[0] for line in body.splitlines())
+
+        # OBJECT records include a u16 ID (11 bytes), while compact
+        # OBJECT_WALK rows omit that ID and are <hhBhhB (10 bytes). The
+        # lookup must use 2*i + 8*i, not the object-table stride.
+        self.assertRegex(
+            body,
+            re.compile(r"lda\.l SCUMM_LIVE_ROOM_TEMP0\s+asl\s+"
+            r"sta\.l SCUMM_LIVE_ROOM_TEMP2.*?"
+            r"lda\.l SCUMM_LIVE_ROOM_TEMP0\s+asl\s+asl\s+asl\s+"
+            r"clc\s+adc\.l SCUMM_LIVE_ROOM_TEMP2\s+"
+            r"clc\s+adc\.l SCUMM_LIVE_ROOM_BASE\+"
+            r"SCUMM_LIVE_ROOM_OBJECT_WALK_OFFSET", re.S),
+        )
+
+    def test_live_portal_pair_index_zero_extends_adjacent_u8_route_next(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm")
+        source = runtime.read_text(encoding="utf-8")
+        body = source.split("ScummV5_LiveRoom_Portal_Far:", 1)[1]
+        body = body.split("ScummV5_LiveRoom_Portal_Far__bad:", 1)[0]
+        body = "\n".join(line.split(";", 1)[0].strip() for line in body.splitlines())
+        self.assertRegex(
+            body,
+            re.compile(
+                r"lda\.l SAME_SCUMM_MOVE_ROUTE_NEXT\s+"
+                r"and #\$00FF\s+"
+                r"sta\.l SCUMM_LIVE_ROOM_TEMP5\s+"
+                r"lda\.l SCUMM_LIVE_ROOM_TEMP2\s+clc\s+"
+                r"adc\.l SCUMM_LIVE_ROOM_TEMP5\s+"
+                r"sta\.l SCUMM_LIVE_ROOM_TEMP2"
+            ),
+        )
+
+        # ROUTE_NEXT is followed immediately by PORTAL_TYPE in WRAM. A byte
+        # value 1 next to the prior portal kind 24 must preserve both the
+        # contamination defense and the high byte of a large pair index.
+        next_u8, adjacent_portal_type = 1, 24
+        self.assertEqual(20 * 20 + next_u8, 401)
+        self.assertNotEqual(20 * 20 + (adjacent_portal_type << 8 | next_u8), 401)
+
 
     def test_rom_backed_build_emits_inert_msu_program_include(self) -> None:
         build = (ROOT / "tools/build_snes.sh").read_text(encoding="utf-8")
@@ -82,6 +190,13 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             "address": "$41E800", "bytes": 0x800,
             "exclusive_with": "Mode-3 conformance fixture engine",
             "active_mode3_staging_unaffected": True,
+        }])
+        self.assertEqual(report["bwram_lifetime_aliases"], [{
+            "owner": "SCUMM checked SC5VIS pixel staging",
+            "address": "$410000", "bytes": 0xE000,
+            "aliases": "Mode-3 encoded tile shadow",
+            "lifetime": "incoming visual transfer through checked publication",
+            "coherency": "full room present invalidates shadow before re-encoding",
         }])
 
     def test_engine_selection_allows_dynamic_residency_with_production_services(self) -> None:
@@ -159,7 +274,7 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             (ROOT / "runtime/snes/carriers/sa1_bwram_layout.json").read_text()
         )
         pending = layout["backend_reserved"]["allocations"]["live_room_pending"]
-        self.assertEqual(pending["bytes"], 0x0A00)
+        self.assertEqual((pending["offset"], pending["bytes"]), (0x3C4, 0x0C3C))
         source = (ROOT / "runtime/snes/services/storage_msu1.pasm").read_text()
         pending_guard = source.split(
             "Same_Msu1_ReadBegin__dest_pending_high_ok:", 1
@@ -201,6 +316,159 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             "cmp.l SAME_SCUMM_PROGRAM_SIZE\n    bcc ScummV5_Engine_Frame__start_runnable",
             (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text(),
         )
+
+    def test_program_lookup_cannot_overwrite_identity_of_inflight_read(self) -> None:
+        programs = (ROOT / "runtime/snes/engines/scumm_v5_msu_programs.pasm").read_text()
+        memory = MEMORY.read_text()
+        ensure = programs.split("ScummV5_MsuProgram_EnsureSelected_Far:", 1)[1].split(
+            "ScummV5_MsuProgram_EnsureSelected_Far__find_slot:", 1
+        )[0]
+        allocator = programs.split("ScummV5_MsuProgram_EnsureSelected_Far__find_slot:", 1)[1].split(
+            "ScummV5_MsuProgram_EnsureSelected_Far__choose0:", 1
+        )[0]
+        chosen = programs.split("ScummV5_MsuProgram_EnsureSelected_Far__chosen:", 1)[1].split(
+            "ScummV5_MsuProgram_EnsureSelected_Far__directory_id_valid:", 1
+        )[0]
+        self.assertIn("SAME_SCUMM_MSU_PAGE_REQUEST_ID          = $7E2ECD", memory)
+        self.assertIn("sta.l SAME_SCUMM_MSU_PAGE_REQUEST_ID", ensure)
+        self.assertNotIn("sta.l SAME_SCUMM_MSU_CACHE_REQUEST_ID", ensure)
+        self.assertIn("cmp #SAME_MSU1_STATE_READING", allocator)
+        self.assertIn("ScummV5_MsuProgram_EnsureSelected_Far__pending", allocator)
+        self.assertIn(
+            "lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID\n"
+            "    sta.l SAME_SCUMM_MSU_CACHE_REQUEST_ID",
+            chosen,
+        )
+
+    def test_program_body_length_checks_the_upper_word_without_overlapping_destination(self) -> None:
+        programs = (ROOT / "runtime/snes/engines/scumm_v5_msu_programs.pasm").read_text()
+        memory = MEMORY.read_text()
+        check = programs.split(
+            "; The directory body remains the full logical source body.", 1
+        )[1].split(
+            "ScummV5_MsuProgram_EnsureSelected_Far__body_length_high_zero:", 1
+        )[0]
+        self.assertIn(".a16\n    ; REQUEST_LENGTH+2 is already the complete upper u16", check)
+        self.assertIn("lda.l SAME_MSU1_REQUEST_LENGTH+2", check)
+        self.assertNotIn("ora.l SAME_MSU1_REQUEST_LENGTH+3", check)
+        self.assertIn("SAME_MSU1_REQUEST_LENGTH      = $7E2F08", memory)
+        self.assertIn("SAME_MSU1_DESTINATION         = $7E2F0C", memory)
+
+    def test_all_bytecode_windows_pinned_is_a_retryable_resource_wait(self) -> None:
+        programs = (ROOT / "runtime/snes/engines/scumm_v5_msu_programs.pasm").read_text()
+        saturated = programs.split(
+            "ScummV5_MsuProgram_EnsureSelected_Far__exhausted:", 1
+        )[1].split("ScummV5_MsuProgram_EnsureSelected_Far__pending:", 1)[0]
+        self.assertIn("temporarily pinned", saturated)
+        self.assertIn("jml ScummV5_MsuProgram_EnsureSelected_Far__pending", saturated)
+        self.assertNotIn("SCUMM_ERR_RESIDENCY_EXHAUSTED", saturated)
+
+    def test_nested_stopped_return_releases_its_transient_bytecode_pin(self) -> None:
+        engine = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        return_path = engine.split(
+            "ScummV5_Engine_Frame__return_success:", 1
+        )[1].split("ScummV5_Engine_Frame__outer_return_success:", 1)[0]
+        self.assertIn(".if SAME_BUILD_SCUMM_MSU1_PROGRAMS", return_path)
+        self.assertIn("jsl ScummV5_MsuProgram_Leave_Far", return_path)
+        self.assertLess(
+            return_path.index("jsl ScummV5_MsuProgram_Leave_Far"),
+            return_path.index("lda.l SAME_SCUMM_RETURN_MODE"),
+        )
+        self.assertIn("nested RETURN_MODE calls", return_path)
+        self.assertIn("all cache pages became permanently", return_path)
+
+    def test_m25a_nested_calls_suspend_and_reacquire_bytecode_pages(self) -> None:
+        far = (ROOT / "runtime/snes/engines/scumm_v5_m24rb_far.pasm").read_text()
+        nested = far.split(
+            "ScummV5_M23B_RunNestedChild_FarEntry:", 1
+        )[1].split("ScummV5_M25A_RunNestedChild__success:", 1)[0]
+        self.assertIn(".if SAME_BUILD_SCUMM_MSU1_PROGRAMS", nested)
+        self.assertLess(
+            nested.index("jsl ScummV5_MsuProgram_SuspendActive_Far"),
+            nested.index("jsl ScummV5_M25A_FarCall_RunSelected"),
+        )
+        self.assertIn("SAME_SCUMM_MSU_PENDING_CHILD_SLOT", nested)
+        self.assertIn("SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM", nested)
+        self.assertLess(
+            nested.index("lda.l SAME_SCUMM_C4_SLOT_PC,x"),
+            nested.index("jsl ScummV5_MsuProgram_ResumeActive_Far"),
+        )
+        self.assertIn("SCUMM_VM_WAIT_RESOURCE", nested)
+        self.assertIn("SCUMM_VM_ERROR", nested)
+
+    def test_bytecode_context_stack_uses_bounded_byte_indices(self) -> None:
+        engine = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        enter = engine.split(
+            "ScummV5_Engine_RunSelected__msu_depth_ok:", 1
+        )[1].split("ScummV5_Engine_RunSelected__msu_select1:", 1)[0]
+        programs = (ROOT / "runtime/snes/engines/scumm_v5_msu_programs.pasm").read_text()
+        leave = programs.split(
+            "ScummV5_MsuProgram_Leave_Far__active:", 1
+        )[1].split("ScummV5_MsuProgram_Leave_Far__unpin1:", 1)[0]
+        self.assertRegex(enter, r"sep #\$10\s+\.i8\s+tax")
+        self.assertRegex(leave, r"sep #\$10\s+\.i8\s+tax")
+        self.assertIn("bounded 25-entry continuation stack", enter)
+        self.assertIn("saved parent cache context", leave)
+
+
+    def test_completed_program_read_is_reconciled_before_room_read_starts(self) -> None:
+        programs = (ROOT / "runtime/snes/engines/scumm_v5_msu_programs.pasm").read_text()
+        live = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm").read_text()
+        frame_ready = programs.split("ScummV5_MsuProgram_FrameReady_Far:", 1)[1].split(
+            "ScummV5_MsuProgram_FrameReady_Far__room_failed:", 1
+        )[0]
+        live_start = live.split("ScummV5_MsuLiveRoom_Start_Far:", 1)[1].split(
+            "ScummV5_MsuLiveRoom_Start_Far__metadata:", 1
+        )[0]
+        self.assertIn("jsl ScummV5_MsuProgram_ReconcileRead_Far", frame_ready)
+        self.assertLess(
+            frame_ready.index("jsl ScummV5_MsuProgram_ReconcileRead_Far"),
+            frame_ready.index("jsl ScummV5_MsuRoom_Service_Far"),
+        )
+        self.assertIn("SAME_SCUMM_MSU_CACHE_REQUEST_SLOT", live_start)
+        self.assertIn("ScummV5_MsuLiveRoom_Start_Far__wait", live_start)
+
+    def test_completed_program_page_is_pinned_until_waiter_can_resume(self) -> None:
+        programs = (ROOT / "runtime/snes/engines/scumm_v5_msu_programs.pasm").read_text()
+        memory = MEMORY.read_text()
+        reconcile = programs.split(
+            "ScummV5_MsuProgram_ReconcileRead_Far__ready1:", 1
+        )[1].split("ScummV5_MsuProgram_ReconcileRead_Far__count:", 1)[0]
+        self.assertIn("SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR0   = $7E2ED0", memory)
+        self.assertIn("SAME_SCUMM_MSU_CACHE_WAITER_SLOT2       = $7E2ED5", memory)
+        self.assertEqual(reconcile.count("ora #$80"), 3)
+        self.assertNotIn("CACHE_COMPLETION_SLOT", programs + memory)
+        allocator = programs.split(
+            "ScummV5_MsuProgram_EnsureSelected_Far__find_slot:", 1
+        )[1].split("ScummV5_MsuProgram_EnsureSelected_Far__read_idle:", 1)[0]
+        request = programs.split("ScummV5_MsuProgram_EnsureSelected_Far__request:", 1)[1].split(
+            "ScummV5_MsuProgram_EnsureSelected_Far__read_failed:", 1
+        )[0]
+        waiter_check = programs.split(
+            "ScummV5_MsuProgram_ValidatePageWaiter_Far:", 1
+        )[1].split("ScummV5_MsuProgram_ClearPageWaiter_Far:", 1)[0]
+        release = programs.split(
+            "ScummV5_MsuProgram_ReleasePageWaiter_Far:", 1
+        )[1].split("ScummV5_MsuProgram_RecordPageWaiter_Far:", 1)[0]
+        self.assertNotIn("CACHE_COMPLETION_SLOT", allocator)
+        self.assertNotIn("completion_unclaimed", allocator)
+        self.assertIn("SAME_MSU1_STATE_READING", allocator)
+        self.assertIn("ScummV5_MsuProgram_RecordPageWaiter_Far", request)
+        record = programs.split(
+            "ScummV5_MsuProgram_RecordPageWaiter_Far:", 1
+        )[1].split("ScummV5_MsuProgram_FrameReady_Far__provider:", 1)[0]
+        self.assertIn("SAME_SCUMM_C4_SLOT_STATUS", waiter_check)
+        self.assertIn("SAME_SCUMM_C4_SLOT_PROGRAM", waiter_check)
+        self.assertIn("SAME_SCUMM_C4_SLOT_PROGRAM,x", record)
+        self.assertNotIn("SAME_SCUMM_PROGRAM_SELECT", record)
+        self.assertIn("SAME_SCUMM_MSU_CACHE_WAITER_SLOT0", release)
+        self.assertIn("SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR2", release)
+        self.assertEqual(release.count("ScummV5_MsuProgram_ClearPageWaiter_Far"), 3)
+        reset = programs.split("ScummV5_MsuProgram_Reset_Far:", 1)[1].split(
+            "ScummV5_MsuProgram_Reset_Far__failed:", 1
+        )[0]
+        self.assertIn("sta.l SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR0", reset)
+        self.assertIn("sta.l SAME_SCUMM_MSU_CACHE_WAITER_SLOT2", reset)
 
     def test_stream_error_diagnostic_sites_are_unique(self) -> None:
         tags: list[tuple[str, int]] = []
@@ -325,6 +593,33 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         self.assertLess(routine.index("    plx\n    clc"),
                         routine.index("ScummV5_Resident_IsSelectorLive__yes:"))
         self.assertIn("ScummV5_Resident_IsSelectorLive__yes:\n    plx\n    sec", routine)
+
+    def test_high_program_unit_ids_do_not_leak_accumulator_b_into_pool_indexes(self) -> None:
+        source = RESOLVER.read_text(encoding="utf-8")
+        candidate = source.split(
+            "ScummV5_Resident_ResolveProgramUnit_Far__generation_ready:", 1
+        )[1].split(
+            "ScummV5_Resident_ResolveProgramUnit_Far__reuse:", 1
+        )[0]
+        set_valid = source.split(
+            "ScummV5_Resident_ResolveProgramUnit_Far__set_valid:", 1
+        )[1].split(
+            "; Input X=pool index", 1
+        )[0]
+        pin = source.split("ScummV5_Resident_SetPin_Far:", 1)[1].split(
+            "ScummV5_Resident_UnpinProgram_Far:", 1
+        )[0]
+        wide_pool_index = (
+            "    rep #$20\n"
+            "    .a16\n"
+            "    lda.l SAME_SCUMM_RESIDENT_POOL_INDEX\n"
+            "    tax\n"
+            "    sep #$20\n"
+            "    .a8\n"
+        )
+        self.assertIn(wide_pool_index, candidate)
+        self.assertIn(wide_pool_index, set_valid)
+        self.assertIn(wide_pool_index, pin)
 
     def test_diagnostic_census_counts_owned_pins_without_scheduler_mutation(self) -> None:
         source = RESOLVER.read_text(encoding="utf-8")

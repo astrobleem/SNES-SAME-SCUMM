@@ -32,6 +32,47 @@ def _signed16(value: int) -> int:
     return value - 0x10000 if value & 0x8000 else value
 
 
+def _movement_runtime_snapshot(session: Any) -> dict[str, Any]:
+    """Capture actor-1's live path leg and the shared route/portal query."""
+    actor_offset = 2  # actor ID 1, indexed as a u16 in movement arrays
+    return {
+        "actor": 1,
+        "current_box": session.read_u8(0x7E7BEA + 1),
+        "destination_box": session.read_u8(0x7FFDC5 + 1),
+        "destination": [
+            _signed16(_read_u16(session, 0x7FFDE5 + actor_offset)),
+            _signed16(_read_u16(session, 0x7E7BAA + actor_offset)),
+        ],
+        "leg_origin": [
+            _signed16(_read_u16(session, 0x7E7C0A + actor_offset)),
+            _signed16(_read_u16(session, 0x7E7C4A + actor_offset)),
+        ],
+        "leg_target": [
+            _signed16(_read_u16(session, 0x7E7C8A + actor_offset)),
+            _signed16(_read_u16(session, 0x7E7CCA + actor_offset)),
+        ],
+        "gate": [
+            _signed16(_read_u16(session, 0x7E7EC8)),
+            _signed16(_read_u16(session, 0x7E7ECA)),
+        ],
+        "route": {
+            "source": session.read_u8(0x7E7EAA),
+            "destination": _read_u16(session, 0x7E7EAB),
+            "next": session.read_u8(0x7E7ECC),
+        },
+        "portal": {
+            "type": session.read_u8(0x7E7ECD),
+            "fixed": _signed16(_read_u16(session, 0x7E7ECE)),
+            "low": _signed16(_read_u16(session, 0x7E7ED0)),
+            "high": _signed16(_read_u16(session, 0x7E7ED2)),
+        },
+        "requested_walk_point": [
+            _signed16(_read_u16(session, 0x7E7EAF)),
+            _signed16(_read_u16(session, 0x7E7EB1)),
+        ],
+    }
+
+
 def room4_controller_snapshot(session: Any) -> dict[str, int]:
     """Read the ordinary controller/scene state used by the saved prefix."""
     c19_depth = session.read_u8(0x7FD348)
@@ -121,6 +162,7 @@ def room4_controller_snapshot(session: Any) -> dict[str, int]:
             "left_edges": [_read_u16(session, 0x7FFEE8), _read_u16(session, 0x7FFEEA)],
             "right_edges": [_read_u16(session, 0x7FFEEC), _read_u16(session, 0x7FFEEE)],
         },
+        "movement": _movement_runtime_snapshot(session),
         "hvbjoy": session.read_u8(0x004212),
     }
 
@@ -158,6 +200,7 @@ def _execution_frontier_snapshot(session: Any) -> dict[str, Any]:
         "vm_pc": _read_u16(session, 0x7E2300),
         "program_select": session.read_u8(0x7E2362),
         "current_slot": session.read_u8(0x7E2A88),
+        "movement": _movement_runtime_snapshot(session),
         "slots": slots,
     }
 
@@ -986,6 +1029,8 @@ def replay_room5_rope_to_room6(
     *,
     pulse: Any = None,
     target: tuple[int, int] = (225, 124),
+    expected_cursor: tuple[int, int] | None = (145, 134),
+    diagonal_navigation: bool = False,
 ) -> dict[str, Any]:
     """Select and submit the already-authenticated room-5 rope sentence.
 
@@ -1006,11 +1051,11 @@ def replay_room5_rope_to_room6(
         "mode": 0,
         "verb": 0,
         "object": 0,
-        "x": 145,
-        "y": 134,
         "actor1_room": 5,
         "bit69": False,
     }
+    if expected_cursor is not None:
+        expected["x"], expected["y"] = expected_cursor
     observed = {
         **{key: initial[key] for key in expected if key in initial},
         "actor1_room": actor_room,
@@ -1019,6 +1064,13 @@ def replay_room5_rope_to_room6(
     if observed != expected:
         raise RuntimeError(
             f"room-5 rope replay precondition mismatch: {observed!r} != {expected!r}"
+        )
+    if expected_cursor is None and not (
+        0 <= initial["x"] <= 0x1FF and 0 <= initial["y"] <= 0xFF
+    ):
+        raise RuntimeError(
+            "room-5 rope replay has an invalid entry cursor position: "
+            f"{(initial['x'], initial['y'])!r}"
         )
     precondition = {**initial, "actor1_room": actor_room, "bit69": bit69}
 
@@ -1033,12 +1085,15 @@ def replay_room5_rope_to_room6(
         if len(movement) >= 100:
             raise RuntimeError("room-5 rope target exceeded the bounded cursor route")
         before = cursor
-        mask = world_point_direction_mask(before["x"], before["y"], *target)
+        mask = world_point_direction_mask(
+            before["x"], before["y"], *target,
+            allow_diagonal=diagonal_navigation,
+        )
         if mask is None:
             break
         target_xy = (
-            before["x"] + (2 if mask == 0x080 else -2 if mask == 0x040 else 0),
-            before["y"] + (2 if mask == 0x020 else -2 if mask == 0x010 else 0),
+            before["x"] + (2 if mask & 0x080 else -2 if mask & 0x040 else 0),
+            before["y"] + (2 if mask & 0x020 else -2 if mask & 0x010 else 0),
         )
         step = send(mask, lambda _old, after, xy=target_xy: (
             after["room"] == 5 and after["error"] == 0
@@ -1098,6 +1153,7 @@ def replay_room6_books_interaction(
     *,
     pulse: Any = None,
     target: tuple[int, int] = (4, 81),
+    diagonal_navigation: bool = False,
 ) -> dict[str, Any]:
     """Submit room6 object91/verb10 from the known authentic entry state.
 
@@ -1119,8 +1175,6 @@ def replay_room6_books_interaction(
         "mode": 0,
         "verb": 0,
         "object": 0,
-        "x": 226,
-        "y": 139,
         "actor1_room": 6,
         "bit69": False,
     }
@@ -1134,6 +1188,11 @@ def replay_room6_books_interaction(
         raise RuntimeError(
             f"room-6 books replay precondition mismatch: {observed!r} != {expected!r}"
         )
+    if not (0 <= initial["x"] <= 0x1FF and 0 <= initial["y"] <= 0xFF):
+        raise RuntimeError(
+            "room-6 books replay has an invalid entry cursor position: "
+            f"{(initial['x'], initial['y'])!r}"
+        )
     precondition = {**initial, "actor1_room": actor_room, "bit69": bit69}
 
     def send(mask: int, predicate: Any) -> dict[str, Any]:
@@ -1141,17 +1200,37 @@ def replay_room6_books_interaction(
             return pulse(session, mask, predicate)
         return controller_synchronous_input_edge(session, mask, predicate)
 
+    requested_target = target
+    # The room-5 action and room transition can leave the cursor on either
+    # parity of the two-pixel controller lattice. Keep the same authenticated
+    # object rectangle and choose its nearest reachable point; never inject a
+    # debugger coordinate or submit at a different object.
+    source_bounds = (0, 40, 40, 128)
+
+    def nearest_lattice(value: int, lower: int, upper: int, parity: int) -> int:
+        candidates = [point for point in range(lower, upper) if point % 2 == parity]
+        if not candidates:
+            raise RuntimeError("room-6 books object has no reachable cursor lattice point")
+        return min(candidates, key=lambda point: (abs(point - value), point))
+
+    target = (
+        nearest_lattice(target[0], source_bounds[0], source_bounds[2], initial["x"] & 1),
+        nearest_lattice(target[1], source_bounds[1], source_bounds[3], initial["y"] & 1),
+    )
     movement: list[dict[str, Any]] = []
     cursor = initial
     while (cursor["x"], cursor["y"]) != target:
         if len(movement) >= 160:
             raise RuntimeError("room-6 books target exceeded its bounded cursor route")
-        mask = world_point_direction_mask(cursor["x"], cursor["y"], *target)
+        mask = world_point_direction_mask(
+            cursor["x"], cursor["y"], *target,
+            allow_diagonal=diagonal_navigation,
+        )
         if mask is None:
             break
         next_xy = (
-            cursor["x"] + (2 if mask == 0x080 else -2 if mask == 0x040 else 0),
-            cursor["y"] + (2 if mask == 0x020 else -2 if mask == 0x010 else 0),
+            cursor["x"] + (2 if mask & 0x080 else -2 if mask & 0x040 else 0),
+            cursor["y"] + (2 if mask & 0x020 else -2 if mask & 0x010 else 0),
         )
         step = send(mask, lambda _old, after, xy=next_xy: (
             after["room"] == 6 and after["error"] == 0
@@ -1186,7 +1265,8 @@ def replay_room6_books_interaction(
         "precondition": precondition,
         "target": {
             "world": list(target),
-            "source_rectangle_half_open": [0, 40, 40, 128],
+            "requested_world": list(requested_target),
+            "source_rectangle_half_open": list(source_bounds),
             "preselection_hit_object": target_state["hit_object"],
             "selected_hit_object": selection["after"]["hit_object"],
         },
@@ -1207,6 +1287,7 @@ def replay_room7_lost_dialogue_interaction(
     variable_count: int,
     pulse: Any = None,
     target: tuple[int, int] = (188, 125),
+    diagonal_navigation: bool = False,
 ) -> dict[str, Any]:
     """Read the room-7 book's authored verb-11 interaction exactly once.
 
@@ -1235,8 +1316,6 @@ def replay_room7_lost_dialogue_interaction(
         "mode": 0,
         "verb": 0,
         "object": 0,
-        "x": 162,
-        "y": 129,
         "actor1_room": 7,
         "bit69": False,
         "V214": 0,
@@ -1255,6 +1334,11 @@ def replay_room7_lost_dialogue_interaction(
         raise RuntimeError(
             f"room-7 book replay precondition mismatch: {observed!r} != {expected!r}"
         )
+    if not (0 <= initial["x"] <= 0x1FF and 0 <= initial["y"] <= 0xFF):
+        raise RuntimeError(
+            "room-7 book replay has an invalid entry cursor position: "
+            f"{(initial['x'], initial['y'])!r}"
+        )
     precondition = {**initial, "actor1_room": actor_room, "bit69": bit69,
                     "V214": v214, "V215": v215, "V219": v219}
 
@@ -1263,17 +1347,33 @@ def replay_room7_lost_dialogue_interaction(
             return pulse(session, mask, predicate)
         return controller_synchronous_input_edge(session, mask, predicate)
 
+    requested_target = target
+    source_bounds = (176, 120, 200, 128)
+
+    def nearest_lattice(value: int, lower: int, upper: int, parity: int) -> int:
+        candidates = [point for point in range(lower, upper) if point % 2 == parity]
+        if not candidates:
+            raise RuntimeError("room-7 book has no reachable cursor lattice point")
+        return min(candidates, key=lambda point: (abs(point - value), point))
+
+    target = (
+        nearest_lattice(target[0], source_bounds[0], source_bounds[2], initial["x"] & 1),
+        nearest_lattice(target[1], source_bounds[1], source_bounds[3], initial["y"] & 1),
+    )
     movement: list[dict[str, Any]] = []
     cursor = initial
     while (cursor["x"], cursor["y"]) != target:
-        if len(movement) >= 64:
+        if len(movement) >= 128:
             raise RuntimeError("room-7 book target exceeded its bounded cursor route")
-        mask = world_point_direction_mask(cursor["x"], cursor["y"], *target)
+        mask = world_point_direction_mask(
+            cursor["x"], cursor["y"], *target,
+            allow_diagonal=diagonal_navigation,
+        )
         if mask is None:
             break
         next_xy = (
-            cursor["x"] + (2 if mask == 0x080 else -2 if mask == 0x040 else 0),
-            cursor["y"] + (2 if mask == 0x020 else -2 if mask == 0x010 else 0),
+            cursor["x"] + (2 if mask & 0x080 else -2 if mask & 0x040 else 0),
+            cursor["y"] + (2 if mask & 0x020 else -2 if mask & 0x010 else 0),
         )
         step = send(mask, lambda _old, after, xy=next_xy: (
             after["room"] == 7 and after["error"] == 0
@@ -1308,7 +1408,8 @@ def replay_room7_lost_dialogue_interaction(
         "precondition": precondition,
         "target": {
             "world": list(target),
-            "object_rectangle_half_open": [176, 120, 200, 128],
+            "requested_world": list(requested_target),
+            "object_rectangle_half_open": list(source_bounds),
             "overlapping_object": 130,
             "source_order_winner": 133,
             "preselection_hit_object": target_state["hit_object"],
@@ -1331,6 +1432,7 @@ def replay_room7_cat_figure_use(
     variable_base: int,
     variable_count: int,
     pulse: Any = None,
+    diagonal_navigation: bool = False,
 ) -> dict[str, Any]:
     """Use one source-authentic room-7 cat figure, exactly once.
 
@@ -1357,19 +1459,16 @@ def replay_room7_cat_figure_use(
     owners = {item: session.read_u8(0x7E8000 + item) for item in (118, 119, 133)}
 
     if object_id == 118:
-        expected_controller = (1, 133, 9, 188, 125)
+        expected_controller = (1, 133, 9)
         expected_v214 = 0
         expected_vars = (0, 0, 0, 0)
         prior = "room7 book interaction has completed; first distinct figurine is available"
     else:
-        expected_controller = (1, 118, 9, 112, 123)
+        expected_controller = (1, 118, 9)
         expected_v214 = 1
         expected_vars = (0, 0, 1, 0)
         prior = "object118 verb10 completed and wrote V217; second distinct figurine is available"
-    observed_controller = (
-        initial["mode"], initial["object"], initial["verb"],
-        initial["x"], initial["y"],
-    )
+    observed_controller = (initial["mode"], initial["object"], initial["verb"])
     observed_vars = tuple(
         variables_215_218[index] for index in (215, 216, 217, 218)
     )
@@ -1398,7 +1497,30 @@ def replay_room7_cat_figure_use(
             f"{observed!r} != {expected!r}"
         )
 
-    target = (112, 123) if object_id == 118 else (128, 123)
+    if not (0 <= initial["x"] <= 0x1FF and 0 <= initial["y"] <= 0xFF):
+        raise RuntimeError(
+            f"room-7 object{object_id} replay has an invalid cursor position: "
+            f"{(initial['x'], initial['y'])!r}"
+        )
+
+    requested_target = (112, 123) if object_id == 118 else (128, 123)
+    source_bounds = (104, 112, 120, 136) if object_id == 118 \
+                    else (120, 112, 136, 136)
+
+    def nearest_lattice(value: int, lower: int, upper: int, parity: int) -> int:
+        candidates = [point for point in range(lower, upper) if point % 2 == parity]
+        if not candidates:
+            raise RuntimeError(
+                f"room-7 object{object_id} has no reachable cursor lattice point"
+            )
+        return min(candidates, key=lambda point: (abs(point - value), point))
+
+    target = (
+        nearest_lattice(requested_target[0], source_bounds[0], source_bounds[2],
+                        initial["x"] & 1),
+        nearest_lattice(requested_target[1], source_bounds[1], source_bounds[3],
+                        initial["y"] & 1),
+    )
 
     def send(mask: int, predicate: Any) -> dict[str, Any]:
         if pulse is not None:
@@ -1408,16 +1530,19 @@ def replay_room7_cat_figure_use(
     movement: list[dict[str, Any]] = []
     cursor = initial
     while (cursor["x"], cursor["y"]) != target:
-        if len(movement) >= 64:
+        if len(movement) >= 128:
             raise RuntimeError(
                 f"room-7 object{object_id} target exceeded its bounded cursor route"
             )
-        mask = world_point_direction_mask(cursor["x"], cursor["y"], *target)
+        mask = world_point_direction_mask(
+            cursor["x"], cursor["y"], *target,
+            allow_diagonal=diagonal_navigation,
+        )
         if mask is None:
             break
         next_xy = (
-            cursor["x"] + (2 if mask == 0x080 else -2 if mask == 0x040 else 0),
-            cursor["y"] + (2 if mask == 0x020 else -2 if mask == 0x010 else 0),
+            cursor["x"] + (2 if mask & 0x080 else -2 if mask & 0x040 else 0),
+            cursor["y"] + (2 if mask & 0x020 else -2 if mask & 0x010 else 0),
         )
         movement.append(send(mask, lambda _old, after, xy=next_xy: (
             after["room"] == 7 and after["error"] == 0
@@ -1454,8 +1579,8 @@ def replay_room7_cat_figure_use(
         "target": {
             "object": object_id,
             "world": list(target),
-            "rectangle_half_open": [104, 112, 120, 136] if object_id == 118
-                                   else [120, 112, 136, 136],
+            "requested_world": list(requested_target),
+            "rectangle_half_open": list(source_bounds),
             "expected_walk_point": [102, 133] if object_id == 118 else [118, 129],
         },
         "movement_edges": movement,
@@ -1583,12 +1708,22 @@ def world_point_direction_mask(
     target_y: int,
     *,
     tolerance: int = 0,
+    allow_diagonal: bool = False,
 ) -> int | None:
-    """Choose one cursor axis without oscillating on the two-pixel lattice."""
+    """Choose cursor direction bits without oscillating on the two-pixel lattice.
+
+    Conservative historical navigation changes one axis per edge.  A caller
+    may opt into a simultaneous diagonal edge; the native controller accepts
+    these independent direction bits and moves two pixels on each axis.
+    """
     x_delta = target_x - world_x
     y_delta = target_y - world_y
     if abs(x_delta) <= tolerance and abs(y_delta) <= tolerance:
         return None
+    if allow_diagonal and abs(x_delta) > tolerance and abs(y_delta) > tolerance:
+        return (0x080 if x_delta > 0 else 0x040) | (
+            0x020 if y_delta > 0 else 0x010
+        )
     if abs(x_delta) > tolerance:
         return 0x080 if x_delta > 0 else 0x040
     return 0x020 if y_delta > 0 else 0x010

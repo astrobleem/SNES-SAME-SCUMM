@@ -55,14 +55,14 @@ Same_Mode3_Reset__clear_video_diag:
     .a16
     .i16
     lda #$0000
-    ldx #$0080
+    ldx #SAME_BWRAM_VIDEO_SURFACE_STATE-SAME_BWRAM_BACKEND_BASE
 Same_Mode3_Reset__clear_surface_facade:
     .a16
     .i16
     sta.l SAME_BWRAM_BACKEND_BASE,x
     inx
     inx
-    cpx #$0080+SAME_VIDEO_SURFACE_STATE_SIZE
+    cpx #SAME_BWRAM_VIDEO_SURFACE_STATE-SAME_BWRAM_BACKEND_BASE+SAME_VIDEO_SURFACE_STATE_SIZE
     bcc Same_Mode3_Reset__clear_surface_facade
     .endif
     sep #$20
@@ -505,20 +505,43 @@ Same_Mode3_HandlePresent__args:
     .a16
     lda.l SAME_EVENT_STAGING+SAME_PKT_ARG1
     ora.l SAME_EVENT_STAGING+SAME_PKT_ARG1+$02
-    bne Same_Mode3_HandlePresent__reject16
+    beq Same_Mode3_HandlePresent__arg1_valid
+    brl Same_Mode3_HandlePresent__reject16
+Same_Mode3_HandlePresent__arg1_valid:
     lda.l SAME_EVENT_STAGING+SAME_PKT_ARG0
     ora.l SAME_EVENT_STAGING+SAME_PKT_ARG0+$02
-    beq Same_Mode3_HandlePresent__reject16
+    bne Same_Mode3_HandlePresent__arg0_valid
+    brl Same_Mode3_HandlePresent__reject16
+Same_Mode3_HandlePresent__arg0_valid:
     lda.l SAME_EVENT_STAGING+SAME_PKT_ARG0+$02
     cmp.l SAME_MODE3_CONTROL_COMMITTED_GENERATION_HI
-    bcc Same_Mode3_HandlePresent__reject16
+    bcs Same_Mode3_HandlePresent__generation_hi_valid
+    brl Same_Mode3_HandlePresent__reject16
+Same_Mode3_HandlePresent__generation_hi_valid:
     bne Same_Mode3_HandlePresent__accept
     lda.l SAME_EVENT_STAGING+SAME_PKT_ARG0
     cmp.l SAME_BWRAM_CONTROL_COMMITTED_GENERATION
-    bcc Same_Mode3_HandlePresent__reject16
-    beq Same_Mode3_HandlePresent__reject16
+    bcs Same_Mode3_HandlePresent__generation_lo_not_less
+    brl Same_Mode3_HandlePresent__reject16
+Same_Mode3_HandlePresent__generation_lo_not_less:
+    bne Same_Mode3_HandlePresent__generation_valid
+    brl Same_Mode3_HandlePresent__reject16
+Same_Mode3_HandlePresent__generation_valid:
 Same_Mode3_HandlePresent__accept:
     .a16
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; The live-room transaction stages the checked SC5VIS pixels in the
+    ; tile-shadow allocation before publishing them to the active surface.
+    ; The upcoming full-room presentation must therefore rebuild the shadow
+    ; from the encoded surface instead of trusting bytes overwritten by the
+    ; resource transfer. Camera-only dirty presents do not take this path.
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_BWRAM_CONTROL_TILE_VALID
+    rep #$20
+    .a16
+    .endif
     lda.l SAME_EVENT_STAGING+SAME_PKT_ARG0
     sta.l SAME_BWRAM_CONTROL_PENDING_GENERATION
     lda.l SAME_EVENT_STAGING+SAME_PKT_ARG0+$02
@@ -534,6 +557,33 @@ Same_Mode3_HandlePresent__accept:
     sta.l SAME_MODE3_CONTROL_QUEUED_CGRAM_BYTES
     sta.l SAME_MODE3_CONTROL_BATCH_COUNT
     sta.l SAME_MODE3_CONTROL_LAST_ERROR
+    ; A full presentation with an invalid tile shadow must upload every
+    ; character tile, including all-zero tiles. Otherwise blank SC5VIS tiles
+    ; can be elided as "unchanged" in the shadow while VRAM still contains
+    ; power-on/stale bytes. This also covers the live-room pixel-stage alias,
+    ; which deliberately invalidates TILE_VALID above.
+    sep #$20
+    .a8
+    lda.l SAME_BWRAM_CONTROL_TILE_VALID
+    bne Same_Mode3_HandlePresent__tile_shadow_valid
+    lda #$FF
+    ldx #$0000
+Same_Mode3_HandlePresent__invalidate_all_tiles:
+    .a8
+    .i16
+    sta.l SAME_MODE3_CANDIDATE_TILES,x
+    inx
+    cpx #SAME_MODE3_CANDIDATE_TILES_SIZE
+    bcc Same_Mode3_HandlePresent__invalidate_all_tiles
+    rep #$20
+    .a16
+    lda #SAME_MODE3_TILE_COUNT
+    sta.l SAME_MODE3_CONTROL_CANDIDATE_COUNT
+    bra Same_Mode3_HandlePresent__tile_candidates_ready
+Same_Mode3_HandlePresent__tile_shadow_valid:
+    rep #$20
+    .a16
+Same_Mode3_HandlePresent__tile_candidates_ready:
     lda.l SAME_MODE3_CONTROL_ACCEPTED_PRESENT
     inc
     sta.l SAME_MODE3_CONTROL_ACCEPTED_PRESENT

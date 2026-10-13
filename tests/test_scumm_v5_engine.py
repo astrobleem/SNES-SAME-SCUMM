@@ -198,6 +198,22 @@ class ScummV5EngineTests(unittest.TestCase):
         talk_path = runtime.split(".if SAME_BUILD_SCUMM_ROOM_SERVICE", 1)[1]
         self.assertIn("ScummV5_Talk_Begin_Far", talk_path)
 
+    def test_streamed_scheduler_rotates_cache_miss_admission_without_skipping_slots(self) -> None:
+        runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
+        memory = (ROOT / "runtime/snes/kernel/memory.pasm").read_text()
+        scheduler = runtime.split("ScummV5_C4_Scheduler_Frame:", 1)[1]
+        scheduler = scheduler.split("ScummV5_C4_Scheduler_Frame__slot_in_range:", 1)[0]
+        advance = runtime.split("ScummV5_C4_Scheduler_Frame__advance:", 1)[1]
+        advance = advance.split("ScummV5_C4_Scheduler_Frame__complete:", 1)[0]
+        self.assertIn(".if SAME_BUILD_SCUMM_MSU1_PROGRAMS", scheduler)
+        self.assertIn("SAME_SCUMM_C4_SCHED_CURSOR", scheduler)
+        self.assertIn("SAME_SCUMM_C4_SCHED_REMAINING", scheduler)
+        self.assertIn("cmp #SCUMM_V5_MAX_SCRIPT_SLOTS", advance)
+        self.assertIn("sta.l SAME_SCUMM_C4_SCHED_SLOT", advance)
+        self.assertIn("sta.l SAME_SCUMM_C4_SCHED_REMAINING", advance)
+        self.assertIn("SAME_SCUMM_C4_SCHED_CURSOR     = $7E2B2A", memory)
+        self.assertIn("SAME_SCUMM_C4_SCHED_FAIR_END   = $7E2B2C", memory)
+
     def test_nested_child_uses_slot_return_mode_and_restores_parent_mode(self) -> None:
         runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
         nested = runtime.split("ScummV5_C4_RunNestedChild:", 1)[1].split(
@@ -296,6 +312,18 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertNotIn("SAME_SCUMM_PUT_ACTOR_BOXES+", runtime)
         self.assertIn("SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK", runtime)
         self.assertIn("SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK        = $7FFB65", memory)
+
+    def test_live_room_mode_elides_unreachable_per_room_movement_dispatch(self) -> None:
+        generator = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
+        for name, target in (
+            ("NextBox", "ScummV5_LiveRoom_NextBox_Far"),
+            ("Portal", "ScummV5_LiveRoom_Portal_Far"),
+            ("ObjectWalk", "ScummV5_LiveRoom_ObjectWalk_Far"),
+        ):
+            body = generator.split(f'"ScummV5_Movement_{name}_Far:"', 1)[1]
+            body = body.split('".endif"', 1)[0]
+            self.assertIn('".else"', body)
+            self.assertIn(f'"    jml {target}"', body)
 
     def test_putactor_geometry_success_restores_word_accumulator_width(self) -> None:
         generator = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
@@ -2593,10 +2621,38 @@ class ScummV5EngineTests(unittest.TestCase):
 
         memory = (ROOT / "runtime/snes/kernel/memory.pasm").read_text()
         self.assertIn("SAME_SCUMM_C25_QUEUE_WORDS_USED          = $7FD8F2", memory)
-        self.assertIn("SAME_SCUMM_C25_STATE_END                 = $7FD8F4", memory)
+        self.assertIn("SAME_SCUMM_C25_CLEAR_QUEUE_COUNT          = $7FD8F4", memory)
+        self.assertIn("SAME_SCUMM_C25_STATE_END                 = $7FD8F6", memory)
         self.assertIn("SAME_SCUMM_C25_QUEUE_END                 = $7FD65A", memory)
         self.assertIn("SAME_SCUMM_C25_QUEUE_CAPACITY_BYTES      = $0200", memory)
         self.assertIn("SAME_SCUMM_C26_SAVED                     = $7FD900", memory)
+
+        clear_dispatch = source.split(
+            "ScummV5_C25_Flush__dispatch:", 1
+        )[1].split("ScummV5_C25_Flush__not_clear_queue:", 1)[0]
+        self.assertIn("cmp #$10", clear_dispatch)
+        self.assertIn("cmp #$01", clear_dispatch)
+        self.assertIn("jmp ScummV5_C25_Flush__clear_imuse_queue", clear_dispatch)
+        generic_probe = source.split(
+            "iMUSE class-1 command 16 clears its deferred-trigger queue.", 1
+        )[1].split("ScummV5_C25_Flush__not_clear_queue:", 1)[0]
+        self.assertNotIn(".if SAME_BUILD_SCUMM_M23C", generic_probe)
+        not_clear = source.split(
+            "ScummV5_C25_Flush__not_clear_queue:", 1
+        )[1].split("; These three iMUSE setup commands", 1)[0]
+        self.assertRegex(
+            not_clear,
+            r"(?s)\.endif\s+; Bytewise probes leave M=8.*?rep #\$20\s+\.a16\s+"
+            r"lda\.l SAME_SCUMM_C25_LAST_WORDS",
+        )
+        clear_handler = source.split(
+            "ScummV5_C25_Flush__clear_imuse_queue:", 1
+        )[1].split("ScummV5_C25_Flush__master_volume:", 1)[0]
+        self.assertIn("SAME_SCUMM_C25_CLEAR_QUEUE_COUNT", clear_handler)
+        self.assertRegex(
+            clear_handler,
+            r"\.endif\s+sep #\$20\s+\.a8\s+jmp ScummV5_C25_Flush__command_done",
+        )
 
     def test_m24rb_frame_end_marker_is_initialized_and_cannot_misreturn(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
@@ -4117,6 +4173,19 @@ class ScummV5EngineTests(unittest.TestCase):
             "the outer scheduler must save the retired lifecycle as stopped, "
             "not overwrite it with a replacement child's wait status",
         )
+
+        poll = far.split("ScummV5_M23A_PollLifecycleChain:", 1)[1].split(
+            "ScummV5_M23A_HandoffLifecycleChain_FarEntry:", 1
+        )[0]
+        self.assertRegex(
+            poll,
+            r"sep #\$10\s+\.i8\s+lda\.l SAME_SCUMM_M23A_CHAIN_SLOT\s+"
+            r"cmp #SCUMM_V5_MAX_SCRIPT_SLOTS\s+bcs .*?\s+tax\s+"
+            r"lda\.l SAME_SCUMM_C4_SLOT_STATUS,x",
+            "the lifecycle poll must zero-extend its byte slot before indexing "
+            "the C4 status table",
+        )
+        self.assertRegex(poll, r"rep #\$10\s+\.i16\s+rts")
 
     def test_native_chain_retirement_zero_extends_byte_slot_index(self) -> None:
         runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()

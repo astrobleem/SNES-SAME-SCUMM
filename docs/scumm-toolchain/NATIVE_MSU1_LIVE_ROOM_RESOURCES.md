@@ -26,15 +26,15 @@ cursor and are checked before publication.
 | Entry/exit lifecycle | SC5LIVE ProgramUnit IDs and the existing M24R-B lifecycle | EXCD/ENCD order is retained; the outgoing room remains installed until its exit/retirement boundary. |
 | Background pixels and palette | Checked SC5VIS plus checked palette record | Pixels enter the indexed active surface; the existing Mode-3 converter/DMA path writes PPU VRAM and CGRAM. |
 | Actor placement/camera | Existing SCUMM runtime state and services | Actor/camera state is not a room asset payload; room geometry and live visual surface are room-backed. |
-| Object names | SC5LIVE fixed-width object-name table | General strings, dialogue text, and font/charset data are not part of this adapter. |
+| Object names | SC5LIVE v2 length-prefixed rows parallel to object records | General strings, dialogue text, and font/charset data are not part of this adapter. |
 
 The feature build has no embedded copy of the SC5LIVE/SC5VIS payloads and no
 fallback to generated ROM object, local-script, movement, or visual tables for
 the live-room consumers above. Compiler/runtime directory metadata remains in
 ROM. This is required to locate external package bytes and is not the room
-payload itself. The authentic room-4 experiment uses this contract for its
-selected route resources; it does not imply that every source-game room or
-resource codec is supported.
+payload itself. The bounded authentic FATE experiment uses this contract for
+the selected route resources in rooms 3–7 and 68; it does not imply that every
+source-game room or resource codec is supported.
 
 ## Transaction and memory ownership
 
@@ -73,7 +73,7 @@ These regions are disjoint from the two WRAM ProgramUnit windows and the
 third BW-RAM page, resident resolver, C4/C19, controller, name cache and
 save-validator state. The active live record is bounded at 4 KiB; incoming
 metadata is staged in the separate 2.5-KiB transaction area. In authentic
-room 4, SC5LIVE is 2,372 bytes and SC5VIS contains a 57,344-byte indexed
+room 4, SC5LIVE is 1,646 bytes and SC5VIS contains a 57,344-byte indexed
 surface plus a 768-byte palette. Visual records are consumed in bounded
 checked reads into their dedicated staging regions. Room-resource buffers and
 bytecode cache have separate ownership and generation rules. A failed
@@ -81,39 +81,118 @@ validation never publishes a partially received record or executable body.
 
 ## Performance and limits
 
-The live-room feature uses a 256-byte per-service-turn MSU budget, versus the
-legacy 64-byte budget. It remains resumable and uses the same serialized
-provider cursor, range checks and CRC validation. Native acceptance records
-actual bytes, logical frame counts, checked-fetch latency, and provider errors;
-these are emulator measurements, not a physical FXPAK throughput claim.
+The live-room feature uses a 256-byte maximum MSU transfer budget per service
+turn (the general provider default remains 64 bytes). Reads are resumable and
+share the serialized provider cursor, checked ranges, and CRC validation.
+Measurements below are from Nexen, not physical FXPAK hardware.
 
-On the synthetic bounded four-room Nexen run, the provider read 261,162 data bytes over
-10,390 logical frames (25.14 bytes/logical frame; 34.23 bytes per frame with
-read progress), with a 256-byte service budget, 233 bytes as the largest
-single-frame transfer, and a 10-frame maximum checked-fetch latency. The
-bytecode windows peaked at 93 occupied bytes. The PCM capture covered 173.4
-seconds; while the track was active it contained no silent 20 ms windows, and
-the four 1.5-second room-transition windows likewise had no silent windows.
-These measurements establish emulator coexistence for this fixture only.
+### Bounded authentic DOS-CD FATE route
 
-The authentic DOS-CD FATE experiment traversed only `0 → 68 → 0 → 4`, settled
-room 4, and then issued the established single Open action on object 61/verb
-3. The selected package contains 209 ProgramUnits (152,548 body bytes), not
-the entire 2,203-unit source projection. By the room-4 checkpoint the provider
-had counted 129,836 bytes; by the later settled/action checkpoint it had
-counted 169,304 bytes. The provider budget is 256 bytes per service turn in
-this feature personality. Nexen reported no provider error or timeout. This
-replay has no PCM track configured, so it is not PCM-continuity evidence.
-Room-4 SC5LIVE (2,372 bytes), its 57,344-byte indexed surface and 768-byte
-palette matched the external package/compiler records. After presentation,
-892/896 PPU tiles matched the compiled visual realization; this is a
-bounded-room visual check, not general image-codec coverage.
+The current acceptance traverses the complete established route
+`0 → 68 → 0 → 4 → 5 → 6 → 7 → 3`. It uses the canonical DOS-CD profile
+(`indy4-fate-dos-cd-en`, DOS CD English, full voice (1993)) and a selected
+287-ProgramUnit package for the six rooms required by this route. This is not
+the entire 2,203-unit backend directory or whole-game streaming.
 
-Mode-3 conversion and DMA are asynchronous. The route validator checks the
-live indexed surface and palette at room publication, then drains the final
-settled presentation without controller input and compares actual PPU tile
-VRAM/CGRAM against the host realization of the same checked SC5VIS resource.
-That presentation drain is not counted as room-load latency.
+The fresh ROM-backed control and streamed experiment are separate builds.
+Static control v25 has ROM SHA-256
+`d87704d6d9d0e2e17b0ab72b1c56cfeee239b584458e26e228ac9f36916132dd`, map
+SHA-256 `3ecb8f1bb51bc4fe67410c1a123b515e0939c628f4645016292b222af754078b`,
+and build identity
+`df3d85e2be222dae9e8d660d9c4a15cd6c4c1b873ca315e2e226b72ad774167f`.
+The streamed v113 build has ROM SHA-256
+`59027f2cc04c41c3abd3fa1cd7741b79086545bfbd5c9a1fd223f1c14f02ea5b`, map
+SHA-256 `7850e76a4aa6482941604ab0c77bd464c1247281c6d446aa118d3e67d08f2db7`,
+build identity
+`2a64eac003338cea13ec0ff159b456713d9ee5a0d9fe77080db1ec1f9c92ed99`, and
+SAMEPKG SHA-256
+`32bea432e369a2853b917a06f283c8d9b67669354462541749ac7d94727a301b`.
+The canonical ProgramUnit directory SHA-256 is
+`07524e9b170c60c4a5f04100062d5baa1597ce2a5ba7434a40772a774084c920`.
+The external source archive SHA-256 is
+`0f3fc396642c800069d31ab9a087b314f1bb1612d37accbe13b6013219ac94f0`.
+
+The earlier newly built static control did not reach room 4 because its replay
+helper passed an unsupported keyword to `_room7_runtime_context`; this was a
+harness error, not an engine or resource-selection failure. The helper was
+corrected and the isolated static v25 replay then passed. A later streamed
+continuation completed native execution but raised an `UnboundLocalError`
+while assembling its JSON report. We did not count that raw exception as a
+pass: a recovery tool checked the partial report's route, all seven one-shot
+actions, runtime snapshots, and identities before emitting a recovered report
+with explicit provenance. The native route was not re-executed after this
+report-only exception.
+
+The seven submissions were exactly once: room 4 Open trapdoor, room 4 Use
+trapdoor, room 5 rope, room 6 books on statues, room 7 Lost Dialogue of Plato,
+room 7 object 118 verb 10, and room 7 object 119 verb 10. Normalized static /
+dynamic comparison passed all seven checkpoints, including live-script
+identity/status, lifecycle, progression state, object state, actor state,
+input ownership, and errors. Selector bytes and scheduler timing are
+normalized because they are implementation-specific. Room-7 dispatch
+observed the generic object-carrier relationships to
+`RoomLocalProgram(room=7,local=207)` and
+`RoomLocalProgram(room=7,local=201)`; the latter reaches room 3 without
+title-specific resolver behavior. The final checkpoint is room 3, SCUMM
+error 0, lifecycle RUNNING, Ego in room 3 at `(71,142)`, and expected
+room-local 213 active.
+
+The streamed route's cumulative provider byte counters at checkpoints were
+1,327,568 (room 5), 2,573,984 (room 6), 3,985,548 (room 7), and 4,964,642
+(room 3). These include executable-page and room/visual traffic. The runtime
+exposes a shared 16-bit “last request started” timestamp that can be overwritten
+by either a code-page or room-resource request, so the measured checkpoint
+intervals of 292, 266, 453, and 165 frames (counter wrap accounted for) are
+**not** isolated room-load durations. For room 4, transition-to-ready was 32
+frames; subsequent settle/presentation work took 173 frames in the recorded
+interval, followed by a 640-frame final presentation drain. These must not be
+conflated with older 25-frame publication or 1,589-frame end-to-end values,
+which came from different builds and timing definitions. Exact per-room
+request/CRC/presentation timing remains a measurement limitation.
+
+### Visual reconciliation
+
+An earlier room-4 comparison reported 892/896 matching PPU tiles. The four
+indices were 736, 740, 744, and 764 (tile row 23; x positions 0, 32, 64, and
+224). They were zero-filled background tiles, not actor, cursor, text, or
+foreground overlays. The Mode-3 invalid-shadow path skipped uploads for blank
+tiles, leaving old VRAM contents. The generic renderer was fixed to upload
+zero-valued tiles too; the comparison was not weakened. After presentation,
+room 4 matched 896/896 tiles. Settled room-6, room-7, and room-3 snapshots
+also report 896/896 PPU tile matches and no mismatched background tiles. The
+continuation evidence does not capture an equivalent full-PPU comparison for
+room 5. SC5VIS indexed surfaces and palettes are checked from package records
+before installation. These results cover this compiled indexed-pixel route,
+not every original FATE graphics codec.
+
+The selected package includes six SC5LIVE records: room 3 (1,449 bytes), room
+4 (1,646), room 5 (2,062), room 6 (2,266), room 7 (2,475), and room 68 (768).
+Each of the six SC5VIS records has a 57,344-byte pixel surface and 768-byte
+palette. Route-specific objects, locals, walkboxes, and verb carriers are
+generated from the external source archive. Program bodies and live-room
+payloads used by the dynamic build remain package-backed; ROM contains
+resolver/resource identity metadata, not hidden copies of those payloads.
+
+### PCM and fault controls
+
+An original Winston PCM diagnostic track was active during the streamed
+route's startup and room-4 external reads. In the 66.721-second capture while
+the finite track was active, one silent 20-ms window was measured (maximum
+20 ms); room-4 reads did not correlate with an additional gap. Longer silent
+regions in a separate long capture occurred after the finite PCM track ended.
+This is emulator concurrency evidence only, not physical hardware acceptance
+or FATE voice/music support.
+
+Fresh Nexen fault controls passed with synthetic package data. A corrupted
+executable page produced explicit CRC error (SCUMM error 16), left the page
+FAILED rather than READY, and did not execute post-corruption markers. A stale
+page-generation reference produced error 16 before any marker executed. A
+corrupted incoming SC5LIVE record failed CRC validation before publication;
+room 1 remained installed with its original active-record hash and the room
+resource failure count incremented. The first room-fault attempt used an old
+incompatible fixture schema and is not counted; the freshly rebuilt
+current-schema ROM passed. These controls do not certify every timeout or
+capacity combination.
 
 The streamed ProgramUnit cache has three 2-KiB instruction-aligned pages. A
 canonical DOS-CD FATE backend-directory audit measured 2,203 selector-bearing
@@ -121,11 +200,10 @@ ProgramUnits and 1,000,867 body bytes. The largest body is 21,002 bytes
 (`RoomLocalProgram(room=27,local=208)`); 78 bodies exceed 2 KiB, 33 exceed 4
 KiB, 16 exceed 8 KiB, and three exceed 16 KiB. The largest complete object
 carrier is 2,116 bytes (`ObjectProgram(room=92,object=1195)`) with verb entry
-offsets retained in its directory. The cache can page this body size
-structurally, and a copyright-free 21,271-byte body passed native cross-page
-branch/yield/resume acceptance. That does not certify all 2,203 FATE
-ProgramUnits for semantics or every possible simultaneously pinned working
-set.
+offsets retained in its directory. A copyright-free 21,271-byte body passed
+native cross-page branch/yield/resume acceptance. This does not certify all
+2,203 FATE ProgramUnits for semantics or every possible simultaneously pinned
+working set.
 
 Original SCUMM background codecs, all image variants, costume codecs, fonts and
 charsets, general text resources, sound/iMUSE assets, and portable streamed
@@ -136,25 +214,25 @@ claimed.
 
 ## Status
 
-- **IMPLEMENTED, feature-gated:** checked live room metadata, objects/names,
-  object-verb dispatch metadata, locals/bundles, walkboxes/movement tables,
-  indexed pixels/palette, and lifecycle integration for copyright-free
-  synthetic rooms and the bounded authentic FATE room-4 route.
-- **NATIVE-VERIFIED:** the generated multiroom fixture route consumed its
-  package-owned SC5LIVE/SC5VIS records and checked the resulting settled PPU
-  tile/CGRAM image; the build and package identities are in local evidence.
-  The current acceptance traverses rooms 1–4, matches the ROM-backed control's
-  observable marker state, records 17 safe selector reuses, and observes no
-  stale rejection, exhaustion, alias, or PCM silence window during room loads.
-  Native build SHA-256 is `cf577d9be0897c44f2478e32f5ba333a36ac0a1ed81e30e18719981801305ba2`;
-  package SHA-256 is `66912bd000b908fe9ea91043cc0169b8baf01aee710815b9466b1a924af24517`.
-- **NATIVE-VERIFIED, bounded external corpus:** canonical DOS-CD FATE room 4
-  used package-owned room metadata, visual pixels/palette and selected
-  executable bodies through `0 → 68 → 0 → 4`; Open on object 61/verb 3 was
-  submitted once. This does not test all rooms.
-- **PARTIAL:** original source-format background decoding and other resource
-  families are not comprehensively streamed; program semantics, concurrent
-  cache pressure, assets, audio conversion and portable save reconstruction
-  remain incomplete.
-- **PLANNED:** general resource cache/codec services, broader bytecode-cache
-  policy, portable save migration, and physical hardware testing.
+- **IMPLEMENTED, feature-gated:** checked live metadata, object/name/verb
+  directories, room locals, walkboxes, indexed surfaces/palettes, and room
+  lifecycle integration for synthetic rooms and the selected authentic FATE
+  route rooms 3–7 and 68.
+- **NATIVE-VERIFIED:** fresh static and streamed controls agree at the seven
+  route checkpoints. The dynamic route reaches settled room 3 with error 0
+  and the accepted actor/local state. Full PPU comparisons are exact for
+  rooms 4, 6, 7, and 3; room 5's full-PPU comparison was not captured.
+- **DIAGNOSTIC RECOVERY:** the final streamed native continuation completed,
+  but its report writer threw after execution. A recovery utility revalidated
+  saved runtime evidence and recorded provenance. This is not a clean run of
+  that report-writing path, although the fresh static replay and native fault
+  controls completed normally.
+- **PARTIAL:** only route-selected ProgramUnits and six room bundles are
+  included. Whole-game execution, all original graphics/costume/charset
+  codecs, general text resources, complete sound/iMUSE assets, portable save
+  reconstruction for streamed scripts, and physical hardware operation
+  remain unproven. This bounded replay is not a claim that FATE is playable
+  end-to-end.
+- **PLANNED:** per-resource request/CRC/presentation timing records that do
+  not share an overwritten timestamp; broader resource codecs and audio
+  conversion; portable streamed-save migration; and physical hardware tests.

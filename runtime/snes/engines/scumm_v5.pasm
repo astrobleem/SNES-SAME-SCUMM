@@ -221,6 +221,13 @@ ScummV5_Engine_Boot__scenario_root_latch_ready:
     .endif
     lda #$00
     sta.l SAME_SCUMM_C4_PARENT_RETURN_MODE
+    sta.l SAME_SCUMM_C4_SCHED_CURSOR
+    sta.l SAME_SCUMM_C4_SCHED_REMAINING
+    .if SAME_BUILD_M24RB && !SAME_BUILD_SCUMM_M23B
+    ; Initialize the generic nested-context depth without enabling any of the
+    ; M23B-specific fixture/profile setup below.
+    sta.l SAME_SCUMM_M23B_NEST_DEPTH
+    .endif
     jsr ScummV5_C7_ResetState
     jsr ScummV5_C8_ResetState
     jsr ScummV5_C10_ResetState
@@ -599,26 +606,34 @@ ScummV5_Engine_Boot__m23c_clear:
     .a8
     .endif
     .endif
+    .endif ; SAME_BUILD_SCUMM_M23B
     ; SCUMM v4+ reset initializes VAR_HEAPSPACE (40) to 1400. Authored
     ; startup conditions depend on this value before any game script runs.
     ; SCUMM v5 resetScummVars also initializes VAR_CURRENT_LIGHTS (9) to
-    ; base-palette | room-lights-on | actor-colors ($000B). Install both after
-    ; all M23B variable-clear and fixture-seed paths above.
+    ; base-palette | room-lights-on | actor-colors ($000B). These are generic
+    ; system variables, not M23B fixture seeds, so initialize them for every
+    ; authored full-table runtime after its selected variable-clear path.
+    .if SAME_BUILD_SCUMM_M23B || SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY || SAME_BUILD_SCUMM_PHASE6HB || SAME_BUILD_SCUMM_PHASE6LA1D
     rep #$20
     .a16
     lda #$0578
-    sta.l SAME_SCUMM_M23B_VARIABLES+(40 * 2)
+    sta.l SAME_SCUMM_VARIABLES+(40 * 2)
     lda #$000B
-    sta.l SAME_SCUMM_M23B_VARIABLES+(9 * 2)
+    sta.l SAME_SCUMM_VARIABLES+(9 * 2)
     sep #$20
     .a8
-    .endif ; SAME_BUILD_SCUMM_M23B
+    .endif
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda #$00
     sta.l SAME_SCUMM_LOAD_EGO_ACTIVE
     jsl ScummV5_Talk_Reset_Far
     jsl ScummV5_GetActorWalkbox_Reset_Far
     jsl ScummV5_ObjectOwner_LoadInitial_Far
+    ; Generated room/source tables include the DOS-CD DOBJ class masks.  They
+    ; are the initial SCUMM object-class state, not a scenario-fixture overlay;
+    ; install them before any authored global/room script evaluates ifClassOfIs.
+    ; Runtime setClass mutations then remain live across room transitions.
+    jsl ScummV5_ObjectClass_LoadInitial_Far
     ; Object names are runtime $54 state in both static and dynamic-residency
     ; builds. Clear the compact length table before room loading; resolver
     ; ownership is separately audited at $7E8C00-$7E8FBF.
@@ -1991,6 +2006,11 @@ ScummV5_Engine_RunSelected__msu_ready:
     bra ScummV5_Engine_RunSelected__msu_resource_return
 ScummV5_Engine_RunSelected__msu_depth_ok:
     .a8
+    ; EXEC_DEPTH is a byte.  The caller may have left a nonzero high X byte
+    ; while X is 16-bit, so explicitly narrow the index before addressing the
+    ; bounded 25-entry continuation stack.
+    sep #$10
+    .i8
     tax
     lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
     sta.l SAME_SCUMM_MSU_EXEC_PREV_SLOT,x
@@ -2255,7 +2275,16 @@ ScummV5_Engine_Frame__op_trace_done:
     .a8
     lda.l SAME_SCUMM_M23A_PHASE
     cmp #$01
+    beq ScummV5_Engine_Frame__lifecycle_trace_record
+    ; In diagnostic/authentic-bootstrap builds, also retain the incoming
+    ; ENCD opcode tail. This makes lifecycle branch decisions observable
+    ; without changing the bytecode or adding a title-specific breakpoint.
+    cmp #$02
     bne ScummV5_Engine_Frame__phase1_trace_done
+    lda.l SAME_SCUMM_M23A_CURRENT_KIND
+    cmp #$01
+    bne ScummV5_Engine_Frame__phase1_trace_done
+ScummV5_Engine_Frame__lifecycle_trace_record:
     rep #$10
     .i16
     phx
@@ -3195,6 +3224,16 @@ ScummV5_Engine_Frame__m20_position_done16:
 ScummV5_Engine_Frame__m20_position_done:
     .endif
 ScummV5_Engine_Frame__return_success:
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; Every RunSelected entry owns one transient bytecode-window pin, including
+    ; nested RETURN_MODE calls.  The old nested fast-return below bypassed
+    ; Leave, leaking one pin whenever a child was already STOPPED on entry;
+    ; after enough nested scripts all cache pages became permanently
+    ; unevictable even though EXEC_DEPTH had returned to zero.  C4 stores only
+    ; canonical selector + logical PC, so releasing this execution pin is safe
+    ; for both the outer scheduler and nested continuation.
+    jsl ScummV5_MsuProgram_Leave_Far
+.endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_RETURN_MODE
@@ -3202,13 +3241,6 @@ ScummV5_Engine_Frame__return_success:
     clc
     rts
 ScummV5_Engine_Frame__outer_return_success:
-.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
-    ; A terminal stop can return through the frame's final path instead of the
-    ; opcode-yield completion path. Balance any body context acquired by this
-    ; invocation; Leave is depth-guarded, so an already-balanced frame is a
-    ; no-op.
-    jsl ScummV5_MsuProgram_Leave_Far
-.endif
 .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
     ; Diagnostic-only: snapshot the exact native return frame before the
     ; engine restores its entry status and returns to Same_ActiveEngine_Frame.
@@ -3365,6 +3397,9 @@ ScummV5_C4_ResetState__msu_pending:
     .endif
     sep #$20
     .a8
+    lda #$00
+    sta.l SAME_SCUMM_C4_SCHED_CURSOR
+    sta.l SAME_SCUMM_C4_SCHED_REMAINING
     rts
 
 .if SAME_BUILD_SCUMM_M25A_VALIDATOR
@@ -3471,11 +3506,41 @@ ScummV5_C4_Scheduler_Frame__clear_didexec:
     inx
     cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
     bcc ScummV5_C4_Scheduler_Frame__clear_didexec
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; Rotate admission order in streamed builds. The scheduler still visits
+    ; all 25 activations exactly once; only which WAIT_RESOURCE owner gets the
+    ; first chance to claim the serialized provider cursor changes.
+    lda.l SAME_SCUMM_C4_SCHED_CURSOR
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcc ScummV5_C4_Scheduler_Frame__cursor_valid
+    lda #$00
+    sta.l SAME_SCUMM_C4_SCHED_CURSOR
+ScummV5_C4_Scheduler_Frame__cursor_valid:
+    .a8
+    sta.l SAME_SCUMM_C4_SCHED_SLOT
+    inc
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcc ScummV5_C4_Scheduler_Frame__cursor_next_valid
+    lda #$00
+ScummV5_C4_Scheduler_Frame__cursor_next_valid:
+    .a8
+    sta.l SAME_SCUMM_C4_SCHED_CURSOR
+    lda #SCUMM_V5_MAX_SCRIPT_SLOTS
+    sta.l SAME_SCUMM_C4_SCHED_REMAINING
+    .else
     lda #$00
     sta.l SAME_SCUMM_C4_SCHED_SLOT
+    .endif
 ScummV5_C4_Scheduler_Frame__next_slot:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    lda.l SAME_SCUMM_C4_SCHED_REMAINING
+    bne ScummV5_C4_Scheduler_Frame__remaining_slots
+    jml ScummV5_C4_Scheduler_Frame__complete
+ScummV5_C4_Scheduler_Frame__remaining_slots:
+    .a8
+    .endif
     lda.l SAME_SCUMM_C4_SCHED_SLOT
     cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
     bcc ScummV5_C4_Scheduler_Frame__slot_in_range
@@ -3841,7 +3906,19 @@ ScummV5_C4_Scheduler_Frame__advance:
     .a8
     lda.l SAME_SCUMM_C4_SCHED_SLOT
     inc
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcc ScummV5_C4_Scheduler_Frame__advance_slot_ready
+    lda #$00
+ScummV5_C4_Scheduler_Frame__advance_slot_ready:
+    .a8
     sta.l SAME_SCUMM_C4_SCHED_SLOT
+    lda.l SAME_SCUMM_C4_SCHED_REMAINING
+    dec
+    sta.l SAME_SCUMM_C4_SCHED_REMAINING
+    .else
+    sta.l SAME_SCUMM_C4_SCHED_SLOT
+    .endif
     jmp ScummV5_C4_Scheduler_Frame__next_slot
 ScummV5_C4_Scheduler_Frame__complete:
     jsr ScummV5_C4_RecountActive
@@ -4099,7 +4176,11 @@ ScummV5_C4_RecountActive__advance:
     rts
 
 ScummV5_C4_RunNestedChild:
-    .if SAME_BUILD_SCUMM_M23B
+    .if SAME_BUILD_SCUMM_M23B || SAME_BUILD_M24RB
+    ; Nested StartScript is ordinary v5 scheduler behavior. M23B originally
+    ; enabled the bounded parent-context stack for its conformance profile;
+    ; room-service builds also require it when source scripts nest multiple
+    ; children before returning to an outer activation.
     .if SAME_BUILD_M24RB
     jmp ScummV5_M25A_RunNestedChildFar
     .else
@@ -4302,7 +4383,7 @@ ScummV5_C4_RunNestedChild__success:
     clc
     rts
 
-.if SAME_BUILD_SCUMM_M23B
+.if SAME_BUILD_SCUMM_M23B || SAME_BUILD_M24RB
 ; Canonical startScript runs a newly allocated child immediately.  The caller
 ; stack is bounded by the 25-slot scheduler: with one current script, at most
 ; 24 parents can be suspended.  Slot-owned state remains in the slot table;
@@ -9166,7 +9247,7 @@ ScummV5_M24RB_FarCall_ResetCutscene:
 ScummV5_M24RB_FarCall_ResetSentenceQueue:
     jsr ScummV5_C20_ResetState
     rtl
-.if SAME_BUILD_SCUMM_M23B
+.if SAME_BUILD_SCUMM_M23B || SAME_BUILD_M24RB
 ScummV5_M25A_FarCall_SaveCurrentSlot:
     jsr ScummV5_C4_SaveCurrentSlot
     rtl
@@ -13376,6 +13457,7 @@ ScummV5_C25_ResetState:
     sta.l SAME_SCUMM_C25_FLUSH_COUNT
     sta.l SAME_SCUMM_C25_COMMAND_INDEX
     sta.l SAME_SCUMM_C25_RECORD_OFFSET
+    sta.l SAME_SCUMM_C25_CLEAR_QUEUE_COUNT
     sep #$20
     .a8
     sta.l SAME_SCUMM_C25_WORD_INDEX
@@ -13876,7 +13958,6 @@ ScummV5_C25_Flush__dispatch:
 ScummV5_C25_Flush__not_jump_hook:
     .a16
     .endif
-    .if SAME_BUILD_SCUMM_M23C
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     sep #$20
     .a8
@@ -13885,18 +13966,21 @@ ScummV5_C25_Flush__not_jump_hook:
     rep #$20
     .a16
     .endif
-    cmp #$0110
+    ; iMUSE class-1 command 16 clears its deferred-trigger queue. This
+    ; semantic is independent of the optional M23C bounded route driver. The
+    ; native audio backend currently has no deferred-trigger records, so a
+    ; valid clear is observable and succeeds without inventing queue state.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C25_LAST_WORDS
+    cmp #$10
     bne ScummV5_C25_Flush__not_clear_queue
-    .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
-    jmp ScummV5_C25_Flush__clear_imuse_queue_conformance
-    .else
-    .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
-    jmp ScummV5_C25_Flush__clear_imuse_queue_conformance
-    .else
+    lda.l SAME_SCUMM_C25_LAST_WORDS+1
+    cmp #$01
+    bne ScummV5_C25_Flush__not_clear_queue
     jmp ScummV5_C25_Flush__clear_imuse_queue
-    .endif
-    .endif
 ScummV5_C25_Flush__not_clear_queue:
+    .if SAME_BUILD_SCUMM_M23C
     ; Recognize this encoded command bytewise.  C25 records are byte-packed
     ; at the queue boundary, so command identity must not depend on the
     ; caller's accumulator-width annotation or a stale high byte.
@@ -13918,13 +14002,12 @@ ScummV5_C25_Flush__not_clear_queue:
     .endif
     jmp ScummV5_C25_Flush__authored_setup
 ScummV5_C25_Flush__not_authored_setup:
+    .endif
+    ; Bytewise probes leave M=8 when they do not match. Restore the normalized
+    ; command before shared M24RB/legacy dispatch in every build personality.
     rep #$20
     .a16
-    ; The fixture-only marker above is observational, but it changes A.  All
-    ; subsequent command-family comparisons must use the normalized queued
-    ; command again rather than the marker byte.
     lda.l SAME_SCUMM_C25_LAST_WORDS
-    .endif
     ; These three iMUSE setup commands are present in the authentic Fate
     ; room scripts.  They are meaningful to the desktop mixer, but have no
     ; independent SNES-side state in the bounded fallback.  Accept their
@@ -14009,37 +14092,10 @@ ScummV5_C25_Flush__not_stop_sound:
 ScummV5_C25_Flush__dispatch_stop_all:
     jmp ScummV5_C25_Flush__stop_all
 ScummV5_C25_Flush__dispatch_error:
-    ; C25 command identity is a packed little-endian word.  Keep the
-    ; compatibility trigger recognizable even when a preceding service helper
-    ; returned with a byte-width accumulator; the normalized record remains
-    ; the authority for the command, not the caller's transient P state.
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_C25_LAST_WORDS
-    ; Keep the packed iMUSE queue-clear command recognizable even if a
-    ; service helper returned through an unexpected accumulator width. This
-    ; compatibility dispatch exists only when M23C owns that command.
-.if SAME_BUILD_SCUMM_M23C
-    cmp #$10
-    bne ScummV5_C25_Flush__dispatch_error__not_0110_low
-    lda.l SAME_SCUMM_C25_LAST_WORDS+1
-    cmp #$01
-    bne ScummV5_C25_Flush__dispatch_error__not_0110_low
-    .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
-    jmp ScummV5_C25_Flush__clear_imuse_queue_conformance
-    .else
-    jmp ScummV5_C25_Flush__clear_imuse_queue
-    .endif
-.else
-    bra ScummV5_C25_Flush__dispatch_error__not_0110_low
-.endif
-ScummV5_C25_Flush__dispatch_error__not_0110_low:
+    ; Reload normalized command after the earlier bytewise probes.
     rep #$30
     .a16
     lda.l SAME_SCUMM_C25_LAST_WORDS
-    ; The compatibility trigger is likewise recognized from the normalized
-    ; packed word below; reloading restores the compare width after the
-    ; bytewise probes above.
     sep #$20
     .a8
     .if SAME_BUILD_M24RB || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
@@ -14292,6 +14348,7 @@ ScummV5_C25_Flush__authored_setup_valid:
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
     jmp ScummV5_C25_Flush__command_done
+.endif
 
 ScummV5_C25_Flush__clear_imuse_queue:
     sep #$20
@@ -14307,9 +14364,20 @@ ScummV5_C25_Flush__clear_imuse_queue:
     lda #$D5
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C25_CLEAR_QUEUE_COUNT
+    inc
+    sta.l SAME_SCUMM_C25_CLEAR_QUEUE_COUNT
+    .if SAME_BUILD_SCUMM_M23C
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_M23C_CLEAR_QUEUE_COUNT
     inc
     sta.l SAME_SCUMM_M23C_CLEAR_QUEUE_COUNT
+    .endif
+    sep #$20
+    .a8
     jmp ScummV5_C25_Flush__command_done
 ScummV5_C25_Flush__clear_imuse_error:
     .a8
@@ -14318,7 +14386,6 @@ ScummV5_C25_Flush__clear_imuse_error:
     sta.l SAME_SCUMM_SCENARIO_C25_ERROR_SITE
     .endif
     jml ScummV5_C25_Error
-.endif
 
 ScummV5_C25_Flush__master_volume:
     sep #$20

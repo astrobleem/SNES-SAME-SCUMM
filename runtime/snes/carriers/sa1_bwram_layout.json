@@ -16,27 +16,27 @@
     "allocations": {
       "mode3_control": {
         "offset": 0,
-        "bytes": 18,
+        "bytes": 64,
         "owner": "video_mode3.pasm"
       },
       "video_surface_state": {
-        "offset": 128,
+        "offset": 64,
         "bytes": 68,
         "owner": "video_surface.pasm"
       },
       "live_room_palette_stage": {
-        "offset": 256,
+        "offset": 132,
         "bytes": 768,
         "owner": "SCUMM live-room MSU transition"
       },
       "live_room_control": {
-        "offset": 1024,
+        "offset": 900,
         "bytes": 64,
         "owner": "SCUMM live-room MSU transition"
       },
       "live_room_pending": {
-        "offset": 1536,
-        "bytes": 2560,
+        "offset": 964,
+        "bytes": 3132,
         "owner": "SCUMM live-room incoming metadata transaction"
       }
     }
