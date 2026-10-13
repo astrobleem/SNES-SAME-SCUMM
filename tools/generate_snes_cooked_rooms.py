@@ -463,6 +463,11 @@ def main() -> int:
         help="package compiler-owned room tables and visuals for live MSU consumers",
     )
     parser.add_argument(
+        "--msu1-include-source-room-records", action="store_true",
+        help=("retain complete cooked SC5ROOM records in SAMEPKG as package-only "
+              "source resources; this does not make oversized records natively loadable"),
+    )
+    parser.add_argument(
         "--pack-source-tables", action="store_true",
         help="pack generated per-room metadata tables into bank-bounded pages",
     )
@@ -485,6 +490,8 @@ def main() -> int:
         parser.error("MSU ProgramUnit storage requires --msu1-program-directory-include")
     if args.msu1_live_room_resources and not args.msu1_program_storage_dir:
         parser.error("--msu1-live-room-resources requires --msu1-program-storage-dir")
+    if args.msu1_include_source_room_records and not args.msu1_live_room_resources:
+        parser.error("--msu1-include-source-room-records requires live-room package mode")
     if args.msu1_program_prefix_all_sections and args.msu1_program_prefix_section:
         parser.error("choose either --msu1-program-prefix-all-sections or named prefix sections")
     prefix_requested = bool(args.msu1_program_prefix_all_sections or args.msu1_program_prefix_section)
@@ -1513,6 +1520,23 @@ def main() -> int:
                 raise RuntimeError(f"duplicate selector-bearing ProgramUnit {identity}")
             canonical_identities.add(identity)
             canonical_by_temp_id[int(item["id"])] = identity
+            source = item.get("source")
+            source_location = {
+                key: (source.get(key) if isinstance(source, dict)
+                      else getattr(source, key, None))
+                for key in (
+                    "source_member", "resource_key", "original_file_offset",
+                    "original_room_offset", "original_chunk_offset",
+                    "cooked_record_offset", "normalized_script_offset",
+                    "directory_offset", "directory_room", "encrypted_chunk_offset",
+                    "decoded_chunk_offset", "decoded_payload_offset", "source_length",
+                    "source_sha256", "obcd_original_file_offset", "obcd_room_offset",
+                    "obcd_length", "obcd_sha256", "local_object_index",
+                    "verb_table_offset", "verb_table_length",
+                )
+            }
+            source_location = {key: value for key, value in source_location.items()
+                               if value is not None}
             native_rows.append({
                 "identity": identity,
                 "kind": ("GLOBAL" if item["kind_name"] == "GLOBAL"
@@ -1525,6 +1549,11 @@ def main() -> int:
                 "source_provenance": {
                     "source_identity": item.get("identity"),
                     "body_sha256": hashlib.sha256(item["program"]).hexdigest(),
+                    "body_pc_coordinate": (
+                        "OBCD-relative" if item["kind_name"] == "OBCD"
+                        else "program-body-relative"
+                    ),
+                    "source_location": source_location,
                 },
                 "dispatch": ({"object": int(item["number"]),
                               "verb_entrypoints": [
@@ -1598,13 +1627,19 @@ def main() -> int:
                     f"missing {missing_visuals[:8]}"
                 )
             live_room_resources = {
-                int(record["room"]): encode_live_room(record, program_units=programs)
+                int(record["room"]): encode_live_room(
+                    record, program_units=programs, max_size=0xFFFF,
+                )
                 for record in records
             }
             room_visual_resources = {
                 int(record["room"]): bytes(record["visual_raw"])
                 for record in records
             }
+        source_room_resources = (
+            {int(record["room"]): bytes(record["raw"]) for record in records}
+            if args.msu1_include_source_room_records else {}
+        )
         prefix_sections = read_package_prefix_sections(
             args.msu1_program_prefix_package,
             None if args.msu1_program_prefix_all_sections
@@ -1616,6 +1651,7 @@ def main() -> int:
             page_metadata=storage_page_metadata,
             prefix_sections=prefix_sections,
             room_resources=room_resources,
+            source_room_resources=source_room_resources,
             live_room_resources=live_room_resources,
             room_visual_resources=room_visual_resources,
             rom_bank=args.msu1_program_directory_bank,

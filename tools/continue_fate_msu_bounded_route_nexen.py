@@ -18,10 +18,15 @@ import re
 import sys
 from typing import Any
 
+from fate_replay_evidence import (
+    ReplayEvidenceJournal, atomic_write_report,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_NEXEN = Path(
     "/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/linux-x64/publish/Nexen"
 )
+EVIDENCE_JOURNAL: ReplayEvidenceJournal | None = None
 
 
 def sha256(path: Path) -> str:
@@ -29,10 +34,9 @@ def sha256(path: Path) -> str:
 
 
 def atomic_report(path: Path, report: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-    temporary.replace(path)
+    if EVIDENCE_JOURNAL is not None:
+        EVIDENCE_JOURNAL.append(report)
+    atomic_write_report(path, report)
 
 
 def main() -> int:
@@ -52,6 +56,10 @@ def main() -> int:
     )
     parser.add_argument("--prefix-report", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--evidence-journal", type=Path,
+        help="append-only identity-bound snapshots (default: OUTPUT.evidence.jsonl)",
+    )
     parser.add_argument("--archive", type=Path, default=Path("/home/chad/ATLANTIS.zip"))
     parser.add_argument("--nexen", type=Path, default=DEFAULT_NEXEN)
     parser.add_argument("--port", type=int, default=44980)
@@ -270,7 +278,29 @@ def main() -> int:
         "room_observations": {},
         "controller_submissions": [],
         "checkpoints": {},
+        "coverage_gaps": {
+            "room5_full_ppu_equivalence": (
+                "NOT_CAPTURED: the accepted full route has no matching-ROM full-PPU "
+                "comparison for room 5; observations from other rooms do not imply it"
+            ),
+        },
+        "evidence_journal": {
+            "schema": "same_fate_native_replay_journal_v1",
+            "snapshot_policy": "append-and-fsync-before-report-finalization",
+        },
     }
+    journal_path = (
+        args.evidence_journal.resolve() if args.evidence_journal
+        else args.output.resolve().with_suffix(args.output.suffix + ".evidence.jsonl")
+    )
+    global EVIDENCE_JOURNAL
+    EVIDENCE_JOURNAL = ReplayEvidenceJournal(journal_path)
+    room5_entry = (
+        prior_entry_report.get("room5_entry") if prior_entry_report is not None
+        else resume_report.get("room5_entry") if resume_report is not None
+        else None
+    )
+    atomic_report(args.output.resolve(), output)
     mesen_session.validate_mesen_build = lambda _path: None
     session_owner = mesen_session.McpSession(
         rom=rom, mesen=nexen, cwd=ROOT, port=args.port,
@@ -323,6 +353,13 @@ def main() -> int:
                 "bytecode_page_loads": metrics["cache_loads"],
             },
         }
+        if room == 5:
+            result_check = presentation["full_vram_check"]
+            output["coverage_gaps"]["room5_full_ppu_equivalence"] = (
+                "CAPTURED: matching-ROM SC5VIS-to-PPU comparison stored in room observation"
+                if result_check is not None else
+                "NOT_CAPTURED: room 5 full-PPU comparison was not ready at this checkpoint"
+            )
         output["room_observations"][str(room)] = result
         atomic_report(args.output.resolve(), output)
         return result

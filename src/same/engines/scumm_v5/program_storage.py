@@ -14,6 +14,7 @@ import zlib
 from typing import Mapping
 
 from same.package import build_package, inspect_package
+from .live_room_resources import MAX_PENDING_BYTES as MAX_PENDING_LIVE_ROOM_BYTES
 
 
 PROGRAM_SECTION = "SC5CODE"
@@ -351,6 +352,7 @@ def build_program_storage(
     page_metadata: Mapping[str, Mapping[str, object]] | None = None,
     prefix_sections: tuple[tuple[str, str, bytes, int], ...] = (),
     room_resources: Mapping[int, bytes] | None = None,
+    source_room_resources: Mapping[int, bytes] | None = None,
     live_room_resources: Mapping[int, bytes] | None = None,
     room_visual_resources: Mapping[int, bytes] | None = None,
     rom_bank: int | None = None,
@@ -416,6 +418,17 @@ def build_program_storage(
             "bundle": entry.get("bundle"),
             "dispatch": entry.get("dispatch", {}),
             "source_provenance": entry.get("source_provenance"),
+            "instruction_spans": (
+                [] if metadata is None else list(metadata.get("instruction_spans", ()))
+            ),
+            "opaque_ranges": (
+                [] if metadata is None else list(metadata.get("opaque_ranges", ()))
+            ),
+            "body_pc_coordinate": (
+                (entry.get("source_provenance") or {}).get(
+                    "body_pc_coordinate", "program-body-relative",
+                )
+            ),
         })
     body_file.write_bytes(payload)
     package_manifest = output_dir / "same-package.json"
@@ -470,6 +483,43 @@ def build_program_storage(
             "alignment": 1,
             "flags": ["streamable", "read_only"],
         })
+    source_room_rows: list[dict[str, object]] = []
+    source_room_payload = bytearray()
+    source_room_by_id = dict(source_room_resources or {})
+    if any(isinstance(room, bool) or not 0 <= int(room) <= 255
+           for room in source_room_by_id):
+        raise ValueError("package-only cooked room IDs must fit u8")
+    if set(source_room_by_id) & set(room_by_id):
+        raise ValueError("runtime and package-only SC5ROOM records cannot share a directory")
+    if source_room_by_id and ROOM_SECTION in used_section_names:
+        raise ValueError(f"reserved SCUMM package section name {ROOM_SECTION}")
+    if source_room_by_id:
+        source_room_file = output_dir / "scumm-source-room-records.bin"
+        for room_id, source_record in sorted(source_room_by_id.items()):
+            body = bytes(source_record)
+            if not body or len(body) > 0xFFFFFFFF:
+                raise ValueError(
+                    f"source cooked room {room_id} length is outside the SAMEPKG u32 range"
+                )
+            offset = len(source_room_payload)
+            source_room_payload.extend(body)
+            source_room_rows.append({
+                "room": int(room_id), "section_relative_offset": offset,
+                "length": len(body), "crc32": f"{zlib.crc32(body) & 0xFFFFFFFF:08x}",
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "native_loadable": len(body) <= ROOM_RECORD_LIMIT,
+                "native_loadability_reason": (
+                    None if len(body) <= ROOM_RECORD_LIMIT else
+                    f"complete SC5ROOM record exceeds the native {ROOM_RECORD_LIMIT}-byte "
+                    "staging window; live-room execution uses SC5LIVE/SC5VIS"
+                ),
+            })
+        source_room_file.write_bytes(source_room_payload)
+        package_sections.append({
+            "name": ROOM_SECTION, "kind": ROOM_SECTION_KIND,
+            "path": source_room_file.name, "alignment": 1,
+            "flags": ["streamable", "read_only"],
+        })
     live_room_rows: list[dict[str, object]] = []
     live_room_payload = bytearray()
     live_by_id = dict(live_room_resources or {})
@@ -483,7 +533,9 @@ def build_program_storage(
         live_file = output_dir / "scumm-live-room-resources.bin"
         for room_id, resource in sorted(live_by_id.items()):
             body = bytes(resource)
-            decoded_live = decode_live_room(body, expected_room=int(room_id))
+            decoded_live = decode_live_room(
+                body, expected_room=int(room_id), max_size=0xFFFF,
+            )
             if len(body) > 0xFFFF:
                 raise ValueError(f"live room {room_id} exceeds directory length field")
             offset = len(live_room_payload)
@@ -492,6 +544,12 @@ def build_program_storage(
                 "room": int(room_id), "section_relative_offset": offset,
                 "length": len(body), "crc32": f"{decoded_live.crc32:08x}",
                 "sha256": decoded_live.sha256,
+                "native_loadable": len(body) <= MAX_PENDING_LIVE_ROOM_BYTES,
+                "native_loadability_reason": (
+                    None if len(body) <= MAX_PENDING_LIVE_ROOM_BYTES else
+                    f"SC5LIVE record exceeds audited pending staging capacity "
+                    f"{MAX_PENDING_LIVE_ROOM_BYTES} bytes"
+                ),
             })
         live_file.write_bytes(live_room_payload)
         package_sections.append({
@@ -550,7 +608,8 @@ def build_program_storage(
             "flags": ["streamable", "read_only"],
         })
     room_directory_count = max(
-        max(room_by_id, default=-1), max(live_by_id, default=-1),
+        max(room_by_id, default=-1), max(source_room_by_id, default=-1),
+        max(live_by_id, default=-1),
         max(visual_by_id, default=-1),
     ) + 1
     package_sections.append({
@@ -588,6 +647,10 @@ def build_program_storage(
         assert room_section is not None
         for row in room_rows:
             row["package_offset"] = room_section.offset + int(row["section_relative_offset"])
+    if source_room_rows:
+        assert room_section is not None
+        for row in source_room_rows:
+            row["package_offset"] = room_section.offset + int(row["section_relative_offset"])
     if live_room_rows:
         assert live_room_section is not None
         for row in live_room_rows:
@@ -624,6 +687,12 @@ def build_program_storage(
         "room_resource_bytes": len(room_payload),
         "room_section": None if room_section is None else room_section.to_dict(),
         "room_records": room_rows,
+        "source_room_record_count": len(source_room_rows),
+        "source_room_record_bytes": len(source_room_payload),
+        "source_room_section": (
+            room_section.to_dict() if source_room_rows and room_section is not None else None
+        ),
+        "source_room_records": source_room_rows,
         "room_directory_count": room_directory_count,
         "live_room_resource_count": len(live_room_rows),
         "live_room_resource_bytes": len(live_room_payload),

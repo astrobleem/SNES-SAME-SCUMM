@@ -46,6 +46,13 @@ generic compiler-derived analysis. It distinguishes resource identity from
 executable identity and includes no FATE root/script/object constants; title
 roots are supplied by profile data.
 
+The whole-source package path (`package_scumm_v5_source_msu.py`) is likewise
+generic compiler-derived packaging. The DOS-CD profile and external archive
+select the integration corpus; package generation itself consumes the complete
+analyzed ProgramUnit/resource directory without title-specific selection rules.
+The replay evidence journal/recovery helpers are integration-test tooling: they
+bind snapshots to build identities and preserve missing observations as missing.
+
 The residency planner (`residency.py`) is another compiler-derived analysis:
 it classifies global/room executable scopes and annotates lifecycle edges
 without allocating selectors or treating title room numbers as policy. The

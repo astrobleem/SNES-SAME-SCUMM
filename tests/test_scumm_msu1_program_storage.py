@@ -15,7 +15,9 @@ from same.engines import default_registry
 from same.engines.scumm_v5.program_storage import (
     build_program_storage, plan_program_pages, read_package_prefix_sections,
 )
-from same.engines.scumm_v5.live_room_resources import encode_live_room
+from same.engines.scumm_v5.live_room_resources import (
+    MAX_PENDING_BYTES, OBJECT, SOURCE_OBJECT_WALK, decode_live_room, encode_live_room,
+)
 from same.engines.scumm_v5.room_compiler import compile_room_payload, decode_script
 from same.engines.scumm_v5.room_visual import decode_room_visual, encode_room_visual
 from same.input import SnesButton
@@ -216,6 +218,53 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
             self.assertIn("ScummV5_MsuVisualRecords:", include)
             self.assertEqual(result["live_room_resource_count"], 1)
             self.assertEqual(result["visual_resource_count"], 1)
+
+    def test_package_retains_large_source_rooms_and_reports_live_staging_limits(self) -> None:
+        directory = self.directory()
+        bodies = {
+            "GlobalProgram(4)": b"\0",
+            "RoomEntryProgram(2)": b"\xa0",
+            "ObjectProgram(room=2,object=9)": b"\0",
+        }
+        object_ids = tuple(range(200))
+        objects = b"".join(OBJECT.pack(value, 0, 0, 1, 1, 0) for value in object_ids)
+        names = tuple((value, b"passive") for value in object_ids)
+        object_walk = b"".join(
+            SOURCE_OBJECT_WALK.pack(value, 0, 0, 0, 0, 0, 0) for value in object_ids
+        )
+        room = {
+            "room": 2, "raw": b"source", "entry": 1, "exit": 0xFFFF,
+            "walkbox_flags": b"\x00", "walkbox_geometry": bytes(18),
+            "box_routes": b"\xff", "portals": bytes(7),
+            "objects": objects, "object_names": names, "object_walk": object_walk,
+            "object_programs": (), "executable_locals": (),
+        }
+        room_units = [{"id": 1, "room": 2, "unit_identity": "RoomEntryProgram(2)"}]
+        live = encode_live_room(room, program_units=room_units, max_size=0xFFFF)
+        self.assertGreater(len(live), MAX_PENDING_BYTES)
+        with self.assertRaisesRegex(Exception, "length exceeds"):
+            decode_live_room(live, expected_room=2)
+        self.assertEqual(decode_live_room(live, expected_room=2, max_size=0xFFFF).room, 2)
+
+        source_room = bytes((index * 7) & 0xFF for index in range(100_000))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            result = build_program_storage(
+                directory, bodies, root,
+                source_room_resources={2: source_room},
+                live_room_resources={2: live},
+            )
+            package = inspect_package(root / "scumm-programs.msu", verify=True)
+            self.assertEqual([section.name for section in package.sections],
+                             ["SC5ROOM", "SC5LIVE", "SC5CODE"])
+            source_row = result["source_room_records"][0]
+            live_row = result["live_room_records"][0]
+            self.assertFalse(source_row["native_loadable"])
+            self.assertFalse(live_row["native_loadable"])
+            raw = (root / "scumm-programs.msu").read_bytes()
+            source_offset = int(source_row["package_offset"])
+            self.assertEqual(raw[source_offset:source_offset + len(source_room)], source_room)
+            self.assertIn("SC5ROOM", [section.name for section in package.sections])
 
     def test_storage_projects_fate_sized_visuals_to_native_surface_in_package(self) -> None:
         directory = self.directory()
