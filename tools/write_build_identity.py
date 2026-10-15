@@ -24,6 +24,21 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def artifact_record(path: Path, root: Path = ROOT) -> dict[str, str]:
+    """Describe an input artifact without assuming it lives in the checkout.
+
+    Builds commonly place ROMs, maps, and generated directories in a separate
+    build root. Keep repository-owned inputs relocatable while retaining an
+    unambiguous absolute identity for intentionally external build artifacts.
+    """
+    resolved = path.resolve()
+    try:
+        display_path = resolved.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        display_path = str(resolved)
+    return {"path": display_path, "sha256": sha256(resolved)}
+
+
 def git(*args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
 
@@ -79,7 +94,7 @@ def main() -> int:
     ]
     for path in candidates:
         if path.is_file():
-            generated.append({"path": str(path.relative_to(ROOT)), "sha256": sha256(path)})
+            generated.append(artifact_record(path))
 
     environment = {
         key: value
@@ -111,7 +126,10 @@ def main() -> int:
         "generated_inputs_sha256": hashlib.sha256(
             json.dumps(generated, sort_keys=True).encode()
         ).hexdigest(),
-        "corpus": corpus_identity(environment.get("SAME_FATE_DEMO_ARCHIVE")),
+        "corpus": corpus_identity(
+            environment.get("SAME_FATE_DEMO_ARCHIVE")
+            or environment.get("SAME_FATE_ARCHIVE")
+        ),
         "poppy_sha256": args.poppy_sha256,
         "built_at_utc": datetime.now(timezone.utc).isoformat(),
     }
