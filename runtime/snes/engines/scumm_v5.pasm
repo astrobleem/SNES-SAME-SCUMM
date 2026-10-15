@@ -4000,7 +4000,7 @@ ScummV5_C4_Scheduler_Frame__complete:
     ; immediates are word-sized, so restore the scheduler's A16 contract here.
     rep #$20
     .a16
-    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
+    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE || SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     ; Publish a coherent post-movement actor snapshot for the late visual
     ; service; this does not compose or publish a surface.
     jsl ScummV5_Controller_PublishActorVisual_Far

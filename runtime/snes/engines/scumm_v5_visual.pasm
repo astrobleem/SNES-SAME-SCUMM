@@ -48,7 +48,7 @@ ScummV5_RoomVisual_Installed_Far:
     inc
 ScummV5_RoomVisual_Installed__generation_ok:
     sta.l SAME_VIDEO_SURFACE_ROOM_GENERATION
-    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $01)
+    .if (SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $01)) || SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     ; A room install begins a new actor-surface cache lifetime.  This is a
     ; lifecycle reset, not an actor draw and not a backend operation.
     jsl ScummV5_Controller_ResetVisualCache_Far
@@ -78,7 +78,9 @@ ScummV5_Visual_Frame_Far:
     jsl Same_VideoSurface_ServiceEvents_Far
     jsl Same_VideoSurface_ServicePending_Far
     jsl Same_VideoSurface_ServiceEvents_Far
-    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $04)
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+      jsl ScummV5_Controller_RenderActor_Far
+    .elseif SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $04)
       ; Semantic actor composition runs after the movement pass.  This later
       ; visual phase only services pending surface work and retries, rather
       ; than taking a second snapshot from a different semantic phase.

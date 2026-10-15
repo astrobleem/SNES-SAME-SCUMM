@@ -12,7 +12,17 @@
   "inflight_palette": {"address": "41:E690", "bytes": 32},
   "tile_scratch": {"address": "41:E6B0", "bytes": 64},
   "inflight_records": {"address": "41:E6F0", "bytes": 96, "records": 8, "record_bytes": 12},
-  "work": {"address": "41:E750", "bytes": 176},
+  "work": {
+    "address": "41:E750",
+    "bytes": 176,
+    "allocations": {
+      "actor_pose_state": {
+        "offset": 48,
+        "bytes": 38,
+        "owner": "generic SCUMM actor renderer"
+      }
+    }
+  },
   "fixture": {"address": "41:E800", "bytes": 2048},
   "reserved": {"address": "41:F000", "bytes": 4096},
   "active_convert_tile_budget": 4,

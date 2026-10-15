@@ -184,6 +184,16 @@ class CheckedMsu1ReadTests(unittest.TestCase):
                 results.append(result)
 
             self.assertEqual(outputs[0], outputs[1])
+            section_offset = int(results[0]["sections"][0]["offset"])
+            directory_text = outputs[0][0].decode("utf-8")
+            self.assertIn(
+                f"SAME_MSU1_SECTION_A_OFFSET_LOW_WORD = ${section_offset & 0xFFFF:04X}",
+                directory_text,
+            )
+            self.assertIn(
+                f"SAME_MSU1_SECTION_A_OFFSET_HIGH_WORD = ${(section_offset >> 16) & 0xFFFF:04X}",
+                directory_text,
+            )
             self.assertEqual(results[0]["native_read_case_count"], 4)
             actual = results[0]["interleaved_native_cases"]
             self.assertEqual([entry["client"] for entry in actual], ["A", "B", "A"])

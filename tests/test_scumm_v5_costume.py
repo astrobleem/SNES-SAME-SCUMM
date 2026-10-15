@@ -13,7 +13,14 @@ from same.errors import ResourceError, SaveFormatError
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
 from same.services import HostServices
-from tools.generate_snes_scumm_actor_sprite import cook_pose
+from tools.generate_snes_scumm_actor_sprite import (
+    POSE_BYTES,
+    cook_pose,
+    compile_pose_set,
+    pose_directory_include,
+    write_pose_package,
+)
+from same.package import inspect_package
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -117,6 +124,60 @@ def masked_raw_room() -> bytes:
 
 
 class ScummV5CostumeTests(unittest.TestCase):
+    def test_checked_pose_package_keeps_pixels_out_of_rom_directory(self) -> None:
+        source = synthetic_costume()
+        payload, records = compile_pose_set({2: ("costume.synthetic", source)})
+        self.assertEqual(len(records), 8)  # static fixture poses collapse to one source state
+        self.assertEqual(len(payload), len(records) * POSE_BYTES)
+        for index, record in enumerate(records):
+            self.assertEqual(record["relative_offset"], index * POSE_BYTES)
+            pose = payload[index * POSE_BYTES:(index + 1) * POSE_BYTES]
+            self.assertEqual(
+                int(str(record["crc32"]), 16),
+                __import__("zlib").crc32(pose) & 0xFFFFFFFF,
+            )
+
+        include = pose_directory_include(records, bank=13)
+        self.assertIn("SCUMM_V5_ACTOR_POSE_COUNT = $0008", include)
+        self.assertIn("SCUMM_V5_ACTOR_POSE_RECORD_SIZE = $0010", include)
+        self.assertIn("ScummV5_ActorPoseDirectory:", include)
+        self.assertNotIn(".incbin", include)
+        self.assertNotIn("SCUMM_V5_ACTOR_SPRITE_Data", include)
+
+    def test_pose_package_roundtrips_checked_sc5act_payload_and_is_deterministic(self) -> None:
+        import tempfile
+
+        source = synthetic_costume()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = write_pose_package(
+                root / "first", {2: ("costume.synthetic", source)},
+                directory_include=root / "first" / "poses.inc.pasm",
+            )
+            second = write_pose_package(
+                root / "second", {2: ("costume.synthetic", source)},
+                directory_include=root / "second" / "poses.inc.pasm",
+            )
+            self.assertEqual(first["package_sha256"], second["package_sha256"])
+            info = inspect_package(Path(first["package_path"]), verify=True)
+            section = next(item for item in info.sections if item.name == "SC5ACT")
+            packaged = Path(first["package_path"]).read_bytes()
+            payload, _records = compile_pose_set({2: ("costume.synthetic", source)})
+            self.assertEqual(
+                packaged[section.offset:section.offset + section.size], payload,
+            )
+            self.assertEqual(section.size, 8 * POSE_BYTES)
+
+    def test_pose_directory_preserves_source_animation_cycle(self) -> None:
+        _payload, records = compile_pose_set({
+            2: ("costume.animated", animated_costume()),
+        })
+        walking = [row for row in records
+                   if row["frame"] == 1 and row["direction"] == 2]
+        self.assertEqual([row["step"] for row in walking], [0, 1])
+        self.assertTrue(all(row["loop_start"] == 0 for row in walking))
+        self.assertTrue(all(row["loop_length"] == 2 for row in walking))
+
     def test_direction_selection_uses_canonical_old_direction_mapping(self) -> None:
         expected = {
             0: 3,

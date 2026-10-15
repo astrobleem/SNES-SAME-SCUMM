@@ -271,6 +271,7 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             "resolver", "controller/input", "name cache", "save validator",
             "C4", "C19", "room lifecycle",
             "three-page streamed-program cache", "Mode-3 live staging",
+            "checked SC5ACT pose buffer",
         ])
         resolver = next(row for row in report["regions"]
                         if row["owner"] == "resident_resolver")

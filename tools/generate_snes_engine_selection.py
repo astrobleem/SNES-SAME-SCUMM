@@ -33,6 +33,11 @@ def main() -> int:
         help="source live SCUMM room tables and visuals from checked SAMEPKG records",
     )
     parser.add_argument(
+        "--scumm-msu1-actor-renderer", action="store_true",
+        help="render selected SCUMM actor poses from checked MSU costume payloads",
+    )
+    parser.add_argument("--scumm-actor-render-id", type=int, default=1)
+    parser.add_argument(
         "--scumm-msu1-live-room-pcm-track", type=int, default=0,
         help="diagnostic only: loop this MSU PCM track while live room reads run",
     )
@@ -129,6 +134,17 @@ def main() -> int:
         parser.error(
             "--scumm-msu1-programs requires SCUMM v5, --msu1-storage, dynamic residency, M23A, and M24RB"
         )
+    if args.scumm_msu1_actor_renderer and (
+        args.engine != "scumm_v5" or not args.scumm_msu1_programs
+        or not args.scumm_msu1_live_room_resources or not args.scumm_room_visual
+        or not args.scumm_dynamic_program_residency or not args.scumm_controller
+    ):
+        parser.error(
+            "--scumm-msu1-actor-renderer requires live MSU room visuals, streamed programs, "
+            "dynamic residency, and the SCUMM controller state service"
+        )
+    if not 0 <= args.scumm_actor_render_id < 32:
+        parser.error("--scumm-actor-render-id must be in 0..31")
     if args.scumm_msu1_live_room_resources and (
         not args.scumm_msu1_programs or not args.scumm_room_visual
         or not args.engine == "scumm_v5"
@@ -208,6 +224,8 @@ def main() -> int:
         f"SAME_BUILD_MSU1_STORAGE = ${1 if args.msu1_storage else 0:02X}\n"
         f"SAME_BUILD_SCUMM_MSU1_PROGRAMS = ${1 if args.engine == 'scumm_v5' and args.scumm_msu1_programs else 0:02X}\n"
         f"SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES = ${1 if args.engine == 'scumm_v5' and args.scumm_msu1_live_room_resources else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER = ${1 if args.engine == 'scumm_v5' and args.scumm_msu1_actor_renderer else 0:02X}\n"
+        f"SCUMM_V5_ACTOR_RENDER_ID = ${args.scumm_actor_render_id:02X}\n"
         f"SAME_SCUMM_MSU1_LIVE_ROOM_PCM_TEST_TRACK = ${args.scumm_msu1_live_room_pcm_track:04X}\n"
         f"SAME_BUILD_MSU1_TEST_FORCE_BUSY = ${1 if args.msu1_test_force_busy else 0:02X}\n"
         f"SAME_BUILD_WINSTON_IO = ${1 if args.engine == 'winston_io' else 0:02X}\n"

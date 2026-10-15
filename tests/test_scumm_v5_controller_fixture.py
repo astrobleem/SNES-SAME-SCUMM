@@ -268,17 +268,37 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
 
     def test_actor_pose_selection_reads_movement_byte_not_following_word(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
-        selection = source.split("; Frame zero is the source-defined standing pose.", 1)[1].split(
-            "ScummV5_Controller_RenderActor__frame_base:", 1)[0]
-        self.assertIn("SAME_SCUMM_CONTROLLER_DESIRED_SELECT", selection)
+        publication = source.split(
+            "ScummV5_Controller_PublishActorVisual_Far:", 1
+        )[1].split("ScummV5_Controller_PublishActorVisual__done:", 1)[0]
+        frame_selection = publication.split(
+            "ScummV5_Controller_PublishActorVisual__stand_frame:", 1
+        )[0]
+        self.assertIn("SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_WALK_FRAME,x", frame_selection)
+        self.assertIn(".a8", frame_selection)
+        self.assertIn("lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_STAND_FRAME,x", publication)
+        self.assertIn("sta.l SAME_SCUMM_ACTOR_POSE_DESIRED_FRAME", publication)
         self.assertIn("ScummV5_Controller_PublishActorVisual_Far", source)
+
+    def test_actor_animation_uses_source_loop_bounds_not_fixed_mask(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        publication = source.split(
+            "ScummV5_Controller_PublishActorVisual_Far:", 1
+        )[1].split("ScummV5_Controller_PublishActorVisual__done:", 1)[0]
+        self.assertGreaterEqual(
+            publication.count("adc.l SAME_SCUMM_ACTOR_POSE_LOOP_LENGTH"), 2
+        )
+        self.assertIn("SAME_SCUMM_ACTOR_POSE_LOOP_START", publication)
+        self.assertIn("SAME_SCUMM_ACTOR_POSE_LOOP_LENGTH", publication)
+        self.assertNotIn("and #$07", publication)
 
     def test_actor_blit_preserves_packed_destination_abi(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         call = source.split("Same_VideoSurface_BlitIndexedRect_Far", 1)[0].split(
             "ScummV5_Controller_RenderActor__frame_base:", 1)[1]
         self.assertIn("lda.l SAME_SCUMM_CONTROLLER_RENDER_BASE", call)
-        self.assertIn("lda.l SAME_SCUMM_CONTROLLER_RENDER_SRC\n    tay\n    pla", call)
+        self.assertIn("ldy #$0000", call)
+        self.assertIn("lda.l SAME_SCUMM_CONTROLLER_RENDER_SRC\n    tay", call)
         self.assertNotIn("pla\n    lda.l SAME_SCUMM_CONTROLLER_RENDER_SRC", call)
 
     def test_surface_blit_preserves_destination_across_diagnostics(self) -> None:
@@ -328,7 +348,7 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         compose = source.split("ScummV5_Controller_RenderActor__compose_actor:", 1)[1].split(
             "ScummV5_Controller_RenderActor__frame_base:", 1)[0]
         self.assertNotIn("sta.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT", compose)
-        self.assertIn("DESIRED_SELECT is the semantic snapshot", compose)
+        self.assertIn("source-backed pose is already validated", compose)
 
     def test_publication_witness_is_success_only_and_serialized_last(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()

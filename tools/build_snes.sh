@@ -84,6 +84,24 @@ if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
         exit 1
     fi
 fi
+if [[ "${SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER:-0}" == "1" ]]; then
+    if [[ "${SAME_SNES_ENGINE:-demo}" != "scumm_v5" ||
+          "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_M23A:-0}" != "1" ||
+          "${SAME_BUILD_M24RB:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" != "1" ||
+          "${SAME_SNES_CARRIER:-lorom}" != "sa1_bwram" ||
+          "${SAME_SNES_VIDEO_BACKEND:-legacy_backdrop}" != "mode3_surface" ]]; then
+        echo "MSU actor rendering requires streamed SCUMM, dynamic residency, live room resources, and SA-1 Mode-3" >&2
+        exit 1
+    fi
+    if [[ -z "${SAME_SCUMM_ACTOR_COSTUMES:-}" ]]; then
+        echo "Set SAME_SCUMM_ACTOR_COSTUMES to comma-separated source costume IDs" >&2
+        exit 1
+    fi
+fi
 if [[ -n "${SAME_MSU1_LIVE_ROOM_PCM_TRACK:-}" ]]; then
     if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" != "1" ||
           "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" != "1" ||
@@ -267,8 +285,12 @@ if [[ "${SAME_BUILD_SCUMM_ROOM_VISUAL:-0}" == "1" ]]; then
     fi
     ENGINE_SELECTION_ARGS+=(--scumm-room-visual)
 fi
-if [[ "${SAME_BUILD_SCUMM_CONTROLLER:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" == "1" ]]; then
+if [[ "${SAME_BUILD_SCUMM_CONTROLLER:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" == "1" || "${SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-controller)
+fi
+if [[ "${SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER:-0}" == "1" ]]; then
+    ENGINE_SELECTION_ARGS+=(--scumm-msu1-actor-renderer
+        --scumm-actor-render-id "${SAME_SCUMM_ACTOR_RENDER_ID:-1}")
 fi
 if [[ "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
     ENGINE_SELECTION_ARGS+=(--scumm-controller-conformance)
@@ -935,6 +957,51 @@ else
         ROOM_GENERATOR_ARGS=("${FILTERED_ROOM_GENERATOR_ARGS[@]}")
     fi
     ROOM_GENERATOR_REPORT="$M23A_BUILD/cooked-rooms.json"
+    ACTOR_PREFIX_PACKAGE="${SAME_SCUMM_MSU1_PREFIX_PACKAGE:-}"
+    ACTOR_PREFIX_SECTION="${SAME_SCUMM_MSU1_PREFIX_SECTION:-}"
+    ACTOR_PREFIX_ALL_SECTIONS="${SAME_SCUMM_MSU1_PREFIX_ALL_SECTIONS:-0}"
+    if [[ "${SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER:-0}" == "1" ]]; then
+        IFS=',' read -r -a ACTOR_COSTUME_IDS <<< "$SAME_SCUMM_ACTOR_COSTUMES"
+        ACTOR_COSTUME_ARGS=()
+        declare -A ACTOR_COSTUME_SEEN=()
+        for costume_id in "${ACTOR_COSTUME_IDS[@]}"; do
+            if [[ ! "$costume_id" =~ ^[0-9]+$ ]] || (( 10#$costume_id > 255 )); then
+                echo "Invalid costume ID in SAME_SCUMM_ACTOR_COSTUMES: $costume_id" >&2
+                exit 1
+            fi
+            costume_id=$((10#$costume_id))
+            if [[ -n "${ACTOR_COSTUME_SEEN[$costume_id]:-}" ]]; then
+                echo "Duplicate costume ID in SAME_SCUMM_ACTOR_COSTUMES: $costume_id" >&2
+                exit 1
+            fi
+            ACTOR_COSTUME_SEEN["$costume_id"]=1
+            ACTOR_COSTUME_ARGS+=(--costume "$costume_id")
+        done
+        unset ACTOR_COSTUME_SEEN
+        ACTOR_POSE_BUILD="$M23A_BUILD/actor-poses"
+        ACTOR_POSE_INCLUDE="runtime/snes/generated/scumm_v5_actor_poses.inc.pasm"
+        ACTOR_POSE_ARGS=(
+            --archive "$SAME_FATE_ARCHIVE" --profile "$SAME_SNES_PROFILE"
+            --output-dir "$ACTOR_POSE_BUILD"
+            --directory-include "$ACTOR_POSE_INCLUDE"
+            --directory-bank 13 "${ACTOR_COSTUME_ARGS[@]}"
+        )
+        if [[ -n "$ACTOR_PREFIX_PACKAGE" ]]; then
+            ACTOR_POSE_ARGS+=(--prefix-package "$ACTOR_PREFIX_PACKAGE")
+            if [[ "$ACTOR_PREFIX_ALL_SECTIONS" == "1" ]]; then
+                ACTOR_POSE_ARGS+=(--prefix-all-sections)
+            elif [[ -n "$ACTOR_PREFIX_SECTION" ]]; then
+                ACTOR_POSE_ARGS+=(--prefix-section "$ACTOR_PREFIX_SECTION")
+            else
+                echo "Existing MSU prefix package selection is incomplete" >&2
+                exit 1
+            fi
+        fi
+        "$PYTHON" tools/generate_snes_scumm_actor_sprite.py "${ACTOR_POSE_ARGS[@]}"
+        ACTOR_PREFIX_PACKAGE="$ACTOR_POSE_BUILD/sc5act-costumes.msu"
+        ACTOR_PREFIX_SECTION=""
+        ACTOR_PREFIX_ALL_SECTIONS=1
+    fi
     ROOM_GENERATOR_ARGS+=(--report "$ROOM_GENERATOR_REPORT")
     if [[ "${SAME_SNES_CARRIER:-lorom}" == "sa1_bwram" ]]; then
         ROOM_GENERATOR_ARGS+=(--sa1-rom-bank-aliases)
@@ -950,6 +1017,9 @@ else
                               --reserved-bank 20 --reserved-bank 21
                               --reserved-bank 22 --reserved-bank 23
                               --reserved-bank 24)
+    fi
+    if [[ "${SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER:-0}" == "1" ]]; then
+        ROOM_GENERATOR_ARGS+=(--reserved-bank 13)
     fi
     if [[ "${SAME_BUILD_M24RB:-0}" == "1" || "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
         # The far room-service closure is fixed in banks 9 and 83 for both
@@ -989,19 +1059,18 @@ else
                 ROOM_GENERATOR_ARGS+=(--msu1-include-source-room-records)
             fi
         fi
-        if [[ -n "${SAME_SCUMM_MSU1_PREFIX_PACKAGE:-}" ||
-              -n "${SAME_SCUMM_MSU1_PREFIX_SECTION:-}" ||
-              "${SAME_SCUMM_MSU1_PREFIX_ALL_SECTIONS:-0}" == "1" ]]; then
-            if [[ -z "${SAME_SCUMM_MSU1_PREFIX_PACKAGE:-}" ||
-                  ! -f "${SAME_SCUMM_MSU1_PREFIX_PACKAGE}" ]]; then
+        if [[ -n "$ACTOR_PREFIX_PACKAGE" ||
+              -n "$ACTOR_PREFIX_SECTION" ||
+              "$ACTOR_PREFIX_ALL_SECTIONS" == "1" ]]; then
+            if [[ -z "$ACTOR_PREFIX_PACKAGE" || ! -f "$ACTOR_PREFIX_PACKAGE" ]]; then
                 echo "MSU ProgramUnit prefix requires an existing SAMEPKG source and section name" >&2
                 exit 1
             fi
-            ROOM_GENERATOR_ARGS+=(--msu1-program-prefix-package "$SAME_SCUMM_MSU1_PREFIX_PACKAGE")
-            if [[ "${SAME_SCUMM_MSU1_PREFIX_ALL_SECTIONS:-0}" == "1" ]]; then
+            ROOM_GENERATOR_ARGS+=(--msu1-program-prefix-package "$ACTOR_PREFIX_PACKAGE")
+            if [[ "$ACTOR_PREFIX_ALL_SECTIONS" == "1" ]]; then
                 ROOM_GENERATOR_ARGS+=(--msu1-program-prefix-all-sections)
-            elif [[ -n "${SAME_SCUMM_MSU1_PREFIX_SECTION:-}" ]]; then
-                ROOM_GENERATOR_ARGS+=(--msu1-program-prefix-section "$SAME_SCUMM_MSU1_PREFIX_SECTION")
+            elif [[ -n "$ACTOR_PREFIX_SECTION" ]]; then
+                ROOM_GENERATOR_ARGS+=(--msu1-program-prefix-section "$ACTOR_PREFIX_SECTION")
             else
                 echo "MSU ProgramUnit prefix selection is missing" >&2
                 exit 1

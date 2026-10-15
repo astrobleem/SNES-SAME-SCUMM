@@ -18,6 +18,8 @@ MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 REGIONS = (
     ("program_cache_page2", "SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_START",
      "SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_END"),
+    ("actor_pose_state", "SAME_SCUMM_ACTOR_POSE_STATE_BASE",
+     "SAME_SCUMM_ACTOR_POSE_STATE_END"),
     ("generated_variables_and_stack_guard", "SAME_SCUMM_VARIABLES_RESERVED_START",
      "SAME_SCUMM_VARIABLES_RESERVED_END"),
     ("program_cache", "SAME_SCUMM_MSU_PROGRAM_CACHE_BASE",
@@ -102,6 +104,24 @@ def audit() -> dict[str, Any]:
     if (page2["start"], page2["end_exclusive"], page2["bytes"]) != (
             "$7F1000", "$7F1800", 0x800):
         raise ValueError("third ProgramUnit page must occupy the audited bank-$7F gap")
+    pose_state = next(item for item in intervals if item["owner"] == "actor_pose_state")
+    if (pose_state["start"], pose_state["end_exclusive"], pose_state["bytes"]) != (
+            "$41E780", "$41E7A6", 0x26):
+        raise ValueError("actor pose state differs from its Mode-3 work suballocation")
+    if "SAME_SCUMM_ACTOR_POSE_BUFFER              = SAME_SCUMM_MSU_PROGRAM_CACHE0" not in MEMORY.read_text(encoding="utf-8"):
+        raise ValueError("actor pose buffer must borrow ProgramUnit cache page 0")
+    if "SAME_SCUMM_ACTOR_POSE_BUFFER_SIZE         = $0800" not in MEMORY.read_text(encoding="utf-8"):
+        raise ValueError("actor pose borrow must remain exactly one cache page")
+    work = video["work"]
+    work_start = parse_address(str(work["address"]))
+    allocation = work.get("allocations", {}).get("actor_pose_state", {})
+    if (allocation.get("offset"), allocation.get("bytes"),
+            pose_state["bytes"]) != (0x30, 0x26, 0x26):
+        raise ValueError("actor pose state suballocation differs from the Mode-3 work owner")
+    if work_start + allocation["offset"] != int(pose_state["start"][1:], 16):
+        raise ValueError("actor pose state address is outside its declared Mode-3 work owner")
+    if allocation["offset"] + allocation["bytes"] > work["bytes"]:
+        raise ValueError("actor pose state exceeds the Mode-3 work owner")
     if fixture_address < 0x41E800 or fixture_address >= 0x41F000:
         raise ValueError("Mode-3 fixture alias bounds changed")
     runtime_source = (ROOT / "runtime/snes/services/video_mode3.pasm").read_text()
@@ -141,7 +161,8 @@ def audit() -> dict[str, Any]:
         "interval_convention": "half-open",
         "features_coexist": ["resolver", "controller/input", "name cache",
                              "save validator", "C4", "C19", "room lifecycle",
-                             "three-page streamed-program cache", "Mode-3 live staging"],
+                             "three-page streamed-program cache", "Mode-3 live staging",
+                             "checked SC5ACT pose buffer"],
         "bwram_aliases": [],
         "wram_cache_page2": {
             "address": page2["start"], "bytes": page2["bytes"],
