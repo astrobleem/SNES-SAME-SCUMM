@@ -102,6 +102,41 @@ if [[ "${SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER:-0}" == "1" ]]; then
         exit 1
     fi
 fi
+if [[ "${SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE:-0}" != "0" &&
+      "${SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE:-0}" != "1" ]]; then
+    echo "SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE must be 0 or 1" >&2
+    exit 1
+fi
+if [[ "${SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE:-0}" == "1" ]]; then
+    if [[ "${SAME_SNES_ENGINE:-demo}" != "scumm_v5" ||
+          "${SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER:-0}" != "1" ||
+          "${SAME_BUILD_SCUMM_M23A:-0}" != "1" ||
+          "${SAME_BUILD_M24RB:-0}" != "1" ||
+          -z "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" ||
+          "${SAME_SCUMM_DYNAMIC_BOOT_SCRIPT:-}" != "1" ||
+          "${SAME_FATE_PROFILE:-}" != "examples/profiles/templates/fate_of_atlantis_dos_cd.json" ||
+          "${SAME_SNES_PROFILE:-}" != "examples/profiles/templates/fate_of_atlantis_dos_cd.json" ]]; then
+        echo "Data-only actor proof requires the assembled full-source actor build profile" >&2
+        exit 1
+    fi
+    case ",${SAME_SCUMM_ACTOR_COSTUMES:-}," in
+        *,2,*) ;;
+        *) echo "Data-only actor proof requires source costume 2 in the actor package" >&2; exit 1 ;;
+    esac
+    if [[ "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ||
+          "${SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP:-0}" == "1" ||
+          "${SAME_BUILD_SCUMM_M25A_VALIDATOR:-0}" == "1" ||
+          "${SAME_BUILD_SCUMM_SCENARIO_FIXTURE:-0}" == "1" ||
+          "${SAME_BUILD_SCUMM_C19_NATIVE_FIXTURE:-0}" == "1" ||
+          "${SAME_BUILD_SCUMM_CONTROLLER_FIXTURE:-0}" == "1" ||
+          "${SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS:-0}" != "0" ]]; then
+        echo "Data-only actor proof forbids alternate native test personalities" >&2
+        exit 1
+    fi
+fi
 if [[ -n "${SAME_MSU1_LIVE_ROOM_PCM_TRACK:-}" ]]; then
     if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" != "1" ||
           "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" != "1" ||
@@ -1053,6 +1088,12 @@ else
             --msu1-program-directory-bank 10
             --msu1-program-page-directory-bank 12
             --reserved-bank 10 --reserved-bank 11 --reserved-bank 12)
+        if [[ "${SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE:-0}" == "1" ]]; then
+            SAME_SCUMM_ACTOR_PROBE_AUDIT="$MSU_PROGRAM_STORAGE_DIR/actor-probe-audit.json"
+            export SAME_SCUMM_ACTOR_PROBE_AUDIT
+            ROOM_GENERATOR_ARGS+=(--diagnostic-actor-probe
+                --actor-probe-audit "$SAME_SCUMM_ACTOR_PROBE_AUDIT")
+        fi
         if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
             ROOM_GENERATOR_ARGS+=(--msu1-live-room-resources)
             if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" ]]; then

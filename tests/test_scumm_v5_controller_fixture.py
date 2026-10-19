@@ -11,6 +11,33 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ScummV5ControllerFixtureTests(unittest.TestCase):
+    def test_actor_publisher_does_not_resolve_uninitialized_c14_records(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        publish = source.split("ScummV5_Controller_PublishActorVisual_Far:", 1)[1].split(
+            "ScummV5_Controller_PublishActorVisual__c14_ready:", 1
+        )[0]
+        self.assertIn("lda.l SAME_SCUMM_C14_INITIALIZED", publish)
+        self.assertIn("bne ScummV5_Controller_PublishActorVisual__c14_ready", publish)
+        self.assertIn("sta.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME", publish)
+        self.assertIn("sta.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE", publish)
+        self.assertIn("jml ScummV5_Controller_PublishActorVisual__done", publish)
+        self.assertNotIn("SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_COSTUME", publish)
+
+    def test_actor_renderer_waits_for_initialized_c14_before_pose_lookup(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        render = source.split("ScummV5_Controller_RenderActor_Far:", 1)[1].split(
+            "ScummV5_Controller_RenderActor__done:", 1
+        )[0]
+        guard = render.split("ScummV5_Controller_RenderActor__c14_ready:", 1)[0]
+        self.assertIn("lda.l SAME_SCUMM_C14_INITIALIZED", guard)
+        self.assertIn("bne ScummV5_Controller_RenderActor__c14_ready", guard)
+        self.assertIn("jml ScummV5_Controller_RenderActor__done", guard)
+        self.assertLess(
+            render.index("lda.l SAME_SCUMM_C14_INITIALIZED"),
+            render.index("lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT"),
+        )
+        self.assertIn("jsl ScummV5_ActorPose_Ensure_Far", render)
+
     def test_far_fixture_aliases_preserve_the_data_bank(self) -> None:
         import sys
         sys.path.insert(0, str(ROOT / "tools"))
@@ -292,6 +319,34 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         self.assertIn("SAME_SCUMM_ACTOR_POSE_LOOP_LENGTH", publication)
         self.assertNotIn("and #$07", publication)
 
+    def test_actor_animation_key_waits_for_checked_pose_presentation(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        advance = source.split(
+            "ScummV5_Controller_PublishActorVisual__advance_pose_step:", 1
+        )[1].split("ScummV5_Controller_PublishActorVisual__pose_step_limit_max:", 1)[0]
+        self.assertLess(
+            advance.index("lda.l SAME_SCUMM_ACTOR_POSE_STATE"),
+            advance.index("lda.l SAME_SCUMM_ACTOR_POSE_LOOP_LENGTH"),
+        )
+        self.assertIn(
+            "bne ScummV5_Controller_PublishActorVisual__save_pose_key", advance
+        )
+        render_success = source.split(
+            "ScummV5_Controller_RenderActor__present_success:", 1
+        )[1].split("ScummV5_Controller_RenderActor__full_compose_retry:", 1)[0]
+        self.assertIn("sta.l SAME_SCUMM_ACTOR_POSE_STATE", render_success)
+
+    def test_actor_provider_destination_matches_as_three_bytes(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        block = source.split("ScummV5_ActorPose_ProviderMatches_Far:", 1)[1].split(
+            "ScummV5_ActorPose_ProviderMatches__no:", 1
+        )[0]
+        self.assertIn("sep #$20\n    .a8\n    lda.l SAME_MSU1_DESTINATION", block)
+        self.assertIn("lda.l SAME_MSU1_DESTINATION+1\n    cmp #>SAME_SCUMM_ACTOR_POSE_BUFFER", block)
+        self.assertIn("lda.l SAME_MSU1_DESTINATION+2\n    cmp #SAME_SCUMM_LIVE_ROOM_PENDING_BANK", block)
+        self.assertNotIn(".a16\n    lda.l SAME_MSU1_DESTINATION", block)
+        self.assertIn("rep #$20\n    .a16\n    lda.l SAME_SCUMM_ACTOR_TICKET_ROOM_EPOCH", block)
+
     def test_actor_blit_preserves_packed_destination_abi(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         call = source.split("Same_VideoSurface_BlitIndexedRect_Far", 1)[0].split(
@@ -310,7 +365,19 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
         self.assertIn("pla\n    sta.l SAME_VIDEO_SURFACE_DAMAGE_X1", block)
         failure = source.split("Same_VideoSurface_BlitIndexedRect__fail:", 1)[1].split(
             "Same_VideoSurface_BlitIndexedRect_Far__", 1)[0]
-        self.assertIn("pla", failure)
+        self.assertNotIn("\n    pla\n", failure)
+        self.assertIn("SAME_VIDEO_DIAG_BLIT_EXITS", failure)
+
+    def test_surface_blit_rejects_destination_overflow_before_pixel_store(self) -> None:
+        source = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()
+        block = source.split("Same_VideoSurface_BlitIndexedRect_Far:", 1)[1].split(
+            "Same_VideoSurface_BlitIndexedRect__row:", 1)[0]
+        self.assertIn("cmp #$0101", block)
+        self.assertIn("cmp #$00E1", block)
+        self.assertLess(block.index("Same_VideoSurface_BlitIndexedRect__right_bound_ok:"),
+                        source.index("Same_VideoSurface_BlitIndexedRect__row:"))
+        self.assertLess(block.index("Same_VideoSurface_BlitIndexedRect__bottom_bound_ok:"),
+                        source.index("Same_VideoSurface_BlitIndexedRect__row:"))
 
     def test_actor_cache_invalidates_for_pose_without_position_change(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
@@ -738,6 +805,18 @@ class ScummV5ControllerFixtureTests(unittest.TestCase):
             "ScummV5_Visual_Frame__skip_actor:", 1)[0]
         self.assertIn("SAME_VIDEO_SURFACE_PENDING_VISUAL", phase)
         self.assertIn("Same_VideoSurface_CanWrite_Far", phase)
+
+    def test_msu_actor_transfer_waits_for_surface_presentation_ownership(self) -> None:
+        source = (ROOT / "runtime/snes/engines/scumm_v5_visual.pasm").read_text()
+        phase = source.split("ScummV5_Visual_Frame_Far:", 1)[1].split(
+            ".elseif SAME_BUILD_SCUMM_CONTROLLER_FIXTURE", 1)[0]
+        pending_gate = phase.index("SAME_VIDEO_SURFACE_PENDING_VISUAL")
+        write_gate = phase.index("Same_VideoSurface_CanWrite_Far")
+        actor_call = phase.index("ScummV5_Controller_RenderActor_Far")
+        self.assertLess(pending_gate, actor_call)
+        self.assertLess(write_gate, actor_call)
+        self.assertIn("bne ScummV5_Visual_Frame__skip_actor", phase[pending_gate:])
+        self.assertIn("bcs ScummV5_Visual_Frame__skip_actor", phase[write_gate:])
 
     def test_visual_snapshot_storage_is_disjoint_from_controller_and_object_state(self) -> None:
         source = (ROOT / "runtime/snes/kernel/memory.pasm").read_text()

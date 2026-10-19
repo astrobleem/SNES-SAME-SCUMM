@@ -79,6 +79,14 @@ ScummV5_Visual_Frame_Far:
     jsl Same_VideoSurface_ServicePending_Far
     jsl Same_VideoSurface_ServiceEvents_Far
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+      ; Do not start a costume transfer or mutate the indexed surface while
+      ; the room's first presentation is pending, or while the video backend
+      ; owns the surface. The compositor can retry on the next ordinary frame
+      ; after the existing presentation transaction becomes writable.
+      lda.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+      bne ScummV5_Visual_Frame__skip_actor
+      jsl Same_VideoSurface_CanWrite_Far
+      bcs ScummV5_Visual_Frame__skip_actor
       jsl ScummV5_Controller_RenderActor_Far
     .elseif SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $04)
       ; Semantic actor composition runs after the movement pass.  This later
@@ -121,7 +129,7 @@ ScummV5_Visual_Frame__prewalk_actor:
       lda.l SAME_SCUMM_CONTROLLER_RENDER_VALID
       bne ScummV5_Visual_Frame__skip_actor
       jsl ScummV5_Controller_RenderActor_Far
-ScummV5_Visual_Frame__skip_actor:
     .endif
+ScummV5_Visual_Frame__skip_actor:
     jsl Same_VideoSurface_ServiceEvents_Far
     rtl

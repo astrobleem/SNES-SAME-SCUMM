@@ -128,19 +128,29 @@ class ScummV5CostumeTests(unittest.TestCase):
         source = synthetic_costume()
         payload, records = compile_pose_set({2: ("costume.synthetic", source)})
         self.assertEqual(len(records), 8)  # static fixture poses collapse to one source state
-        self.assertEqual(len(payload), len(records) * POSE_BYTES)
-        for index, record in enumerate(records):
-            self.assertEqual(record["relative_offset"], index * POSE_BYTES)
-            pose = payload[index * POSE_BYTES:(index + 1) * POSE_BYTES]
-            self.assertEqual(
-                int(str(record["crc32"]), 16),
-                __import__("zlib").crc32(pose) & 0xFFFFFFFF,
-            )
+        self.assertLess(len(payload), len(records) * POSE_BYTES)
+        for record in records:
+            self.assertEqual(record["palette_index"], 0)
+            if record["chunks"]:
+                self.assertEqual(record["length"], record["chunks"][0]["length"])
+            else:
+                self.assertEqual(record["length"], 0)
+            for chunk in record["chunks"]:
+                offset = int(chunk["relative_offset"])
+                body = payload[offset:offset + int(chunk["length"])]
+                self.assertEqual(len(body), chunk["length"])
+                self.assertEqual(
+                    int(str(chunk["crc32"]), 16),
+                    __import__("zlib").crc32(body) & 0xFFFFFFFF,
+                )
 
         include = pose_directory_include(records, bank=13)
         self.assertIn("SCUMM_V5_ACTOR_POSE_COUNT = $0008", include)
-        self.assertIn("SCUMM_V5_ACTOR_POSE_RECORD_SIZE = $0010", include)
+        self.assertIn("SCUMM_V5_ACTOR_POSE_RECORD_SIZE = $0018", include)
         self.assertIn("ScummV5_ActorPoseDirectory:", include)
+        self.assertIn("ScummV5_ActorPoseChunkDirectory:", include)
+        self.assertIn("ScummV5_ActorPaletteDirectory:", include)
+        self.assertIn("ScummV5_ActorPoseSpanDirectory0:", include)
         self.assertNotIn(".incbin", include)
         self.assertNotIn("SCUMM_V5_ACTOR_SPRITE_Data", include)
 
@@ -166,7 +176,7 @@ class ScummV5CostumeTests(unittest.TestCase):
             self.assertEqual(
                 packaged[section.offset:section.offset + section.size], payload,
             )
-            self.assertEqual(section.size, 8 * POSE_BYTES)
+            self.assertEqual(section.size, len(payload))
 
     def test_pose_directory_preserves_source_animation_cycle(self) -> None:
         _payload, records = compile_pose_set({

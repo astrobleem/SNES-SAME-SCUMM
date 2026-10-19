@@ -921,6 +921,21 @@ ScummV5_Controller_PublishActorVisual_Far:
     sep #$20
     .a8
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; Before C14's first semantic initialization its actor records are not a
+    ; valid rendering source.  In particular, cold WRAM bytes must not be
+    ; interpreted as a visible actor/costume and sent to the checked pose
+    ; resolver (which would correctly reject a nonexistent directory key).
+    ; Publish an empty visual snapshot until ordinary ActorOps initializes
+    ; C14.  Room installation separately retires any prior surface damage.
+    lda.l SAME_SCUMM_C14_INITIALIZED
+    bne ScummV5_Controller_PublishActorVisual__c14_ready
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
+    sta.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    sta.l SAME_SCUMM_ACTOR_POSE_COMPOSED
+    jml ScummV5_Controller_PublishActorVisual__done
+ScummV5_Controller_PublishActorVisual__c14_ready:
     rep #$20
     .a16
     lda #SCUMM_V5_ACTOR_RENDER_ID
@@ -1027,11 +1042,33 @@ ScummV5_Controller_PublishActorVisual__pose_done:
     sta.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     ; The host costume model advances its chore step with committed actor
-    ; movement, not with wall-clock frames. Mirror that observable contract:
-    ; a new coherent C31 position advances one source costume command step;
-    ; standing resets the chore to its initial step.
+    ; movement, while animateActor frame requests also advance over logical
+    ; ticks. Movement advances walk cels; stationary explicit chores retain
+    ; the time-driven step selected below rather than being reset here.
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    bne ScummV5_Controller_PublishActorVisual__movement_step_active
+    lda.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_RENDER_ID
     beq ScummV5_Controller_PublishActorVisual__reset_step
+    rep #$20
+    .a16
+    lda #SCUMM_V5_ACTOR_RENDER_ID
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
+    cmp #$F4
+    bcc ScummV5_Controller_PublishActorVisual__store_sample
+    cmp #$FC
+    bcc ScummV5_Controller_PublishActorVisual__store_sample
+    bra ScummV5_Controller_PublishActorVisual__reset_step
+ScummV5_Controller_PublishActorVisual__movement_step_active:
     lda.l SAME_SCUMM_ACTOR_POSE_OBSERVED
     beq ScummV5_Controller_PublishActorVisual__store_sample
     rep #$20
@@ -1161,12 +1198,23 @@ ScummV5_Controller_PublishActorVisual__visible_ready:
     sep #$20
     .a8
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
+    bne ScummV5_Controller_PublishActorVisual__walk_frame
+    lda.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_RENDER_ID
     beq ScummV5_Controller_PublishActorVisual__stand_frame
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
+    cmp #$F4
+    bcc ScummV5_Controller_PublishActorVisual__selected_frame
+    cmp #$FC
+    bcs ScummV5_Controller_PublishActorVisual__stand_frame
+    ; Direction-only animateActor requests preserve the last selected chore.
+    lda.l SAME_SCUMM_ACTOR_POSE_LAST_FRAME
+    bra ScummV5_Controller_PublishActorVisual__selected_frame
+ScummV5_Controller_PublishActorVisual__walk_frame:
     lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_WALK_FRAME,x
-    bra ScummV5_Controller_PublishActorVisual__frame_ready
+    bra ScummV5_Controller_PublishActorVisual__selected_frame
 ScummV5_Controller_PublishActorVisual__stand_frame:
     lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_STAND_FRAME,x
-ScummV5_Controller_PublishActorVisual__frame_ready:
+ScummV5_Controller_PublishActorVisual__selected_frame:
     sta.l SAME_SCUMM_ACTOR_POSE_DESIRED_FRAME
     ; Direction index follows ScummV5Costume.direction_index exactly.
     rep #$20
@@ -1218,9 +1266,8 @@ ScummV5_Controller_PublishActorVisual__same_pose_direction:
     bne ScummV5_Controller_PublishActorVisual__reset_pose_step
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
     beq ScummV5_Controller_PublishActorVisual__reset_pose_step
-    lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
-    beq ScummV5_Controller_PublishActorVisual__reset_pose_step
     ; The host advances costume commands at actorOps.animSpeed logical ticks.
+    ; Stationary visible actors animate too; movement only selects walk chore.
     ; A zero native byte retains the engine default cadence of one tick.
     lda.l SAME_SCUMM_ACTOR_POSE_ANIM_COUNTER
     inc
@@ -1241,6 +1288,15 @@ ScummV5_Controller_PublishActorVisual__animation_speed_ready:
     bra ScummV5_Controller_PublishActorVisual__save_pose_key
 ScummV5_Controller_PublishActorVisual__advance_pose_step:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; Keep the in-flight pose key immutable until its checked bytes have been
+    ; composed and the matching surface generation has been presented. The
+    ; renderer clears POSE_STATE only after that commit. Advancing here while
+    ; a read is pending repeatedly cancels ordinary animation requests and
+    ; can prevent any actor frame from ever becoming visible.
+    lda.l SAME_SCUMM_ACTOR_POSE_STATE
+    bne ScummV5_Controller_PublishActorVisual__save_pose_key
+    .endif
     lda.l SAME_SCUMM_ACTOR_POSE_LOOP_LENGTH
     beq ScummV5_Controller_PublishActorVisual__pose_step_unseeded
     lda.l SAME_SCUMM_ACTOR_POSE_LOOP_START
@@ -1324,6 +1380,14 @@ ScummV5_Controller_ResetVisualCache_Far:
     sta.l SAME_SCUMM_ACTOR_POSE_DESIRED_STEP
     sta.l SAME_SCUMM_ACTOR_POSE_ANIM_COUNTER
     sta.l SAME_SCUMM_ACTOR_POSE_OBSERVED
+    rep #$20
+    .a16
+    lda #$FFFF
+    sta.l SAME_SCUMM_ACTOR_RENDER_PALETTE_GENERATION
+    lda #$0000
+    sta.l SAME_SCUMM_ACTOR_POSE_GENERATION
+    sep #$20
+    .a8
     .endif
     rep #$20
     .a16
@@ -1351,6 +1415,19 @@ ScummV5_Controller_RenderActor_Far:
     pha
     phx
     phy
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; The late visual service may run before the scheduler has published its
+    ; first coherent actor snapshot.  C14 is the owner of costume/facing
+    ; semantics; until it is initialized, cold controller bytes are not a
+    ; valid pose key and must not reach the checked pose-directory resolver.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_INITIALIZED
+    bne ScummV5_Controller_RenderActor__c14_ready
+    jml ScummV5_Controller_RenderActor__done
+ScummV5_Controller_RenderActor__c14_ready:
+    .a8
+    .endif
     rep #$20
     .a16
     lda.l SAME_VIDEO_DIAG_RENDER_ENTRIES
@@ -1441,6 +1518,9 @@ ScummV5_Controller_RenderActor__y_same:
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_FACING
     cmp.l SAME_SCUMM_CONTROLLER_RENDER_FACING
     bne ScummV5_Controller_RenderActor__changed
+    lda.l SAME_SCUMM_ACTOR_POSE_GENERATION
+    cmp.l SAME_SCUMM_ACTOR_RENDER_PALETTE_GENERATION
+    bne ScummV5_Controller_RenderActor__changed
     .elseif SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $01
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME
     cmp.l SAME_SCUMM_CONTROLLER_RENDER_COSTUME
@@ -1462,6 +1542,16 @@ ScummV5_Controller_RenderActor__y_same:
     beq ScummV5_Controller_RenderActor__changed
     lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
     beq ScummV5_Controller_RenderActor__retry_done
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; An incomplete multi-span composition must be rebuilt from the room
+    ; surface before retrying. Only a fully composed surface may be republished
+    ; directly after a transient PRESENT failure.
+    lda.l SAME_SCUMM_ACTOR_POSE_COMPOSED
+    bne ScummV5_Controller_RenderActor__retry_present_only
+    jmp ScummV5_Controller_RenderActor__changed
+ScummV5_Controller_RenderActor__retry_present_only:
+    .a8
+    .endif
     jsl Same_VideoSurface_CanWrite_Far
     bcs ScummV5_Controller_RenderActor__retry_done
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
@@ -1483,6 +1573,8 @@ ScummV5_Controller_RenderActor__changed:
     sep #$20
     .a8
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    lda #$00
+    sta.l SAME_SCUMM_ACTOR_POSE_COMPOSED
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
     beq ScummV5_Controller_RenderActor__compose_ready
     jsl ScummV5_ActorPose_Ensure_Far
@@ -1503,7 +1595,7 @@ ScummV5_Controller_RenderActor__bounded_compose:
     .i16
     lda.l SAME_SCUMM_CONTROLLER_RENDER_X
     sec
-    sbc #$0010
+    sbc #$0020
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_X
     sec
@@ -1511,7 +1603,7 @@ ScummV5_Controller_RenderActor__bounded_compose:
     sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
     sec
-    sbc #$0010
+    sbc #$0020
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_X
     sec
@@ -1525,23 +1617,23 @@ ScummV5_Controller_RenderActor__damage_x0_done:
     .i16
     lda.l SAME_SCUMM_CONTROLLER_RENDER_X
     sec
-    sbc #$0010
+    sbc #$0020
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_X
     sec
     sbc.l SAME_VIDEO_SURFACE_SOURCE_X
     clc
-    adc #$0020
+    adc #$0040
     sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
     sec
-    sbc #$0010
+    sbc #$0020
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_X
     sec
     sbc.l SAME_VIDEO_SURFACE_SOURCE_X
     clc
-    adc #$0020
+    adc #$0040
     cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
     bcc ScummV5_Controller_RenderActor__damage_x1_done
     sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
@@ -1551,7 +1643,7 @@ ScummV5_Controller_RenderActor__damage_x1_done:
     .i16
     lda.l SAME_SCUMM_CONTROLLER_RENDER_Y
     sec
-    sbc #$0037
+    sbc #$0040
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_Y
     sec
@@ -1559,7 +1651,7 @@ ScummV5_Controller_RenderActor__damage_x1_done:
     sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
     sec
-    sbc #$0037
+    sbc #$0040
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_Y
     sec
@@ -1573,23 +1665,23 @@ ScummV5_Controller_RenderActor__damage_y0_done:
     .i16
     lda.l SAME_SCUMM_CONTROLLER_RENDER_Y
     sec
-    sbc #$0037
+    sbc #$0040
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_Y
     sec
     sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
     clc
-    adc #$0040
+    adc #$0048
     sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
     sec
-    sbc #$0037
+    sbc #$0040
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_Y
     sec
     sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
     clc
-    adc #$0040
+    adc #$0048
     cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
     bcc ScummV5_Controller_RenderActor__damage_y1_done
     sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
@@ -1656,7 +1748,7 @@ ScummV5_Controller_RenderActor__full_compose:
     .i16
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
     sec
-    sbc #$0010
+    sbc #$0020
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_X
     sec
@@ -1664,11 +1756,11 @@ ScummV5_Controller_RenderActor__full_compose:
     sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
     lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
     clc
-    adc #$0020
+    adc #$0040
     sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
     sec
-    sbc #$0037
+    sbc #$0040
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_Y
     sec
@@ -1676,7 +1768,7 @@ ScummV5_Controller_RenderActor__full_compose:
     sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
     lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
     clc
-    adc #$0040
+    adc #$0048
     sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
     lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
     sec
@@ -1712,6 +1804,11 @@ ScummV5_Controller_RenderActor__full_compose:
     bcc ScummV5_Controller_RenderActor__compose_actor
     brl ScummV5_Controller_RenderActor__full_compose_retry
 ScummV5_Controller_RenderActor__compose_actor:
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    jsl ScummV5_ActorPose_Compose_Far
+    bcc ScummV5_Controller_RenderActor__blit_ok
+    brl ScummV5_Controller_RenderActor__present_retry
+    .else
     rep #$30
     .a16
     .i16
@@ -1809,6 +1906,7 @@ ScummV5_Controller_RenderActor__frame_base:
     jsl Same_VideoSurface_BlitIndexedRect_Far
     bcc ScummV5_Controller_RenderActor__blit_ok
     brl ScummV5_Controller_RenderActor__present_retry
+    .endif
 ScummV5_Controller_RenderActor__blit_ok:
 
     ; Add the source-backed locker OBIM through the same indexed surface
@@ -1844,8 +1942,8 @@ ScummV5_Controller_RenderActor__present_success:
     lda #$00
     sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
-    ; Once copied into the indexed surface, the raster page can return to the
-    ; ordinary ProgramUnit cache without affecting pixels already composed.
+    ; All source spans have now been synchronously copied to the surface.
+    ; Actor scratch was released by Compose_Far; no pixel pointer survives.
     jsl ScummV5_ActorPose_ReleaseBuffer_Far
     lda #$00
     sta.l SAME_SCUMM_ACTOR_POSE_STATE
@@ -1937,6 +2035,12 @@ ScummV5_Controller_RenderActor__witness_done:
     sta.l SAME_SCUMM_CONTROLLER_RENDER_POSE_FRAME
     lda.l SAME_SCUMM_ACTOR_POSE_DESIRED_STEP
     sta.l SAME_SCUMM_CONTROLLER_RENDER_POSE_STEP
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_GENERATION
+    sta.l SAME_SCUMM_ACTOR_RENDER_PALETTE_GENERATION
+    sep #$20
+    .a8
     .endif
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
@@ -1972,10 +2076,10 @@ ScummV5_Controller_RenderActor__done:
     rtl
 
 .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
-; Resolve a source pose row and fetch its fixed-size raster through the SAME
-; checked provider. The raster temporarily leases cache page 0; its cache pin
-; and generation prevent live bytecode from being overwritten. Carry is set
-; only after this exact request identity has passed provider CRC validation.
+; Resolve a source pose/chunk row and fetch its checked source-slot bytes into
+; the pending-room scratch. Actor ownership is exclusive with ROOM ownership;
+; executable cache pages remain untouched. Carry is set only after this
+; immutable request ticket has passed the provider's CRC validation.
 ScummV5_ActorPose_Ensure_Far:
     php
     rep #$30
@@ -2068,29 +2172,51 @@ ScummV5_ActorPose_Ensure__request_same_direction:
     jml ScummV5_ActorPose_Ensure__discard_completed
 ScummV5_ActorPose_Ensure__request_same_step:
     .a8
+    jsl ScummV5_ActorPose_MapPalette_Far
+    bcc ScummV5_ActorPose_Ensure__mapped
+    jml ScummV5_ActorPose_Ensure__read_error
+ScummV5_ActorPose_Ensure__mapped:
+    sep #$20
+    .a8
     lda #$02
     sta.l SAME_SCUMM_ACTOR_POSE_STATE
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_ACTOR_POSE_GENERATION
-    inc
-    bne ScummV5_ActorPose_Ensure__generation
-    inc
-ScummV5_ActorPose_Ensure__generation:
-    .a16
-    sta.l SAME_SCUMM_ACTOR_POSE_GENERATION
     lda #$01
     sta.l SAME_SCUMM_ACTOR_POSE_RESULT
     jml ScummV5_ActorPose_Ensure__return
 
 ScummV5_ActorPose_Ensure__cached:
     .a8
-    lda.l SAME_SCUMM_MSU_CACHE_STATE0
-    cmp #SCUMM_MSU_CACHE_ACTOR
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_CHUNK_COUNT
+    beq ScummV5_ActorPose_Ensure__cached_empty
+    lda.l SAME_SCUMM_ACTOR_TICKET_ROOM_EPOCH
+    cmp.l SAME_VIDEO_SURFACE_ROOM_GENERATION
     bne ScummV5_ActorPose_Ensure__stale_cache
-    lda.l SAME_SCUMM_MSU_CACHE_PINS0
-    cmp #$01
+    lda.l SAME_SCUMM_ACTOR_TICKET_COSTUME_EPOCH
+    cmp.l SAME_SCUMM_ACTOR_POSE_GENERATION
     bne ScummV5_ActorPose_Ensure__stale_cache
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR
+    bne ScummV5_ActorPose_Ensure__stale_cache
+    bra ScummV5_ActorPose_Ensure__cached_key
+ScummV5_ActorPose_Ensure__cached_empty:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_TICKET_ROOM_EPOCH
+    cmp.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    bne ScummV5_ActorPose_Ensure__stale_cache
+    lda.l SAME_SCUMM_ACTOR_TICKET_COSTUME_EPOCH
+    cmp.l SAME_SCUMM_ACTOR_POSE_GENERATION
+    bne ScummV5_ActorPose_Ensure__stale_cache
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    bne ScummV5_ActorPose_Ensure__stale_cache
+ScummV5_ActorPose_Ensure__cached_key:
+    .a8
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME
     cmp.l SAME_SCUMM_ACTOR_POSE_COSTUME
     beq ScummV5_ActorPose_Ensure__cached_same_costume
@@ -2178,15 +2304,12 @@ ScummV5_ActorPose_Ensure__provider_room_not_requested:
     jml ScummV5_ActorPose_Ensure__pending
 ScummV5_ActorPose_Ensure__provider_room_not_reading:
     .a8
-    lda.l SAME_SCUMM_MSU_CACHE_PINS0
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
     beq ScummV5_ActorPose_Ensure__provider_page_unpinned
     jml ScummV5_ActorPose_Ensure__pending
 ScummV5_ActorPose_Ensure__provider_page_unpinned:
     .a8
-    lda.l SAME_SCUMM_MSU_CACHE_STATE0
-    cmp #SCUMM_MSU_CACHE_LOADING
-    bne ScummV5_ActorPose_Ensure__find
-    jml ScummV5_ActorPose_Ensure__pending
+    jml ScummV5_ActorPose_Ensure__find
 
 ScummV5_ActorPose_Ensure__find:
     rep #$20
@@ -2219,7 +2342,7 @@ ScummV5_ActorPose_Ensure__find_in_range:
     inx
     lda.l ScummV5_ActorPoseDirectory,x
     cmp.l SAME_SCUMM_ACTOR_POSE_DESIRED_STEP
-    beq ScummV5_ActorPose_Ensure__row_found
+    beq ScummV5_ActorPose_Ensure__row_found_v2
 ScummV5_ActorPose_Ensure__next:
     rep #$20
     .a16
@@ -2229,12 +2352,14 @@ ScummV5_ActorPose_Ensure__next:
     tax
     brl ScummV5_ActorPose_Ensure__find_loop
 
-ScummV5_ActorPose_Ensure__row_found:
+ScummV5_ActorPose_Ensure__row_found_v2:
+    ; Pose record v2: key[4], palette, loop[2], first-chunk/count[4],
+    ; signed half-open bounds[8], reserved[5].
     rep #$20
     .a16
     lda.l SAME_SCUMM_ACTOR_POSE_ROW
     clc
-    adc #$000C
+    adc #$0005
     tax
     sep #$20
     .a8
@@ -2252,17 +2377,188 @@ ScummV5_ActorPose_Ensure__row_found:
     sep #$20
     .a8
     lda.l ScummV5_ActorPoseDirectory,x
+    sta.l SAME_SCUMM_ACTOR_PALETTE_INDEX
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_PALETTE_INDEX
+    and #$00FF
+    asl
+    sta.l SAME_SCUMM_ACTOR_PALETTE_ROW
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_ACTOR_PALETTE_ROW
+    sta.l SAME_SCUMM_ACTOR_PALETTE_ROW ; index * 34
+    lda.l SAME_SCUMM_ACTOR_POSE_ROW
+    clc
+    adc #$000B
+    tax
+    lda.l ScummV5_ActorPoseDirectory,x
+    sta.l SAME_SCUMM_ACTOR_POSE_BOUNDS_LEFT
+    inx
+    inx
+    lda.l ScummV5_ActorPoseDirectory,x
+    sta.l SAME_SCUMM_ACTOR_POSE_BOUNDS_TOP
+    inx
+    inx
+    lda.l ScummV5_ActorPoseDirectory,x
+    sta.l SAME_SCUMM_ACTOR_POSE_BOUNDS_RIGHT
+    inx
+    inx
+    lda.l ScummV5_ActorPoseDirectory,x
+    sta.l SAME_SCUMM_ACTOR_POSE_BOUNDS_BOTTOM
+    jsl ScummV5_ActorPose_ValidateBounds_Far
+    bcc ScummV5_ActorPose_Ensure__bounds_valid
+    jml ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__bounds_valid:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_ROW
+    clc
+    adc #$0007
+    tax
+    lda.l ScummV5_ActorPoseDirectory,x
+    sta.l SAME_SCUMM_ACTOR_CHUNK_FIRST
+    inx
+    inx
+    lda.l ScummV5_ActorPoseDirectory,x
+    sta.l SAME_SCUMM_ACTOR_CHUNK_COUNT
+    cmp #$0001
+    beq ScummV5_ActorPose_Ensure__chunk_count_valid
+    cmp #$0000
+    beq ScummV5_ActorPose_Ensure__empty_pose
+    jml ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__empty_pose:
+    ; Empty decoded poses are valid transparent frames. They have a complete
+    ; semantic pose key but own no scratch buffer and issue no provider read.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME
+    sta.l SAME_SCUMM_ACTOR_POSE_COSTUME
+    lda.l SAME_SCUMM_ACTOR_POSE_DESIRED_FRAME
+    sta.l SAME_SCUMM_ACTOR_POSE_FRAME
+    lda.l SAME_SCUMM_ACTOR_POSE_DESIRED_DIRECTION
+    sta.l SAME_SCUMM_ACTOR_POSE_DIRECTION
+    lda.l SAME_SCUMM_ACTOR_POSE_DESIRED_STEP
+    sta.l SAME_SCUMM_ACTOR_POSE_ACCEPTED_STEP
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    sta.l SAME_SCUMM_ACTOR_TICKET_ROOM_EPOCH
+    lda.l SAME_SCUMM_ACTOR_POSE_GENERATION
+    sta.l SAME_SCUMM_ACTOR_TICKET_COSTUME_EPOCH
+    sep #$20
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_ACTOR_POSE_STATE
+    lda #$01
+    sta.l SAME_SCUMM_ACTOR_POSE_RESULT
+    jml ScummV5_ActorPose_Ensure__return
+ScummV5_ActorPose_Ensure__chunk_count_valid:
+    ; Current authentic costume selection measures at one bounded chunk per
+    ; pose. Larger generic poses remain representable in the package and are
+    ; explicitly rejected until the incremental multi-chunk compositor lands.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_CHUNK_FIRST
+    cmp #SCUMM_V5_ACTOR_CHUNK_COUNT
+    bcc ScummV5_ActorPose_Ensure__chunk_directory_index_ok
+    jmp ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__chunk_directory_index_ok:
+    lda.l SAME_SCUMM_ACTOR_CHUNK_FIRST
+    asl
+    asl
+    asl
+    asl
+    tax
+    lda.l ScummV5_ActorPoseChunkDirectory,x
     sta.l SAME_MSU1_REQUEST_OFFSET
     inx
-    lda.l ScummV5_ActorPoseDirectory,x
-    sta.l SAME_MSU1_REQUEST_OFFSET+1
     inx
-    lda.l ScummV5_ActorPoseDirectory,x
+    lda.l ScummV5_ActorPoseChunkDirectory,x
     sta.l SAME_MSU1_REQUEST_OFFSET+2
     inx
-    lda.l ScummV5_ActorPoseDirectory,x
-    sta.l SAME_MSU1_REQUEST_OFFSET+3
+    inx
+    lda.l ScummV5_ActorPoseChunkDirectory,x
+    sta.l SAME_MSU1_EXPECTED_CRC
+    inx
+    inx
+    lda.l ScummV5_ActorPoseChunkDirectory,x
+    sta.l SAME_MSU1_EXPECTED_CRC+2
+    inx
+    inx
+    lda.l ScummV5_ActorPoseChunkDirectory,x
+    sta.l SAME_SCUMM_ACTOR_TICKET_LENGTH
+    inx
+    inx
+    lda.l ScummV5_ActorPoseChunkDirectory,x
+    sta.l SAME_SCUMM_ACTOR_SPAN_FIRST
+    inx
+    inx
+    lda.l ScummV5_ActorPoseChunkDirectory,x
+    sta.l SAME_SCUMM_ACTOR_SPAN_COUNT
+    lda.l SAME_SCUMM_ACTOR_SPAN_FIRST
+    and #$F000
+    xba
+    lsr
+    lsr
+    lsr
+    lsr
+    sta.l SAME_SCUMM_ACTOR_SPAN_PAGE
+    lda.l SAME_SCUMM_ACTOR_SPAN_FIRST
+    and #$0FFF
+    asl
+    asl
+    asl
+    sta.l SAME_SCUMM_ACTOR_SPAN_LOCAL_OFFSET
+    lda.l SAME_SCUMM_ACTOR_SPAN_COUNT
+    bne ScummV5_ActorPose_Ensure__span_count_nonzero
+    jml ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__span_count_nonzero:
+    .a16
+    cmp #$0801
+    bcc ScummV5_ActorPose_Ensure__span_count_ok
+    jmp ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__span_count_ok:
+    ; SPAN_PAGE is a byte immediately followed by SPAN_LOCAL_OFFSET. Compare
+    ; only that byte: an A16 read would fold the offset's low byte into the
+    ; page number and reject valid descriptors (or accept malformed ones).
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ACTOR_SPAN_PAGE
+    cmp #SCUMM_V5_ACTOR_SPAN_BANK_COUNT
+    bcc ScummV5_ActorPose_Ensure__span_page_ok
+    jmp ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__span_page_ok:
     rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_SPAN_LOCAL_OFFSET
+    sta.l SAME_SCUMM_ACTOR_SPAN_RAW_X
+    lda.l SAME_SCUMM_ACTOR_SPAN_COUNT
+    asl
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_ACTOR_SPAN_RAW_X
+    bcc ScummV5_ActorPose_Ensure__span_range_no_wrap
+    jmp ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__span_range_no_wrap:
+    .a16
+    cmp #$8001
+    bcc ScummV5_ActorPose_Ensure__span_range_ok
+    jmp ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__span_range_ok:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_TICKET_LENGTH
+    bne ScummV5_ActorPose_Ensure__chunk_length_nonzero
+    jml ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__chunk_length_nonzero:
+    .a16
+    cmp #$0801
+    bcc ScummV5_ActorPose_Ensure__chunk_length_ok
+    jmp ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__chunk_length_ok:
     .a16
     lda.l SAME_MSU1_REQUEST_OFFSET
     clc
@@ -2271,23 +2567,26 @@ ScummV5_ActorPose_Ensure__row_found:
     lda.l SAME_MSU1_REQUEST_OFFSET+2
     adc #SAME_MSU1_SECTION_SC5ACT_OFFSET_HIGH_WORD
     sta.l SAME_MSU1_REQUEST_OFFSET+2
-    lda.l SAME_SCUMM_ACTOR_POSE_ROW
-    clc
-    adc #$0008
+    lda.l SAME_SCUMM_ACTOR_PALETTE_ROW
     tax
     sep #$20
     .a8
-    lda.l ScummV5_ActorPoseDirectory,x
-    sta.l SAME_MSU1_EXPECTED_CRC
+    lda.l ScummV5_ActorPaletteDirectory,x
+    sta.l SAME_SCUMM_ACTOR_PALETTE_SIZE
     inx
-    lda.l ScummV5_ActorPoseDirectory,x
-    sta.l SAME_MSU1_EXPECTED_CRC+1
-    inx
-    lda.l ScummV5_ActorPoseDirectory,x
-    sta.l SAME_MSU1_EXPECTED_CRC+2
-    inx
-    lda.l ScummV5_ActorPoseDirectory,x
-    sta.l SAME_MSU1_EXPECTED_CRC+3
+    lda.l ScummV5_ActorPaletteDirectory,x
+    beq ScummV5_ActorPose_Ensure__palette_high_zero
+    jml ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__palette_high_zero:
+    lda.l SAME_SCUMM_ACTOR_PALETTE_SIZE
+    bne ScummV5_ActorPose_Ensure__palette_nonzero
+    jml ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__palette_nonzero:
+    .a8
+    cmp #$21
+    bcc ScummV5_ActorPose_Ensure__palette_valid
+    jmp ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__palette_valid:
     rep #$20
     .a16
     lda.l SAME_MSU1_REQUEST_OFFSET
@@ -2298,53 +2597,40 @@ ScummV5_ActorPose_Ensure__row_found:
     sta.l SAME_SCUMM_ACTOR_POSE_REQUEST_CRC
     lda.l SAME_MSU1_EXPECTED_CRC+2
     sta.l SAME_SCUMM_ACTOR_POSE_REQUEST_CRC+2
-    ; Claim the existing page only after confirming it has no interpreter or
-    ; completion-owner pin. Logical PCs make invalidating a READY page safe.
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_MSU_CACHE_STATE0
-    cmp #SCUMM_MSU_CACHE_READY
-    bne ScummV5_ActorPose_Ensure__claim_empty
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_MSU_CACHE_CURRENT_BYTES
-    sec
-    sbc.l SAME_SCUMM_MSU_CACHE_SIZE0
-    sta.l SAME_SCUMM_MSU_CACHE_CURRENT_BYTES
-    lda.l SAME_SCUMM_MSU_CACHE_EVICTIONS
-    inc
-    sta.l SAME_SCUMM_MSU_CACHE_EVICTIONS
-ScummV5_ActorPose_Ensure__claim_empty:
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_MSU_CACHE_GENERATION0
-    inc
-    bne ScummV5_ActorPose_Ensure__claim_generation
-    inc
-ScummV5_ActorPose_Ensure__claim_generation:
-    .a16
-    sta.l SAME_SCUMM_MSU_CACHE_GENERATION0
-    lda #$FFFF
-    sta.l SAME_SCUMM_MSU_CACHE_ID0
-    lda #$0000
-    sta.l SAME_SCUMM_MSU_CACHE_SIZE0
-    sep #$20
-    .a8
-    lda #$01
-    sta.l SAME_SCUMM_MSU_CACHE_PINS0
-    lda #SCUMM_MSU_CACHE_ACTOR
-    sta.l SAME_SCUMM_MSU_CACHE_STATE0
-    lda #$00
+    lda.l SAME_SCUMM_ACTOR_TICKET_LENGTH
     sta.l SAME_MSU1_REQUEST_LENGTH
+    lda #$0000
     sta.l SAME_MSU1_REQUEST_LENGTH+2
-    sta.l SAME_MSU1_REQUEST_LENGTH+3
-    lda #$08
-    sta.l SAME_MSU1_REQUEST_LENGTH+1
-    lda #$00
+    lda.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    sta.l SAME_SCUMM_ACTOR_TICKET_ROOM_EPOCH
+    lda.l SAME_SCUMM_ACTOR_POSE_GENERATION
+    inc
+    bne ScummV5_ActorPose_Ensure__ticket_epoch
+    inc
+ScummV5_ActorPose_Ensure__ticket_epoch:
+    sta.l SAME_SCUMM_ACTOR_POSE_GENERATION
+    sta.l SAME_SCUMM_ACTOR_TICKET_COSTUME_EPOCH
+    lda.l SAME_SCUMM_ACTOR_TICKET_SERIAL
+    inc
+    bne ScummV5_ActorPose_Ensure__ticket_serial
+    inc
+ScummV5_ActorPose_Ensure__ticket_serial:
+    sta.l SAME_SCUMM_ACTOR_TICKET_SERIAL
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_NONE
+    beq ScummV5_ActorPose_Ensure__scratch_free
+    jmp ScummV5_ActorPose_Ensure__pending
+ScummV5_ActorPose_Ensure__scratch_free:
+    .a8
+    lda #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR
+    sta.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    lda #<SAME_SCUMM_ACTOR_POSE_BUFFER
     sta.l SAME_MSU1_DESTINATION
-    lda #$10
+    lda #>SAME_SCUMM_ACTOR_POSE_BUFFER
     sta.l SAME_MSU1_DESTINATION+1
-    lda #$7E
+    lda #SAME_SCUMM_LIVE_ROOM_PENDING_BANK
     sta.l SAME_MSU1_DESTINATION+2
     rep #$20
     .a16
@@ -2353,6 +2639,8 @@ ScummV5_ActorPose_Ensure__claim_generation:
     sep #$20
     .a8
     lda #$00
+    sta.l SAME_MSU1_REQUEST_LENGTH+2
+    sta.l SAME_MSU1_REQUEST_LENGTH+3
     sta.l SAME_MSU1_FLAGS
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME
     sta.l SAME_SCUMM_ACTOR_POSE_COSTUME
@@ -2362,8 +2650,6 @@ ScummV5_ActorPose_Ensure__claim_generation:
     sta.l SAME_SCUMM_ACTOR_POSE_DIRECTION
     lda.l SAME_SCUMM_ACTOR_POSE_DESIRED_STEP
     sta.l SAME_SCUMM_ACTOR_POSE_ACCEPTED_STEP
-    lda #$00
-    sta.l SAME_SCUMM_ACTOR_POSE_BUFFER_SLOT
     lda #$01
     sta.l SAME_SCUMM_ACTOR_POSE_STATE
     jsl Same_Msu1_ReadBegin_FarEntry
@@ -2372,9 +2658,12 @@ ScummV5_ActorPose_Ensure__claim_generation:
 
 ScummV5_ActorPose_Ensure__lost_request:
     .a8
-    jsl ScummV5_ActorPose_ReleaseBuffer_Far
-    lda #$00
+    ; A ticket mismatch does not authorize reuse while the provider may still
+    ; be writing its destination. Drain the provider first; room requests have
+    ; priority and will claim the shared staging only after this owner clears.
+    lda #$03
     sta.l SAME_SCUMM_ACTOR_POSE_STATE
+    jsl ScummV5_ActorPose_ServiceCancel_Far
     bra ScummV5_ActorPose_Ensure__pending
 ScummV5_ActorPose_Ensure__discard_completed:
     .a8
@@ -2418,6 +2707,576 @@ ScummV5_ActorPose_Ensure__carry_clear:
     clc
     rtl
 
+; Validate signed half-open pose bounds against the generic 64x72 damage
+; envelope (x=-32..32, y=-64..8). Equality is valid for an empty pose.
+ScummV5_ActorPose_ValidateBounds_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    lda.l SAME_SCUMM_ACTOR_POSE_BOUNDS_LEFT
+    eor #$8000
+    cmp #$7FE0
+    bcc ScummV5_ActorPose_ValidateBounds__bad
+    cmp #$8021
+    bcs ScummV5_ActorPose_ValidateBounds__bad
+    sta.l SAME_SCUMM_ACTOR_POSE_VALIDATE_TEMP
+    lda.l SAME_SCUMM_ACTOR_POSE_BOUNDS_RIGHT
+    eor #$8000
+    cmp #$7FE0
+    bcc ScummV5_ActorPose_ValidateBounds__bad
+    cmp #$8021
+    bcs ScummV5_ActorPose_ValidateBounds__bad
+    cmp.l SAME_SCUMM_ACTOR_POSE_VALIDATE_TEMP
+    bcc ScummV5_ActorPose_ValidateBounds__bad
+    lda.l SAME_SCUMM_ACTOR_POSE_BOUNDS_TOP
+    eor #$8000
+    cmp #$7FC0
+    bcc ScummV5_ActorPose_ValidateBounds__bad
+    cmp #$8009
+    bcs ScummV5_ActorPose_ValidateBounds__bad
+    sta.l SAME_SCUMM_ACTOR_POSE_VALIDATE_TEMP
+    lda.l SAME_SCUMM_ACTOR_POSE_BOUNDS_BOTTOM
+    eor #$8000
+    cmp #$7FC0
+    bcc ScummV5_ActorPose_ValidateBounds__bad
+    cmp #$8009
+    bcs ScummV5_ActorPose_ValidateBounds__bad
+    cmp.l SAME_SCUMM_ACTOR_POSE_VALIDATE_TEMP
+    bcc ScummV5_ActorPose_ValidateBounds__bad
+    pla
+    plp
+    clc
+    rtl
+ScummV5_ActorPose_ValidateBounds__bad:
+    pla
+    plp
+    sec
+    rtl
+
+; Map checked nonzero source palette slots to final indexed colors in the
+; ACTOR-owned scratch. This runs only after the provider's whole-chunk CRC and
+; immutable ticket have been accepted. Output color zero remains opaque.
+ScummV5_ActorPose_MapPalette_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR
+    beq ScummV5_ActorPose_MapPalette__owner_ok
+    jml ScummV5_ActorPose_MapPalette__bad
+ScummV5_ActorPose_MapPalette__owner_ok:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_TICKET_LENGTH
+    bne ScummV5_ActorPose_MapPalette__length_nonzero
+    jml ScummV5_ActorPose_MapPalette__bad
+ScummV5_ActorPose_MapPalette__length_nonzero:
+    .a16
+    cmp #SAME_SCUMM_ACTOR_POSE_BUFFER_SIZE+1
+    bcc ScummV5_ActorPose_MapPalette__length_bounded
+    jml ScummV5_ActorPose_MapPalette__bad
+ScummV5_ActorPose_MapPalette__length_bounded:
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_ACTOR_PIXEL_CURSOR
+ScummV5_ActorPose_MapPalette__loop:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_PIXEL_CURSOR
+    cmp.l SAME_SCUMM_ACTOR_TICKET_LENGTH
+    bcc ScummV5_ActorPose_MapPalette__loop_body
+    jml ScummV5_ActorPose_MapPalette__done
+ScummV5_ActorPose_MapPalette__loop_body:
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ACTOR_POSE_BUFFER,x
+    bne ScummV5_ActorPose_MapPalette__slot_nonzero
+    jml ScummV5_ActorPose_MapPalette__bad
+ScummV5_ActorPose_MapPalette__slot_nonzero:
+    sta.l SAME_SCUMM_ACTOR_PALETTE_SLOT
+    cmp.l SAME_SCUMM_ACTOR_PALETTE_SIZE
+    bcc ScummV5_ActorPose_MapPalette__slot_in_palette
+    jml ScummV5_ActorPose_MapPalette__bad
+ScummV5_ActorPose_MapPalette__slot_in_palette:
+    .a8
+    cmp #$20
+    bcc ScummV5_ActorPose_MapPalette__slot_representable
+    jml ScummV5_ActorPose_MapPalette__bad
+ScummV5_ActorPose_MapPalette__slot_representable:
+    .a8
+    and #$07
+    tax
+    lda.l ScummV5_C7_BitMasks,x
+    sta.l SAME_SCUMM_ACTOR_PALETTE_MASK_BIT
+    lda.l SAME_SCUMM_ACTOR_PALETTE_SLOT
+    lsr
+    lsr
+    lsr
+    tax
+    lda.l SAME_SCUMM_ACTOR_PALETTE_OVERRIDE_VALID,x
+    and.l SAME_SCUMM_ACTOR_PALETTE_MASK_BIT
+    beq ScummV5_ActorPose_MapPalette__costume_color
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_PALETTE_SLOT
+    and #$00FF
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+(SCUMM_V5_ACTOR_RENDER_ID*$40)+SAME_SCUMM_C14_A_PALETTE,x
+    bra ScummV5_ActorPose_MapPalette__store_color
+ScummV5_ActorPose_MapPalette__costume_color:
+    .a8
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_PALETTE_SLOT
+    and #$00FF
+    clc
+    adc.l SAME_SCUMM_ACTOR_PALETTE_ROW
+    adc #$0002
+    tax
+    sep #$20
+    .a8
+    lda.l ScummV5_ActorPaletteDirectory,x
+ScummV5_ActorPose_MapPalette__store_color:
+    .a8
+    sta.l SAME_SCUMM_ACTOR_PALETTE_COLOR
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_PIXEL_CURSOR
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ACTOR_PALETTE_COLOR
+    sta.l SAME_SCUMM_ACTOR_POSE_BUFFER,x
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_PIXEL_CURSOR
+    inc
+    sta.l SAME_SCUMM_ACTOR_PIXEL_CURSOR
+    brl ScummV5_ActorPose_MapPalette__loop
+ScummV5_ActorPose_MapPalette__done:
+    .a16
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
+    plp
+    clc
+    rtl
+ScummV5_ActorPose_MapPalette__bad:
+    .a8
+    sep #$20
+    .a8
+    lda #SCUMM_ERR_RESOURCE
+    sta.l SAME_SCUMM_ERROR
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
+    plp
+    sec
+    rtl
+
+; Fetch one 8-byte signed span descriptor from the generated banked ROM table.
+; PAGE and byte cursor were range-checked before any surface write.
+ScummV5_ActorPose_LoadSpan_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ACTOR_SPAN_PAGE
+    clc
+    adc #SCUMM_V5_ACTOR_SPAN_FIRST_BANK
+    pha
+    plb
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_ACTOR_SPAN_CURSOR
+    tax
+    lda $8000,x
+    sta.l SAME_SCUMM_ACTOR_SPAN_X
+    inx
+    inx
+    lda $8000,x
+    sta.l SAME_SCUMM_ACTOR_SPAN_Y
+    inx
+    inx
+    lda $8000,x
+    sta.l SAME_SCUMM_ACTOR_SPAN_SOURCE
+    inx
+    inx
+    lda $8000,x
+    sta.l SAME_SCUMM_ACTOR_SPAN_LENGTH
+    plb
+    ply
+    plx
+    pla
+    plp
+    clc
+    rtl
+
+; Compose one complete checked source pose into the existing indexed surface.
+; The current FATE costume directory has at most one <=2 KiB chunk per pose;
+; larger directory entries fail explicitly until the asynchronous multi-chunk
+; presentation state machine is extended. No code-cache page or ROM pixel
+; fallback is used here.
+ScummV5_ActorPose_Compose_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ACTOR_POSE_COMPOSED
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
+    bne ScummV5_ActorPose_Compose__visible
+    jsl ScummV5_ActorPose_ReleaseBuffer_Far
+    jml ScummV5_ActorPose_Compose__complete
+ScummV5_ActorPose_Compose__visible:
+    .a8
+    lda.l SAME_SCUMM_ACTOR_POSE_STATE
+    cmp #$02
+    beq ScummV5_ActorPose_Compose__ready
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__ready:
+    .a8
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_TICKET_ROOM_EPOCH
+    cmp.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    beq ScummV5_ActorPose_Compose__room_epoch_ok
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__room_epoch_ok:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_TICKET_COSTUME_EPOCH
+    cmp.l SAME_SCUMM_ACTOR_POSE_GENERATION
+    beq ScummV5_ActorPose_Compose__costume_epoch_ok
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__costume_epoch_ok:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_CHUNK_COUNT
+    bne ScummV5_ActorPose_Compose__chunk_nonempty
+    jml ScummV5_ActorPose_Compose__empty
+ScummV5_ActorPose_Compose__chunk_nonempty:
+    .a16
+    cmp #$0001
+    beq ScummV5_ActorPose_Compose__one_chunk
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__one_chunk:
+    .a16
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR
+    beq ScummV5_ActorPose_Compose__owner_ok
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__owner_ok:
+    .a8
+    rep #$20
+    .a16
+    ; Project the logical actor foot through the established surface viewport.
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    sta.l SAME_SCUMM_ACTOR_FOOT_SCREEN_X
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    sec
+    sbc.l SAME_SCUMM_C14_ACTORS+(SCUMM_V5_ACTOR_RENDER_ID*$40)+SAME_SCUMM_C14_A_ELEVATION
+    sta.l SAME_SCUMM_ACTOR_FOOT_SCREEN_Y
+    ; Validate every span before touching the surface. A malformed descriptor
+    ; therefore cannot publish a prefix of an actor.
+    lda.l SAME_SCUMM_ACTOR_SPAN_LOCAL_OFFSET
+    sta.l SAME_SCUMM_ACTOR_SPAN_CURSOR
+    lda.l SAME_SCUMM_ACTOR_SPAN_COUNT
+    sta.l SAME_SCUMM_ACTOR_SPAN_REMAIN
+ScummV5_ActorPose_Compose__validate_loop:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_SPAN_REMAIN
+    bne ScummV5_ActorPose_Compose__validate_body
+    jml ScummV5_ActorPose_Compose__validated
+ScummV5_ActorPose_Compose__validate_body:
+    jsl ScummV5_ActorPose_LoadSpan_Far
+    lda.l SAME_SCUMM_ACTOR_SPAN_LENGTH
+    bne ScummV5_ActorPose_Compose__span_nonempty
+    jml ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__span_nonempty:
+    .a16
+    cmp #$0801
+    bcc ScummV5_ActorPose_Compose__span_length_ok
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__span_length_ok:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_SPAN_SOURCE
+    clc
+    adc.l SAME_SCUMM_ACTOR_SPAN_LENGTH
+    bcc ScummV5_ActorPose_Compose__source_no_wrap
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__source_no_wrap:
+    .a16
+    cmp.l SAME_SCUMM_ACTOR_TICKET_LENGTH
+    bcc ScummV5_ActorPose_Compose__source_in_chunk
+    beq ScummV5_ActorPose_Compose__source_in_chunk
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__source_in_chunk:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_SPAN_X
+    eor #$8000
+    sta.l SAME_SCUMM_ACTOR_POSE_VALIDATE_TEMP
+    lda.l SAME_SCUMM_ACTOR_POSE_BOUNDS_LEFT
+    eor #$8000
+    cmp.l SAME_SCUMM_ACTOR_POSE_VALIDATE_TEMP
+    bcc ScummV5_ActorPose_Compose__x_after_left
+    beq ScummV5_ActorPose_Compose__x_after_left
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__x_after_left:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_SPAN_X
+    clc
+    adc.l SAME_SCUMM_ACTOR_SPAN_LENGTH
+    eor #$8000
+    sta.l SAME_SCUMM_ACTOR_SPAN_RAW_X
+    lda.l SAME_SCUMM_ACTOR_POSE_BOUNDS_RIGHT
+    eor #$8000
+    cmp.l SAME_SCUMM_ACTOR_SPAN_RAW_X
+    bcs ScummV5_ActorPose_Compose__x_before_right
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__x_before_right:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_SPAN_Y
+    eor #$8000
+    sta.l SAME_SCUMM_ACTOR_POSE_VALIDATE_TEMP
+    lda.l SAME_SCUMM_ACTOR_POSE_BOUNDS_TOP
+    eor #$8000
+    cmp.l SAME_SCUMM_ACTOR_POSE_VALIDATE_TEMP
+    bcc ScummV5_ActorPose_Compose__y_after_top
+    beq ScummV5_ActorPose_Compose__y_after_top
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__y_after_top:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_BOUNDS_BOTTOM
+    eor #$8000
+    cmp.l SAME_SCUMM_ACTOR_POSE_VALIDATE_TEMP
+    bcs ScummV5_ActorPose_Compose__bottom_not_before_y
+    jml ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__bottom_not_before_y:
+    .a16
+    bne ScummV5_ActorPose_Compose__y_before_bottom
+    jml ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__y_before_bottom:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_SPAN_CURSOR
+    clc
+    adc #$0008
+    sta.l SAME_SCUMM_ACTOR_SPAN_CURSOR
+    lda.l SAME_SCUMM_ACTOR_SPAN_REMAIN
+    dec
+    sta.l SAME_SCUMM_ACTOR_SPAN_REMAIN
+    brl ScummV5_ActorPose_Compose__validate_loop
+ScummV5_ActorPose_Compose__validated:
+    .a16
+    jsl Same_VideoSurface_CanWrite_Far
+    bcc ScummV5_ActorPose_Compose__surface_ready
+    jmp ScummV5_ActorPose_Compose__retry
+ScummV5_ActorPose_Compose__surface_ready:
+    .a16
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && (SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D)
+    ; Save the checked room pixels under this pose before any actor span writes.
+    ; The surface service bounds the snapshot by the exact active-record tail.
+    jsl Same_VideoSurface_CaptureActorUnderlay_Far
+    bcc ScummV5_ActorPose_Compose__underlay_ready
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__underlay_ready:
+    .a16
+.endif
+    ; The pending window is the checked source, not a retained actor cache.
+    sep #$20
+    .a8
+    lda #<SAME_SCUMM_ACTOR_POSE_BUFFER
+    sta SAME_VIDEO_SURFACE_DP_SOURCE
+    lda #>SAME_SCUMM_ACTOR_POSE_BUFFER
+    sta SAME_VIDEO_SURFACE_DP_SOURCE+$01
+    lda #SAME_SCUMM_LIVE_ROOM_PENDING_BANK
+    sta SAME_VIDEO_SURFACE_DP_SOURCE+$02
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_SPAN_LOCAL_OFFSET
+    sta.l SAME_SCUMM_ACTOR_SPAN_CURSOR
+    lda.l SAME_SCUMM_ACTOR_SPAN_COUNT
+    sta.l SAME_SCUMM_ACTOR_SPAN_REMAIN
+ScummV5_ActorPose_Compose__draw_loop:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_SPAN_REMAIN
+    bne ScummV5_ActorPose_Compose__draw_body
+    jml ScummV5_ActorPose_Compose__draw_done
+ScummV5_ActorPose_Compose__draw_body:
+    jsl ScummV5_ActorPose_LoadSpan_Far
+    lda.l SAME_SCUMM_ACTOR_FOOT_SCREEN_Y
+    clc
+    adc.l SAME_SCUMM_ACTOR_SPAN_Y
+    bpl ScummV5_ActorPose_Compose__draw_y_nonnegative
+    jml ScummV5_ActorPose_Compose__draw_skip
+ScummV5_ActorPose_Compose__draw_y_nonnegative:
+    .a16
+    cmp #$00E0
+    bcc ScummV5_ActorPose_Compose__draw_y_in_range
+    jml ScummV5_ActorPose_Compose__draw_skip
+ScummV5_ActorPose_Compose__draw_y_in_range:
+    .a16
+    sta.l SAME_SCUMM_ACTOR_POSE_VALIDATE_TEMP
+    lda.l SAME_SCUMM_ACTOR_FOOT_SCREEN_X
+    clc
+    adc.l SAME_SCUMM_ACTOR_SPAN_X
+    sta.l SAME_SCUMM_ACTOR_SPAN_RAW_X
+    clc
+    adc.l SAME_SCUMM_ACTOR_SPAN_LENGTH
+    bmi ScummV5_ActorPose_Compose__draw_skip
+    cmp #$0100
+    bcc ScummV5_ActorPose_Compose__right_ready
+    lda #$0100
+ScummV5_ActorPose_Compose__right_ready:
+    .a16
+    sta.l SAME_SCUMM_ACTOR_CLIP_RIGHT
+    lda.l SAME_SCUMM_ACTOR_SPAN_RAW_X
+    bmi ScummV5_ActorPose_Compose__left_zero
+    cmp #$0100
+    bcs ScummV5_ActorPose_Compose__draw_skip
+    sta.l SAME_SCUMM_ACTOR_CLIP_LEFT
+    bra ScummV5_ActorPose_Compose__left_ready
+ScummV5_ActorPose_Compose__left_zero:
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_ACTOR_CLIP_LEFT
+ScummV5_ActorPose_Compose__left_ready:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_CLIP_RIGHT
+    cmp.l SAME_SCUMM_ACTOR_CLIP_LEFT
+    bcc ScummV5_ActorPose_Compose__draw_skip
+    beq ScummV5_ActorPose_Compose__draw_skip
+    sec
+    sbc.l SAME_SCUMM_ACTOR_CLIP_LEFT
+    sta.l SAME_SCUMM_ACTOR_CLIP_COUNT
+    lda.l SAME_SCUMM_ACTOR_CLIP_LEFT
+    sec
+    sbc.l SAME_SCUMM_ACTOR_SPAN_RAW_X
+    clc
+    adc.l SAME_SCUMM_ACTOR_SPAN_SOURCE
+    sta.l SAME_SCUMM_ACTOR_CLIP_SOURCE
+    clc
+    adc.l SAME_SCUMM_ACTOR_CLIP_COUNT
+    bcc ScummV5_ActorPose_Compose__clip_source_no_wrap
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__clip_source_no_wrap:
+    .a16
+    cmp.l SAME_SCUMM_ACTOR_TICKET_LENGTH
+    bcc ScummV5_ActorPose_Compose__clip_source_valid
+    beq ScummV5_ActorPose_Compose__clip_source_valid
+    jmp ScummV5_ActorPose_Compose__invalid
+ScummV5_ActorPose_Compose__clip_source_valid:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_CLIP_COUNT
+    tax
+    lda.l SAME_SCUMM_ACTOR_CLIP_SOURCE
+    tay
+    lda.l SAME_SCUMM_ACTOR_POSE_VALIDATE_TEMP
+    xba
+    and #$FF00
+    ora.l SAME_SCUMM_ACTOR_CLIP_LEFT
+    jsl Same_VideoSurface_BlitCheckedOpaqueRun_Far
+    bcc ScummV5_ActorPose_Compose__draw_skip
+    jmp ScummV5_ActorPose_Compose__retry
+ScummV5_ActorPose_Compose__draw_skip:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_SPAN_CURSOR
+    clc
+    adc #$0008
+    sta.l SAME_SCUMM_ACTOR_SPAN_CURSOR
+    lda.l SAME_SCUMM_ACTOR_SPAN_REMAIN
+    dec
+    sta.l SAME_SCUMM_ACTOR_SPAN_REMAIN
+    brl ScummV5_ActorPose_Compose__draw_loop
+ScummV5_ActorPose_Compose__draw_done:
+    .a16
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_ACTOR_POSE_COMPOSED
+    jsl ScummV5_ActorPose_ReleaseBuffer_Far
+ScummV5_ActorPose_Compose__complete:
+    .a8
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
+    plp
+    clc
+    rtl
+ScummV5_ActorPose_Compose__empty:
+    .a16
+    sep #$20
+    .a8
+    jmp ScummV5_ActorPose_Compose__draw_done
+ScummV5_ActorPose_Compose__retry:
+    .a16
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
+    plp
+    sec
+    rtl
+ScummV5_ActorPose_Compose__invalid:
+    .a8
+    sep #$20
+    .a8
+    lda #SCUMM_ERR_RESOURCE
+    sta.l SAME_SCUMM_ERROR
+    lda #$FF
+    sta.l SAME_SCUMM_ACTOR_POSE_STATE
+    jsl ScummV5_ActorPose_ReleaseBuffer_Far
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
+    plp
+    sec
+    rtl
+
 ; The provider has one global cursor. Accept completion only if its full
 ; section offset, CRC, length, and destination still identify this pose.
 ScummV5_ActorPose_ProviderMatches_Far:
@@ -2438,17 +3297,34 @@ ScummV5_ActorPose_ProviderMatches_Far:
     cmp.l SAME_SCUMM_ACTOR_POSE_REQUEST_CRC+2
     bne ScummV5_ActorPose_ProviderMatches__no
     lda.l SAME_MSU1_REQUEST_LENGTH
-    cmp #$0800
+    cmp.l SAME_SCUMM_ACTOR_TICKET_LENGTH
     bne ScummV5_ActorPose_ProviderMatches__no
     lda.l SAME_MSU1_REQUEST_LENGTH+2
     bne ScummV5_ActorPose_ProviderMatches__no
-    lda.l SAME_MSU1_DESTINATION
-    cmp #$1000
-    bne ScummV5_ActorPose_ProviderMatches__no
+    ; DESTINATION is a 24-bit pointer. Compare its three bytes in A8 mode;
+    ; the earlier A16 loads compared a 16-bit value such as $13C4 with the
+    ; one-byte <address immediate $C4 and rejected every valid actor ticket.
     sep #$20
     .a8
+    lda.l SAME_MSU1_DESTINATION
+    cmp #<SAME_SCUMM_ACTOR_POSE_BUFFER
+    bne ScummV5_ActorPose_ProviderMatches__no
+    lda.l SAME_MSU1_DESTINATION+1
+    cmp #>SAME_SCUMM_ACTOR_POSE_BUFFER
+    bne ScummV5_ActorPose_ProviderMatches__no
     lda.l SAME_MSU1_DESTINATION+2
-    cmp #$7E
+    cmp #SAME_SCUMM_LIVE_ROOM_PENDING_BANK
+    bne ScummV5_ActorPose_ProviderMatches__no
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR
+    bne ScummV5_ActorPose_ProviderMatches__no
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_TICKET_ROOM_EPOCH
+    cmp.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    bne ScummV5_ActorPose_ProviderMatches__no
+    lda.l SAME_SCUMM_ACTOR_TICKET_COSTUME_EPOCH
+    cmp.l SAME_SCUMM_ACTOR_POSE_GENERATION
     bne ScummV5_ActorPose_ProviderMatches__no
     plp
     sec
@@ -2458,30 +3334,18 @@ ScummV5_ActorPose_ProviderMatches__no:
     clc
     rtl
 
-; Drop the temporary cache-page lease and advance its generation. No program
-; bytes are credited to the page while the actor owns it.
+; Release only an ACTOR-owned scratch after a verified transfer has either
+; been discarded or synchronously consumed. Never change executable-cache
+; identity, pins, or generations here.
 ScummV5_ActorPose_ReleaseBuffer_Far:
     php
     sep #$20
     .a8
-    lda.l SAME_SCUMM_MSU_CACHE_STATE0
-    cmp #SCUMM_MSU_CACHE_ACTOR
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR
     bne ScummV5_ActorPose_ReleaseBuffer__done
-    lda #$00
-    sta.l SAME_SCUMM_MSU_CACHE_PINS0
-    sta.l SAME_SCUMM_MSU_CACHE_STATE0
-    rep #$20
-    .a16
-    lda #$FFFF
-    sta.l SAME_SCUMM_MSU_CACHE_ID0
-    lda #$0000
-    sta.l SAME_SCUMM_MSU_CACHE_SIZE0
-    lda.l SAME_SCUMM_MSU_CACHE_GENERATION0
-    inc
-    bne ScummV5_ActorPose_ReleaseBuffer__generation
-    inc
-ScummV5_ActorPose_ReleaseBuffer__generation:
-    sta.l SAME_SCUMM_MSU_CACHE_GENERATION0
+    lda #SAME_SCUMM_ACTOR_SCRATCH_OWNER_NONE
+    sta.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
 ScummV5_ActorPose_ReleaseBuffer__done:
     plp
     rtl
@@ -2526,8 +3390,6 @@ ScummV5_ActorPose_ServiceCancel_Far:
     lda.l SAME_SCUMM_ACTOR_POSE_STATE
     cmp #$03
     bne ScummV5_ActorPose_ServiceCancel__done
-    jsl ScummV5_ActorPose_ProviderMatches_Far
-    bcc ScummV5_ActorPose_ServiceCancel__release
     lda.l SAME_MSU1_STATUS
     cmp #SAME_MSU1_STATE_READING
     beq ScummV5_ActorPose_ServiceCancel__done

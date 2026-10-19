@@ -16,9 +16,14 @@
     "address": "41:E750",
     "bytes": 176,
     "allocations": {
+      "actor_explicit_animation": {
+        "offset": 0,
+        "bytes": 32,
+        "owner": "generic SCUMM actor animation state"
+      },
       "actor_pose_state": {
         "offset": 48,
-        "bytes": 38,
+        "bytes": 128,
         "owner": "generic SCUMM actor renderer"
       }
     }

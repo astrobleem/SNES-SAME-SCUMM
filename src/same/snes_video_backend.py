@@ -140,7 +140,7 @@ def validate_mode3_layout(layout: dict[str, Any]) -> tuple[BackendRegion, ...]:
     pose_state = work_allocations.get("actor_pose_state")
     if pose_state != {
             "offset": 48,
-            "bytes": 38,
+            "bytes": 128,
             "owner": "generic SCUMM actor renderer",
     }:
         raise ValueError("Mode-3 actor pose state suballocation differs")

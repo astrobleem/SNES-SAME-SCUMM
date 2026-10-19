@@ -77,6 +77,13 @@ def main() -> int:
     status = git("status", "--short")
     tracked_diff = subprocess.check_output(
         ["git", "diff", "HEAD", "--binary"], cwd=ROOT)
+    environment = {
+        key: value
+        for key, value in sorted(os.environ.items())
+        if key.startswith("SAME_") or key in {
+            "POPPY_ROOT", "DOTNET_ROOT", "PYTHON"
+        }
+    }
     generated = []
     candidates = [
         ROOT / "runtime/snes/generated/active_engine.inc.pasm",
@@ -92,17 +99,16 @@ def main() -> int:
         args.video_overlay_manifest.resolve(),
         args.rom.with_suffix(".charset.json").resolve(),
     ]
+    actor_probe_audit = environment.get("SAME_SCUMM_ACTOR_PROBE_AUDIT")
+    if actor_probe_audit:
+        audit_path = Path(actor_probe_audit).resolve()
+        if not audit_path.is_file():
+            raise RuntimeError(f"actor diagnostic audit is missing: {audit_path}")
+        candidates.append(audit_path)
     for path in candidates:
         if path.is_file():
             generated.append(artifact_record(path))
 
-    environment = {
-        key: value
-        for key, value in sorted(os.environ.items())
-        if key.startswith("SAME_") or key in {
-            "POPPY_ROOT", "DOTNET_ROOT", "PYTHON"
-        }
-    }
     identity = {
         "format": "same-build-identity-v1",
         "rom": {"path": str(args.rom), "sha256": sha256(args.rom)},
@@ -133,6 +139,16 @@ def main() -> int:
         "poppy_sha256": args.poppy_sha256,
         "built_at_utc": datetime.now(timezone.utc).isoformat(),
     }
+    if actor_probe_audit:
+        identity["diagnostics"] = {
+            "actor_probe": {
+                "kind": "SYNTHETIC_GRAPHICS_DIAGNOSTIC",
+                "production_release_eligible": False,
+                "gameplay_authentic": False,
+                "audit": artifact_record(Path(actor_probe_audit)),
+                "audit_sha256": sha256(Path(actor_probe_audit)),
+            }
+        }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(identity, indent=2, sort_keys=True) + "\n")
     print(json.dumps({
