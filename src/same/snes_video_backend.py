@@ -136,6 +136,16 @@ def validate_mode3_layout(layout: dict[str, Any]) -> tuple[BackendRegion, ...]:
         if not isinstance(record, dict) or (parse_address(record["address"]), record.get("bytes")) != (address, size):
             raise ValueError(f"Mode-3 region {name} differs")
         regions.append(BackendRegion(name, address, size))
+    work_allocations = layout["work"].get("allocations", {})
+    pose_state = work_allocations.get("actor_pose_state")
+    if pose_state != {
+            "offset": 48,
+            "bytes": 128,
+            "owner": "generic SCUMM actor renderer",
+    }:
+        raise ValueError("Mode-3 actor pose state suballocation differs")
+    if pose_state["offset"] < 0x24 or pose_state["offset"] + pose_state["bytes"] > layout["work"]["bytes"]:
+        raise ValueError("Mode-3 actor pose state overlaps work fields or exceeds its owner")
     ordered = tuple(sorted(regions, key=lambda item: item.address))
     for left, right in zip(ordered, ordered[1:]):
         if left.end > right.address:

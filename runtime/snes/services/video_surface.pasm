@@ -46,6 +46,16 @@ SAME_VIDEO_SURFACE_DAMAGE_Y1          = SAME_VIDEO_SURFACE_STATE+$3E
 ; palette storage and copies the fixed 256-entry palette into it.
 SAME_VIDEO_SURFACE_PALETTE_SOURCE      = SAME_VIDEO_SURFACE_STATE+$40
 SAME_VIDEO_SURFACE_STATE_SIZE         = SAME_BWRAM_VIDEO_SURFACE_STATE_SIZE
+SAME_VIDEO_ACTOR_UNDERLAY_MAGIC       = $A7
+SAME_VIDEO_ACTOR_UNDERLAY_HEADER_SIZE = $0010
+SAME_VIDEO_ACTOR_UNDERLAY_MAGIC_OFF  = $0000
+SAME_VIDEO_ACTOR_UNDERLAY_ROOM_OFF   = $0001
+SAME_VIDEO_ACTOR_UNDERLAY_GEN_OFF    = $0002
+SAME_VIDEO_ACTOR_UNDERLAY_X_OFF      = $0004
+SAME_VIDEO_ACTOR_UNDERLAY_Y_OFF      = $0006
+SAME_VIDEO_ACTOR_UNDERLAY_W_OFF      = $0008
+SAME_VIDEO_ACTOR_UNDERLAY_H_OFF      = $000A
+SAME_VIDEO_ACTOR_UNDERLAY_SIZE_OFF   = $000C
 ; Debug-only service pipeline witness.  This is in the unused tail of the
 ; backend-reserved block, after the surface descriptor/state and before no
 ; other published service allocation.  It is not visible to SCUMM.
@@ -132,6 +142,22 @@ Same_VideoSurface_InstallPalette_Far__copy:
     iny
     cpy #$0300
     bcc Same_VideoSurface_InstallPalette_Far__copy
+    plp
+    clc
+    rtl
+
+; A producer that replaces the backing surface from a buffer aliased with the
+; Mode-3 tile shadow must invalidate that shadow before the next PRESENT.
+; Ordinary dirty presentations (including actor damage) keep the cache valid
+; and therefore convert only their marked tiles.
+Same_VideoSurface_InvalidateTileCache_Far:
+    php
+    .if SAME_BUILD_SCUMM_ROOM_VISUAL
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_BWRAM_CONTROL_TILE_VALID
+    .endif
     plp
     clc
     rtl
@@ -1196,6 +1222,23 @@ Same_VideoSurface_RestoreRect__y_span:
     sta.l SAME_SCUMM_CONTROLLER_RESTORE_LOOP_W
     lda.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
     sta.l SAME_SCUMM_CONTROLLER_RESTORE_LOOP_H
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER && SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && (SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D)
+    ; The MSU-backed actor build has no ROM room-visual directory. Restore the
+    ; exact prior actor underlay from the validated active SC5LIVE allocation
+    ; instead of indexing an empty ROM table. DAMAGE_* still describes the
+    ; old/new presentation union prepared by the caller.
+    jsl Same_VideoSurface_RestoreActorUnderlay_Far
+    bcc Same_VideoSurface_RestoreRect__actor_underlay_ok
+    jml Same_VideoSurface_RestoreRect__fail
+Same_VideoSurface_RestoreRect__actor_underlay_ok:
+    sep #$20
+    .a8
+    lda #$05
+    sta.l SAME_VIDEO_DIAG_RESTORE_STAGE
+    plp
+    clc
+    rtl
+.endif
     ; LoadRowTablePointer uses byte loads and returns with A8.  RestoreRect's
     ; row arithmetic and loop counters are 16-bit, so re-establish the public
     ; caller contract before touching them.
@@ -1318,6 +1361,574 @@ Same_VideoSurface_RestoreRect__busy:
     sta.l SAME_VIDEO_DIAG_RESTORE_STAGE
     plp
     sec
+    rtl
+
+; The live-room actor compositor stores only its current pose rectangle in the
+; unused tail of the validated SC5LIVE active allocation.  Its base offset is
+; the compact active record's checked u16 total_size at header+$30.  The room
+; control+$3E field is only a source-validation diagnostic terminal offset and
+; may exceed the compact active allocation.  This is a bounded surface backup,
+; not a ROM fallback or a second renderer.
+Same_VideoSurface_CaptureActorUnderlay_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_CONTROL+$01
+    cmp #$01
+    beq Same_VideoSurface_CaptureActorUnderlay__room_valid
+    jmp Same_VideoSurface_CaptureActorUnderlay__invalid
+Same_VideoSurface_CaptureActorUnderlay__room_valid:
+    .a8
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$30
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    cmp #(SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE+1)
+    bcc Same_VideoSurface_CaptureActorUnderlay__record_length_ok
+    jmp Same_VideoSurface_CaptureActorUnderlay__invalid
+Same_VideoSurface_CaptureActorUnderlay__record_length_ok:
+    ; Project the checked source-cel bounds around the actor's screen-space
+    ; foot, then clip to the existing indexed surface. Bounds are half-open.
+    lda.l SAME_SCUMM_ACTOR_FOOT_SCREEN_X
+    clc
+    adc.l SAME_SCUMM_ACTOR_POSE_BOUNDS_LEFT
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+    lda.l SAME_SCUMM_ACTOR_FOOT_SCREEN_Y
+    clc
+    adc.l SAME_SCUMM_ACTOR_POSE_BOUNDS_TOP
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+    lda.l SAME_SCUMM_ACTOR_FOOT_SCREEN_X
+    clc
+    adc.l SAME_SCUMM_ACTOR_POSE_BOUNDS_RIGHT
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_RIGHT
+    lda.l SAME_SCUMM_ACTOR_FOOT_SCREEN_Y
+    clc
+    adc.l SAME_SCUMM_ACTOR_POSE_BOUNDS_BOTTOM
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_BOTTOM
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+    bpl Same_VideoSurface_CaptureActorUnderlay__left_nonnegative
+    lda #$0000
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+Same_VideoSurface_CaptureActorUnderlay__left_nonnegative:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+    cmp #$0100
+    bcc Same_VideoSurface_CaptureActorUnderlay__left_clipped
+    lda #$0100
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+Same_VideoSurface_CaptureActorUnderlay__left_clipped:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_RIGHT
+    bpl Same_VideoSurface_CaptureActorUnderlay__right_nonnegative
+    lda #$0000
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_RIGHT
+Same_VideoSurface_CaptureActorUnderlay__right_nonnegative:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_RIGHT
+    cmp #$0100
+    bcc Same_VideoSurface_CaptureActorUnderlay__right_clipped
+    lda #$0100
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_RIGHT
+Same_VideoSurface_CaptureActorUnderlay__right_clipped:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+    bpl Same_VideoSurface_CaptureActorUnderlay__top_nonnegative
+    lda #$0000
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+Same_VideoSurface_CaptureActorUnderlay__top_nonnegative:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+    cmp #$00E0
+    bcc Same_VideoSurface_CaptureActorUnderlay__top_clipped
+    lda #$00E0
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+Same_VideoSurface_CaptureActorUnderlay__top_clipped:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_BOTTOM
+    bpl Same_VideoSurface_CaptureActorUnderlay__bottom_nonnegative
+    lda #$0000
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_BOTTOM
+Same_VideoSurface_CaptureActorUnderlay__bottom_nonnegative:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_BOTTOM
+    cmp #$00E0
+    bcc Same_VideoSurface_CaptureActorUnderlay__bottom_clipped
+    lda #$00E0
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_BOTTOM
+Same_VideoSurface_CaptureActorUnderlay__bottom_clipped:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_RIGHT
+    sec
+    sbc.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+    bcs Same_VideoSurface_CaptureActorUnderlay__width_ok
+    jmp Same_VideoSurface_CaptureActorUnderlay__invalid
+Same_VideoSurface_CaptureActorUnderlay__width_ok:
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X1 ; scratch; not used by dirty publish
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_BOTTOM
+    sec
+    sbc.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+    bcs Same_VideoSurface_CaptureActorUnderlay__height_ok
+    jmp Same_VideoSurface_CaptureActorUnderlay__invalid
+Same_VideoSurface_CaptureActorUnderlay__height_ok:
+    .a16
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y1 ; scratch; not used by dirty publish
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    lda #$0000
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+Same_VideoSurface_CaptureActorUnderlay__area_loop:
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    beq Same_VideoSurface_CaptureActorUnderlay__area_done
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    clc
+    adc.l SAME_VIDEO_SURFACE_DAMAGE_X1
+    bcc Same_VideoSurface_CaptureActorUnderlay__area_add_ok
+    jml Same_VideoSurface_CaptureActorUnderlay__invalid
+Same_VideoSurface_CaptureActorUnderlay__area_add_ok:
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    dec
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    bra Same_VideoSurface_CaptureActorUnderlay__area_loop
+Same_VideoSurface_CaptureActorUnderlay__area_done:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    clc
+    adc #SAME_VIDEO_ACTOR_UNDERLAY_HEADER_SIZE
+    bcc Same_VideoSurface_CaptureActorUnderlay__header_add_ok
+    jml Same_VideoSurface_CaptureActorUnderlay__invalid
+Same_VideoSurface_CaptureActorUnderlay__header_add_ok:
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_DATA_BASE
+    clc
+    adc.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    bcc Same_VideoSurface_CaptureActorUnderlay__capacity_add_ok
+    jml Same_VideoSurface_CaptureActorUnderlay__invalid
+Same_VideoSurface_CaptureActorUnderlay__capacity_add_ok:
+    .a16
+    cmp #(SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE+1)
+    bcc Same_VideoSurface_CaptureActorUnderlay__capacity_ok
+    jmp Same_VideoSurface_CaptureActorUnderlay__invalid
+Same_VideoSurface_CaptureActorUnderlay__capacity_ok:
+    ; Header magic is written last. A failed bounded copy therefore cannot
+    ; publish a partial background snapshot as a valid one.
+    sep #$20
+    .a8
+    lda #SAME_SCUMM_LIVE_ROOM_ACTIVE_BANK
+    pha
+    plb
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    tay
+    sep #$20
+    .a8
+    lda #$00
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    iny
+    lda.l SAME_VIDEO_SURFACE_ROOM
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    rep #$20
+    .a16
+    iny
+    lda.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    iny
+    iny
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    iny
+    iny
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    iny
+    iny
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X1
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    iny
+    iny
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y1
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    iny
+    iny
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    ; Copy the exact clipped indexed pixels, including palette index zero.
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_DATA_BASE
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+Same_VideoSurface_CaptureActorUnderlay__row:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    cmp.l SAME_SCUMM_ACTOR_POSE_RENDER_BOTTOM
+    bcs Same_VideoSurface_CaptureActorUnderlay__copy_done
+    xba
+    and #$FF00
+    ora.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X1
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+Same_VideoSurface_CaptureActorUnderlay__pixel:
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    beq Same_VideoSurface_CaptureActorUnderlay__row_done
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    tax
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    tay
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    inc
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    inc
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    dec
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    bra Same_VideoSurface_CaptureActorUnderlay__pixel
+Same_VideoSurface_CaptureActorUnderlay__row_done:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    inc
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    bra Same_VideoSurface_CaptureActorUnderlay__row
+Same_VideoSurface_CaptureActorUnderlay__copy_done:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    tay
+    sep #$20
+    .a8
+    lda #SAME_VIDEO_ACTOR_UNDERLAY_MAGIC
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    plb
+    ply
+    plx
+    pla
+    plp
+    clc
+    rtl
+Same_VideoSurface_CaptureActorUnderlay__invalid:
+    sep #$20
+    .a8
+    lda #SCUMM_ERR_RESOURCE
+    sta.l SAME_SCUMM_ERROR
+    plb
+    ply
+    plx
+    pla
+    plp
+    sec
+    rtl
+
+Same_VideoSurface_RestoreActorUnderlay_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$30
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    cmp #(SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE+1)
+    bcc Same_VideoSurface_RestoreActorUnderlay__record_length_ok
+    jmp Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__record_length_ok:
+    .a16
+    clc
+    adc #SAME_VIDEO_ACTOR_UNDERLAY_HEADER_SIZE
+    bcs Same_VideoSurface_RestoreActorUnderlay__no_room_for_header
+    cmp #(SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE+1)
+    bcc Same_VideoSurface_RestoreActorUnderlay__header_in_range
+Same_VideoSurface_RestoreActorUnderlay__no_room_for_header:
+    ; Capture will report an explicit capacity error if a visible actor needs
+    ; an underlay; never read a marker outside the active allocation.
+    jmp Same_VideoSurface_RestoreActorUnderlay__empty
+Same_VideoSurface_RestoreActorUnderlay__header_in_range:
+    .a16
+    sep #$20
+    .a8
+    lda #SAME_SCUMM_LIVE_ROOM_ACTIVE_BANK
+    pha
+    plb
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    tay
+    sep #$20
+    .a8
+    lda SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    cmp #SAME_VIDEO_ACTOR_UNDERLAY_MAGIC
+    beq Same_VideoSurface_RestoreActorUnderlay__magic_ok
+    jmp Same_VideoSurface_RestoreActorUnderlay__empty
+Same_VideoSurface_RestoreActorUnderlay__magic_ok:
+    .a8
+    iny
+    lda SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    cmp.l SAME_VIDEO_SURFACE_ROOM
+    beq Same_VideoSurface_RestoreActorUnderlay__room_ok
+    jmp Same_VideoSurface_RestoreActorUnderlay__stale
+Same_VideoSurface_RestoreActorUnderlay__room_ok:
+    .a8
+    rep #$20
+    .a16
+    iny
+    lda SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    cmp.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    beq Same_VideoSurface_RestoreActorUnderlay__generation_ok
+    jmp Same_VideoSurface_RestoreActorUnderlay__stale
+Same_VideoSurface_RestoreActorUnderlay__generation_ok:
+    .a16
+    iny
+    iny
+    lda SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+    iny
+    iny
+    lda SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    sta.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+    iny
+    iny
+    lda SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X1
+    iny
+    iny
+    lda SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y1
+    iny
+    iny
+    lda SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR ; expected byte count
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    bne Same_VideoSurface_RestoreActorUnderlay__area_nonzero
+    jml Same_VideoSurface_RestoreActorUnderlay__clear
+Same_VideoSurface_RestoreActorUnderlay__area_nonzero:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+    cmp #$0100
+    bcc Same_VideoSurface_RestoreActorUnderlay__x_ok
+    jmp Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__x_ok:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+    cmp #$00E0
+    bcc Same_VideoSurface_RestoreActorUnderlay__y_ok
+    jmp Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__y_ok:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X1
+    cmp #$0101
+    bcc Same_VideoSurface_RestoreActorUnderlay__width_ok
+    jmp Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__width_ok:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y1
+    cmp #$00E1
+    bcc Same_VideoSurface_RestoreActorUnderlay__height_ok
+    jmp Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__height_ok:
+    .a16
+    clc
+    adc.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+    cmp #$00E1
+    bcc Same_VideoSurface_RestoreActorUnderlay__bottom_ok
+    jmp Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__bottom_ok:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X1
+    clc
+    adc.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+    cmp #$0101
+    bcc Same_VideoSurface_RestoreActorUnderlay__right_ok
+    jmp Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__right_ok:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y1
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    lda #$0000
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+Same_VideoSurface_RestoreActorUnderlay__area_loop:
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    beq Same_VideoSurface_RestoreActorUnderlay__area_done
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    clc
+    adc.l SAME_VIDEO_SURFACE_DAMAGE_X1
+    bcc Same_VideoSurface_RestoreActorUnderlay__area_add_ok
+    jml Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__area_add_ok:
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    dec
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    bra Same_VideoSurface_RestoreActorUnderlay__area_loop
+Same_VideoSurface_RestoreActorUnderlay__area_done:
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    cmp.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    beq Same_VideoSurface_RestoreActorUnderlay__area_matches
+    jmp Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__area_matches:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    clc
+    adc #SAME_VIDEO_ACTOR_UNDERLAY_HEADER_SIZE
+    bcc Same_VideoSurface_RestoreActorUnderlay__header_add_ok
+    jml Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__header_add_ok:
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_DATA_BASE
+    clc
+    adc.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    bcc Same_VideoSurface_RestoreActorUnderlay__capacity_add_ok
+    jml Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__capacity_add_ok:
+    .a16
+    cmp #(SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE+1)
+    bcc Same_VideoSurface_RestoreActorUnderlay__capacity_ok
+    jmp Same_VideoSurface_RestoreActorUnderlay__invalid
+Same_VideoSurface_RestoreActorUnderlay__capacity_ok:
+    .a16
+    lda #$0000
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_DATA_BASE
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+Same_VideoSurface_RestoreActorUnderlay__row:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    cmp.l SAME_VIDEO_SURFACE_DAMAGE_Y1
+    bcs Same_VideoSurface_RestoreActorUnderlay__row_done
+    clc
+    adc.l SAME_SCUMM_ACTOR_POSE_RENDER_TOP
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    xba
+    and #$FF00
+    ora.l SAME_SCUMM_ACTOR_POSE_RENDER_LEFT
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+Same_VideoSurface_RestoreActorUnderlay__copy_row:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X1
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+Same_VideoSurface_RestoreActorUnderlay__pixel:
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    beq Same_VideoSurface_RestoreActorUnderlay__row_advance
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    tay
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    tax
+    sep #$20
+    .a8
+    lda SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    sta.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    inc
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    inc
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    dec
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    bra Same_VideoSurface_RestoreActorUnderlay__pixel
+Same_VideoSurface_RestoreActorUnderlay__row_advance:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    inc
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    bra Same_VideoSurface_RestoreActorUnderlay__row
+Same_VideoSurface_RestoreActorUnderlay__row_done:
+    .a16
+    jmp Same_VideoSurface_RestoreActorUnderlay__clear
+Same_VideoSurface_RestoreActorUnderlay__stale:
+    .a8
+    ; A room/generation mismatch means the surface has advanced; old pixels
+    ; must never be copied into the new room. Discard only the stale marker.
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    tay
+    sep #$20
+    .a8
+    lda #$00
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    bra Same_VideoSurface_RestoreActorUnderlay__success
+Same_VideoSurface_RestoreActorUnderlay__empty:
+    .a8
+    bra Same_VideoSurface_RestoreActorUnderlay__success
+Same_VideoSurface_RestoreActorUnderlay__clear:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    tay
+    sep #$20
+    .a8
+    lda #$00
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+Same_VideoSurface_RestoreActorUnderlay__success:
+    plb
+    ply
+    plx
+    pla
+    plp
+    clc
+    rtl
+Same_VideoSurface_RestoreActorUnderlay__invalid:
+    sep #$20
+    .a8
+    lda #SCUMM_ERR_RESOURCE
+    sta.l SAME_SCUMM_ERROR
+    plb
+    ply
+    plx
+    pla
+    plp
+    sec
+    rtl
+
+Same_VideoSurface_InvalidateActorUnderlay_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$30
+    clc
+    adc #SAME_VIDEO_ACTOR_UNDERLAY_HEADER_SIZE
+    bcs Same_VideoSurface_InvalidateActorUnderlay__done
+    cmp #(SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE+1)
+    bcs Same_VideoSurface_InvalidateActorUnderlay__done
+    sep #$20
+    .a8
+    lda #SAME_SCUMM_LIVE_ROOM_ACTIVE_BANK
+    pha
+    plb
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$30
+    tay
+    sep #$20
+    .a8
+    lda #$00
+    sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+Same_VideoSurface_InvalidateActorUnderlay__done:
+    plb
+    ply
+    plx
+    pla
+    plp
     rtl
 
 ; Publish exactly the clipped rectangle prepared by RestoreRect.  A palette
@@ -1935,6 +2546,36 @@ Same_VideoSurface_BlitIndexedRect__height_ok:
     rep #$30
     .a16
     .i16
+    ; ASTRA_BOUND_CHECK_V1: destination must be wholly inside INDEX8.
+    ; The legacy packed ABI has unsigned x/y. New callers preclip signed
+    ; positions; this guard rejects overflow instead of writing outside it.
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    cmp #$0101
+    bcc Same_VideoSurface_BlitIndexedRect__right_bound_ok
+    sep #$20
+    .a8
+    lda #$06
+    sta.l SAME_VIDEO_DIAG_BLIT_FAIL_STAGE
+    jmp Same_VideoSurface_BlitIndexedRect__fail
+Same_VideoSurface_BlitIndexedRect__right_bound_ok:
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    cmp #$00E1
+    bcc Same_VideoSurface_BlitIndexedRect__bottom_bound_ok
+    sep #$20
+    .a8
+    lda #$07
+    sta.l SAME_VIDEO_DIAG_BLIT_FAIL_STAGE
+    jmp Same_VideoSurface_BlitIndexedRect__fail
+Same_VideoSurface_BlitIndexedRect__bottom_bound_ok:
+    rep #$30
+    .a16
+    .i16
     lda.l SAME_VIDEO_SURFACE_DAMAGE_Y
     xba
     and #$FF00
@@ -1994,10 +2635,14 @@ Same_VideoSurface_BlitIndexedRect__fail:
     sta.l SAME_VIDEO_DIAG_BLIT_LOCKED
     rep #$20
     .a16
-    pla
+    ; Packed A was already popped before CanWrite; only saved P remains.
     lda.l SAME_VIDEO_DIAG_BLIT_EXITS
     inc
     sta.l SAME_VIDEO_DIAG_BLIT_EXITS
     plp
     sec
     rtl
+
+; Single opaque INDEX8 run primitive for checked costume chunks. The caller
+; clips signed coordinates and palette-maps source slots before calling it.
+.include "opaque_run.inc.pasm"

@@ -48,7 +48,7 @@ ScummV5_RoomVisual_Installed_Far:
     inc
 ScummV5_RoomVisual_Installed__generation_ok:
     sta.l SAME_VIDEO_SURFACE_ROOM_GENERATION
-    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $01)
+    .if (SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $01)) || SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     ; A room install begins a new actor-surface cache lifetime.  This is a
     ; lifecycle reset, not an actor draw and not a backend operation.
     jsl ScummV5_Controller_ResetVisualCache_Far
@@ -78,7 +78,17 @@ ScummV5_Visual_Frame_Far:
     jsl Same_VideoSurface_ServiceEvents_Far
     jsl Same_VideoSurface_ServicePending_Far
     jsl Same_VideoSurface_ServiceEvents_Far
-    .if SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $04)
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+      ; Do not start a costume transfer or mutate the indexed surface while
+      ; the room's first presentation is pending, or while the video backend
+      ; owns the surface. The compositor can retry on the next ordinary frame
+      ; after the existing presentation transaction becomes writable.
+      lda.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+      bne ScummV5_Visual_Frame__skip_actor
+      jsl Same_VideoSurface_CanWrite_Far
+      bcs ScummV5_Visual_Frame__skip_actor
+      jsl ScummV5_Controller_RenderActor_Far
+    .elseif SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $04)
       ; Semantic actor composition runs after the movement pass.  This later
       ; visual phase only services pending surface work and retries, rather
       ; than taking a second snapshot from a different semantic phase.
@@ -119,7 +129,7 @@ ScummV5_Visual_Frame__prewalk_actor:
       lda.l SAME_SCUMM_CONTROLLER_RENDER_VALID
       bne ScummV5_Visual_Frame__skip_actor
       jsl ScummV5_Controller_RenderActor_Far
-ScummV5_Visual_Frame__skip_actor:
     .endif
+ScummV5_Visual_Frame__skip_actor:
     jsl Same_VideoSurface_ServiceEvents_Far
     rtl

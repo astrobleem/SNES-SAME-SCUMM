@@ -309,6 +309,45 @@ def inject_diagnostic_invalid_sparse_route_value(
     return bytes(raw)
 
 
+def apply_synthetic_actor_probe(
+    native_directory: NativeProgramDirectory,
+    programs: list[dict[str, object]],
+    audit_path: Path,
+) -> tuple[NativeProgramDirectory, dict[str, object]]:
+    """Apply the explicit data-only actor driver before directory/package output."""
+    from actor_probe_overlay import apply_actor_probe
+    from actor_probe_program import ProbeConfig
+
+    bodies = {
+        str(item["unit_identity"]): bytes(item["program"])
+        for item in programs if item["executable"]
+    }
+    pages = {
+        str(item["unit_identity"]): {
+            "instruction_spans": item.get("instruction_spans", []),
+            "opaque_ranges": item.get("opaque_ranges", []),
+        }
+        for item in programs if item["executable"]
+    }
+    proof_document, proof_bodies, proof_pages, audit = apply_actor_probe(
+        native_directory.document, bodies, pages,
+        ProbeConfig(room=4, costume=2, boot_script=1),
+        diagnostic_authorized=True,
+    )
+    updated_directory = NativeProgramDirectory(proof_document)
+    for item in programs:
+        if not item["executable"]:
+            continue
+        identity = str(item["unit_identity"])
+        item["program"] = proof_bodies[identity]
+        item["instruction_spans"] = proof_pages[identity]["instruction_spans"]
+        item["opaque_ranges"] = proof_pages[identity].get("opaque_ranges", [])
+    audit_path = audit_path.resolve()
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(json.dumps(audit, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    return updated_directory, audit
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, action="append", required=True)
@@ -494,6 +533,13 @@ def main() -> int:
     )
     parser.add_argument("--msu1-program-cache-bytes", type=lambda value: int(value, 0), default=0x0800)
     parser.add_argument(
+        "--diagnostic-actor-probe", action="store_true",
+        help=("explicitly replace source scripts with a synthetic graphics driver; "
+              "not an authentic gameplay build"),
+    )
+    parser.add_argument("--actor-probe-audit", type=Path,
+                        help="write the diagnostic body-replacement ledger")
+    parser.add_argument(
         "--msu1-live-room-resources", action="store_true",
         help="package compiler-owned room tables and visuals for live MSU consumers",
     )
@@ -530,6 +576,14 @@ def main() -> int:
         parser.error("MSU ProgramUnit storage requires --msu1-program-directory-include")
     if args.msu1_live_room_resources and not args.msu1_program_storage_dir:
         parser.error("--msu1-live-room-resources requires --msu1-program-storage-dir")
+    if args.diagnostic_actor_probe and (
+        not args.msu1_program_storage_dir or not args.msu1_live_room_resources
+    ):
+        parser.error("the actor probe requires live MSU ProgramUnit storage")
+    if args.diagnostic_actor_probe and args.actor_probe_audit is None:
+        parser.error("--diagnostic-actor-probe requires --actor-probe-audit")
+    if args.actor_probe_audit and not args.diagnostic_actor_probe:
+        parser.error("--actor-probe-audit requires --diagnostic-actor-probe")
     if args.msu1_include_source_room_records and not args.msu1_live_room_resources:
         parser.error("--msu1-include-source-room-records requires live-room package mode")
     if args.msu1_program_prefix_all_sections and args.msu1_program_prefix_section:
@@ -560,6 +614,7 @@ def main() -> int:
         args.output, args.data_output, args.report, args.native_directory_output,
         args.native_directory_include, args.backend_directory_output,
         args.far_validator_output, args.msu1_program_directory_include,
+        args.actor_probe_audit,
     ):
         if output_path is not None:
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1626,6 +1681,16 @@ def main() -> int:
                 int(item["id"]) for item in record["scripts"]
                 if item["kind_name"] == "EXCD" and item["id"] is not None
             ), 0xFFFF)
+
+    actor_probe_report = None
+    actor_probe_audit_path = None
+    if args.diagnostic_actor_probe:
+        if native_directory is None:
+            raise RuntimeError("synthetic actor probe requires the canonical native directory")
+        native_directory, actor_probe_report = apply_synthetic_actor_probe(
+            native_directory, programs, args.actor_probe_audit,
+        )
+        actor_probe_audit_path = args.actor_probe_audit.resolve()
 
     program_storage = None
     if args.msu1_program_storage_dir is not None:
@@ -3805,6 +3870,23 @@ def main() -> int:
     }
     if native_directory is not None:
         report["native_program_directory_sha256"] = native_directory.sha256
+        if actor_probe_report is not None and actor_probe_audit_path is not None:
+            report["synthetic_actor_probe"] = {
+                "kind": "SYNTHETIC_GRAPHICS_DIAGNOSTIC",
+                "production_release_eligible": False,
+                "gameplay_authentic": False,
+                "audit": os.path.relpath(
+                    actor_probe_audit_path,
+                    start=(args.report.parent if args.report is not None
+                           else args.output.parent).resolve(),
+                ),
+                "audit_sha256": hashlib.sha256(
+                    actor_probe_audit_path.read_bytes()
+                ).hexdigest(),
+                "driver_sha256": actor_probe_report["program"]["sha256"],
+                "replaced_program_units": len(actor_probe_report["replacements"]),
+                "native_runtime_code_added": 0,
+            }
         if program_storage is not None:
             report["msu1_program_storage"] = {
                 "package": str(args.msu1_program_storage_dir / "scumm-programs.msu"),

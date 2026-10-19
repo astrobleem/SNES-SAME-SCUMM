@@ -3036,6 +3036,20 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
         self.assertFalse(host.engine.inspect_state()["scripts"][0]["active"])
 
+    def test_c28_direction_preserves_chore_then_raw_request_selects_frame(self) -> None:
+        fixture = (ROOT / "examples/resources/scumm_v5/c28_animate_actor.scrp").read_bytes()
+        host = self._host(fixture)
+        host.engine.state.actors[10] = ActorState(
+            costume=1, room=0, visible=False, costume_frame=7, costume_step=3
+        )
+        host.tick()  # request 250 changes facing without replacing the current chore.
+        actor = host.engine.state.actors[10]
+        self.assertEqual(actor.costume_frame, 7)
+        self.assertEqual(actor.costume_step, 3)
+        host.tick()  # variable request 6 selects the requested costume frame.
+        self.assertEqual(actor.costume_frame, 6)
+        self.assertEqual(actor.costume_step, 0)
+
     def test_c28_animate_actor_fails_closed_on_actor_stream_and_save(self) -> None:
         for script, message in (
             (bytes((0x11, 32, 1)), "actor 32 is outside"),

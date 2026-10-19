@@ -271,12 +271,28 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             "resolver", "controller/input", "name cache", "save validator",
             "C4", "C19", "room lifecycle",
             "three-page streamed-program cache", "Mode-3 live staging",
+            "exclusive actor/room SC5ACT pending scratch",
         ])
         resolver = next(row for row in report["regions"]
                         if row["owner"] == "resident_resolver")
         self.assertEqual((resolver["start"], resolver["end_exclusive"], resolver["bytes"]),
                          ("$7E8C00", "$7E8FC0", 960))
-        self.assertEqual(report["bwram_aliases"], [])
+        self.assertEqual(report["bwram_aliases"], [{
+            "owner": "live SC5LIVE actor underlay snapshot",
+            "address_rule": "$41E800 + validated active SC5LIVE total_size",
+            "maximum_bytes": 6144,
+            "aliases": "unused tail of the same active metadata allocation",
+            "lifetime": "displayed actor pose until the next redraw or checked room-surface publication",
+            "capacity_rule": "16-byte checked header + clipped pose bounds must fit before active allocation end",
+            "coherency": "valid marker is written last and invalidated on new checked background publication",
+        }])
+        self.assertEqual(report["wram_lifetime_aliases"], [{
+            "owner": "actor-underlay cursor during live SC5LIVE actor composition",
+            "address": "$7E5E82", "bytes": 14,
+            "aliases": "RestoreRect debug-only width/height/destination/source witnesses plus the six-byte gap before video diagnostics",
+            "lifetime": "RestoreRect bypasses its ROM row loop for live rooms; cursor use occurs only inside the underlay helpers",
+            "coherency": "no simultaneous reader; persistent underlay pixels reside in the validated active-room tail",
+        }])
         self.assertEqual(report["wram_cache_page2"], {
             "address": "$7F1000", "bytes": 0x800, "exclusive_with": [],
         })
@@ -290,6 +306,12 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             "aliases": "Mode-3 encoded tile shadow",
             "lifetime": "incoming visual transfer through checked publication",
             "coherency": "full room present invalidates shadow before re-encoding",
+        }, {
+            "owner": "SCUMM actor chunk / live-room transaction",
+            "address": "$4013C4", "bytes": 3132,
+            "aliases": "exclusive owner field NONE/ACTOR/ROOM",
+            "lifetime": "checked actor chunk until synchronous composition; complete room transaction otherwise",
+            "coherency": "room request preempts actor; provider is drained before reuse",
         }])
 
     def test_engine_selection_allows_dynamic_residency_with_production_services(self) -> None:

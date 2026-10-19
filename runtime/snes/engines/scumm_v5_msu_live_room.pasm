@@ -51,6 +51,18 @@ SCUMM_LIVE_ROOM_VALIDATION_BASE = SCUMM_LIVE_ROOM_PENDING
 ScummV5_MsuLiveRoom_Start_Far:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; Room lifecycle has priority over transient costume transfers. Mark the
+    ; actor ticket stale and let the provider drain before this service claims
+    ; the shared pending bytes.
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR
+    bne ScummV5_MsuLiveRoom_Start_Far__actor_not_owner
+    jsl ScummV5_ActorPose_Cancel_Far
+    jmp ScummV5_MsuLiveRoom_Start_Far__wait
+ScummV5_MsuLiveRoom_Start_Far__actor_not_owner:
+    .a8
+    .endif
     lda.l SAME_MSU1_STATUS
     cmp #SAME_MSU1_STATE_READING
     bne ScummV5_MsuLiveRoom_Start_Far__not_waiting
@@ -664,6 +676,20 @@ ScummV5_MsuLiveRoom_Start_Far__palette_length_ok:
 ScummV5_MsuLiveRoom_Start_Far__read:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_NONE
+    beq ScummV5_MsuLiveRoom_Start_Far__claim_room_scratch
+    cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ROOM
+    beq ScummV5_MsuLiveRoom_Start_Far__room_scratch_owned
+    jmp ScummV5_MsuLiveRoom_Start_Far__wait
+ScummV5_MsuLiveRoom_Start_Far__claim_room_scratch:
+    .a8
+    lda #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ROOM
+    sta.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+ScummV5_MsuLiveRoom_Start_Far__room_scratch_owned:
+    .a8
+    .endif
     lda #$00
     sta.l SAME_MSU1_FLAGS
     rep #$20
@@ -691,6 +717,15 @@ ScummV5_MsuLiveRoom_Start_Far__wait:
     rtl
 ScummV5_MsuLiveRoom_Start_Far__invalid:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ROOM
+    bne ScummV5_MsuLiveRoom_Start_Far__invalid_owner_done
+    lda #SAME_SCUMM_ACTOR_SCRATCH_OWNER_NONE
+    sta.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+ScummV5_MsuLiveRoom_Start_Far__invalid_owner_done:
+    .a8
+    .endif
     lda #$95
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
     sec
@@ -921,6 +956,15 @@ ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__pixels:
     sta.l SCUMM_LIVE_ROOM_VALID
 ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__ready:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    lda.l SCUMM_LIVE_ROOM_STAGE
+    cmp #SCUMM_LIVE_ROOM_STAGE_COMMIT_READY
+    bne ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__scratch_retained
+    lda #SAME_SCUMM_ACTOR_SCRATCH_OWNER_NONE
+    sta.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__scratch_retained:
+    .a8
+    .endif
     lda #SCUMM_MSU_ROOM_VALIDATED
     sta.l SAME_SCUMM_MSU_ROOM_STATE
     lda #$05
@@ -2193,6 +2237,10 @@ ScummV5_LiveRoom_PublishVisual_Far__pixels:
     inx
     cpx #$E000
     bcc ScummV5_LiveRoom_PublishVisual_Far__pixels
+    ; The checked input buffer aliases the video backend's cached tile shadow.
+    ; Invalidate exactly at this surface replacement boundary; later actor
+    ; damage PRESENTs must retain the cache and stay incremental.
+    jsl Same_VideoSurface_InvalidateTileCache_Far
     ; The surface service owns backend palette storage. Give it the checked
     ; RGB8 source through its target-neutral request pointer instead of
     ; naming Mode-3 memory from the SCUMM engine.
@@ -2229,6 +2277,12 @@ ScummV5_LiveRoom_PublishVisual_Far__pixels:
     ; while this installed image remains the surface being presented.
     lda #$01
     sta.l SCUMM_LIVE_ROOM_ACTIVE_VISUAL_VALID
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER && (SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D)
+    ; The checked new background is now authoritative. Any underlay from the
+    ; outgoing room belongs to its previous surface generation and must not be
+    ; restored over these pixels.
+    jsl Same_VideoSurface_InvalidateActorUnderlay_Far
+    .endif
     plp
     clc
     rtl

@@ -63,3 +63,28 @@ For Fate/SCUMM work, keep one repeatable input prefix and instrument the next
 specified boundary. At a choice boundary, investigate only the action needed
 for the current objective; do not launch an open-ended playthrough. Preserve
 the distinction between synthetic fixtures and authentic game resources.
+
+## Emulator operation — mandatory
+
+- Never execute Nexen or Mesen to discover command-line arguments. Do not use
+  `--help`, `-h`, `/?`, `--version`, or guessed switches; these graphical
+  applications may open dialogs on the user's desktop.
+- Do not launch an emulator from an exploratory shell command. Read the
+  repository's documented invocation or an existing working validator.
+- Never inherit or use the user's `DISPLAY` or `XAUTHORITY`, reconnect to
+  MobaXterm, or treat the user's desktop as a test environment.
+- Use only the project's canonical supervised emulator launcher with its own
+  private Xvfb display and MCP port. Nexen is the default for automated native
+  acceptance requiring MCP; Mesen is reserved for explicitly selected
+  independent validation.
+- Before each diagnostic, check for prior test-owned emulator/MCP processes.
+  Give each run a dedicated MCP port, explicit deadline, supervised process
+  tree, and guaranteed cleanup. Do not kill unrelated processes. A diagnostic
+  must not exceed its configured timeout or leave emulator processes running.
+- If the canonical launcher is absent or broken, stop and repair the launcher
+  without executing an emulator on the user's desktop. Never fall back to a
+  different emulator because the requested one failed to start.
+- An X11/display failure never authorizes retrying on another display or the
+  user's desktop. Do not enable, reconfigure, or ask the user to enable
+  MobaXterm's X server for automated testing. If private headless execution is
+  unavailable, report the dependency instead of launching elsewhere.
