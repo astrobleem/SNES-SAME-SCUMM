@@ -21,6 +21,7 @@ import zlib
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from same.engines.scumm_v5.costume import ScummV5Costume
+from same.snes_surface import SnesIndexedSurfaceBundle, decode_bundle_indexed, encode_cgram
 
 DEFAULT_NEXEN = Path(
     "/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/"
@@ -363,6 +364,14 @@ def capture_surface(session, directory: Path, label: str,
     ppu = session.get_ppu_state()
     (directory / f"{label}.ppu-state.json").write_text(
         json.dumps(ppu, indent=2, sort_keys=True) + "\n")
+    vram = session.read_memory("snesVideoRam", 0, 0x10000)
+    cgram = session.read_memory("snesCgRam", 0, 0x200)
+    (directory / f"{label}.vram.bin").write_bytes(vram)
+    (directory / f"{label}.cgram.bin").write_bytes(cgram)
+    ppu_pixels = decode_bundle_indexed(SnesIndexedSurfaceBundle(
+        vram[:0xE000], vram[0xE000:0xE800], cgram))
+    expected_cgram = encode_cgram(tuple(tuple(palette[i:i + 3])
+                                      for i in range(0, 768, 3)))
 
     changed = [i for i, (actual, source) in enumerate(zip(pixels, backdrop))
                if actual != source]
@@ -436,6 +445,8 @@ def capture_surface(session, directory: Path, label: str,
         "difference_bounds_xyxy": bounds,
         "actor_bound_difference_pixels": actual_visible_pixels,
         "pose": present,
+        "ppu_indexed_differences": sum(a != b for a, b in zip(ppu_pixels, pixels)),
+        "cgram_difference_bytes": sum(a != b for a, b in zip(cgram, expected_cgram)),
     }
 
 
@@ -815,6 +826,10 @@ class ProbeObserver:
             json.dumps({"kind": "SYNTHETIC_GRAPHICS_DIAGNOSTIC",
                         "captures": self.captures,
                         "last_vm_state": self.last_state}, indent=2) + "\n")
+        require(record["ppu_indexed_differences"] == 0,
+                f"presented VRAM differs from composed indexed surface: {record['ppu_indexed_differences']} pixels")
+        require(record["cgram_difference_bytes"] == 0,
+                "presented CGRAM differs from the active RGB8 palette")
         return record
 
     def acknowledge(self, value: int) -> None:
@@ -1646,7 +1661,7 @@ def main() -> int:
                     index = y * 256 + x
                     if pixels[index] != backdrop[index]:
                         old_only += 1
-            require(old_only <= 8,
+            require(old_only == 0,
                     f"old actor pixels were not restored after movement: {old_only} residual pixels")
             observer.acknowledge(4)
             stage5 = observer.wait_stage(5, max_frames=600)

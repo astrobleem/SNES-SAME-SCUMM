@@ -3625,3 +3625,20 @@ drift remains adjudicated and unchanged.
   independent package runs 7 and 9 had identical 401-artifact sets and
   contents. Whole-game readiness remains `NOT_READY`; no whole-game runtime
   claim or FATE-specific production hook was added.
+
+## Actor visibility restored (2026-11-09)
+
+- Continued on `scumm-fate-visible-actor` from `add72d1`; preserved the separate
+  progression recovery worktree and all earlier evidence. No story replay.
+- Corrected underlay stack widths, controller-latch scratch overlap, visual
+  flag width, span damage lifetime, animation presentation backpressure, and
+  palette-index zero extension. Fixed the actor-disabled clean include path.
+- The final private diagnostic completed in 68.099 seconds: standing, turned,
+  two animation steps, moved/restored. All five native indexed surfaces match
+  the source-costume host oracle exactly; VRAM/CGRAM comparisons and zero old
+  residue pass. No test-owned emulator remained; no desktop display used.
+- Full evidence identities and limitations are recorded in
+  `docs/scumm-toolchain/ACTOR_VISIBILITY_CHECKPOINT.md`. This is a synthetic
+  graphics diagnostic, not gameplay acceptance. Local 213 is NOT_VERIFIED.
+- Local tests: 1,196 with 12 skips; validate, pinned assembly, ROM/memory audits,
+  and source checks pass. Hosted PR checks remain a separate publication gate.

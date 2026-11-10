@@ -315,8 +315,12 @@ def apply_synthetic_actor_probe(
     audit_path: Path,
 ) -> tuple[NativeProgramDirectory, dict[str, object]]:
     """Apply the explicit data-only actor driver before directory/package output."""
-    from actor_probe_overlay import apply_actor_probe
-    from actor_probe_program import ProbeConfig
+    if __package__:
+        from .actor_probe_overlay import apply_actor_probe
+        from .actor_probe_program import ProbeConfig
+    else:
+        from actor_probe_overlay import apply_actor_probe
+        from actor_probe_program import ProbeConfig
 
     bodies = {
         str(item["unit_identity"]): bytes(item["program"])

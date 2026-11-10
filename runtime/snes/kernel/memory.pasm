@@ -1182,16 +1182,12 @@ SAME_SCUMM_ACTOR_CLIP_COUNT                   = SAME_SCUMM_ACTOR_POSE_STATE_BASE
 ; mapping. +$67 is reused for signed coordinate scratch only after mapping.
 SAME_SCUMM_ACTOR_SPAN_RAW_X                   = SAME_SCUMM_ACTOR_POSE_STATE_BASE+$67 ; post-map phase-local u16
 SAME_SCUMM_ACTOR_RENDER_PALETTE_GENERATION    = SAME_SCUMM_ACTOR_POSE_STATE_BASE+$7D ; u16 accepted generation
-; The indexed-surface service uses this audited 14-byte lifetime alias for its
-; actor-underlay copy cursor. The first eight bytes alias RestoreRect's debug-only
-; size/address witnesses; the live-room RestoreRect path returns through the
-; underlay helper instead of entering that loop. Actor capture occurs only
-; after RestoreRect has returned. The final six bytes are the gap before the
-; video diagnostic block. Persistent pixels themselves are placed only after
-; the validated compact SC5LIVE record in that allocation's tail.
-SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_BASE        = $7E5E82
+; The synchronous actor-underlay helper aliases only RestoreRect debug
+; witnesses after its arguments have been consumed. No persistent controller
+; latch is included: ROOM_READY begins immediately at the exclusive end.
+SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_BASE        = $7E5E7C
 SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_SIZE        = $000E
-SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_END         = $7E5E90
+SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_END         = $7E5E8A
 SAME_SCUMM_CONTROLLER_RESTORE_INPUT_X   = $7E5E6C ; debug-only u16 raw restore x
 SAME_SCUMM_CONTROLLER_RESTORE_INPUT_Y   = $7E5E6E ; debug-only u16 raw restore y
 SAME_SCUMM_CONTROLLER_RESTORE_INPUT_W   = $7E5E70 ; debug-only u16 raw restore width
@@ -1209,13 +1205,13 @@ SAME_SCUMM_CONTROLLER_RESTORE_LOOP_DST  = $7E5E86 ; debug-only u16 destination
 SAME_SCUMM_CONTROLLER_RESTORE_LOOP_SRC  = $7E5E88 ; debug-only u16 source
 ; Lifetime aliases into the restore-loop diagnostic scratch above, consumed
 ; only by the MSU live-room actor underlay helpers.
-SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH  = SAME_SCUMM_CONTROLLER_RESTORE_LOOP_W
-SAME_VIDEO_ACTOR_UNDERLAY_DATA_BASE      = SAME_SCUMM_CONTROLLER_RESTORE_LOOP_H
-SAME_VIDEO_ACTOR_UNDERLAY_AREA           = SAME_SCUMM_CONTROLLER_RESTORE_LOOP_DST
-SAME_VIDEO_ACTOR_UNDERLAY_ROW            = SAME_SCUMM_CONTROLLER_RESTORE_LOOP_SRC
-SAME_VIDEO_ACTOR_UNDERLAY_COLUMN         = $7E5E8A
-SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR = $7E5E8C
-SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR  = $7E5E8E
+SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH  = SAME_SCUMM_CONTROLLER_RESTORE_CALL_X
+SAME_VIDEO_ACTOR_UNDERLAY_DATA_BASE      = SAME_SCUMM_CONTROLLER_RESTORE_LOOP_ROW
+SAME_VIDEO_ACTOR_UNDERLAY_AREA           = SAME_SCUMM_CONTROLLER_RESTORE_LOOP_COL
+SAME_VIDEO_ACTOR_UNDERLAY_ROW            = SAME_SCUMM_CONTROLLER_RESTORE_LOOP_W
+SAME_VIDEO_ACTOR_UNDERLAY_COLUMN         = SAME_SCUMM_CONTROLLER_RESTORE_LOOP_H
+SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR = SAME_SCUMM_CONTROLLER_RESTORE_LOOP_DST
+SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR  = SAME_SCUMM_CONTROLLER_RESTORE_LOOP_SRC
 SAME_SCUMM_CONTROLLER_RENDER_RETRY       = $7E5E24 ; u8 bounded native-present retry
 SAME_SCUMM_CONTROLLER_CURSOR_RENDER_X    = $7E5E26 ; s16 cached logical x
 SAME_SCUMM_CONTROLLER_CURSOR_RENDER_Y    = $7E5E28 ; s16 cached logical y

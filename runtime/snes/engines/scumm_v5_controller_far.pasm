@@ -1263,9 +1263,24 @@ ScummV5_Controller_PublishActorVisual__same_pose_direction:
     .a8
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME
     cmp.l SAME_SCUMM_ACTOR_POSE_LAST_COSTUME
-    bne ScummV5_Controller_PublishActorVisual__reset_pose_step
+    beq ScummV5_Controller_PublishActorVisual__same_pose_costume
+    jml ScummV5_Controller_PublishActorVisual__reset_pose_step
+ScummV5_Controller_PublishActorVisual__same_pose_costume:
+    .a8
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
-    beq ScummV5_Controller_PublishActorVisual__reset_pose_step
+    bne ScummV5_Controller_PublishActorVisual__animation_visible
+    jml ScummV5_Controller_PublishActorVisual__reset_pose_step
+ScummV5_Controller_PublishActorVisual__animation_visible:
+    .a8
+    ; Do not advance the desired animation while the previous surface is
+    ; still owned by presentation. Otherwise the late compositor immediately
+    ; starts another pose on the acknowledgement frame, with no stable
+    ; displayed key. This is presentation backpressure, not a script wait.
+    jsl Same_VideoSurface_CanWrite_Far
+    bcc ScummV5_Controller_PublishActorVisual__animation_surface_ready
+    jml ScummV5_Controller_PublishActorVisual__save_pose_key
+ScummV5_Controller_PublishActorVisual__animation_surface_ready:
+    .a8
     ; The host advances costume commands at actorOps.animSpeed logical ticks.
     ; Stationary visible actors animate too; movement only selects walk chore.
     ; A zero native byte retains the engine default cadence of one tick.
@@ -2811,16 +2826,24 @@ ScummV5_ActorPose_MapPalette__slot_in_palette:
     bcc ScummV5_ActorPose_MapPalette__slot_representable
     jml ScummV5_ActorPose_MapPalette__bad
 ScummV5_ActorPose_MapPalette__slot_representable:
-    .a8
-    and #$07
+    rep #$20
+    .a16
+    and #$0007
     tax
+    sep #$20
+    .a8
     lda.l ScummV5_C7_BitMasks,x
     sta.l SAME_SCUMM_ACTOR_PALETTE_MASK_BIT
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_ACTOR_PALETTE_SLOT
+    and #$00FF
     lsr
     lsr
     lsr
     tax
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_ACTOR_PALETTE_OVERRIDE_VALID,x
     and.l SAME_SCUMM_ACTOR_PALETTE_MASK_BIT
     beq ScummV5_ActorPose_MapPalette__costume_color

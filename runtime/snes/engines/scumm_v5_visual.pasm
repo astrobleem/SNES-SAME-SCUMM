@@ -71,6 +71,7 @@ ScummV5_Visual_CameraPublished_Far:
     rtl
 
 ScummV5_Visual_Frame_Far:
+    php
     ; Resolve any room/camera presentation request before the actor pass.
     ; Actor composition must be the final indexed-surface mutation for this
     ; frame; otherwise a pending background blit can erase the actor before
@@ -83,6 +84,8 @@ ScummV5_Visual_Frame_Far:
       ; the room's first presentation is pending, or while the video backend
       ; owns the surface. The compositor can retry on the next ordinary frame
       ; after the existing presentation transaction becomes writable.
+      sep #$20
+      .a8
       lda.l SAME_VIDEO_SURFACE_PENDING_VISUAL
       bne ScummV5_Visual_Frame__skip_actor
       jsl Same_VideoSurface_CanWrite_Far
@@ -132,4 +135,5 @@ ScummV5_Visual_Frame__prewalk_actor:
     .endif
 ScummV5_Visual_Frame__skip_actor:
     jsl Same_VideoSurface_ServiceEvents_Far
+    plp
     rtl

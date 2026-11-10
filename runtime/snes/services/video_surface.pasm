@@ -1611,6 +1611,10 @@ Same_VideoSurface_CaptureActorUnderlay__copy_done:
     .a8
     lda #SAME_VIDEO_ACTOR_UNDERLAY_MAGIC
     sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
+    ; Registers were saved at 16-bit width, independently of the caller's P.
+    rep #$30
+    .a16
+    .i16
     plb
     ply
     plx
@@ -1623,6 +1627,9 @@ Same_VideoSurface_CaptureActorUnderlay__invalid:
     .a8
     lda #SCUMM_ERR_RESOURCE
     sta.l SAME_SCUMM_ERROR
+    rep #$30
+    .a16
+    .i16
     plb
     ply
     plx
@@ -1875,6 +1882,9 @@ Same_VideoSurface_RestoreActorUnderlay__clear:
     lda #$00
     sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
 Same_VideoSurface_RestoreActorUnderlay__success:
+    rep #$30
+    .a16
+    .i16
     plb
     ply
     plx
@@ -1887,6 +1897,9 @@ Same_VideoSurface_RestoreActorUnderlay__invalid:
     .a8
     lda #SCUMM_ERR_RESOURCE
     sta.l SAME_SCUMM_ERROR
+    rep #$30
+    .a16
+    .i16
     plb
     ply
     plx
@@ -1924,6 +1937,9 @@ Same_VideoSurface_InvalidateActorUnderlay_Far:
     lda #$00
     sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y
 Same_VideoSurface_InvalidateActorUnderlay__done:
+    rep #$30
+    .a16
+    .i16
     plb
     ply
     plx

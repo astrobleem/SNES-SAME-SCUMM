@@ -30,6 +30,16 @@ Same_VideoSurface_BlitCheckedOpaqueRun__writable:
     plx
     pla
     sta.l SAME_VIDEO_SURFACE_DAMAGE_X1
+    ; A run is a synchronous pixel operation, not the complete pose damage.
+    ; Preserve the caller's rectangle across every span and error path.
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X
+    pha
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    pha
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    pha
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    pha
     tya
     sta.l SAME_MODE3_WORK_INDEX
     txa
@@ -92,10 +102,30 @@ Same_VideoSurface_BlitCheckedOpaqueRun__copy:
     .a16
     dec SAME_VIDEO_SURFACE_DP_PIXEL_COUNT
     bne Same_VideoSurface_BlitCheckedOpaqueRun__copy
+    rep #$20
+    .a16
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
     plp
     clc
     rtl
 Same_VideoSurface_BlitCheckedOpaqueRun__bad:
+    rep #$20
+    .a16
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
     plp
     sec
     rtl

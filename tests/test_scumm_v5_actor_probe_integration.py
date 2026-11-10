@@ -19,6 +19,141 @@ from tools.validate_scumm_actor_visual_probe_nexen import (
 
 
 class ActorProbeIntegrationTests(unittest.TestCase):
+    def test_palette_indices_do_not_inherit_the_pixel_cursor_high_byte(self) -> None:
+        source = (Path(__file__).resolve().parents[1] /
+                  "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        code = source.split("ScummV5_ActorPose_MapPalette__slot_representable:", 1)[1]
+        bit_index = code.split("    tax", 1)[0]
+        group_index = code.split("    lda.l SAME_SCUMM_ACTOR_PALETTE_SLOT", 1)[1].split("    tax", 1)[0]
+        for high in range(8):  # every page within a checked 2 KiB chunk
+            for slot in range(1, 32):
+                for operations, expected, initial in (
+                        (bit_index, slot & 7, (high << 8) | slot),
+                        (group_index, slot >> 3, 0x8000 | slot)):
+                    a = initial
+                    width = 8 if operations == bit_index else 16
+                    for raw in operations.splitlines():
+                        line = raw.strip()
+                        if line == "rep #$20":
+                            width = 16
+                        elif line == "sep #$20":
+                            width = 8
+                        elif line.startswith("and #$"):
+                            mask = int(line[6:], 16)
+                            a = (a & mask) if width == 16 else ((a & 0xFF00) | (a & mask))
+                        elif line == "lsr":
+                            a = (a >> 1) if width == 16 else ((a & 0xFF00) | ((a & 255) >> 1))
+                    self.assertEqual(a, expected)
+
+    def test_animation_cadence_waits_for_the_previous_surface_owner(self) -> None:
+        source = (Path(__file__).resolve().parents[1] /
+                  "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
+        cadence = source.split("ScummV5_Controller_PublishActorVisual__same_pose_direction:", 1)[1]
+        cadence = cadence.split("ScummV5_Controller_PublishActorVisual__advance_pose_step:", 1)[0]
+        self.assertLess(cadence.index("jsl Same_VideoSurface_CanWrite_Far"),
+                        cadence.index("sta.l SAME_SCUMM_ACTOR_POSE_ANIM_COUNTER"))
+        self.assertIn("jml ScummV5_Controller_PublishActorVisual__save_pose_key", cadence)
+
+    def test_opaque_spans_preserve_the_complete_pose_damage_rectangle(self) -> None:
+        source = (Path(__file__).resolve().parents[1] /
+                  "runtime/snes/services/opaque_run.inc.pasm").read_text()
+        save = source.split("    sta.l SAME_VIDEO_SURFACE_DAMAGE_X1\n", 1)[1].split("    tya", 1)[0]
+        success = source.split("    bne Same_VideoSurface_BlitCheckedOpaqueRun__copy\n", 1)[1].split("    plp", 1)[0]
+        failure = source.split("Same_VideoSurface_BlitCheckedOpaqueRun__bad:\n", 1)[1].split("    plp", 1)[0]
+        for exit_code in (success, failure):
+            for rectangle in ((128, 72, 64, 72), (0, 0, 256, 224)):
+                fields = ["SAME_VIDEO_SURFACE_DAMAGE_" + name
+                          for name in ("X", "Y", "WIDTH", "HEIGHT")]
+                memory = dict(zip(fields, rectangle))
+                stack = []
+                a = 0
+                for code in (save, exit_code):
+                    if code == exit_code:
+                        memory.update(dict(zip(fields, (164, 135, 5, 1))))
+                    for line in code.splitlines():
+                        line = line.strip()
+                        if line.startswith("lda.l "):
+                            a = memory[line[6:]]
+                        elif line == "pha":
+                            stack.extend((a >> 8, a & 255))
+                        elif line == "pla":
+                            a = stack.pop() | stack.pop() << 8
+                        elif line.startswith("sta.l "):
+                            memory[line[6:]] = a
+                self.assertEqual(tuple(memory[field] for field in fields), rectangle)
+                self.assertEqual(stack, [])
+
+    def test_visual_pending_gate_reads_only_the_flag_for_either_caller_width(self) -> None:
+        source = (Path(__file__).resolve().parents[1] /
+                  "runtime/snes/engines/scumm_v5_visual.pasm").read_text()
+        frame = source.split("ScummV5_Visual_Frame_Far:", 1)[1]
+        gate = frame.split(".if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER", 1)[1]
+        gate = gate.split("lda.l SAME_VIDEO_SURFACE_PENDING_VISUAL", 1)[0]
+        for caller_width in (8, 16):
+            width = caller_width
+            for line in gate.splitlines():
+                if line.strip() == "sep #$20":
+                    width = 8
+                elif line.strip() == "rep #$20":
+                    width = 16
+            # The adjacent byte is the nonzero room ID, not a pending flag.
+            for pending in (0, 1, 2):
+                value = int.from_bytes(bytes((pending, 4))[:width // 8], "little")
+                self.assertEqual(bool(value), bool(pending))
+        self.assertTrue(frame.lstrip().startswith("php"))
+        self.assertIn("    plp\n    rtl", frame)
+
+    def test_underlay_exits_restore_saved_registers_and_return_frame(self) -> None:
+        surface = (Path(__file__).resolve().parents[1] /
+                   "runtime/snes/services/video_surface.pasm").read_text()
+        exits = (
+            ("CaptureActorUnderlay__copy_done", 0),
+            ("CaptureActorUnderlay__invalid", 1),
+            ("RestoreActorUnderlay__success", 0),
+            ("RestoreActorUnderlay__invalid", 1),
+            ("InvalidateActorUnderlay__done", None),
+        )
+        # Execute the width-sensitive stack operations from the actual source
+        # epilogues against a byte stack, including the caller's JSL frame.
+        # This tests balance/restoration, not the resource or pixel semantics.
+        for suffix, carry in exits:
+            code = surface.split("Same_VideoSurface_" + suffix + ":", 1)[1]
+            code = code.split("    rtl", 1)[0]
+            for caller_p in (0x04, 0x14, 0x24, 0x34):
+                for exit_p in (0x04, 0x14, 0x24, 0x34):
+                    with self.subTest(exit=suffix, caller_p=caller_p, exit_p=exit_p):
+                        stack = [0x54, 0x90, 0xCA]  # untouched JSL return frame
+                        stack.append(caller_p)
+                        saved = {"a": 0xA1B2, "x": 0xC3D4, "y": 0xE5F6, "b": 0x41}
+                        for register in ("a", "x", "y"):
+                            stack.extend((saved[register] >> 8, saved[register] & 255))
+                        stack.append(saved["b"])
+                        restored = {}
+                        p = exit_p
+                        for raw in code.splitlines():
+                            line = raw.split(";", 1)[0].strip()
+                            if line.startswith("rep #$"):
+                                p &= ~int(line[6:], 16)
+                            elif line.startswith("sep #$"):
+                                p |= int(line[6:], 16)
+                            elif line in ("pla", "plx", "ply", "plb"):
+                                register = line[-1]
+                                width = 1 if register == "b" or p & (
+                                    0x20 if register == "a" else 0x10) else 2
+                                value = stack.pop()
+                                if width == 2:
+                                    value |= stack.pop() << 8
+                                restored[register] = value
+                            elif line == "plp":
+                                p = stack.pop()
+                            elif line == "clc":
+                                p &= ~1
+                            elif line == "sec":
+                                p |= 1
+                        self.assertEqual(restored, saved)
+                        self.assertEqual(stack, [0x54, 0x90, 0xCA])
+                        self.assertEqual(p, caller_p if carry is None else caller_p | carry)
+
     def test_live_actor_damage_restores_checked_room_underlay_not_empty_rom_directory(self) -> None:
         root = Path(__file__).resolve().parents[1]
         surface = (root / "runtime/snes/services/video_surface.pasm").read_text()
@@ -94,14 +229,16 @@ class ActorProbeIntegrationTests(unittest.TestCase):
     def test_underlay_scratch_is_a_lifetime_alias_not_an_independent_wram_gap(self) -> None:
         root = Path(__file__).resolve().parents[1]
         memory = (root / "runtime/snes/kernel/memory.pasm").read_text()
-        for alias, field in (
-                ("SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH", "SAME_SCUMM_CONTROLLER_RESTORE_LOOP_W"),
-                ("SAME_VIDEO_ACTOR_UNDERLAY_DATA_BASE", "SAME_SCUMM_CONTROLLER_RESTORE_LOOP_H"),
-                ("SAME_VIDEO_ACTOR_UNDERLAY_AREA", "SAME_SCUMM_CONTROLLER_RESTORE_LOOP_DST"),
-                ("SAME_VIDEO_ACTOR_UNDERLAY_ROW", "SAME_SCUMM_CONTROLLER_RESTORE_LOOP_SRC")):
-            self.assertRegex(memory, rf"{alias}\s+= {field}")
-        self.assertIn("SAME_VIDEO_ACTOR_UNDERLAY_COLUMN         = $7E5E8A", memory)
-        self.assertIn("SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR  = $7E5E8E", memory)
+        from tools.audit_scumm_residency_wram import symbols
+        values = symbols()
+        start = values["SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_BASE"]
+        end = values["SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_END"]
+        self.assertEqual(end - start, 14)
+        for field in ("ROOM_READY", "INIT_ROOM", "GENERIC_STATE"):
+            key = "SAME_SCUMM_CONTROLLER_" + field
+            if key in values:
+                self.assertFalse(start <= values[key] < end)
+        self.assertLessEqual(end, values["SAME_SCUMM_CONTROLLER_ROOM_READY"])
 
     def test_pose_bounds_underlay_is_bounded_by_the_exact_live_record_tail(self) -> None:
         active_capacity = 6144

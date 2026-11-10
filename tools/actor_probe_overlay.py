@@ -10,7 +10,10 @@ from copy import deepcopy
 import hashlib
 from typing import Mapping
 
-from actor_probe_program import ProbeConfig, build_probe
+if __package__:
+    from .actor_probe_program import ProbeConfig, build_probe
+else:
+    from actor_probe_program import ProbeConfig, build_probe
 
 SCRIPT_KINDS = {'GLOBAL', 'SCRP', 'ENCD', 'EXCD', 'LSCR',
                 'ROOM_ENTRY', 'ROOM_EXIT', 'ROOM_LOCAL'}

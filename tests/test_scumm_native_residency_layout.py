@@ -288,8 +288,8 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         }])
         self.assertEqual(report["wram_lifetime_aliases"], [{
             "owner": "actor-underlay cursor during live SC5LIVE actor composition",
-            "address": "$7E5E82", "bytes": 14,
-            "aliases": "RestoreRect debug-only width/height/destination/source witnesses plus the six-byte gap before video diagnostics",
+            "address": "$7E5E7C", "bytes": 14,
+            "aliases": "RestoreRect debug-only call/loop witnesses; excludes persistent room readiness",
             "lifetime": "RestoreRect bypasses its ROM row loop for live rooms; cursor use occurs only inside the underlay helpers",
             "coherency": "no simultaneous reader; persistent underlay pixels reside in the validated active-room tail",
         }])

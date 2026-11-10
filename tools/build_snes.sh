@@ -1403,6 +1403,10 @@ fi
 # Emit deterministic empty files for feature-gated generated includes when
 # their producer is inactive; otherwise a clean checkout can accidentally
 # depend on ignored outputs left by a different build profile.
+if [[ "${SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER:-0}" != "1" ]]; then
+    printf '%s\n' '; Generated empty checked actor-pose directory (actor renderer disabled).' \
+        > runtime/snes/generated/scumm_v5_actor_poses.inc.pasm
+fi
 if [[ "${SAME_BUILD_SCUMM_M22:-0}" != "1" ]]; then
     printf '%s\n' '; Generated empty music-sections include (M22 disabled).' \
         > runtime/snes/generated/music_sections.inc.pasm

@@ -61,10 +61,21 @@ REGIONS = (
 
 def symbols() -> dict[str, int]:
     result: dict[str, int] = {}
+    aliases: dict[str, str] = {}
     for line in MEMORY.read_text(encoding="utf-8").splitlines():
         match = re.match(r"\s*([A-Z][A-Z0-9_]*)\s*=\s*\$([0-9A-Fa-f]+)(?:\s|$)", line)
         if match:
             result[match.group(1)] = int(match.group(2), 16)
+        else:
+            alias = re.match(r"\s*([A-Z][A-Z0-9_]*)\s*=\s*([A-Z][A-Z0-9_]*)(?:\s*(?:;.*)?)$", line)
+            if alias:
+                aliases[alias.group(1)] = alias.group(2)
+    for _ in range(len(aliases)):
+        added = {name: result[target] for name, target in aliases.items()
+                 if name not in result and target in result}
+        if not added:
+            break
+        result.update(added)
     return result
 
 
@@ -103,17 +114,19 @@ def audit() -> dict[str, Any]:
                              if item["owner"] == "controller_and_interaction")
     underlay_scratch_start = values["SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_BASE"]
     underlay_scratch_end = values["SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_END"]
-    if (underlay_scratch_end - underlay_scratch_start != 0x0E
+    restore_aliases = ("CALL_X", "LOOP_ROW", "LOOP_COL", "LOOP_W",
+                       "LOOP_H", "LOOP_DST", "LOOP_SRC")
+    underlay_fields = ("RECORD_LENGTH", "DATA_BASE", "AREA", "ROW",
+                       "COLUMN", "SURFACE_CURSOR", "RECORD_CURSOR")
+    expected = [underlay_scratch_start + 2 * i for i in range(7)]
+    if (underlay_scratch_end - underlay_scratch_start != 14
             or underlay_scratch_start < int(controller_region["start"][1:], 16)
-            or underlay_scratch_end > int(controller_region["end_exclusive"][1:], 16)
-            or underlay_scratch_start != values["SAME_SCUMM_CONTROLLER_RESTORE_LOOP_W"]
-            or [values[name] for name in (
-                "SAME_SCUMM_CONTROLLER_RESTORE_LOOP_H",
-                "SAME_SCUMM_CONTROLLER_RESTORE_LOOP_DST",
-                "SAME_SCUMM_CONTROLLER_RESTORE_LOOP_SRC",
-            )] != [underlay_scratch_start + offset for offset in (2, 4, 6)]
-            or underlay_scratch_end != 0x7E5E90):
-        raise ValueError("actor-underlay scratch must alias only the nonconcurrent restore witnesses before video diagnostics")
+            or underlay_scratch_end > values["SAME_SCUMM_CONTROLLER_ROOM_READY"]
+            or [values["SAME_SCUMM_CONTROLLER_RESTORE_" + name]
+                for name in restore_aliases] != expected
+            or [values["SAME_VIDEO_ACTOR_UNDERLAY_" + name]
+                for name in underlay_fields] != expected):
+        raise ValueError("actor-underlay scratch must alias only nonconcurrent restore witnesses, never room readiness")
     bwram = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json").read_text())
     video = json.loads((ROOT / "runtime/snes/video_backends/mode3_surface_layout.json").read_text())
     fixture_address = parse_address(str(video["fixture"]["address"]))
@@ -155,8 +168,8 @@ def audit() -> dict[str, Any]:
     video_surface_source = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()
     if values.get("SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_SIZE") != 0x0E:
         raise ValueError("actor-underlay copy cursor must remain a bounded 14-byte scratch owner")
-    if values.get("SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_END") != 0x7E5E90:
-        raise ValueError("actor-underlay scratch must end before the video diagnostic block")
+    if values.get("SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_END") != values["SAME_SCUMM_CONTROLLER_ROOM_READY"]:
+        raise ValueError("actor-underlay scratch must end before persistent room readiness")
     if "SAME_VIDEO_DIAG_BASE                  = $7E5E90" not in video_surface_source:
         raise ValueError("actor-underlay scratch no longer meets the declared video diagnostic boundary")
     if ("Same_VideoSurface_CaptureActorUnderlay_Far" not in video_surface_source
@@ -218,7 +231,7 @@ def audit() -> dict[str, Any]:
             "owner": "actor-underlay cursor during live SC5LIVE actor composition",
             "address": f"${underlay_scratch_start:06X}",
             "bytes": underlay_scratch_end - underlay_scratch_start,
-            "aliases": "RestoreRect debug-only width/height/destination/source witnesses plus the six-byte gap before video diagnostics",
+            "aliases": "RestoreRect debug-only call/loop witnesses; excludes persistent room readiness",
             "lifetime": "RestoreRect bypasses its ROM row loop for live rooms; cursor use occurs only inside the underlay helpers",
             "coherency": "no simultaneous reader; persistent underlay pixels reside in the validated active-room tail",
         }],
