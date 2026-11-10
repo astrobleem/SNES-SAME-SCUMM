@@ -109,3 +109,49 @@ The corrected full actor configuration assembles and passes the ROM audit.
 The full host suite passes 1,197 tests (12 skips), and `make validate` passes.
 The prior five-frame native result above remains bound to its original ROM;
 new native evidence must use the corrected build identity.
+
+## Review: screen edges and renderer ownership
+
+The integration review found two additional defects. Negative actor damage
+origins were packed into unsigned bytes before clipping. The MSU actor path
+now clips signed endpoints before union/packing, preserves the old/new damage
+union, and splits a full-width restore into two legal packed requests. The
+legacy fixture path remains unchanged.
+
+The original 32-byte explicit-animation array also overlapped the Mode-3
+backend's working tile indexes. This was demonstrated by the edge diagnostic:
+standing/turning were correct, but animation reverted to standing. Flags now
+occupy a four-byte bitset at `$41:E774..E777`; backend scratch exclusively owns
+`$41:E750..E773`, and pose state retains `$41:E780..E7FF`. The ownership audit
+includes both owners and checks the backend generator's actual field extent.
+All 32 actor bits and preservation across backend scratch writes are tested.
+Numeric renderer byte/mask constants are generated alongside the actor ID;
+the validator checks their assembled values before launching Nexen. An
+intermediate conditional-mask build selected the wrong bit and is retained
+as failed evidence, not acceptance.
+
+The corrected edge diagnostic uses source-backed costume 2 at `(20,40)`,
+then `(80,40)`. It passed in 62.701 seconds under the 600-second supervisor:
+five captures, zero source/native indexed differences, exact indexed/PPU and
+CGRAM checks, and zero old-position residue. This remains a synthetic graphics
+driver, not authentic gameplay. No emulator or display remained owned by the
+run afterward.
+
+| Corrected edge artifact | SHA-256 |
+|---|---|
+| ROM | `8c1d612dc1d18bcdbb3439472d6cd9b5c08d5cc622bdf31b310d65bdac3ce572` |
+| Map | `a2800552d278eedd4d192c027631a1571de81bf065bbaa3ad319037d1a1e4657` |
+| Package | `94010cfd90aa9445ec1e42f17936b5568b8e40f513eec42ba5e08b2976337a4c` |
+| Build identity | `e2daae4115766e889624a3ac64e9ab4975cb5acf24d811c1d26c62896622d3e0` |
+
+The build used an isolated pre-commit source snapshot. Its input manifest
+records exact assembly bytes; the public commit also contains documentation
+and tests added around that build. It is not represented as a build made
+from a later commit SHA. Local evidence is retained at
+`/tmp/astra-actor-reviewed-edge-proof-20261109` and build output at
+`/tmp/luna-actor-stack-fixed-20261109.pjuq80u2`; commercial captures/payloads
+are excluded from Git. The prior centered regression also passed on its own
+ROM before the edge changes.
+
+Validation: 1,209 tests passed, 12 skipped; `make validate`, the expanded
+26-region ownership audit, pinned Poppy assembly and ROM audit passed.

@@ -14,34 +14,19 @@ from tools.generate_snes_cooked_rooms import apply_synthetic_actor_probe
 from tools.validate_scumm_actor_visual_probe_nexen import (
     decode_pose_observation, direction_index_for_facing, pose_is_presented,
     same_room_costume_source, actor_bounds_on_surface,
-    read_surface_packets_pending,
+    read_surface_packets_pending, validate_animation_constants,
 )
 
 
 class ActorProbeIntegrationTests(unittest.TestCase):
-    def test_explicit_animation_writes_are_bounded_for_every_actor(self) -> None:
-        source = (Path(__file__).resolve().parents[1] /
-                  "runtime/snes/engines/scumm_v5.pasm").read_text()
-        helper = source.split("ScummV5_C14_AnimationIndexX:", 1)[1].split("    rts", 1)[0]
-        self.assertIn("rep #$30", helper)
-        self.assertIn("and #$00FF\n    tax", helper)
-        for marker in ("ScummV5_Op_ActorOps__costume:",
-                       "ScummV5_Op_AnimateActor__store:",
-                       "ScummV5_C14_DefaultActor:"):
-            write = source.split(marker, 1)[1].split(
-                "sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x", 1)[0]
-            self.assertIn("jsr ScummV5_C14_AnimationIndexX", write)
-        # C14_BaseX leaves the high byte of actor*64 in B. Adjacent actor
-        # state can also occupy the high byte of a word load of C14_ACTOR.
-        for actor in range(32):
-            for adjacent in (0, 1, 255):
-                a = (adjacent << 8) | actor
-                mask = int(helper.split("and #$", 1)[1].splitlines()[0], 16)
-                index = a & mask
-                guarded = bytearray([0xA5] * 34)
-                guarded[1 + index] = 1
-                self.assertEqual(index, actor)
-                self.assertEqual((guarded[0], guarded[-1]), (0xA5, 0xA5))
+    def test_wrong_assembled_actor_mask_is_rejected_before_native_launch(self) -> None:
+        listing = ("; SCUMM_V5_ACTOR_ANIMATION_BYTE = $0000 (Constant)\n"
+                   "; SCUMM_V5_ACTOR_ANIMATION_MASK = $0002 (Constant)\n")
+        validate_animation_constants(listing, 1)
+        with self.assertRaisesRegex(RuntimeError, 'ANIMATION_MASK'):
+            validate_animation_constants(listing.replace('$0002', '$0001'), 1)
+        with self.assertRaisesRegex(RuntimeError, 'ANIMATION_BYTE'):
+            validate_animation_constants('', 1)
 
     def test_palette_indices_do_not_inherit_the_pixel_cursor_high_byte(self) -> None:
         source = (Path(__file__).resolve().parents[1] /
@@ -405,7 +390,7 @@ class ActorProbeIntegrationTests(unittest.TestCase):
             "ScummV5_Controller_PublishActorVisual_Far:", 1
         )[1].split("ScummV5_Controller_PublishActorVisual__done:", 1)[0]
         self.assertIn(
-            "SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_RENDER_ID", publisher
+            "SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_ANIMATION_BYTE", publisher
         )
         self.assertIn("SAME_SCUMM_C14_A_ANIMATION,x", publisher)
         self.assertIn("cmp #$F4", publisher)  # F4..FB are direction-only commands.
@@ -422,7 +407,7 @@ class ActorProbeIntegrationTests(unittest.TestCase):
         movement = publisher.split(
             "ScummV5_Controller_PublishActorVisual__pose_done:", 1
         )[1].split("ScummV5_Controller_PublishActorVisual__movement_step_active:", 1)[0]
-        self.assertIn("SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_RENDER_ID", movement)
+        self.assertIn("SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_ANIMATION_BYTE", movement)
         self.assertIn("SAME_SCUMM_C14_A_ANIMATION,x", movement)
         self.assertIn("cmp #$F4", movement)
         self.assertIn("cmp #$FC", movement)
@@ -432,9 +417,9 @@ class ActorProbeIntegrationTests(unittest.TestCase):
         animate = engine.split("ScummV5_Op_AnimateActor__store:", 1)[1].split(
             "ScummV5_Op_AnimateActor__operand_error:", 1
         )[0]
-        self.assertIn("sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x", animate)
+        self.assertIn("jsr ScummV5_C14_SetExplicitAnimation", animate)
         memory = (root / "runtime/snes/kernel/memory.pasm").read_text()
-        self.assertRegex(memory, r"SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION\s+= \$41E750")
+        self.assertRegex(memory, r"SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION\s+= \$41E774")
 
     def test_span_page_validation_uses_its_byte_width_and_restores_a16(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -452,7 +437,10 @@ class ActorProbeIntegrationTests(unittest.TestCase):
                         block.index("ScummV5_ActorPose_Ensure__span_page_ok:"))
         self.assertLess(block.index("rep #$20"), block.index("lda.l SAME_SCUMM_ACTOR_SPAN_LOCAL_OFFSET"))
 
-    def test_overlay_feeds_directory_bodies_pages_and_package_consistently(self) -> None:
+    def test_edge_probe_preserves_directory_and_page_integrity(self) -> None:
+        self.test_overlay_feeds_directory_bodies_pages_and_package_consistently((20, 40, 80))
+
+    def test_overlay_feeds_directory_bodies_pages_and_package_consistently(self, position=(160, 136, 184)) -> None:
         rows = []
         programs = []
         for kind, room, number, length in (
@@ -487,7 +475,7 @@ class ActorProbeIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             audit_path = root / "actor-probe-audit.json"
-            updated, audit = apply_synthetic_actor_probe(directory, programs, audit_path)
+            updated, audit = apply_synthetic_actor_probe(directory, programs, audit_path, position)
             body_map = {p["unit_identity"]: p["program"] for p in programs}
             page_map = {p["unit_identity"]: {
                 "instruction_spans": p["instruction_spans"],
@@ -496,7 +484,8 @@ class ActorProbeIntegrationTests(unittest.TestCase):
             storage = build_program_storage(updated.document, body_map, root / "storage",
                                             page_metadata=page_map)
 
-            driver, _ = build_probe(ProbeConfig(room=4, costume=2, boot_script=1))
+            driver, _ = build_probe(ProbeConfig(room=4, costume=2, boot_script=1,
+                                               x=position[0], y=position[1], moved_x=position[2]))
             boot_identity = "GlobalProgram(1)"
             boot = next(p for p in programs if p["unit_identity"] == boot_identity)
             self.assertEqual(len(driver), 118)

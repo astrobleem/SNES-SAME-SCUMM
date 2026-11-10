@@ -202,6 +202,16 @@ def listing_label_offset(listing_path: Path, name: str) -> int:
     return int(match.group(1), 16)
 
 
+def validate_animation_constants(listing: str, actor: int) -> None:
+    """Reject a misassembled bit selector before launching the emulator."""
+    for name, expected in (("SCUMM_V5_ACTOR_ANIMATION_BYTE", actor // 8),
+                           ("SCUMM_V5_ACTOR_ANIMATION_MASK", 1 << (actor % 8))):
+        found = re.search(rf"^;\s*{name}\s*=\s*\$([0-9A-Fa-f]+)\s+\(Constant\)",
+                          listing, re.MULTILINE)
+        require(found is not None and int(found.group(1), 16) == expected,
+                f"assembled {name} differs from diagnostic actor {actor}")
+
+
 def validate_build(args: argparse.Namespace) -> tuple[dict, dict, dict, bytes]:
     for path in (args.rom, args.package, args.map, args.identity,
                  args.listing, args.directory, args.storage, args.audit,
@@ -236,9 +246,19 @@ def validate_build(args: argparse.Namespace) -> tuple[dict, dict, dict, bytes]:
     require(audit.get("kind") == "SYNTHETIC_GRAPHICS_DIAGNOSTIC"
             and audit.get("native_runtime_code_added") == 0,
             "unexpected diagnostic overlay or native code")
-    require(audit.get("program", {}).get("sha256")
-            == "e2a6b283003fd9e30230d7d9ce21e8311d8f1319284a782b8fee8e62902796a6",
-            "unexpected 118-byte probe program identity")
+    if __package__:
+        from .actor_probe_program import ProbeConfig, build_probe
+    else:
+        from actor_probe_program import ProbeConfig, build_probe
+    probe_config = ProbeConfig(**audit["program"]["config"])
+    require((probe_config.room, probe_config.costume, probe_config.actor,
+             probe_config.boot_script, probe_config.stand_frame,
+             probe_config.animate_frame) == (4, 2, 1, 1, 3, 2),
+            "unsupported diagnostic scene or actor; only positions may vary")
+    validate_animation_constants(args.listing.read_text(), probe_config.actor)
+    _, expected_probe = build_probe(probe_config)
+    require(audit["program"] == expected_probe,
+            "probe audit differs from the reproducible synthetic driver")
 
     poppy_hash = sha256(args.poppy_inputs)
     records = identity.get("generated_inputs", [])

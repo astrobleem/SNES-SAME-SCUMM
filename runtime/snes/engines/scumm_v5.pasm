@@ -11186,9 +11186,8 @@ ScummV5_Op_ActorOps__costume:
     lda.l SAME_SCUMM_CONDITION
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_COSTUME,x
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
-    jsr ScummV5_C14_AnimationIndexX
     lda #$00
-    sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
+    jsr ScummV5_C14_SetExplicitAnimation
     .endif
     brl ScummV5_Op_ActorOps__loop
 ScummV5_Op_ActorOps__speed:
@@ -11558,9 +11557,8 @@ ScummV5_Op_AnimateActor__store:
     lda.l SAME_SCUMM_FETCH_BYTE
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
-    jsr ScummV5_C14_AnimationIndexX
     lda #$01
-    sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
+    jsr ScummV5_C14_SetExplicitAnimation
     .endif
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_ActorFacing_ObserveAnimate_Far
@@ -12551,17 +12549,55 @@ ScummV5_C14_BaseX:
     rts
 
 .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
-; BaseX leaves the actor-record offset in B. TAX with A8/X16 would carry
-; that high byte into the animation array index for actor IDs >= 4.
-ScummV5_C14_AnimationIndexX:
+; A low byte: zero clears, nonzero sets the current validated C14 actor bit.
+; Preserve A (including hidden B), X, Y and P. No shared scratch is borrowed.
+ScummV5_C14_SetExplicitAnimation:
+    php
     rep #$30
     .a16
     .i16
-    lda.l SAME_SCUMM_C14_ACTOR
+    pha
+    phx
+    phy
     and #$00FF
+    tay
+    lda.l SAME_SCUMM_C14_ACTOR
+    and #$0007
     tax
     sep #$20
     .a8
+    lda.l ScummV5_C7_BitMasks,x
+    pha
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C14_ACTOR
+    and #$001F
+    lsr
+    lsr
+    lsr
+    tax
+    sep #$20
+    .a8
+    tya
+    beq ScummV5_C14_SetExplicitAnimation__clear
+    pla
+    ora.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
+    bra ScummV5_C14_SetExplicitAnimation__store
+ScummV5_C14_SetExplicitAnimation__clear:
+    .a8
+    pla
+    eor #$FF
+    and.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
+ScummV5_C14_SetExplicitAnimation__store:
+    .a8
+    sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
+    plp
     rts
 .endif
 
@@ -12602,9 +12638,8 @@ ScummV5_C14_DefaultActor:
     .a8
     jsr ScummV5_C14_BaseX
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
-    jsr ScummV5_C14_AnimationIndexX
     lda #$00
-    sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
+    jsr ScummV5_C14_SetExplicitAnimation
     jsr ScummV5_C14_BaseX
     lda.l SAME_SCUMM_C14_ACTOR
     cmp #SCUMM_V5_ACTOR_RENDER_ID
@@ -13065,15 +13100,8 @@ ScummV5_C14_ResetState__clear:
     bcc ScummV5_C14_ResetState__clear
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     lda #$0000
-    ldx #$0000
-ScummV5_C14_ResetState__clear_animation:
-    .a16
-    .i16
-    sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
-    inx
-    inx
-    cpx #$0020
-    bcc ScummV5_C14_ResetState__clear_animation
+    sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION
+    sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+2
     .endif
     sep #$20
     .a8

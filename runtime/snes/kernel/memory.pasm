@@ -1099,8 +1099,10 @@ SAME_SCUMM_CONTROLLER_WITNESS_VALID     = $7E5E6A ; u8
 ; Generic checked actor-pose request/scratch state occupies the audited final
 ; 128-byte Mode-3 work allocation. Pixel bytes use the ROOM-PENDING buffer,
 ; never a ProgramUnit cache page.
-SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION      = $41E750 ; 32 x u8, one per C14 actor
-SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION_END  = $41E770
+SAME_MODE3_WORK_OWNER_START            = $41E750 ; backend offsets $00..$23
+SAME_MODE3_WORK_OWNER_END              = $41E774
+SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION      = $41E774 ; 32 packed bits, actors 0..31
+SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION_END  = $41E778
 SAME_SCUMM_ACTOR_POSE_STATE_BASE         = $41E780 ; 128-byte owned state block
 SAME_SCUMM_ACTOR_POSE_STATE_END          = $41E800
 SAME_SCUMM_ACTOR_POSE_DESIRED_FRAME      = SAME_SCUMM_ACTOR_POSE_STATE_BASE+$00

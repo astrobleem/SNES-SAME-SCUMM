@@ -16,6 +16,8 @@ MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 # Intervals are half-open. Their endpoints are ownership boundaries declared
 # in memory.pasm; unrelated ownership overlap fails closed.
 REGIONS = (
+    ("mode3_backend_scratch", "SAME_MODE3_WORK_OWNER_START",
+     "SAME_MODE3_WORK_OWNER_END"),
     ("program_cache_page2", "SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_START",
      "SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_END"),
     ("actor_explicit_animation", "SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION",
@@ -152,13 +154,31 @@ def audit() -> dict[str, Any]:
         raise ValueError("actor pose state address is outside its declared Mode-3 work owner")
     if allocation["offset"] + allocation["bytes"] > work["bytes"]:
         raise ValueError("actor pose state exceeds the Mode-3 work owner")
+    backend = work.get("allocations", {}).get("backend_scratch", {})
+    if backend != {"offset": 0, "bytes": 0x24, "owner": "Mode-3 backend scratch"}:
+        raise ValueError("Mode-3 backend scratch must own work offsets $00..$23")
+    if (values["SAME_MODE3_WORK_OWNER_START"] != work_start
+            or values["SAME_MODE3_WORK_OWNER_END"] != work_start + 0x24):
+        raise ValueError("Mode-3 backend scratch boundaries differ from generated work")
+    generator = (ROOT / "tools/generate_snes_video_backend.py").read_text()
+    offsets = [int(value, 16) for value in re.findall(
+        r"SAME_MODE3_WORK_[A-Z0-9_]+ = SAME_MODE3_WORK\+\$([0-9A-Fa-f]+)", generator)]
+    # All generated fields fit within a word; conservatively reserve two
+    # bytes even for byte fields. TIMEOUT at $22 consumes the last word.
+    if not offsets or max(offsets) + 2 != backend["bytes"]:
+        raise ValueError("generated Mode-3 work fields exceed/differ from audited scratch")
     explicit_animation = work.get("allocations", {}).get("actor_explicit_animation", {})
     if (explicit_animation.get("offset"), explicit_animation.get("bytes"),
             explicit_animation.get("owner")) != (
-                0, 32, "generic SCUMM actor animation state"):
+                36, 4, "generic SCUMM actor animation state"):
         raise ValueError("explicit animation state differs from the Mode-3 work owner")
-    if work_start + explicit_animation["offset"] != 0x41E750:
+    if work_start + explicit_animation["offset"] != values["SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION"]:
         raise ValueError("explicit animation state address differs from its memory contract")
+    if (values["SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION_END"]
+            - values["SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION"] != 4):
+        raise ValueError("explicit animation state must be a four-byte bitset")
+    if explicit_animation["offset"] < backend["offset"] + backend["bytes"]:
+        raise ValueError("explicit animation state overlaps backend scratch")
     if explicit_animation["offset"] + explicit_animation["bytes"] > allocation["offset"]:
         raise ValueError("explicit animation state overlaps actor pose state")
     if fixture_address < 0x41E800 or fixture_address >= 0x41F000:

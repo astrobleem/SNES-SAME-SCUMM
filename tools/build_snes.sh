@@ -1093,6 +1093,10 @@ else
             export SAME_SCUMM_ACTOR_PROBE_AUDIT
             ROOM_GENERATOR_ARGS+=(--diagnostic-actor-probe
                 --actor-probe-audit "$SAME_SCUMM_ACTOR_PROBE_AUDIT")
+            if [[ -n "${SAME_SCUMM_ACTOR_PROBE_POSITION:-}" ]]; then
+                IFS=, read -r PROBE_X PROBE_Y PROBE_MOVED_X <<< "$SAME_SCUMM_ACTOR_PROBE_POSITION"
+                ROOM_GENERATOR_ARGS+=(--actor-probe-position "$PROBE_X" "$PROBE_Y" "$PROBE_MOVED_X")
+            fi
         fi
         if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
             ROOM_GENERATOR_ARGS+=(--msu1-live-room-resources)

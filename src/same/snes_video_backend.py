@@ -137,6 +137,11 @@ def validate_mode3_layout(layout: dict[str, Any]) -> tuple[BackendRegion, ...]:
             raise ValueError(f"Mode-3 region {name} differs")
         regions.append(BackendRegion(name, address, size))
     work_allocations = layout["work"].get("allocations", {})
+    for name, offset, size, owner in (
+            ("backend_scratch", 0, 36, "Mode-3 backend scratch"),
+            ("actor_explicit_animation", 36, 4, "generic SCUMM actor animation state")):
+        if work_allocations.get(name) != {"offset": offset, "bytes": size, "owner": owner}:
+            raise ValueError(f"Mode-3 {name} suballocation differs")
     pose_state = work_allocations.get("actor_pose_state")
     if pose_state != {
             "offset": 48,

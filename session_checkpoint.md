@@ -3653,3 +3653,21 @@ audit pass. Native regression initially stopped at its identity preflight:
 emulator launched in that attempt. Build/validation sources are now isolated;
 do not bypass that guard or reuse the old ROM's evidence for this correction.
 The separate progression recovery worktree is untouched.
+
+### Actor review complete — 2026-11-09
+
+Fixed signed edge damage and an explicit-animation/Mode-3 scratch overlap.
+Packed flags now own four previously free bytes after backend scratch. The
+corrected edge proof passed in 62.701 seconds with five source-matching native
+captures and zero movement residue; see ACTOR_VISIBILITY_CHECKPOINT.md for
+identities and limitations. 1,209 tests/12 skips, validate, memory audit and
+pinned assembly/ROM audit pass. No FATE route replay occurred.
+
+Next authentic-room blockers are concrete: script palette mutations have no
+native presentation consumer; actor/world coordinates do not yet follow the
+background's aspect-fit projection; authored intro costume 26 has sparse
+poses whose bounding rectangles exceed the fixed 64x72 envelope and may
+exceed rectangular-underlay capacity. The source compiler represents these
+poses. Do not relax the capacity guard or claim them rendered without a
+correct bounded restoration path. Original full-source reanalysis remains
+NOT_READY; report is local at /tmp/astra-authentic-room-capabilities-20261109.

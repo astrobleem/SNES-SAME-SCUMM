@@ -313,6 +313,7 @@ def apply_synthetic_actor_probe(
     native_directory: NativeProgramDirectory,
     programs: list[dict[str, object]],
     audit_path: Path,
+    position: tuple[int, int, int] = (160, 136, 184),
 ) -> tuple[NativeProgramDirectory, dict[str, object]]:
     """Apply the explicit data-only actor driver before directory/package output."""
     if __package__:
@@ -335,7 +336,8 @@ def apply_synthetic_actor_probe(
     }
     proof_document, proof_bodies, proof_pages, audit = apply_actor_probe(
         native_directory.document, bodies, pages,
-        ProbeConfig(room=4, costume=2, boot_script=1),
+        ProbeConfig(room=4, costume=2, boot_script=1,
+                    x=position[0], y=position[1], moved_x=position[2]),
         diagnostic_authorized=True,
     )
     updated_directory = NativeProgramDirectory(proof_document)
@@ -541,6 +543,9 @@ def main() -> int:
         help=("explicitly replace source scripts with a synthetic graphics driver; "
               "not an authentic gameplay build"),
     )
+    parser.add_argument("--actor-probe-position", type=int, nargs=3,
+                        default=(160, 136, 184), metavar=("X", "Y", "MOVED_X"),
+                        help="synthetic actor driver coordinates, including edge controls")
     parser.add_argument("--actor-probe-audit", type=Path,
                         help="write the diagnostic body-replacement ledger")
     parser.add_argument(
@@ -586,6 +591,8 @@ def main() -> int:
         parser.error("the actor probe requires live MSU ProgramUnit storage")
     if args.diagnostic_actor_probe and args.actor_probe_audit is None:
         parser.error("--diagnostic-actor-probe requires --actor-probe-audit")
+    if tuple(args.actor_probe_position) != (160, 136, 184) and not args.diagnostic_actor_probe:
+        parser.error("--actor-probe-position requires --diagnostic-actor-probe")
     if args.actor_probe_audit and not args.diagnostic_actor_probe:
         parser.error("--actor-probe-audit requires --diagnostic-actor-probe")
     if args.msu1_include_source_room_records and not args.msu1_live_room_resources:
@@ -1693,6 +1700,7 @@ def main() -> int:
             raise RuntimeError("synthetic actor probe requires the canonical native directory")
         native_directory, actor_probe_report = apply_synthetic_actor_probe(
             native_directory, programs, args.actor_probe_audit,
+            tuple(args.actor_probe_position),
         )
         actor_probe_audit_path = args.actor_probe_audit.resolve()
 

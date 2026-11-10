@@ -1039,6 +1039,7 @@ ScummV5_Controller_PublishActorVisual__standing:
     .a8
     lda #$00
 ScummV5_Controller_PublishActorVisual__pose_done:
+    .a8
     sta.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     ; The host costume model advances its chore step with committed actor
@@ -1047,7 +1048,8 @@ ScummV5_Controller_PublishActorVisual__pose_done:
     ; the time-driven step selected below rather than being reset here.
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
     bne ScummV5_Controller_PublishActorVisual__movement_step_active
-    lda.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_RENDER_ID
+    lda.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_ANIMATION_BYTE
+    and #SCUMM_V5_ACTOR_ANIMATION_MASK
     beq ScummV5_Controller_PublishActorVisual__reset_step
     rep #$20
     .a16
@@ -1199,7 +1201,8 @@ ScummV5_Controller_PublishActorVisual__visible_ready:
     .a8
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
     bne ScummV5_Controller_PublishActorVisual__walk_frame
-    lda.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_RENDER_ID
+    lda.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_ANIMATION_BYTE
+    and #SCUMM_V5_ACTOR_ANIMATION_MASK
     beq ScummV5_Controller_PublishActorVisual__stand_frame
     lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
     cmp #$F4
@@ -1599,6 +1602,16 @@ ScummV5_Controller_RenderActor__changed:
     jmp ScummV5_Controller_RenderActor__done
 ScummV5_Controller_RenderActor__compose_ready:
     .endif
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    jsr ScummV5_Controller_RestoreActorDamage
+    bcc ScummV5_Controller_RenderActor__compose_actor
+ScummV5_Controller_RenderActor__streamed_restore_retry:
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    jmp ScummV5_Controller_RenderActor__done
+.else
     lda.l SAME_SCUMM_CONTROLLER_RENDER_VALID
     bne ScummV5_Controller_RenderActor__bounded_compose
     brl ScummV5_Controller_RenderActor__full_compose
@@ -1818,6 +1831,7 @@ ScummV5_Controller_RenderActor__full_compose:
     jsl Same_VideoSurface_RestoreRect_Far
     bcc ScummV5_Controller_RenderActor__compose_actor
     brl ScummV5_Controller_RenderActor__full_compose_retry
+.endif
 ScummV5_Controller_RenderActor__compose_actor:
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     jsl ScummV5_ActorPose_Compose_Far
@@ -2089,6 +2103,266 @@ ScummV5_Controller_RenderActor__done:
     pla
     plp
     rtl
+
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+; Signed screen endpoints are clamped BEFORE union: clamp is monotone, so
+; min/max of clamped endpoints equals the clipped signed union. This avoids
+; unsigned comparisons between negative and positive old/new coordinates.
+; Uses only existing controller damage fields; does not borrow pose scratch.
+; Coordinates plus projection/envelope must fit signed 16-bit arithmetic.
+ScummV5_Controller_RestoreActorDamage:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    sec
+    sbc #$0020
+    jsr ScummV5_Controller_Damage_ClampX
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    clc
+    adc #$0020
+    jsr ScummV5_Controller_Damage_ClampX
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    sec
+    sbc #$0040
+    jsr ScummV5_Controller_Damage_ClampY
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    clc
+    adc #$0008
+    jsr ScummV5_Controller_Damage_ClampY
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    bne ScummV5_Controller_Damage__include_old
+    brl ScummV5_Controller_Damage__viewport
+ScummV5_Controller_Damage__include_old:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    sec
+    sbc #$0020
+    jsr ScummV5_Controller_Damage_ClampX
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    bcs ScummV5_Controller_Damage__keep_X0
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+ScummV5_Controller_Damage__keep_X0:
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    clc
+    adc #$0020
+    jsr ScummV5_Controller_Damage_ClampX
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    bcc ScummV5_Controller_Damage__keep_X1
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+ScummV5_Controller_Damage__keep_X1:
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    sec
+    sbc #$0040
+    jsr ScummV5_Controller_Damage_ClampY
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    bcs ScummV5_Controller_Damage__keep_Y0
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+ScummV5_Controller_Damage__keep_Y0:
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    clc
+    adc #$0008
+    jsr ScummV5_Controller_Damage_ClampY
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    bcc ScummV5_Controller_Damage__keep_Y1
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+ScummV5_Controller_Damage__keep_Y1:
+    .a16
+ScummV5_Controller_Damage__viewport:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_VIDEO_SURFACE_DEST_X
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    bcc ScummV5_Controller_Damage__viewport_X0
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+ScummV5_Controller_Damage__viewport_X0:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DEST_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_COPY_WIDTH
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    bcs ScummV5_Controller_Damage__viewport_X1
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+ScummV5_Controller_Damage__viewport_X1:
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    bne ScummV5_Controller_Damage__nonzero_X
+    jmp ScummV5_Controller_Damage__empty
+ScummV5_Controller_Damage__nonzero_X:
+    .a16
+    bcs ScummV5_Controller_Damage__positive_X
+    jmp ScummV5_Controller_Damage__empty
+ScummV5_Controller_Damage__positive_X:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DEST_Y
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    bcc ScummV5_Controller_Damage__viewport_Y0
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+ScummV5_Controller_Damage__viewport_Y0:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DEST_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_COPY_HEIGHT
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    bcs ScummV5_Controller_Damage__viewport_Y1
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+ScummV5_Controller_Damage__viewport_Y1:
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    cmp.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    bne ScummV5_Controller_Damage__nonzero_Y
+    jmp ScummV5_Controller_Damage__empty
+ScummV5_Controller_Damage__nonzero_Y:
+    .a16
+    bcs ScummV5_Controller_Damage__positive_Y
+    jmp ScummV5_Controller_Damage__empty
+ScummV5_Controller_Damage__positive_Y:
+    .a16
+    ; RestoreRect's packed width cannot represent 256. For that one case
+    ; restore [0,255) then [255,256), with no PRESENT between the calls.
+    ; Viewport intersection above guarantees both pieces are nonempty.
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    sec
+    sbc.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    cmp #$0100
+    bne ScummV5_Controller_Damage__width_ready
+    dec
+ScummV5_Controller_Damage__width_ready:
+    .a16
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    sec
+    sbc.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    xba
+    ora.l SAME_SCUMM_CONTROLLER_RENDER_DST
+    tax
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    xba
+    ora.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    jsl Same_VideoSurface_RestoreRect_Far
+    bcc ScummV5_Controller_Damage__first_restored
+    rts
+ScummV5_Controller_Damage__first_restored:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    sec
+    sbc.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    cmp #$0100
+    bne ScummV5_Controller_Damage__publish_bounds
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    sec
+    sbc.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    xba
+    ora #$0001
+    tax
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    xba
+    ora #$00FF
+    jsl Same_VideoSurface_RestoreRect_Far
+    bcc ScummV5_Controller_Damage__publish_bounds
+    rts
+ScummV5_Controller_Damage__publish_bounds:
+    rep #$30
+    .a16
+    .i16
+    ; Services may clobber DAMAGE_*; publish the complete clipped union,
+    ; including width 256 as a word, after all restore calls have succeeded.
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X1
+    sec
+    sbc.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_X0
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y1
+    sec
+    sbc.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_Y0
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_ACTIVE
+    clc
+    rts
+ScummV5_Controller_Damage__empty:
+    ; No visible old/new envelope: no zero-sized RestoreRect and no retry
+    ; loop. Continue normal composition/key acceptance with a full PRESENT.
+    ; A visible old actor makes the union nonempty even if the new one left.
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_ACTIVE
+    clc
+    rts
+
+ScummV5_Controller_Damage_ClampX:
+    .a16
+    bmi ScummV5_Controller_Damage_Clamp__zero
+    cmp #$0100
+    bcc ScummV5_Controller_Damage_Clamp__done
+    lda #$0100
+    rts
+ScummV5_Controller_Damage_ClampY:
+    .a16
+    bmi ScummV5_Controller_Damage_Clamp__zero
+    cmp #$00E0
+    bcc ScummV5_Controller_Damage_Clamp__done
+    lda #$00E0
+    rts
+ScummV5_Controller_Damage_Clamp__zero:
+    .a16
+    lda #$0000
+ScummV5_Controller_Damage_Clamp__done:
+    .a16
+    rts
+.endif
 
 .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
 ; Resolve a source pose/chunk row and fetch its checked source-slot bytes into

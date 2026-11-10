@@ -16,9 +16,14 @@
     "address": "41:E750",
     "bytes": 176,
     "allocations": {
-      "actor_explicit_animation": {
+      "backend_scratch": {
         "offset": 0,
-        "bytes": 32,
+        "bytes": 36,
+        "owner": "Mode-3 backend scratch"
+      },
+      "actor_explicit_animation": {
+        "offset": 36,
+        "bytes": 4,
         "owner": "generic SCUMM actor animation state"
       },
       "actor_pose_state": {
