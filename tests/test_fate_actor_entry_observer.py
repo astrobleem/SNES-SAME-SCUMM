@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 import replay_fate_room4_cold_nexen as replay
@@ -22,6 +22,14 @@ class PublishedRoom:
 
 
 class ActorEntryObserverTests(unittest.TestCase):
+    def test_graphics_capture_does_not_enable_continuous_native_trace(self):
+        session = Mock()
+        self.assertFalse(replay.arm_startup_trace(session, enabled=False)["enabled"])
+        session.trace_log.assert_not_called()
+        session.trace_log.return_value = {"rows": []}
+        self.assertTrue(replay.arm_startup_trace(session, enabled=True)["enabled"])
+        session.trace_log.assert_called_once_with(count=1, cpu_type="Snes")
+
     def test_graphics_entry_does_not_wait_for_dialogue_or_skip_cutscene(self):
         with patch.object(replay, '_snapshot', return_value={'room': 4}) as snapshot:
             state, transitions = replay._cold_wait_room4(

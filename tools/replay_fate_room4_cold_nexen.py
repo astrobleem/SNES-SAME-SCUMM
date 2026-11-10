@@ -1857,8 +1857,19 @@ def _finish_room4_intro(session: Any, *, max_frames: int,
     )
 
 
+def arm_startup_trace(session: Any, *, enabled: bool) -> dict[str, Any]:
+    # Nexen's first trace_log call ENABLES continuous instruction logging.
+    # Graphics capture does not need it; do not impose that CPU overhead.
+    if not enabled:
+        return {"enabled": False, "reason": "graphics-only observer; no instruction trace requested"}
+    trace = session.trace_log(count=1, cpu_type="Snes")
+    return {"enabled": True, "requested_rows": 1,
+            "initial_rows": len(trace.get("rows", [])) if isinstance(trace, dict) else None}
+
+
 def _cold_wait_room4(session: Any, max_frames: int, *,
-                     require_interactive: bool = True) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                     require_interactive: bool = True, trace_enabled: bool = True,
+                     progress_callback: Any | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     from fate_replay import advance_bounded
 
     transitions: list[dict[str, Any]] = []
@@ -1963,9 +1974,9 @@ def _cold_wait_room4(session: Any, max_frames: int, *,
             # change emulated timing or input.
             if room == 68 and phase == 1:
                 sample["cpu"] = session.get_cpu_state("Snes")
-                sample["trace_tail"] = session.trace_log(
+                sample["trace_tail"] = (session.trace_log(
                     count=1000, cpu_type="Snes"
-                )
+                ) if trace_enabled else {"status": "NOT_CAPTURED", "reason": "graphics-only observer"})
                 sample["m24rb_state"] = session.read_memory(
                     "snesMemory", 0x7FFA30, 0x10
                 ).hex()
@@ -2010,13 +2021,27 @@ def _cold_wait_room4(session: Any, max_frames: int, *,
                     sample["active_cache_slot"] = session.read_u8(0x7E2F5B)
                 sample["active_program_select"] = session.read_u8(0x7E2362)
             progress.append(sample)
+            if progress_callback is not None:
+                progress_callback({"sample": sample, "transitions": transitions})
         # Keep debugger-assisted/native-frame batches below the emulator's
         # wall-clock timeout even while room scripts and checked IO are busy.
-        advanced = advance_bounded(session, min(16, max_frames - elapsed))
+        try:
+            advanced = advance_bounded(session, min(16, max_frames - elapsed))
+        except Exception as exc:
+            if progress_callback is not None:
+                failure = {"error": str(exc), "transitions": transitions}
+                for name, read in (("cpu", lambda: session.get_cpu_state("Snes")),
+                                   ("state", lambda: _snapshot(session))):
+                    try:
+                        failure[name] = read()
+                    except Exception as capture_error:
+                        failure[name] = {"status": "NOT_CAPTURED", "error": str(capture_error)}
+                progress_callback(failure)
+            raise
         elapsed += int(advanced["frames_advanced"])
     last = _snapshot(session)
     cpu = session.get_cpu_state("Snes")
-    trace = session.trace_log(count=128, cpu_type="Snes")
+    trace = session.trace_log(count=128, cpu_type="Snes") if trace_enabled else {"status": "NOT_CAPTURED"}
     raise TimeoutError(
         f"cold authentic startup did not reach room4 readiness within {max_frames} "
         f"frames; transitions={transitions!r}; progress={progress!r}; "
@@ -3308,12 +3333,9 @@ def main() -> int:
             # Arm it before the bounded startup so a later stalled-room
             # sample contains instructions from the actual SCUMM frame, not
             # merely an empty-ring status response.
-            trace_arm = session.trace_log(count=1, cpu_type="Snes")
-            report["startup_trace_arm"] = {
-                "requested_rows": 1,
-                "initial_rows": len(trace_arm.get("rows", []))
-                if isinstance(trace_arm, dict) else None,
-            }
+            graphics_only = args.capture_room4_actor_entry or args.capture_room4_playable_scene
+            report["startup_trace_arm"] = arm_startup_trace(session, enabled=not graphics_only)
+            args.output.write_text(json.dumps(report, indent=2) + "\n")
             if args.break_on_cpu_address is not None:
                 if not 0 <= args.break_on_cpu_address <= 0xFFFFFF:
                     parser.error("--break-on-cpu-address must be a 24-bit CPU address")
@@ -3387,9 +3409,15 @@ def main() -> int:
                     return 0
                 finally:
                     session.remove_hook(fault_hook)
+            def preserve_startup_progress(observation: dict[str, Any]) -> None:
+                report["startup_last_observation"] = observation
+                args.output.write_text(json.dumps(report, indent=2) + "\n")
+
             ready, transitions = _cold_wait_room4(
                 session, args.startup_frames,
-                require_interactive=not args.capture_room4_actor_entry)
+                require_interactive=not args.capture_room4_actor_entry,
+                trace_enabled=not graphics_only,
+                progress_callback=preserve_startup_progress if graphics_only else None)
             report["room_transitions"] = transitions
             report["room4_ready"] = ready
             report["room4_ready_source_probe"] = _room4_source_probe(
