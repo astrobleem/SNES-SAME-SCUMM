@@ -15,16 +15,108 @@ The source decoder comparison has **zero differing pixels**; the captured
 surface versus VRAM and palette versus CGRAM also have zero differences.
 This proves an integrated scene, not complete gameplay or all palette effects.
 
-A matching-ROM/package emulator checkpoint restored the exact INDEX8 hash and
-actor state. One normal Right edge moved the cursor from (117,138) to (119,138);
-a subsequent completed capture matched VRAM/CGRAM exactly. No guest-state writes
-were used. A later empty-floor A click did not yet start walking and remains a
-failed control, not gameplay acceptance. The generated hit-test's byte-count
-comparison is corrected in source; native movement verification is pending. Text, verbs and inventory are not yet
-visibly usable in this build.
+A matching-ROM/package emulator checkpoint restores the exact INDEX8 hash and
+actor state. Normal controller edges move the cursor; one empty-floor A click
+now walks Indy from (117,138) to the original walkbox oracle's adjusted target
+(161,133), box 2, with SCUMM error zero. No guest gameplay-state writes or
+object-action replay were used. The corrected committed-pose observer captures the displayed key independently
+of the next checked costume read. The 81.837-second matching-checkpoint control
+now passes: source costume/background/cursor versus INDEX8, INDEX8 versus VRAM,
+and palette versus CGRAM all have zero differences. Whole-surface equality
+also rejects old-position residue. Movement flags clear at the adjusted target.
+The earlier timeout is retained; it was not evidence of a deadlock or bad pixels.
+
+This capture exposed a separate semantic omission: final-leg completion did not
+start the configured stand chore. The display still showed walk frame 2 after
+MOVING cleared, while both the host engine and ScummVM start the stand chore.
+Commit `d2f0a3c` starts the configured stand chore at final-leg completion for
+the moving actor, preserving final-facing behavior and interpreter scratch.
+Four source-instruction/host tests cover all 32 actors, widths/flags, unrelated
+bits, and intermediate legs. A fresh matching-ROM native control now verifies
+stand frame 3/step 0, MOVING=0 and the actor's explicit-animation bit cleared.
+The new surface matches the source decoder, VRAM and CGRAM exactly. Equal
+stand/walk-frame animation restart timing remains unverified; this is not
+certification of every animation command.
+
+Text, verbs and inventory are not yet visibly usable in this build.
+
+## Mapped-ROM interaction repair
+
+Two concrete generated-code defects affected ordinary input. The hit tester
+compared a byte object count as a word, accidentally including the adjacent
+dirty counter. Commit `6c7e074` zero-extends that count and uses byte flag reads;
+instruction-model regressions cover all 256 adjacent dirty values.
+
+The full-directory MSU build also emitted an unreachable ROM-only geometry
+dispatcher in bank 7. Its 39,560-byte segment exceeded the mapped 32 KiB window;
+a hit-test call assembled as `22 50 19 01` (CPU `$01:1950`, not the intended ROM
+helper). Commit `86ae336` excludes only that unreachable static dispatcher in
+MSU mode. The segment is now 29,374 bytes (10,186 bytes less), and the call is
+`22 86 F1 07` to `$07:F186`. ProgramUnits and package bytes are unchanged.
+Both shell and PowerShell builds now require map-span auditing for SA-1 as well
+as LoROM. The old map is explicitly rejected before acceptance; the new map
+passes. Earlier ROM-audit success did not cover SA-1 segment spans.
+
+The corrected image's fresh authentic scene control completed in 336.999 seconds.
+Its normal-input control completed in 60.720 seconds, preserving both successful
+walking state and the unsuccessful final-frame observer result. Both owned
+process trees exited. No historical state was restored into a different ROM.
+
+- ROM: `50b4812fe6cf357702b40bcffa63ec8de961f9f8a009c6b95a17dc388ba35b32`
+- Map: `70b3a4f2f41a190df86b1d4e2521ad8bb53eb1f60c56f68ff2e5b64e8cca8e63`
+- Package: `9f66adacf15836f2fdf1ea10485199e43f5b606deb49e26ba4b493aa12e622d0`
+- Build identity: `b92e2e1ba72073588673f22c7ecaad13411cc5403183a1e32250765fdcaac07d`
+
+Local evidence: `/tmp/astra-authentic-bank-fixed-scene-20261110` and
+`/tmp/astra-authentic-room4-walk-bank-fixed-20261110`. The scene checkpoint is
+hashed after asynchronous save completion and emulator exit (`96668b6`); a
+nonempty file alone is not restoration acceptance. This checkpoint was then
+restored and checked against its exact scene hash in the input control.
+
+Local suite at `96668b6`: 1,362 tests, 12 skipped; `make validate` passes.
+[Hosted run 42766444588](https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/42766444588)
+passed both required jobs on that exact commit. Hosted assembly is not Nexen
+execution. Observer `bac2654` has 7 new committed-capture regressions plus the existing
+held-pose regressions. Native evidence is local under
+`/tmp/astra-authentic-room4-walk-committed-20261110`; its source comparison report
+is identity-bound to the captured files. No native ROM bytes changed for this
+observer correction. A source audit confirms all 47 tracked assembly/layout
+inputs match the immutable build snapshot; observer commits are separate.
 
 The following sections retain earlier evidence chronologically; older
 NOT_VERIFIED statements are scoped to their named ROMs, not this capture.
+
+## Final walk-to-stand native checkpoint
+
+The corrected original-source image boots to room 4 in 319.766 seconds of
+supervised host execution. Its own saved checkpoint is then restored and
+verified. The normal-input walk/stand control completes in 70.801 seconds,
+within its 180-second process-tree watchdog. No owned Nexen/Xvfb process remains;
+the unrelated user session is untouched.
+
+- ROM: `41a9f510a4a9475f43110be46cb26a171877e8857aba55d7745a8e95c02ed807`
+- Map: `affb8c586ddfd16765327e1da9d09ac3a1e902f6f1df93f7fbcc4e2738024f37`
+- Package: `9f66adacf15836f2fdf1ea10485199e43f5b606deb49e26ba4b493aa12e622d0`
+- Build identity: `7c563758ece264dc4fe87b89c0d12171fdd3a58788872a69f8fef4008fb6be92`
+- Final indexed surface: `87b911e009f2c73b162d13af7890fc0da8cce387644fd980f9071109f0886a26`
+
+Evidence remains outside Git at `/tmp/astra-authentic-stand-fixed-scene-20261110`
+and `/tmp/astra-authentic-room4-walk-stand-fixed-20261110`. A durable, hashed
+private copy (including exact ROM/map/package) is retained outside Git at
+`/home/chad/same-private-evidence/astra-authentic-walk-20261110`. The latter control includes
+before/cursor-moved/stand-after-walk PPU images, indexed/VRAM/CGRAM bytes, source
+comparison, ordinary input observations and the supervisor result. All three
+captures have zero source/INDEX8/VRAM/CGRAM differences. Committed elevation is
+not separately stored: the comparison predicts the source foot from committed
+position and observed zero elevation; exact pixel equality verifies that
+prediction for these captures, not arbitrary elevated actors.
+
+Performance: the A edge is sampled in 6 emulated frames; destination and cleared
+movement flags are observed 82 frames after its initial input level. The completed
+stand image is captured 274 frames after input (192 after arrival). This visible
+presentation lag still needs improvement. These are emulated frame intervals,
+not raw MSU throughput or physical-hardware measurements. No audio acceptance
+is inferred from this graphics control.
 
 ## Sparse source poses
 

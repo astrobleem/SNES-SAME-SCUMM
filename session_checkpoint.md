@@ -1,38 +1,50 @@
-# Active checkpoint — authentic room and controller integration
+# Active checkpoint — authentic room, controller walking, and stand completion
 
-PR #13 is merged through protected main at99127067. Active draft PR #14 is
-scumm-fate-authentic-room. The separate progression recovery worktree and
-baseline tag remain unchanged.
+PR #13 is merged through protected main at `99127067`. Active draft PR #14:
+`scumm-fate-authentic-room`. Baseline tag and the separate progression recovery
+worktree remain untouched.
 
-Original full-source startup (no synthetic script overlay) now presents Indy
-and the live cursor on the authentic room-4 backdrop. Exact source INDEX8,
-VRAM and CGRAM comparisons pass. A matching native savestate restores that
-scene exactly, and a normal Right edge moves the cursor with the same exact
-visual comparisons. Evidence identities and chronology are in
-`docs/scumm-toolchain/AUTHENTIC_ROOM_INTEGRATION.md`. Commercial captures stay
-outside Git. This is integrated scene acceptance, not full gameplay.
+The full 2,203-ProgramUnit package runs original startup into room 4, displaying
+Indy and a normal controller cursor on the authentic background. A matching-ROM
+checkpoint and ordinary controller input now move Indy from (117,138) to the
+source walkbox-adjusted (161,133), box 2; movement flags clear, SCUMM error stays
+zero. Source INDEX8, VRAM, CGRAM and old-position restoration comparisons are
+exact. This is original-source walking, not the synthetic costume driver, and
+not complete gameplay. No seven-action route or room-7 repetition occurred.
 
-A first empty-floor A click failed to start movement. Inspection found a real
-generated hit-test defect: its16-bit comparison consumed the u8 object count
-and adjacent dirty counter. Commit6c7e074 zero-extends the count and makes
-last-record flag reads byte-sized. Guarded instruction tests cover all256 dirty
-values, empty/single/full200-record tables and first/last hits. New ROM
-3a5bb3f177a4cf35b8a89caacd52e56ce7bf98177346791d234743efebabd19f
-assembled and passed ROM audit. Its fresh bounded room-4 checkpoint is being
-collected; never load the previous ROM's saved state into this build.
+Evidence: `/tmp/astra-authentic-room4-walk-committed-20261110`, 81.837 seconds,
+normal owned-process cleanup. ROM `50b4812fe6cf357702b40bcffa63ec8de961f9f8a009c6b95a17dc388ba35b32`.
+The observer now reads the committed display key while the next costume fetch
+is pending, retaining generation, queue, ownership, room and retry checks.
+Earlier timeouts are preserved and are not deadlock evidence.
 
-Observer881b5ea evaluates the exact terminal budget boundary and captures an
-already committed paused frame instead of advancing into the next composition.
-All generation/queue/lock guards remain. Tests exercise the actual observer.
-Source charset decoder eb7454a preserves1/2/4bpp source slots with opt-in;
-binary-only host/cooked consumers still reject multibit fonts. Native text,
-verbs, inventory, scaling, multiple actors and foreground masks remain unfinished.
+The controller failure involved both a widened byte object count and a helper
+linked beyond a 32 KiB ROM window. `6c7e074` fixes the count; `86ae336` removes
+unreachable static geometry code from MSU mode and requires SA-1 map auditing.
+Bank 7 shrank 39,560→29,374 bytes; invalid JSL `$01:1950` became `$07:F186`.
+All ProgramUnits/package bytes remain present.
 
-Local full suite1357 tests/12skips passes. Hosted1ffb289 passed1344/12 plus
-pinned assembly/ROM audit, run42762004285. New-head hosted results must be
-recorded separately. No seven-action route, room7 or Local213 investigation.
-Each native session remains isolated, single-client and at most600seconds;
-no unchanged retry. Current walking diagnostic budget is180seconds.
+Walking exposed a separate omission: native final-leg completion did not start
+the stand chore. `d2f0a3c` fixes this generically for all actors; source-instruction
+and host tests pass. New ROM `41a9f510a4a9475f43110be46cb26a171877e8857aba55d7745a8e95c02ed807`
+assembled with pinned Poppy and passes ROM/map/WRAM audits. Its fresh room-4
+checkpoint and normal-input stand-after-walk native control pass (319.766s and
+70.801s respectively), with exact source/INDEX8/VRAM/CGRAM equality. The final
+stand is frame3/step0, MOVING0 and actor1 explicit bit cleared. Never restore the
+old ROM's state into it. `472cd9f` adds a committed-frame filter so a pending
+stand request or old displayed walk cannot count as a stand acceptance.
+
+Local suite: 1,374 tests, 12 skipped; make validate passes. Committed-frame filtering is included. Hosted CI on `96668b6` is green;
+new-head runs are separate evidence. No hosted Nexen claim.
+
+Next player-facing gap is text/verbs/inventory presentation. Source charset
+1 is binary up to13×16; charset2 uses2-bit slots up to39×10. The current native
+Font0/80×8 single-ink overlay cannot represent these generally. Host decoding
+preserves1/2/4-bit slots, while binary-only consumers still reject multibit.
+Native text integration needs a bounded extension of the existing overlay,
+not fake glyphs. Scaling, multiple actors, masks, full audio and portable save
+restoration remain incomplete. Whole-game status: NOT_READY.
+
 
 ---
 
