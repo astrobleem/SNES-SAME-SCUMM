@@ -245,7 +245,8 @@ def read_committed_pose(session, *, cursor_base: int) -> dict:
 
 def committed_pose_is_presented(state: dict, *, expected_room: int | None = None,
                                  expected_x: int | None = None,
-                                 expected_y: int | None = None) -> bool:
+                                 expected_y: int | None = None,
+                                 expected_frame: int | None = None) -> bool:
     """Fence a committed actor while a different pose may be fetching."""
     generation = state["surface_next_generation"]
     return bool(
@@ -263,6 +264,7 @@ def committed_pose_is_presented(state: dict, *, expected_room: int | None = None
         and (expected_room is None or state["room"] == expected_room)
         and (expected_x is None or state["actor_position_source_room"][0] == expected_x)
         and (expected_y is None or state["actor_position_source_room"][1] == expected_y)
+        and (expected_frame is None or state["actor_render_pose_frame"] == expected_frame)
     )
 
 
@@ -271,7 +273,8 @@ def capture_committed_surface(session, directory: Path, label: str, *,
                               source_foot: tuple[int, int] | None = None,
                               expected_room: int | None = None,
                               expected_x: int | None = None,
-                              expected_y: int | None = None) -> dict:
+                              expected_y: int | None = None,
+                              expected_frame: int | None = None) -> dict:
     """Capture a paused committed surface without consulting pending pose data.
 
     Bounds are omitted. Optional source_foot must be supplied from independently
@@ -282,7 +285,8 @@ def capture_committed_surface(session, directory: Path, label: str, *,
             "capture label must be a single filename component")
     state = read_committed_pose(session, cursor_base=cursor_base)
     require(committed_pose_is_presented(state, expected_room=expected_room,
-                                       expected_x=expected_x, expected_y=expected_y),
+                                       expected_x=expected_x, expected_y=expected_y,
+                                       expected_frame=expected_frame),
             f"committed actor presentation fence is not satisfied: {state}")
     pixels = session.read_memory("snesMemory", SURFACE, 256 * 224)
     palette = session.read_memory("snesMemory", PALETTE, 768)
@@ -1014,7 +1018,8 @@ class ProbeObserver:
     def wait_committed_pose(self, *, max_frames: int = 1800,
                             expected_room: int | None = None,
                             expected_x: int | None = None,
-                            expected_y: int | None = None) -> dict:
+                            expected_y: int | None = None,
+                            expected_frame: int | None = None) -> dict:
         """Wait for the committed actor, independently of the next pose request."""
         require(type(max_frames) is int and max_frames >= 0, "invalid committed wait budget")
         end = self.logical_frames + max_frames
@@ -1022,7 +1027,8 @@ class ProbeObserver:
             state = read_committed_pose(self.session, cursor_base=self.cursor_base)
             require(state["error"] == 0, f"SCUMM error before committed presentation: {state}")
             if committed_pose_is_presented(state, expected_room=expected_room,
-                                            expected_x=expected_x, expected_y=expected_y):
+                                            expected_x=expected_x, expected_y=expected_y,
+                                            expected_frame=expected_frame):
                 return dict(state, logical_frame=self.logical_frames)
             if self.logical_frames >= end:
                 break
@@ -1035,13 +1041,16 @@ class ProbeObserver:
                                 expected_room: int | None = None,
                                 expected_x: int | None = None,
                                 expected_y: int | None = None,
+                                expected_frame: int | None = None,
                                 source_foot: tuple[int, int] | None = None) -> dict:
         state = self.wait_committed_pose(max_frames=max_frames, expected_room=expected_room,
-                                         expected_x=expected_x, expected_y=expected_y)
+                                         expected_x=expected_x, expected_y=expected_y,
+                                         expected_frame=expected_frame)
         record = capture_committed_surface(
             self.session, self.output, label, cursor_base=self.cursor_base,
             projection=self.projection, source_foot=source_foot,
-            expected_room=expected_room, expected_x=expected_x, expected_y=expected_y)
+            expected_room=expected_room, expected_x=expected_x, expected_y=expected_y,
+            expected_frame=expected_frame)
         record["vm"] = state
         self.captures.append(record)
         return record

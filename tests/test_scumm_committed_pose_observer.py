@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'tools'))
 import validate_scumm_actor_visual_probe_nexen as probe
@@ -146,6 +146,30 @@ class CommittedPoseObserverTests(unittest.TestCase):
             saved = json.loads((Path(directory)/'walk.committed.json').read_text())
             self.assertEqual(saved['pose'],record['pose'])
             self.assertEqual(obj.captures,[record])
+
+    def test_expected_frame_rejects_old_walk_key_and_capture_forwards_filter(self):
+        session = Session()  # committed walk frame 2, next request may be stand 3
+        session.put(probe.ACTOR_STATE+3, 3, 1)
+        state = probe.read_committed_pose(session, cursor_base=CURSOR)
+        self.assertFalse(probe.committed_pose_is_presented(state, expected_frame=3))
+        self.assertTrue(probe.committed_pose_is_presented(state, expected_frame=2))
+        with tempfile.TemporaryDirectory() as directory:
+            obj = observer(session, directory)
+            with self.assertRaisesRegex(RuntimeError, 'fence is not satisfied'):
+                probe.capture_committed_surface(session, Path(directory), 'old-walk',
+                                                cursor_base=CURSOR, expected_frame=3)
+            self.assertEqual(list(Path(directory).iterdir()), [])
+            def advance(count):
+                self.assertEqual(count, 1)
+                obj.logical_frames += count
+                session.put(probe.ACTOR_STATE+0x15, 3, 1)
+            obj.advance = Mock(side_effect=advance)
+            with patch.object(probe, 'capture_committed_surface', wraps=probe.capture_committed_surface) as capture:
+                result = obj.capture_committed_stage('stand', max_frames=1, expected_frame=3)
+            obj.advance.assert_called_once_with(1)
+            self.assertEqual(capture.call_args.kwargs['expected_frame'], 3)
+            self.assertEqual(result['pose']['actor_render_pose_frame'], 3)
+            self.assertEqual(result['vm']['logical_frame'], 1)
 
     def test_optional_source_foot_is_explicit_not_live_elevation(self):
         s = Session()
