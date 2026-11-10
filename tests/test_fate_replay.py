@@ -757,6 +757,52 @@ class FateReplayTests(unittest.TestCase):
         self.assertNotIn("program_cache", observed)
         self.assertNotIn("live_room_header", observed)
 
+    def test_checkpoint_identity_missing_empty_and_complete_preserves_capture(self) -> None:
+        import hashlib
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'scene.state'
+            for contents in (None, b'', b'synthetic checkpoint payload'):
+                with self.subTest(contents=contents):
+                    if contents is not None:
+                        path.write_bytes(contents)
+                    report = {'result': 'ACTOR_SCENE_CAPTURED_NOT_OBJECT_GAMEPLAY_ACCEPTANCE',
+                              'scene_checkpoint': {'path': str(path),
+                                                   'identity_status': 'PENDING_SESSION_EXIT'}}
+                    result = report['result']
+                    cold_startup_module._finalize_scene_checkpoint(report)
+                    evidence = report['scene_checkpoint']
+                    self.assertEqual(report['result'], result)
+                    self.assertEqual(evidence['restoration_status'], 'NOT_VERIFIED')
+                    if contents:
+                        self.assertEqual(evidence['sha256'], hashlib.sha256(contents).hexdigest())
+                        self.assertEqual(evidence['size_bytes'], len(contents))
+                        self.assertEqual(evidence['identity_status'], 'HASHED_AFTER_SESSION_EXIT')
+                    else:
+                        self.assertNotIn('sha256', evidence)
+                        self.assertEqual(evidence['identity_status'], 'UNAVAILABLE')
+                        self.assertTrue(evidence['identity_reason'])
+
+    def test_checkpoint_finalization_is_in_owned_session_outer_finally(self) -> None:
+        import ast
+        tree = ast.parse(Path(cold_startup_module.__file__).read_text())
+        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
+        owner = next(n for n in main.body if isinstance(n, ast.Try) and any(
+            isinstance(child, ast.With) and any(
+                isinstance(item.context_expr, ast.Name) and item.context_expr.id == 'owned_session'
+                for item in child.items) for child in n.body))
+        calls = [n for statement in owner.finalbody for n in ast.walk(statement)
+                 if isinstance(n, ast.Call)]
+        self.assertTrue(any(isinstance(n.func, ast.Name) and
+                            n.func.id == '_finalize_scene_checkpoint' for n in calls))
+        self.assertTrue(any(isinstance(n.func, ast.Attribute) and
+                            n.func.attr == 'write_text' for n in calls))
+        capture = next(n for n in ast.walk(owner) if isinstance(n, ast.FunctionDef)
+                       and n.name == 'capture_authentic_actor')
+        self.assertFalse(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                             and n.func.attr == 'is_file' for n in ast.walk(capture)))
+
     def test_dynamic_build_report_is_resolved_from_its_isolated_output_root(self) -> None:
         import hashlib
         import json

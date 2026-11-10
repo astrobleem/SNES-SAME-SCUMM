@@ -35,6 +35,33 @@ RESIDENCY_PREINIT_UNKNOWN_ROWS = 0
 RESIDENCY_POSTINIT_UNKNOWN_ROWS: list[dict[str, int]] = []
 
 
+def _finalize_scene_checkpoint(report: dict[str, Any]) -> None:
+    """Record file identity only after the owned session has exited.
+
+    A save request is asynchronous. Missing/empty files are checkpoint evidence
+    limitations, not failures of the independently completed scene capture.
+    """
+    checkpoint = report.get("scene_checkpoint")
+    if checkpoint is None:
+        return
+    checkpoint.pop("sha256", None)
+    checkpoint.pop("size_bytes", None)
+    checkpoint.pop("identity_reason", None)
+    checkpoint["identity_status"] = "UNAVAILABLE"
+    checkpoint["restoration_status"] = "NOT_VERIFIED"
+    try:
+        data = Path(checkpoint["path"]).read_bytes()
+    except OSError as exc:
+        checkpoint["identity_reason"] = f"{type(exc).__name__}: {exc}"
+        return
+    checkpoint["size_bytes"] = len(data)
+    if not data:
+        checkpoint["identity_reason"] = "checkpoint file is empty after session exit"
+        return
+    checkpoint["sha256"] = hashlib.sha256(data).hexdigest()
+    checkpoint["identity_status"] = "HASHED_AFTER_SESSION_EXIT"
+
+
 def _selector_pool_index(selector: int) -> int:
     """Map the unchanged byte-selector ABI to the resolver's pool row."""
     if 0xD0 <= selector <= 0xFF:
@@ -3514,9 +3541,8 @@ def main() -> int:
                     "package_sha256": storage["package_sha256"],
                     "save_result": session.save_state(checkpoint),
                     "restoration_status": "NOT_VERIFIED",
+                    "identity_status": "PENDING_SESSION_EXIT",
                 }
-                if checkpoint.is_file():
-                    report["scene_checkpoint"]["sha256"] = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
                 report["result"] = "ACTOR_SCENE_CAPTURED_NOT_OBJECT_GAMEPLAY_ACCEPTANCE"
                 if pcm_capture_path is not None:
                     report["pcm_capture_stop"] = session.stop_audio()
@@ -4581,6 +4607,11 @@ def main() -> int:
             }
         args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         raise
+    finally:
+        # Runs after owned_session.__exit__, including capture's inner return.
+        if "scene_checkpoint" in report:
+            _finalize_scene_checkpoint(report)
+            args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"FATE room4 cold replay: {report['result']} ({rom_sha})")
     print(args.output)
