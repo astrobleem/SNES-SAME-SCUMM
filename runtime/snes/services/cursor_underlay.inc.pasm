@@ -1,0 +1,438 @@
+; Independent dense cursor underlay. No glyph, controller, ROM or PPU policy.
+; Generated owner: $40:0620..073F (32-byte header/work + 256 saved pixels).
+; +00 magic C9 commits LAST, +01 retained-damage-valid, +02 room u16,
+; +04 installed generation, +06 packed destination, +08 width, +0A height,
+; +0C payload area, +0E reserved. +10..1F is private synchronous scratch.
+; Pixel payload +20..11F is tightly packed row-major (no surface stride).
+; The independent engine owner begins at $40:0740 and is never touched here.
+;
+; Capture: A16=y*256+x, X16=width 1..16, Y16=height 1..16; caller clips.
+; Restore consumes magic but retains bounds for Merge after actor restoration.
+; Capture/Restore/Merge union DAMAGE, never reset it. Empty restore is a no-op.
+; Capture rejects an unconsumed journal. Invalid arguments/malformed journal
+; fail before surface/persistent-journal writes; private scratch may change.
+; Stale identity is discarded without restoring. Invalidate on cold reset and
+; BEFORE same-room background replacement (room generation may not change).
+; All entries preserve P/A/X/Y/DB except carry: clear success, set failure.
+; Busy Capture/Restore retain committed journal and damage. No publication.
+SAME_VIDEO_CURSOR_MAGIC = $C9
+SAME_VIDEO_CURSOR_HEADER_SIZE = $0020
+SAME_VIDEO_CURSOR_PAYLOAD_SIZE = $0100
+SAME_VIDEO_CURSOR_PIXELS = SAME_VIDEO_CURSOR_UNDERLAY+$20
+SAME_VIDEO_CURSOR_WORK_DEST = SAME_VIDEO_CURSOR_UNDERLAY+$10
+SAME_VIDEO_CURSOR_WORK_WIDTH = SAME_VIDEO_CURSOR_UNDERLAY+$12
+SAME_VIDEO_CURSOR_WORK_HEIGHT = SAME_VIDEO_CURSOR_UNDERLAY+$14
+SAME_VIDEO_CURSOR_WORK_AREA = SAME_VIDEO_CURSOR_UNDERLAY+$16
+SAME_VIDEO_CURSOR_WORK_SURFACE = SAME_VIDEO_CURSOR_UNDERLAY+$18
+SAME_VIDEO_CURSOR_WORK_PIXEL = SAME_VIDEO_CURSOR_UNDERLAY+$1A
+SAME_VIDEO_CURSOR_WORK_COLUMN = SAME_VIDEO_CURSOR_UNDERLAY+$1C
+SAME_VIDEO_CURSOR_WORK_ROWS = SAME_VIDEO_CURSOR_UNDERLAY+$1E
+
+Same_VideoSurface_CaptureCursorUnderlay_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    cld
+    sta.l SAME_VIDEO_CURSOR_WORK_DEST
+    txa
+    sta.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    tya
+    sta.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    jsr Same_VideoSurface_Cursor_Validate
+    bcc Same_VideoSurface_Cursor_Capture__valid
+    jmp Same_VideoSurface_Cursor_Failure
+Same_VideoSurface_Cursor_Capture__valid:
+    .a16
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_CURSOR_UNDERLAY
+    cmp #SAME_VIDEO_CURSOR_MAGIC
+    bne Same_VideoSurface_Cursor_Capture__empty
+    jmp Same_VideoSurface_Cursor_Failure
+Same_VideoSurface_Cursor_Capture__empty:
+    .a8
+    jsl Same_VideoSurface_CanWrite_Far
+    bcc Same_VideoSurface_Cursor_Capture__writable
+    jmp Same_VideoSurface_Cursor_Failure
+Same_VideoSurface_Cursor_Capture__writable:
+    .a8
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY+$0E
+    lda.l SAME_VIDEO_SURFACE_ROOM
+    and #$00FF
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY+$02
+    lda.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY+$04
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY+$06
+    lda.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY+$08
+    lda.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY+$0A
+    lda.l SAME_VIDEO_CURSOR_WORK_AREA
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY+$0C
+    jsr Same_VideoSurface_Cursor_StartCopy
+Same_VideoSurface_Cursor_Capture__pixel:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_BWRAM_SURFACE_BASE,x
+    pha
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_PIXEL
+    tax
+    sep #$20
+    .a8
+    pla
+    sta.l SAME_VIDEO_CURSOR_PIXELS,x
+    rep #$20
+    .a16
+    jsr Same_VideoSurface_Cursor_NextPixel
+    bcc Same_VideoSurface_Cursor_Capture__pixel
+    jsr Same_VideoSurface_Cursor_UnionDamage
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY+$01
+    lda #SAME_VIDEO_CURSOR_MAGIC
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY
+    jmp Same_VideoSurface_Cursor_Success
+
+Same_VideoSurface_RestoreCursorUnderlay_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    cld
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_CURSOR_UNDERLAY
+    cmp #SAME_VIDEO_CURSOR_MAGIC
+    beq Same_VideoSurface_Cursor_Restore__committed
+    jmp Same_VideoSurface_Cursor_Success
+Same_VideoSurface_Cursor_Restore__committed:
+    .a8
+    rep #$20
+    .a16
+    jsr Same_VideoSurface_Cursor_Identity
+    bcc Same_VideoSurface_Cursor_Restore__identity
+    jmp Same_VideoSurface_Cursor_Discard
+Same_VideoSurface_Cursor_Restore__identity:
+    .a16
+    jsr Same_VideoSurface_Cursor_LoadValidate
+    bcc Same_VideoSurface_Cursor_Restore__valid
+    jmp Same_VideoSurface_Cursor_Failure
+Same_VideoSurface_Cursor_Restore__valid:
+    .a16
+    jsl Same_VideoSurface_CanWrite_Far
+    bcc Same_VideoSurface_Cursor_Restore__writable
+    jmp Same_VideoSurface_Cursor_Failure
+Same_VideoSurface_Cursor_Restore__writable:
+    .a16
+    jsr Same_VideoSurface_Cursor_StartCopy
+Same_VideoSurface_Cursor_Restore__pixel:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_PIXEL
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_CURSOR_PIXELS,x
+    pha
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    tax
+    sep #$20
+    .a8
+    pla
+    sta.l SAME_BWRAM_SURFACE_BASE,x
+    rep #$20
+    .a16
+    jsr Same_VideoSurface_Cursor_NextPixel
+    bcc Same_VideoSurface_Cursor_Restore__pixel
+    jsr Same_VideoSurface_Cursor_UnionDamage
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY
+    jmp Same_VideoSurface_Cursor_Success
+
+Same_VideoSurface_MergeCursorDamage_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    cld
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_CURSOR_UNDERLAY+$01
+    cmp #$01
+    beq Same_VideoSurface_Cursor_Merge__retained
+    jmp Same_VideoSurface_Cursor_Success
+Same_VideoSurface_Cursor_Merge__retained:
+    .a8
+    rep #$20
+    .a16
+    jsr Same_VideoSurface_Cursor_Identity
+    bcc Same_VideoSurface_Cursor_Merge__identity
+    jmp Same_VideoSurface_Cursor_Discard
+Same_VideoSurface_Cursor_Merge__identity:
+    .a16
+    jsr Same_VideoSurface_Cursor_LoadValidate
+    bcc Same_VideoSurface_Cursor_Merge__valid
+    jmp Same_VideoSurface_Cursor_Failure
+Same_VideoSurface_Cursor_Merge__valid:
+    .a16
+    jsr Same_VideoSurface_Cursor_UnionDamage
+    jmp Same_VideoSurface_Cursor_Success
+
+Same_VideoSurface_InvalidateCursorUnderlay_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    cld
+Same_VideoSurface_Cursor_Discard:
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY
+Same_VideoSurface_Cursor_Success:
+    rep #$30
+    .a16
+    .i16
+    plb
+    ply
+    plx
+    pla
+    plp
+    clc
+    rtl
+Same_VideoSurface_Cursor_Failure:
+    rep #$30
+    .a16
+    .i16
+    plb
+    ply
+    plx
+    pla
+    plp
+    sec
+    rtl
+
+Same_VideoSurface_Cursor_Identity:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_ROOM
+    and #$00FF
+    cmp.l SAME_VIDEO_CURSOR_UNDERLAY+$02
+    bne Same_VideoSurface_Cursor_Identity__bad
+    lda.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    cmp.l SAME_VIDEO_CURSOR_UNDERLAY+$04
+    bne Same_VideoSurface_Cursor_Identity__bad
+    clc
+    rts
+Same_VideoSurface_Cursor_Identity__bad:
+    sec
+    rts
+
+Same_VideoSurface_Cursor_LoadValidate:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_UNDERLAY+$06
+    sta.l SAME_VIDEO_CURSOR_WORK_DEST
+    lda.l SAME_VIDEO_CURSOR_UNDERLAY+$08
+    sta.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    lda.l SAME_VIDEO_CURSOR_UNDERLAY+$0A
+    sta.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    jsr Same_VideoSurface_Cursor_Validate
+    bcs Same_VideoSurface_Cursor_LoadValidate__bad
+    lda.l SAME_VIDEO_CURSOR_WORK_AREA
+    cmp.l SAME_VIDEO_CURSOR_UNDERLAY+$0C
+    bne Same_VideoSurface_Cursor_LoadValidate__bad
+    clc
+    rts
+Same_VideoSurface_Cursor_LoadValidate__bad:
+    sec
+    rts
+
+; Validate complete clipped rectangle and bounded area before any pixel write.
+Same_VideoSurface_Cursor_Validate:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    beq Same_VideoSurface_Cursor_Validate__bad
+    cmp #$0011
+    bcs Same_VideoSurface_Cursor_Validate__bad
+    lda.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    beq Same_VideoSurface_Cursor_Validate__bad
+    cmp #$0011
+    bcs Same_VideoSurface_Cursor_Validate__bad
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    and #$00FF
+    clc
+    adc.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    cmp #$0101
+    bcs Same_VideoSurface_Cursor_Validate__bad
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    xba
+    and #$00FF
+    clc
+    adc.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    cmp #$00E1
+    bcs Same_VideoSurface_Cursor_Validate__bad
+    lda.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    sta.l SAME_VIDEO_CURSOR_WORK_ROWS
+    lda #$0000
+Same_VideoSurface_Cursor_Validate__area:
+    .a16
+    clc
+    adc.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    sta.l SAME_VIDEO_CURSOR_WORK_AREA
+    lda.l SAME_VIDEO_CURSOR_WORK_ROWS
+    dec
+    sta.l SAME_VIDEO_CURSOR_WORK_ROWS
+    lda.l SAME_VIDEO_CURSOR_WORK_ROWS
+    beq Same_VideoSurface_Cursor_Validate__ok
+    lda.l SAME_VIDEO_CURSOR_WORK_AREA
+    bra Same_VideoSurface_Cursor_Validate__area
+Same_VideoSurface_Cursor_Validate__ok:
+    clc
+    rts
+Same_VideoSurface_Cursor_Validate__bad:
+    sec
+    rts
+
+Same_VideoSurface_Cursor_StartCopy:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    sta.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    lda.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    lda.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    sta.l SAME_VIDEO_CURSOR_WORK_ROWS
+    lda #$0000
+    sta.l SAME_VIDEO_CURSOR_WORK_PIXEL
+    rts
+
+; C clear => another pixel, C set => finished. Scratch never survives a call.
+Same_VideoSurface_Cursor_NextPixel:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_PIXEL
+    inc
+    sta.l SAME_VIDEO_CURSOR_WORK_PIXEL
+    lda.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    inc
+    sta.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    lda.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    dec
+    sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    bne Same_VideoSurface_Cursor_NextPixel__more
+    lda.l SAME_VIDEO_CURSOR_WORK_ROWS
+    dec
+    sta.l SAME_VIDEO_CURSOR_WORK_ROWS
+    beq Same_VideoSurface_Cursor_NextPixel__done
+    lda.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    clc
+    adc #$0100
+    sec
+    sbc.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    sta.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    lda.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
+Same_VideoSurface_Cursor_NextPixel__more:
+    clc
+    rts
+Same_VideoSurface_Cursor_NextPixel__done:
+    sec
+    rts
+
+; Damage belongs to the active surface; caller supplies either an empty or
+; valid surface rectangle. Column/Rows become exclusive new right/bottom.
+Same_VideoSurface_Cursor_UnionDamage:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    and #$00FF
+    clc
+    adc.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    xba
+    and #$00FF
+    clc
+    adc.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    sta.l SAME_VIDEO_CURSOR_WORK_ROWS
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    beq Same_VideoSurface_Cursor_UnionDamage__empty
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    beq Same_VideoSurface_Cursor_UnionDamage__empty
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    cmp.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    bcc Same_VideoSurface_Cursor_UnionDamage__right
+    sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
+Same_VideoSurface_Cursor_UnionDamage__right:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    cmp.l SAME_VIDEO_CURSOR_WORK_ROWS
+    bcc Same_VideoSurface_Cursor_UnionDamage__bottom
+    sta.l SAME_VIDEO_CURSOR_WORK_ROWS
+Same_VideoSurface_Cursor_UnionDamage__bottom:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    and #$00FF
+    cmp.l SAME_VIDEO_SURFACE_DAMAGE_X
+    bcs Same_VideoSurface_Cursor_UnionDamage__left
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
+Same_VideoSurface_Cursor_UnionDamage__left:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    xba
+    and #$00FF
+    cmp.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    bcs Same_VideoSurface_Cursor_UnionDamage__size
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    bra Same_VideoSurface_Cursor_UnionDamage__size
+Same_VideoSurface_Cursor_UnionDamage__empty:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    and #$00FF
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    xba
+    and #$00FF
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y
+Same_VideoSurface_Cursor_UnionDamage__size:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    sec
+    sbc.l SAME_VIDEO_SURFACE_DAMAGE_X
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    lda.l SAME_VIDEO_CURSOR_WORK_ROWS
+    sec
+    sbc.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    rts

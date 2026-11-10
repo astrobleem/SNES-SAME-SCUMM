@@ -72,6 +72,25 @@ class SourceCaptureComparisonTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             compare_capture(self.plan, pose, self.visual, self.backdrop, self.backdrop[:-1])
 
+    def test_builtin_cursor_is_composited_after_actor_and_clipped(self):
+        pose = dict(foot_screen=[21, 40], foot_coordinate_space='source_room',
+                    room_projection=self.projection,
+                    builtin_cursor=dict(valid=1, pending=0, visible=1, id=0,
+                                        logical_x=0, logical_y=0, left=-8, top=25, color=7))
+        actual = bytearray(self.backdrop)
+        actual[64*256+17] = 0
+        # Source X22 is skipped by the shared sample grid.
+        for y in (*range(6), *range(9, 15)):
+            actual[(25+y)*256] = 7
+        for x in range(2, 8):
+            actual[32*256+x] = 7
+        self.assertEqual(compare_capture(self.plan, pose, self.visual, self.backdrop,
+                                         bytes(actual))['different_pixels'], 0)
+        for mutation in ({'left': -7}, {'color': 44}, {'pending': 1}, {'valid': 0}):
+            invalid = dict(pose, builtin_cursor=pose['builtin_cursor'] | mutation)
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                compare_capture(self.plan, invalid, self.visual, self.backdrop, bytes(actual))
+
     def test_required_identities_match_and_fail_closed(self):
         data = b'bound bytes'
         digest = hashlib.sha256(data).hexdigest()

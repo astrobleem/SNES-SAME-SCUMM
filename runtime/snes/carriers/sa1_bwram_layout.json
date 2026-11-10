@@ -20,6 +20,16 @@
         "offset": 1536,
         "bytes": 32,
         "owner": "SCUMM palette publication state"
+      },
+      "cursor_underlay": {
+        "offset": 1568,
+        "bytes": 288,
+        "owner": "video_surface independent cursor underlay"
+      },
+      "cursor_presentation": {
+        "offset": 1856,
+        "bytes": 64,
+        "owner": "SCUMM cursor presentation state"
       }
     }
   },

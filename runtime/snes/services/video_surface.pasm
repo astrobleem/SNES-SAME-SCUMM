@@ -595,6 +595,11 @@ Same_VideoSurface_Clear__loop:
 ; source rectangle retain the previous room and must be removed.  This is a
 ; service-owned storage optimization; callers remain pixel/projection based.
 Same_VideoSurface_ClearForProjection:
+    ; Background rewrite supersedes saved cursor pixels even within one room
+    ; generation. Invalidate before both full-cover and cleared projections.
+    .if SAME_CARRIER_IS_SA1_BWRAM
+    jsl Same_VideoSurface_InvalidateCursorUnderlay_Far
+    .endif
     rep #$20
     .a16
     lda.l SAME_VIDEO_SURFACE_COPY_WIDTH
@@ -2851,3 +2856,8 @@ Same_VideoSurface_BlitIndexedRect__fail:
 ; Single opaque INDEX8 run primitive for checked costume chunks. The caller
 ; clips signed coordinates and palette-maps source slots before calling it.
 .include "opaque_run.inc.pasm"
+
+; Independent dense cursor journal; no controller/resource policy in service.
+.if SAME_VIDEO_SURFACE_AVAILABLE && SAME_CARRIER_IS_SA1_BWRAM
+.include "cursor_underlay.inc.pasm"
+.endif

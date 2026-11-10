@@ -94,6 +94,7 @@ ScummV5_Visual_Frame_Far:
       jsl Same_VideoSurface_CanWrite_Far
       bcs ScummV5_Visual_Frame__skip_actor
       jsl ScummV5_Controller_RenderActor_Far
+      jsl ScummV5_Cursor_Frame_Far
     .elseif SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $04)
       ; Semantic actor composition runs after the movement pass.  This later
       ; visual phase only services pending surface work and retries, rather
@@ -143,4 +144,8 @@ ScummV5_Visual_Frame__skip_actor:
 
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
 .include "scumm_v5_palette_far.pasm"
+.endif
+
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+.include "scumm_v5_cursor_far.pasm"
 .endif

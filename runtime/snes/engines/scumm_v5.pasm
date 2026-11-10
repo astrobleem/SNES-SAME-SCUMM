@@ -18157,6 +18157,11 @@ ScummV5_Op_CursorCommand__image_first_ok:
 ScummV5_Op_CursorCommand__image_second_ok:
     .a8
     sta.l SAME_SCUMM_C7_CURSOR_CHAR
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; Built-in cursor presentation does not yet implement glyph/hotspot
+    ; redefinition. Reject explicitly instead of displaying a false default.
+    jmp ScummV5_Op_CursorCommand__error
+    .endif
     jmp ScummV5_Op_CursorCommand__done
 ScummV5_Op_CursorCommand__hotspot:
     sep #$20
@@ -18182,6 +18187,11 @@ ScummV5_Op_CursorCommand__hotspot_second_ok:
 ScummV5_Op_CursorCommand__hotspot_third_ok:
     .a8
     sta.l SAME_SCUMM_C7_HOTSPOT_Y
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; Built-in cursor presentation does not yet implement glyph/hotspot
+    ; redefinition. Reject explicitly instead of displaying a false default.
+    jmp ScummV5_Op_CursorCommand__error
+    .endif
     jmp ScummV5_Op_CursorCommand__done
 ScummV5_Op_CursorCommand__cursor_id:
     sep #$20

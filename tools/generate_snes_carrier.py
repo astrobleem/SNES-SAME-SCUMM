@@ -73,8 +73,11 @@ def generate(
         for name, allocation in layout["protected_low"]["allocations"].items():
             from same.snes_carrier import parse_address
             address = parse_address(layout["protected_low"]["address"]) + allocation["offset"]
-            constants.append(f"SAME_SCUMM_{name.upper()} = {hex24(address)}")
-            constants.append(f"SAME_SCUMM_{name.upper()}_SIZE = ${allocation['bytes']:04X}")
+            symbol = {"cursor_underlay": "SAME_VIDEO_CURSOR_UNDERLAY",
+                      "cursor_presentation": "SAME_SCUMM_CURSOR_PRESENTATION_BASE"}.get(
+                          name, f"SAME_SCUMM_{name.upper()}")
+            constants.append(f"{symbol} = {hex24(address)}")
+            constants.append(f"{symbol}_SIZE = ${allocation['bytes']:04X}")
         names = {
             "save_reserved": "SAVE",
             "backend_reserved": "BACKEND",

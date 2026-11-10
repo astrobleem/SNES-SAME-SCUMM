@@ -61,7 +61,9 @@ Native allocation is explicit within the formerly unused low BW-RAM reservation:
 | `$40:0000–02FF` | Immutable installed source palette |
 | `$40:0300–05FF` | Ordered desired palette |
 | `$40:0600–061F` | Palette publication/control scratch |
-| `$40:0620–07FF` | Still reserved |
+| `$40:0620–073F` | Independent cursor underlay (32-byte header + 256 pixels) |
+| `$40:0740–077F` | SCUMM cursor presentation/cache state |
+| `$40:0780–07FF` | Still reserved |
 | `$40:0800–0FFF` | Existing save storage, unchanged |
 
 Incoming room preflight cannot replace the installed palette. Desired colors
@@ -177,3 +179,58 @@ At projected-actor commit `82bdbc9`, 1,274 tests pass with12 skips, make validat
 and memory audit pass, and both hosted checks pass in run `42755315305`.
 Subsequent observer-only corrections have focused regression coverage; their
 CI status must be read independently.
+
+## Live built-in cursor integration (native verification in progress)
+
+The live MSU renderer previously recorded C7 cursor state but never drew the
+cursor. The new path uses the four generic DOS-v5 built-in masks and hotspots,
+with the two-tick 15/15/7/8 color cycle. Charset commands 13/14 remain text
+semantics. Glyph/hotspot redefinition is explicitly unsupported in this
+feature configuration; no source charset is substituted. The host cursor
+module is a tested semantic/video adapter; the host interpreter has not yet
+been switched to that adapter.
+
+Logical input coordinates remain unchanged for object hit-testing. Only the
+screen hotspot uses the installed SC5VIS sampling grid; the UI mask/hotspot
+remain 16x16 screen pixels. The service saves a clipped rectangle independently
+from actor storage. It restores the cursor before actor restoration, then draws
+it last. Cursor-only movement does not reread costume data. Checked bounds,
+room generations, background replacement invalidation, rejected publication,
+error latches and retained old damage are covered by source-instruction tests.
+The new 352-byte ownership lies within the former 480-byte reservation; save
+storage, code-cache pages, room staging and resolver ownership are unchanged.
+
+First native cursor run: `/tmp/astra-cursor-native-proof-20261110`, 66.317 seconds,
+one capture, **FAIL_OR_NOT_VERIFIED**. Its INDEX8/VRAM comparison differed at
+exactly the 24 crosshair pixels. The captured indexed image contains a partially
+painted next color while the cached cursor key and VRAM contain the preceding
+completed color. The previous-generation PPU commit alone is therefore not a
+producer-completion fence. The observer must reject an in-progress composition;
+this is not evidence that a draw counter certifies a complete image.
+
+The correction adds a bounded composition-in-progress field to the existing
+cursor owner, set before restore/draw and cleared only after accepted
+publication. The actor and cursor paths both participate. The observer and
+source-image comparison reject this incomplete state. No timeout is increased,
+no story replay is added, and the failed capture is retained unchanged.
+
+### Completed cursor/actor native control
+
+The corrected control completed in **115.858 seconds**, with five captures,
+zero INDEX8/VRAM differences, zero palette differences, zero old-actor residue,
+and SCUMM error zero. All five full indexed images also match independent
+source-costume decoding, SC5VIS projection and built-in cursor composition.
+The cursor overlaps the actor during this control; moving the actor restores
+its old footprint without removing the cursor. Cursor movement through player
+input is not newly certified by this neutral-input graphics control.
+
+- `actor-proof.sfc`: `bdf6a1a2eedb8635438d9a5cf8c9b68d8f93dea0c58cc1cd1008109982055647`
+- `actor-proof.map`: `b77213363e1bf521e2d19b8245a4476c4ce2c6c67fbee767435c17b44b8c5674`
+- `actor-proof.msu`: `281589a71af44c7476d79d7109977439bc94c31832653deb9cb0eb775183297a`
+- `actor-proof.build_identity.json`: `2173418cabd0ef5a7808ad5878db2dd4302ac8e17926123974be052a39a498dd`
+
+Evidence: `/tmp/astra-cursor-fence-proof-20261110/observations`.
+Immutable source: `/tmp/astra-cursor-source._2oki1fg`.
+This remains an original synthetic SCUMM driver with externally supplied
+commercial images/costumes, not authentic story or interactive acceptance.
+The earlier failed run is retained. No payloads or captures are in Git.

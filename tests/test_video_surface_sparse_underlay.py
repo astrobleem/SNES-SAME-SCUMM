@@ -132,6 +132,7 @@ class ServiceMachine:
                 self.writes.append((address, width//8))
             elif op == 'tax': x = a & (255 if p & 0x10 else 65535)
             elif op == 'txa': result = x
+            elif op == 'tya': result = y
             elif op in ('and', 'and.l'): result = a & value
             elif op == 'ora.l': result = a | value
             elif op in ('adc', 'adc.l'):

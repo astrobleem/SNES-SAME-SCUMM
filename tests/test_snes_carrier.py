@@ -93,7 +93,7 @@ class SnesCarrierTests(unittest.TestCase):
         layout = load_carrier(ROOT, "sa1_bwram", save_enabled=True).layout
         allocations = layout["protected_low"]["allocations"]
         self.assertEqual([(r["offset"], r["bytes"]) for r in allocations.values()],
-                         [(0, 768), (768, 768), (1536, 32)])
+                         [(0, 768), (768, 768), (1536, 32), (1568, 288), (1856, 64)])
         for name, offset, size in (("room_palette_desired", 0, 768),
                                   ("room_palette_state", 2048, 32),
                                   ("room_palette_base", 0, 769)):
@@ -106,6 +106,19 @@ class SnesCarrierTests(unittest.TestCase):
             "offset": 0, "bytes": 1, "owner": "overlap"}
         with self.assertRaises(ValueError):
             layout_regions(damaged)
+
+    def test_generated_cursor_owners_are_independent_and_exact(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            self.generator.generate(carrier_name="sa1_bwram",save_enabled=True,
+                                    rom_size_code=9,output_dir=root,
+                                    manifest_path=root/"manifest.json")
+            constants=(root/"carrier_constants.inc.pasm").read_text()
+            for line in ("SAME_VIDEO_CURSOR_UNDERLAY = $400620",
+                         "SAME_VIDEO_CURSOR_UNDERLAY_SIZE = $0120",
+                         "SAME_SCUMM_CURSOR_PRESENTATION_BASE = $400740",
+                         "SAME_SCUMM_CURSOR_PRESENTATION_BASE_SIZE = $0040"):
+                self.assertIn(line,constants)
 
     def test_generated_ordinary_carrier_emits_no_boot_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -1377,6 +1377,7 @@ ScummV5_Controller_ResetVisualCache_Far:
     .i16
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     jsl ScummV5_ActorPose_Cancel_Far
+    jsl ScummV5_Cursor_Reset_Far
     .endif
     sep #$20
     .a8
@@ -1444,6 +1445,16 @@ ScummV5_Controller_RenderActor_Far:
     bne ScummV5_Controller_RenderActor__c14_ready
     jml ScummV5_Controller_RenderActor__done
 ScummV5_Controller_RenderActor__c14_ready:
+    .a8
+    rep #$20
+    .a16
+    ; A completed cursor transaction with a rejected PRESENT owns DAMAGE.
+    ; Let the cursor service publish it before a new actor restore resets it.
+    lda.l SAME_SCUMM_CURSOR_PENDING
+    beq ScummV5_Controller_RenderActor__cursor_published
+    jml ScummV5_Controller_RenderActor__done
+ScummV5_Controller_RenderActor__cursor_published:
+    sep #$20
     .a8
     .endif
     rep #$20
@@ -1521,7 +1532,10 @@ ScummV5_Controller_RenderActor__y_same:
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_COSTUME
     cmp.l SAME_SCUMM_CONTROLLER_RENDER_COSTUME
-    bne ScummV5_Controller_RenderActor__changed
+    beq ScummV5_Controller_RenderActor__costume_same
+    jmp ScummV5_Controller_RenderActor__changed
+ScummV5_Controller_RenderActor__costume_same:
+    .a8
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
     cmp.l SAME_SCUMM_CONTROLLER_RENDER_VISIBLE
     bne ScummV5_Controller_RenderActor__changed
@@ -1575,6 +1589,14 @@ ScummV5_Controller_RenderActor__retry_present_only:
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
     jsl Same_VideoSurface_PushDirtyPresent_Far
     bcs ScummV5_Controller_RenderActor__retry_done
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_CURSOR_COMPOSING
+    sep #$20
+    .a8
+    .endif
     lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
     dec
     sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
@@ -1603,8 +1625,17 @@ ScummV5_Controller_RenderActor__changed:
 ScummV5_Controller_RenderActor__compose_ready:
     .endif
 .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
-    ; The service restores the old sparse journal and seeds its damage union.
+    rep #$20
+    .a16
+    lda #$0001
+    sta.l SAME_SCUMM_CURSOR_COMPOSING
+    ; Cursor is the topmost layer: restore it before touching actor backing.
+    jsl Same_VideoSurface_RestoreCursorUnderlay_Far
+    bcs ScummV5_Controller_RenderActor__streamed_restore_retry
+    ; Actor restoration seeds a fresh damage union; re-add the cursor bounds.
     jsl Same_VideoSurface_RestoreActorUnderlay_Far
+    bcs ScummV5_Controller_RenderActor__streamed_restore_retry
+    jsl Same_VideoSurface_MergeCursorDamage_Far
     bcc ScummV5_Controller_RenderActor__compose_actor
 ScummV5_Controller_RenderActor__streamed_restore_retry:
     sep #$20
@@ -1956,6 +1987,28 @@ ScummV5_Controller_RenderActor__frame_base:
     brl ScummV5_Controller_RenderActor__present_retry
     .endif
 ScummV5_Controller_RenderActor__blit_ok:
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    jsl ScummV5_Cursor_Draw_Far
+    bcc ScummV5_Controller_RenderActor__cursor_complete
+    jml ScummV5_Controller_RenderActor__present_retry
+ScummV5_Controller_RenderActor__cursor_complete:
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    beq ScummV5_Controller_RenderActor__cursor_damage_empty
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    beq ScummV5_Controller_RenderActor__cursor_damage_empty
+    lda #$0001
+    bra ScummV5_Controller_RenderActor__cursor_damage_store
+ScummV5_Controller_RenderActor__cursor_damage_empty:
+    .a16
+    lda #$0000
+ScummV5_Controller_RenderActor__cursor_damage_store:
+    .a16
+    sep #$20
+    .a8
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_DAMAGE_ACTIVE
+    .endif
 
     ; Add the source-backed locker OBIM through the same indexed surface
     ; compositor before publishing.  State 1 is the authored opened form,
@@ -1985,6 +2038,12 @@ ScummV5_Controller_RenderActor__present_result:
     bcc ScummV5_Controller_RenderActor__present_success
     brl ScummV5_Controller_RenderActor__present_retry
 ScummV5_Controller_RenderActor__present_success:
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_CURSOR_COMPOSING
+    .endif
     sep #$20
     .a8
     lda #$00

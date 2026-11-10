@@ -144,6 +144,7 @@ def pose_is_presented(raw: bytes, *, render_valid: int,
                       backend_state: int, surface_locked: int,
                       pending_visual: int, presented_room: int, room: int,
                       surface_packets_pending: bool,
+                      composition_active: int = 0,
                       expected_frame: int | None = None,
                       expected_facing: int | None = None,
                       expected_x: int | None = None) -> bool:
@@ -156,7 +157,7 @@ def pose_is_presented(raw: bytes, *, render_valid: int,
     requires the Mode-3 backend to have committed the exact surface generation
     and to be idle, unlocked, and free of queued surface packets.
     """
-    if len(raw) < 0x7F or raw[1] not in (0, 2) or raw[0x6B] != 1:
+    if composition_active or len(raw) < 0x7F or raw[1] not in (0, 2) or raw[0x6B] != 1:
         return False
     if (not render_valid or next_generation == 0
             or backend_pending_generation != next_generation
@@ -408,7 +409,8 @@ def actor_bounds_on_surface(raw: bytes, projection: dict | None = None) -> tuple
 
 
 def capture_surface(session, directory: Path, label: str,
-                    backdrop: bytes, *, projection: dict | None = None) -> dict:
+                    backdrop: bytes, *, projection: dict | None = None,
+                    cursor_base: int | None = None) -> dict:
     pixels = session.read_memory("snesMemory", SURFACE, 256 * 224)
     palette = session.read_memory("snesMemory", PALETTE, 768)
     require(len(pixels) == len(backdrop), "incomplete indexed surface read")
@@ -497,6 +499,17 @@ def capture_surface(session, directory: Path, label: str,
         "foot_coordinate_space": "source_room" if projection is not None else "surface",
         "room_projection": projection,
     }
+    if cursor_base is not None:
+        cursor = session.read_memory("snesMemory", cursor_base, 64)
+        present["builtin_cursor"] = {
+            "valid": read_u16(cursor, 0), "logical_x": read_u16(cursor, 2),
+            "logical_y": read_u16(cursor, 4), "id": read_u16(cursor, 6),
+            "color": read_u16(cursor, 8), "visible": read_u16(cursor, 10),
+            "room_generation": read_u16(cursor, 12), "pending": read_u16(cursor, 14),
+            "composing": read_u16(cursor, 56),
+            "left": int.from_bytes(cursor[16:18], 'little', signed=True),
+            "top": int.from_bytes(cursor[18:20], 'little', signed=True),
+        }
     actual_visible_pixels = sum(1 for i in changed
                                 if actor_bounds[0] <= i % 256 < actor_bounds[2]
                                 and actor_bounds[1] <= i // 256 < actor_bounds[3])
@@ -515,11 +528,12 @@ def capture_surface(session, directory: Path, label: str,
 
 class ProbeObserver:
     def __init__(self, session, output: Path, backdrop: bytes, *, deadline: float,
-                 projection: dict | None = None):
+                 projection: dict | None = None, cursor_base: int | None = None):
         self.session = session
         self.output = output
         self.backdrop = backdrop
         self.projection = projection
+        self.cursor_base = cursor_base
         self.deadline = deadline
         self.logical_frames = 0
         self.last_state = {}
@@ -605,6 +619,7 @@ class ProbeObserver:
             "mode3_inflight_count": self.session.read_u16(MODE3_INFLIGHT_COUNT),
             "event_count": self.session.read_u16(EVENT_COUNT),
             "surface_packets_pending": read_surface_packets_pending(self.session),
+            "composition_active": self.session.read_u16(self.cursor_base + 56) if self.cursor_base is not None else 0,
             "actor_witness_generation": self.session.read_u16(0x7E5E68),
             "actor_witness_valid": self.session.read_u8(0x7E5E6A),
             "scumm_pc": self.session.read_u16(0x7E2300),
@@ -815,6 +830,7 @@ class ProbeObserver:
                 presented_room=state["surface_presented_room"],
                 room=state["room"],
                 surface_packets_pending=state["surface_packets_pending"],
+                composition_active=state.get("composition_active", 0),
                 expected_frame=expected_frame,
                 expected_facing=expected_facing,
                 expected_x=expected_x,
@@ -848,7 +864,8 @@ class ProbeObserver:
                     presented_room=state["surface_presented_room"],
                     room=state["room"],
                     surface_packets_pending=state["surface_packets_pending"],
-                    expected_frame=expected_frame,
+                    composition_active=state.get("composition_active", 0),
+                expected_frame=expected_frame,
                     expected_facing=expected_facing,
                     expected_x=expected_x,
                 )
@@ -879,7 +896,7 @@ class ProbeObserver:
                                          expected_facing=expected_facing,
                                          expected_x=expected_x)
         record = capture_surface(self.session, self.output, label, self.backdrop,
-                                 projection=self.projection)
+                                 projection=self.projection, cursor_base=self.cursor_base)
         record["vm"] = state
         require(record["pose"]["actor_composed"] == 1
                 and record["pose"]["actor_pose_state"] in (0, 2)
@@ -1514,9 +1531,14 @@ def main() -> int:
             projection = (source_records["visual"].get("projection")
                           if "ScummV5_ActorPose_ProjectSpan_Far" in args.listing.read_text()
                           else None)
+            cursor_base = None
+            if "ScummV5_Cursor_Draw_Far" in args.listing.read_text():
+                carrier = (args.build_source / "runtime/snes/generated/carrier_constants.inc.pasm").read_text()
+                cursor_base = eq_symbol(carrier, "SAME_SCUMM_CURSOR_PRESENTATION_BASE")
+                require(cursor_base == 0x400740, "unexpected cursor owner in matching assembly")
             observer = ProbeObserver(session, args.output, backdrop,
                                      deadline=started + INTERNAL_DEADLINE_SECONDS,
-                                     projection=projection)
+                                     projection=projection, cursor_base=cursor_base)
             if args.room_commit_trace_probe:
                 trace = None
                 while observer.logical_frames < 2400:

@@ -218,6 +218,18 @@ def audit() -> dict[str, Any]:
         raise ValueError("actor-underlay scratch must end before persistent room readiness")
     if "SAME_VIDEO_DIAG_BASE                  = $7E5E90" not in video_surface_source:
         raise ValueError("actor-underlay scratch no longer meets the declared video diagnostic boundary")
+    cursor_source = (ROOT / "runtime/snes/services/cursor_underlay.inc.pasm").read_text()
+    for api in ("CaptureCursorUnderlay", "RestoreCursorUnderlay", "MergeCursorDamage",
+                "InvalidateCursorUnderlay"):
+        if f"Same_VideoSurface_{api}_Far:" not in cursor_source:
+            raise ValueError(f"cursor underlay API missing: {api}")
+    if ('SAME_VIDEO_CURSOR_HEADER_SIZE = $0020' not in cursor_source
+            or 'SAME_VIDEO_CURSOR_PAYLOAD_SIZE = $0100' not in cursor_source
+            or '.include "cursor_underlay.inc.pasm"' not in video_surface_source):
+        raise ValueError("cursor underlay header/payload/include differs from ownership")
+    if any(symbol in cursor_source for symbol in ("SAME_SCUMM_CURSOR_PRESENTATION",
+                                                 "SAME_SCUMM_ACTOR_POSE_")):
+        raise ValueError("cursor service must not borrow engine/actor memory")
     sparse_apis = ("RestoreActorUnderlay", "BeginActorUnderlay", "CaptureActorRun",
                    "CommitActorUnderlay", "InvalidateActorUnderlay")
     for api in sparse_apis:

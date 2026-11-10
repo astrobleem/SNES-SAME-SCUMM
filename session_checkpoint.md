@@ -1,3 +1,27 @@
+# Active checkpoint — authentic room integration, 2026-11-10
+
+PR #13 is merged through protected main at 99127067. Current work is draft
+PR #14, scumm-fate-authentic-room. Progression recovery worktree is untouched.
+
+Completed generic graphics work: sparse actor underlay, source-grid projection,
+ordered room-palette intent, and live v5 built-in cursor composition. The latest
+native control completed five actor/cursor frames in 115.858 seconds; source
+INDEX8, VRAM/CGRAM and restoration comparisons are exact, error zero. It is a
+synthetic graphics driver, NOT authentic interactive gameplay. Evidence and
+ROM/map/package identities are in docs/scumm-toolchain/AUTHENTIC_ROOM_INTEGRATION.md.
+No commercial captures/payloads are committed.
+
+Original-script startup is still NOT_VERIFIED for a visible interactive actor.
+Two previous original-script runs stopped on Nexen's per-call frame budget,
+without SCUMM error; no automatic retry. Offline evidence shows room4 ENCD
+hides Indy, then Local206 waits on201 and129 before authored entrance. Local206's
+final saved PC was not captured. Do not investigate Global94/Local213 or repeat
+the seven actions. The next original-scene observation must capture saved PCs
+and resource ownership, not merely wait for an image. All native diagnostics
+remain privately supervised with a600-second process-tree cap.
+
+---
+
 # SAME / SCUMM v5 session checkpoint
 
 ## Authentic-room integration checkpoint (2026-11-10)

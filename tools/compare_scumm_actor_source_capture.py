@@ -89,6 +89,31 @@ def compare_capture(plan: PosePlan, pose: dict, visual: dict,
     elif space != 'surface':
         raise ValueError(f'unknown foot coordinate space: {space}')
     expected = render_reference(backdrop, width, height, plan, anchor_x=fx, anchor_y=fy)
+    cursor = pose.get('builtin_cursor')
+    if cursor is not None:
+        from same.engines.scumm_v5.cursor import MASKS, HOTSPOTS, COLORS
+        from bisect import bisect_left
+        if cursor['valid'] != 1 or cursor['pending'] != 0 or cursor.get('composing', 0):
+            raise ValueError('cursor composition is not committed')
+        if cursor['visible'] not in (0, 1) or cursor['id'] not in range(4):
+            raise ValueError('invalid cursor visibility or ID')
+        if cursor['visible']:
+            if space != 'source_room' or cursor['color'] not in COLORS:
+                raise ValueError('cursor requires source projection and a builtin color')
+            lx, ly = cursor['logical_x'], cursor['logical_y']
+            lx, ly = (v - 65536 if v > 32767 else v for v in (lx, ly))
+            px = bisect_left([(2*i+1)*sw//(2*cw) for i in range(cw)], max(0, lx))
+            py = bisect_left([(2*i+1)*sh//(2*ch) for i in range(ch)], max(0, ly))
+            hx, hy = HOTSPOTS[cursor['id']]
+            left, top = px + (width-cw)//2 - hx, py + (height-ch)//2 - hy
+            if (left, top) != (cursor['left'], cursor['top']):
+                raise ValueError('cursor projection/hotspot differs from reference')
+            composed = bytearray(expected)
+            for i, covered in enumerate(MASKS[cursor['id']]):
+                x, y = left+i%16, top+i//16
+                if covered and 0 <= x < width and 0 <= y < height:
+                    composed[y*width+x] = cursor['color']
+            expected = bytes(composed)
     return dict(different_pixels=sum(a != b for a, b in zip(actual, expected)),
                 captured_indexed_sha256=sha(actual), source_reference_sha256=sha(expected),
                 foot_coordinate_space=space)

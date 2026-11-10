@@ -14,7 +14,9 @@ class SparseUnderlayAuditTests(unittest.TestCase):
         self.assertEqual([(r['name'],r['start'],r['end_exclusive'],r['bytes']) for r in rows], [
             ('room_palette_base','$400000','$400300',768),
             ('room_palette_desired','$400300','$400600',768),
-            ('room_palette_state','$400600','$400620',32)])
+            ('room_palette_state','$400600','$400620',32),
+            ('cursor_underlay','$400620','$400740',288),
+            ('cursor_presentation','$400740','$400780',64)])
         self.assertTrue(all(r['disjoint_from_save'] for r in rows))
         self.assertEqual(report['bwram_save_reserved'],
                          {'start':'$400800','end_exclusive':'$401000','bytes':2048})
@@ -30,6 +32,20 @@ class SparseUnderlayAuditTests(unittest.TestCase):
             with patch.object(Path, 'read_text', replacement):
                 with self.assertRaisesRegex(ValueError,'palette allocation'):
                     audit.audit()
+
+    def test_cursor_owners_reject_overlap_and_save_intrusion(self):
+        path = audit.ROOT / 'runtime/snes/carriers/sa1_bwram_layout.json'
+        original = Path.read_text
+        for name, offset, size in [('cursor_underlay',1536,288),
+                                   ('cursor_underlay',1568,481),
+                                   ('cursor_presentation',1800,64),
+                                   ('cursor_presentation',2048,64)]:
+            layout=json.loads(original(path))
+            layout['protected_low']['allocations'][name].update(offset=offset,bytes=size)
+            def replacement(file,*args,**kwargs):
+                return json.dumps(layout) if file==path else original(file,*args,**kwargs)
+            with patch.object(Path,'read_text',replacement), self.assertRaises(ValueError):
+                audit.audit()
 
     def test_obsolete_capture_api_cannot_satisfy_audit(self):
         path = audit.ROOT / 'runtime/snes/services/video_surface.pasm'
