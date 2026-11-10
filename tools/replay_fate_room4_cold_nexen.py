@@ -1857,6 +1857,39 @@ def _finish_room4_intro(session: Any, *, max_frames: int,
     )
 
 
+def _authentic_cursor_base(rom: Path, identity: dict[str, Any]) -> int | None:
+    """Resolve cursor observation memory only from this ROM's sealed inputs."""
+    listing_path = rom.with_suffix(".lst")
+    listing_record = identity.get("native_symbols", {}).get("listing", {})
+    listing = _read_identity_bound_generated_input(listing_path, listing_record.get("sha256", ""))
+    if "ScummV5_Cursor_Draw_Far" not in listing:
+        return None
+    if hashlib.sha256(rom.read_bytes()).hexdigest() != identity.get("rom", {}).get("sha256"):
+        raise RuntimeError("cursor observer ROM differs from build identity")
+    inputs_path = rom.with_suffix(".poppy-inputs.json")
+    rows = [row for row in identity.get("generated_inputs", [])
+            if Path(row.get("path", "")).name == inputs_path.name]
+    if len(rows) != 1:
+        raise RuntimeError("cursor observer requires one identity-bound Poppy input manifest")
+    sealed = _generated_input_identity(identity, rows[0]["path"])
+    inputs = json.loads(_read_identity_bound_generated_input(inputs_path, sealed["sha256"]))
+    source = Path(identity["git"]["worktree"])
+    texts = {}
+    for relative in ("runtime/snes/kernel/memory.pasm",
+                     "runtime/snes/generated/carrier_constants.inc.pasm"):
+        matches = [row for row in inputs.get("inputs", [])
+                   if row.get("kind") == "ASSEMBLY_INCLUDE" and row.get("path") == relative]
+        if len(matches) != 1:
+            raise RuntimeError(f"cursor observer assembly contract missing: {relative}")
+        texts[relative] = _read_identity_bound_generated_input(source / relative, matches[0]["sha256"])
+    carrier = texts["runtime/snes/generated/carrier_constants.inc.pasm"]
+    matches = re.findall(r"^\s*SAME_SCUMM_CURSOR_PRESENTATION_BASE\s*=\s*\$([0-9A-Fa-f]+)\b",
+                         carrier, re.MULTILINE)
+    if len(matches) != 1 or int(matches[0], 16) != 0x400740:
+        raise RuntimeError("cursor observer requires the matching $400740 engine owner")
+    return int(matches[0], 16)
+
+
 def arm_startup_trace(session: Any, *, enabled: bool) -> dict[str, Any]:
     # Nexen's first trace_log call ENABLES continuous instruction logging.
     # Graphics capture does not need it; do not impose that CPU overhead.
@@ -1869,9 +1902,12 @@ def arm_startup_trace(session: Any, *, enabled: bool) -> dict[str, Any]:
 
 def _cold_wait_room4(session: Any, max_frames: int, *,
                      require_interactive: bool = True, trace_enabled: bool = True,
+                     frame_step: int = 16,
                      progress_callback: Any | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     from fate_replay import advance_bounded
 
+    if type(frame_step) is not int or not 1 <= frame_step <= 16:
+        raise ValueError("cold-start frame_step must be an integer in 1..16")
     transitions: list[dict[str, Any]] = []
     progress: list[dict[str, Any]] = []
     last_room: int | None = None
@@ -1909,8 +1945,8 @@ def _cold_wait_room4(session: Any, max_frames: int, *,
         # boot lifecycle to install the target room, so a wider polling slice
         # cannot skip an input edge or transition. The state is monotonic here:
         # once room 4 is settled it remains the accepted checkpoint.
-        # The room and error words above are sampled every sixty frames. The
-        # full resolver/slot census is much more expensive over Nexen's RPC
+        # Room/error words are sampled each slice. The full resolver/slot
+        # census is much more expensive over Nexen's RPC
         # interface, so inspect it periodically and at the accepted endpoint
         # without changing a single emulated frame or controller submission.
         if elapsed % 60 == 0:
@@ -1933,6 +1969,7 @@ def _cold_wait_room4(session: Any, max_frames: int, *,
                 "phase": phase,
                 "error": error,
                 "lifecycle": lifecycle,
+                "active_c4": [dict(slot) for slot in state.get("slots", [])],
                 "global74_status": global74.get("status"),
                 "global74_pc": global74.get("saved_pc"),
                 "global74_delay": global74.get("delay"),
@@ -2026,7 +2063,7 @@ def _cold_wait_room4(session: Any, max_frames: int, *,
         # Keep debugger-assisted/native-frame batches below the emulator's
         # wall-clock timeout even while room scripts and checked IO are busy.
         try:
-            advanced = advance_bounded(session, min(16, max_frames - elapsed))
+            advanced = advance_bounded(session, min(frame_step, max_frames - elapsed))
         except Exception as exc:
             if progress_callback is not None:
                 failure = {"error": str(exc), "transitions": transitions}
@@ -3411,12 +3448,15 @@ def main() -> int:
                     session.remove_hook(fault_hook)
             def preserve_startup_progress(observation: dict[str, Any]) -> None:
                 report["startup_last_observation"] = observation
+                if "sample" in observation:
+                    report.setdefault("startup_progress", []).append(observation["sample"])
                 args.output.write_text(json.dumps(report, indent=2) + "\n")
 
             ready, transitions = _cold_wait_room4(
                 session, args.startup_frames,
                 require_interactive=not args.capture_room4_actor_entry,
                 trace_enabled=not graphics_only,
+                frame_step=4 if graphics_only else 16,
                 progress_callback=preserve_startup_progress if graphics_only else None)
             report["room_transitions"] = transitions
             report["room4_ready"] = ready
@@ -3457,15 +3497,26 @@ def main() -> int:
                               else None)
                 observer = ProbeObserver(session, capture_dir, backdrop,
                                          deadline=time.monotonic() + 120,
-                                         projection=projection)
+                                         projection=projection,
+                                         cursor_base=_authentic_cursor_base(rom, build_identity),
+                                         evidence_kind=evidence_class, frame_step=4)
                 state = observer.wait_presented_pose(max_frames=1200)
                 capture = capture_surface(session, capture_dir, "authentic-room4-entry", backdrop,
-                                          projection=projection)
+                                          projection=projection, cursor_base=observer.cursor_base)
                 report["actor_entry"] = {"state": state, "capture": capture}
                 if capture["ppu_indexed_differences"] or capture["cgram_difference_bytes"]:
                     raise RuntimeError("authentic entry PPU differs from indexed presentation")
                 if capture["actor_bound_difference_pixels"] < 40:
                     raise RuntimeError("authentic entry actor is not visibly distinguishable")
+                checkpoint = capture_dir / "authentic-scene.state"
+                report["scene_checkpoint"] = {
+                    "path": str(checkpoint), "rom_sha256": rom_sha,
+                    "package_sha256": storage["package_sha256"],
+                    "save_result": session.save_state(checkpoint),
+                    "restoration_status": "NOT_VERIFIED",
+                }
+                if checkpoint.is_file():
+                    report["scene_checkpoint"]["sha256"] = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
                 report["result"] = "ACTOR_SCENE_CAPTURED_NOT_OBJECT_GAMEPLAY_ACCEPTANCE"
                 if pcm_capture_path is not None:
                     report["pcm_capture_stop"] = session.stop_audio()

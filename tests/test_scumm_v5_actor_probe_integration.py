@@ -19,6 +19,43 @@ from tools.validate_scumm_actor_visual_probe_nexen import (
 
 
 class ActorProbeIntegrationTests(unittest.TestCase):
+    def test_probe_advance_accounts_actual_progress_and_never_retries_timeout(self):
+        import time
+        from unittest.mock import Mock
+        from tools.validate_scumm_actor_visual_probe_nexen import ProbeObserver
+
+        class Session:
+            def __init__(self, timeout):
+                self.frame = 0
+                self.calls = 0
+                self.timeout = timeout
+            def get_state(self):
+                return {'frameCount': self.frame}
+            def run_frames(self, count):
+                self.calls += 1
+                self.frame += count - int(self.timeout)
+                return {'framesAdvanced': count-int(self.timeout), 'timedOut': self.timeout}
+
+        for timeout in (False, True):
+            observer = object.__new__(ProbeObserver)
+            observer.deadline = time.monotonic()+10
+            observer.logical_frames = 0
+            observer.frame_step = 4
+            observer.session = Session(timeout)
+            observer.last_state = {}
+            observer.read_scene = Mock(return_value={'captured': True})
+            observer._persist_progress_sample = Mock()
+            if timeout:
+                with self.assertRaisesRegex(RuntimeError, 'timed out'):
+                    observer.advance(4)
+                self.assertEqual(observer.logical_frames, 0)
+            else:
+                self.assertEqual(observer.advance(4), {'captured': True})
+                self.assertEqual(observer.logical_frames, 4)
+            self.assertEqual(observer.session.calls, 1)
+            observer._persist_progress_sample.assert_called_once_with({'captured': True})
+
+
     def test_projection_header_bank_is_verified_in_actual_rom_bytes(self) -> None:
         listing = ("; ScummV5_ActorPose_Compose__header_in_range = $9000 (Label)\n"
                    "; ScummV5_ActorPose_Compose__geometry_check_10 = $9040 (Label)\n"

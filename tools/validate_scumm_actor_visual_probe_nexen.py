@@ -528,12 +528,18 @@ def capture_surface(session, directory: Path, label: str,
 
 class ProbeObserver:
     def __init__(self, session, output: Path, backdrop: bytes, *, deadline: float,
-                 projection: dict | None = None, cursor_base: int | None = None):
+                 projection: dict | None = None, cursor_base: int | None = None,
+                 evidence_kind: str = "SYNTHETIC_GRAPHICS_DIAGNOSTIC",
+                 frame_step: int = POLL_FRAMES):
         self.session = session
         self.output = output
         self.backdrop = backdrop
         self.projection = projection
         self.cursor_base = cursor_base
+        self.evidence_kind = evidence_kind
+        if not 1 <= frame_step <= POLL_FRAMES:
+            raise ValueError("observer frame_step must be 1..30")
+        self.frame_step = frame_step
         self.deadline = deadline
         self.logical_frames = 0
         self.last_state = {}
@@ -548,6 +554,15 @@ class ProbeObserver:
         numbers = self.session.read_memory("snesMemory", C4_NUMBER, 25)
         selectors = self.session.read_memory("snesMemory", C4_PROGRAM, 25)
         resident = self.session.read_memory("snesMemory", RESIDENT_IDS, 178 * 2)
+        saved_pcs = self.session.read_memory("snesMemory", 0x7E23E4, 50)
+        active_slots = []
+        for i, (status, number, selector) in enumerate(zip(statuses, numbers, selectors)):
+            if not status:
+                continue
+            index = selector_index(selector)
+            active_slots.append(dict(slot=i, status=status, script_number=number,
+                                     selector=selector, saved_pc=read_u16(saved_pcs, i*2),
+                                     program_unit_id=read_u16(resident, index*2)))
         activation = None
         for slot, (status, number, selector) in enumerate(zip(statuses, numbers, selectors)):
             if not status or number != 1:
@@ -627,6 +642,10 @@ class ProbeObserver:
             "program_select": self.session.read_u8(0x7E2362),
             "c4_current_slot": self.session.read_u8(0x7E2A88),
             "c4_active_count": self.session.read_u8(0x7E2A8A),
+            "active_slots": active_slots,
+            "c19_depth": self.session.read_u8(0x7FD348),
+            "c19_overrides": self.session.read_memory("snesMemory", 0x7FD354, 15).hex(),
+            "talk_active": self.session.read_u8(0x7E7A20),
             "c4_statuses": list(statuses),
             "c4_numbers": list(numbers),
             "c4_selectors": list(selectors),
@@ -661,8 +680,21 @@ class ProbeObserver:
         if self.logical_frames + count > MAX_LOGICAL_FRAMES:
             count = MAX_LOGICAL_FRAMES - self.logical_frames
         require(count > 0, f"logical-frame budget exhausted; last={self.last_state}")
-        self.session.run_frames(count)
-        self.logical_frames += count
+        from fate_replay import advance_bounded
+        try:
+            remaining = count
+            while remaining:
+                if time.monotonic() >= self.deadline:
+                    raise TimeoutError("observer wall-clock deadline")
+                actual = advance_bounded(self.session, min(remaining, self.frame_step))
+                self.logical_frames += actual["frames_advanced"]
+                remaining -= actual["frames_advanced"]
+        except Exception:
+            # Preserve the observed boundary; never turn partial progress into
+            # the requested frame count or automatically retry a failed call.
+            self.last_state = self.read_scene()
+            self._persist_progress_sample(self.last_state)
+            raise
         state = self.read_scene()
         self._persist_progress_sample(state)
         return state
@@ -672,6 +704,11 @@ class ProbeObserver:
         provider = state["provider_bytes"]
         sample = {
             "logical_frame": state["logical_frame"],
+            "active_slots": state.get("active_slots", []),
+            "c19_depth": state.get("c19_depth"),
+            "c19_overrides": state.get("c19_overrides"),
+            "talk_active": state.get("talk_active"),
+            "composition_active": state.get("composition_active"),
             "room": state["room"],
             "error": state["error"],
             "lifecycle": state["lifecycle"],
@@ -707,7 +744,7 @@ class ProbeObserver:
         self.progress.append(sample)
         path = self.output / "actor-progress.json"
         temp = path.with_suffix(".json.tmp")
-        temp.write_text(json.dumps({"kind": "SYNTHETIC_GRAPHICS_DIAGNOSTIC",
+        temp.write_text(json.dumps({"kind": self.evidence_kind,
                                     "samples": self.progress}, indent=2) + "\n")
         temp.replace(path)
 
