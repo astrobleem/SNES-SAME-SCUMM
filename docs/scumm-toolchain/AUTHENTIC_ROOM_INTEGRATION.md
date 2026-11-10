@@ -5,6 +5,27 @@ Main's hosted run [42749057867](https://github.com/astrobleem/SNES-SAME-SCUMM/ac
 passed. This branch continues from that commit; the historical progression
 recovery worktree and experimental baseline tag remain unchanged.
 
+## Current authentic-room result
+
+The complete 2,203-ProgramUnit package now runs original startup into room 4
+and presents Indy against the original indexed room background, with the live
+controller cursor. This is original SCUMM startup, not the synthetic costume
+script. No object action or seven-action route was needed for this capture.
+The source decoder comparison has **zero differing pixels**; the captured
+surface versus VRAM and palette versus CGRAM also have zero differences.
+This proves an integrated scene, not complete gameplay or all palette effects.
+
+A matching-ROM/package emulator checkpoint restored the exact INDEX8 hash and
+actor state. One normal Right edge moved the cursor from (117,138) to (119,138);
+a subsequent completed capture matched VRAM/CGRAM exactly. No guest-state writes
+were used. A later empty-floor A click did not yet start walking and remains a
+failed control, not gameplay acceptance. The generated hit-test's byte-count
+comparison is corrected in source; native movement verification is pending. Text, verbs and inventory are not yet
+visibly usable in this build.
+
+The following sections retain earlier evidence chronologically; older
+NOT_VERIFIED statements are scoped to their named ROMs, not this capture.
+
 ## Sparse source poses
 
 The opening source costume has 100 cooked poses, 78 nonempty. Its largest
@@ -296,3 +317,64 @@ The observer also mislabeled address7E2364 (C1_HOLD_AFTER) as VM PC. It now
 reads the true PC at7E2300 and reports the hold field under its own name.
 Thus the failed capture's42496 value was not a corrupted VM PC; actual PC13625
 matched the saved Global1 continuation. No historical report is rewritten.
+
+## Authentic original-script scene and restored input
+
+Corrected native capture: `/tmp/astra-authentic-coldinit-scene-20261110`.
+The private supervised run took324.963 seconds and exited normally. Room4,
+RUNNING, error0; actor1 is at(117,138), costume2, frame6, facing180, scale255.
+Presentation producer/pending/committed generation47 agrees; backend is idle,
+unlocked, queue empty, with zero rejected PRESENT/dirty/palette packets.
+
+- ROM `dca4509f1f21e64bef7104469b982c1c16e3a5a207708ef23dc9b372a89ec8aa`
+- Map `7c9bb2db3bf8c767a9f0b11c893abe2cdd04f51131425a86f7e3e103ba57c461`
+- SAMEPKG `9f66adacf15836f2fdf1ea10485199e43f5b606deb49e26ba4b493aa12e622d0`
+- Build identity `60ccabf6095dc5308c6e48df461b681988c251c9f7f1b2ebb8e441e4d9d7ce`
+- INDEX8 `6e66d01fe602c0b4e791528656a521802076fa2bc3e5cd788d31a113c940d7ed`
+- Original costume source `07e0c506e7d365e7210a6e8b380fa5e6b571d141aee4a476e61490d6b8ca0f2e`
+
+The immutable build snapshot is1048878bacfbcc00d3a646e2881577c22d869ad7,
+not the later publication commit. All35 tracked assembly inputs match
+1ffb289adfb4e5e8ab90aeaa329a5e9f82a3471e byte-for-byte; the identity retains
+its actual snapshot provenance. Local linkage evidence:
+`/tmp/astra-authentic-native-source-linkage.json`.
+
+Offline source comparison `/tmp/astra-authentic-room4-source-comparison.json`
+uses the original costume decoder, stored SC5VIS backdrop, source-grid projection
+and builtin cursor. It checks the restored override mask: none of the16 used
+source palette slots is overridden. It does not mistake phase-local palette
+scratch for persistent metadata. Commercial captures remain outside Git.
+
+The first checkpoint-input attempt failed on a Python predicate-arity error.
+The second verified the Right edge but the observer skipped its final allowed
+boundary and demanded a future frame after the current committed frame; a new
+composition could invalidate that artificial stability requirement. Actual-method
+host tests now cover terminal readiness, terminal failure and no future advance.
+The strict generation/lock/queue/composition fence is unchanged. Historical
+failed reports remain unchanged. The corrected observer captured Right input
+and exact indexed/PPU output in `/tmp/astra-authentic-room4-walk-20261110` before
+that run stopped on the separate floor-click failure (50.163 seconds total).
+
+Hosted run [42762004285](https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/42762004285)
+passed both jobs on1ffb289:1,344 tests,12skips, static validation, pinned Poppy
+assembly and ROM audit. GitHub-hosted checks do not execute Nexen.
+
+## Next text capability boundary
+
+Original startup selects a2bpp charset. The current native SC5FNT consumer is
+binary-mask-only, hardcodes Font0 and has an80x8 overlay. Authentic charset1
+includes glyphs taller/wider than that contract; charset2 needs source-slot
+color mapping and authored charset selection. The current build has text
+presentation disabled. A visible cursor and actor are not a usable verb panel.
+The bounded next integration must extend the existing font cooker/glyph service
+and projection, not substitute fake dialogue or a second renderer.
+
+The opt-in source decoder now preserves continuous MSB-first1/2/4bpp slots,
+including nonzero slots mapped to screen color zero. Its authority is ScummVM
+`CharsetRendererClassic::drawBitsN`, source revision
+`10a54c2696126a81ee2b2f7f10b1a8be90ed7711`. Existing binary-mask consumers
+still reject multibit input before drawing/cooking; this is source-decoding
+coverage, not native text support. The actual external-source census gives
+charset1:110 glyphs, max13x16; charset2:108 glyphs, max39x10. Original byte
+identity and measurements are retained locally in
+`/tmp/astra-authentic-charset-source-audit.json`.

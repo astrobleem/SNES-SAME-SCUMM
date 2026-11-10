@@ -1,24 +1,38 @@
-# Active checkpoint — authentic room integration, 2026-11-10
+# Active checkpoint — authentic room and controller integration
 
-PR #13 is merged through protected main at 99127067. Current work is draft
-PR #14, scumm-fate-authentic-room. Progression recovery worktree is untouched.
+PR #13 is merged through protected main at99127067. Active draft PR #14 is
+scumm-fate-authentic-room. The separate progression recovery worktree and
+baseline tag remain unchanged.
 
-Completed generic graphics work: sparse actor underlay, source-grid projection,
-ordered room-palette intent, and live v5 built-in cursor composition. The latest
-native control completed five actor/cursor frames in 115.858 seconds; source
-INDEX8, VRAM/CGRAM and restoration comparisons are exact, error zero. It is a
-synthetic graphics driver, NOT authentic interactive gameplay. Evidence and
-ROM/map/package identities are in docs/scumm-toolchain/AUTHENTIC_ROOM_INTEGRATION.md.
-No commercial captures/payloads are committed.
+Original full-source startup (no synthetic script overlay) now presents Indy
+and the live cursor on the authentic room-4 backdrop. Exact source INDEX8,
+VRAM and CGRAM comparisons pass. A matching native savestate restores that
+scene exactly, and a normal Right edge moves the cursor with the same exact
+visual comparisons. Evidence identities and chronology are in
+`docs/scumm-toolchain/AUTHENTIC_ROOM_INTEGRATION.md`. Commercial captures stay
+outside Git. This is integrated scene acceptance, not full gameplay.
 
-Original-script startup is still NOT_VERIFIED for a visible interactive actor.
-Two previous original-script runs stopped on Nexen's per-call frame budget,
-without SCUMM error; no automatic retry. Offline evidence shows room4 ENCD
-hides Indy, then Local206 waits on201 and129 before authored entrance. Local206's
-final saved PC was not captured. Do not investigate Global94/Local213 or repeat
-the seven actions. The next original-scene observation must capture saved PCs
-and resource ownership, not merely wait for an image. All native diagnostics
-remain privately supervised with a600-second process-tree cap.
+A first empty-floor A click failed to start movement. Inspection found a real
+generated hit-test defect: its16-bit comparison consumed the u8 object count
+and adjacent dirty counter. Commit6c7e074 zero-extends the count and makes
+last-record flag reads byte-sized. Guarded instruction tests cover all256 dirty
+values, empty/single/full200-record tables and first/last hits. New ROM
+3a5bb3f177a4cf35b8a89caacd52e56ce7bf98177346791d234743efebabd19f
+assembled and passed ROM audit. Its fresh bounded room-4 checkpoint is being
+collected; never load the previous ROM's saved state into this build.
+
+Observer881b5ea evaluates the exact terminal budget boundary and captures an
+already committed paused frame instead of advancing into the next composition.
+All generation/queue/lock guards remain. Tests exercise the actual observer.
+Source charset decoder eb7454a preserves1/2/4bpp source slots with opt-in;
+binary-only host/cooked consumers still reject multibit fonts. Native text,
+verbs, inventory, scaling, multiple actors and foreground masks remain unfinished.
+
+Local full suite1357 tests/12skips passes. Hosted1ffb289 passed1344/12 plus
+pinned assembly/ROM audit, run42762004285. New-head hosted results must be
+recorded separately. No seven-action route, room7 or Local213 investigation.
+Each native session remains isolated, single-client and at most600seconds;
+no unchanged retry. Current walking diagnostic budget is180seconds.
 
 ---
 
