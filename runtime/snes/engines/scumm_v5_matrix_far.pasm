@@ -6182,6 +6182,10 @@ ScummV5_Talk_Begin_Far__scan_done_common:
 ScummV5_Talk_Begin_Far__message_ready:
     sep #$20
     .a8
+    ; An accepted authored message owns TALK_RAW, including spontaneous talk
+    ; with no controller sentence dispatch to retire a previously pending HUD.
+    lda #$00
+    sta.l SAME_VIDEO_TEXT_CONTROLLER_VALID
     lda.l SAME_SCUMM_TALK_ACTIVE
     beq ScummV5_Talk_Begin_Far__no_previous
     lda #$01

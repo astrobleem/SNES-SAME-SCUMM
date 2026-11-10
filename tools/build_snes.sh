@@ -1387,6 +1387,8 @@ if [[ "$SAME_SNES_VIDEO_OVERLAY" == "bg2_index4" ]]; then
     "$PYTHON" tools/generate_snes_scumm_charset.py \
         --archive "${SAME_FATE_ARCHIVE:?Set SAME_FATE_ARCHIVE to a user-supplied archive}" \
         --profile "${SAME_SNES_PROFILE:-examples/profiles/templates/fate_of_atlantis_demo.json}" \
+        --source-id "${SAME_SCUMM_FONT_SOURCE_ID:-1}" \
+        --logical-id "${SAME_SCUMM_FONT_LOGICAL_ID:-0}" \
         --output build/generated/scumm-v5-font0.sc5fnt \
         --include runtime/snes/generated/scumm_v5_font.inc.pasm \
         --manifest "${SAME_SNES_OUTPUT%.sfc}.charset.json"

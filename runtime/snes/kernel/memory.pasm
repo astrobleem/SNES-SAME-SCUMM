@@ -1020,7 +1020,7 @@ SAME_SCUMM_CONTROLLER_TEXT_INDEX         = $7E5F9E ; u16 encoded HUD destination
 ; separate from the logical C23 talk stream because authored text may update
 ; that stream after a controller frame has staged a HUD prompt.
 SAME_VIDEO_TEXT_CONTROLLER_BUFFER        = $7E5FA4 ; 32 encoded bytes
-SAME_VIDEO_TEXT_CONTROLLER_LENGTH        = $7E5FC4 ; u8, includes terminator
+SAME_VIDEO_TEXT_CONTROLLER_LENGTH        = $7E5FC4 ; u8 printable bytes, excludes stored terminator
 SAME_VIDEO_TEXT_CONTROLLER_VALID         = $7E5FC5 ; u8 pending controller text
 SAME_SCUMM_OBJECT_NAME_OBJECT            = $7E5FA0 ; u16 $54 operand scratch
 SAME_SCUMM_OBJECT_NAME_INDEX             = $7E5FA2 ; u8 encoded-name cursor

@@ -785,13 +785,14 @@ ScummV5_Controller_Frame__hud:
     ; The target-neutral text service may reject a publish while the prior
     ; overlay generation is still converting.  Clear its per-call status,
     ; publish the current runtime C17/object names, and retain the request
-    ; when publication was rejected.  This is a generic service retry; it
+    ; only when publication was busy. This is a generic service retry; it
     ; does not inspect a particular verb, object, or object state.
     lda #$00
     sta.l SAME_SCUMM_TALK_VISUAL_STATUS
     jsl ScummV5_Controller_ShowHud_Far
     lda.l SAME_SCUMM_TALK_VISUAL_STATUS
-    beq ScummV5_Controller_Frame__hud_done
+    cmp #$01 ; BUSY retries; unsupported waits for a content change
+    bne ScummV5_Controller_Frame__hud_done
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
 ScummV5_Controller_Frame__hud_done:
@@ -4308,6 +4309,7 @@ ScummV5_Controller_BuildHudText__verb_present:
     ; a 0x0105-byte loop bound and consumes the whole target buffer.
     and #$00FF
     dec
+    beq ScummV5_Controller_BuildHudText__object
     sta.l SAME_OVERLAY_PRODUCER_TEMP
     lda.l SAME_SCUMM_C17_RECORD_OFFSET
     clc
@@ -4324,7 +4326,7 @@ ScummV5_Controller_BuildHudText__verb_loop:
     ; data, so its authored length must be clipped before the indexed write;
     ; otherwise a long name can alias controller state immediately after the
     ; buffer (including SAME_SCUMM_CONTROLLER_MODE).
-    cmp #$0020
+    cmp #$001F ; reserve byte 31 for the terminator
     bcc ScummV5_Controller_BuildHudText__verb_bound_ok
     brl ScummV5_Controller_BuildHudText__finish
 ScummV5_Controller_BuildHudText__verb_bound_ok:
@@ -4356,6 +4358,11 @@ ScummV5_Controller_BuildHudText__object:
     lda.l SAME_SCUMM_CONTROLLER_TEXT_INDEX
     beq ScummV5_Controller_BuildHudText__object_no_space
     and #$00FF
+    cmp #$001F
+    bcc ScummV5_Controller_BuildHudText__space_fits
+    brl ScummV5_Controller_BuildHudText__finish
+ScummV5_Controller_BuildHudText__space_fits:
+    .a16
     tay
     sep #$20
     .a8
@@ -4466,6 +4473,7 @@ ScummV5_Controller_BuildHudText__unusable:
     sep #$20
     .a8
     lda #$00
+    sta.l SAME_VIDEO_TEXT_CONTROLLER_BUFFER
     sta.l SAME_VIDEO_TEXT_CONTROLLER_LENGTH
     sta.l SAME_VIDEO_TEXT_CONTROLLER_VALID
     sta.l SAME_SCUMM_TALK_RAW_LENGTH
@@ -4476,6 +4484,29 @@ ScummV5_Controller_BuildHudText__unusable:
     rtl
 
 ScummV5_Controller_ShowHud_Far:
+    ; C23 slot 0 is persistent script-owned state. Save six words (the
+    ; 11-byte style plus the adjacent byte) and restore them on every exit.
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    cld
+    lda.l SAME_SCUMM_C23_SLOTS+$00
+    pha
+    lda.l SAME_SCUMM_C23_SLOTS+$02
+    pha
+    lda.l SAME_SCUMM_C23_SLOTS+$04
+    pha
+    lda.l SAME_SCUMM_C23_SLOTS+$06
+    pha
+    lda.l SAME_SCUMM_C23_SLOTS+$08
+    pha
+    lda.l SAME_SCUMM_C23_SLOTS+$0A
+    pha
     ; Keep the first visual proof deliberately small: a source-neutral cursor
     ; marker and verb prompt. Authored dialogue later replaces it normally.
     ; Anchor the prompt with the same room-to-display transform used by the
@@ -4506,20 +4537,41 @@ ScummV5_Controller_ShowHud_Far:
     sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_HEIGHT
     sep #$20
     .a8
-    lda #$0F
-    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_COLOR
-    lda #$00
-    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_CHARSET
-    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_FLAGS
     ; The controller HUD is assembled from runtime SCUMM names. The legacy
     ; proof-scene prompt block below is unreachable and retained temporarily
     ; only as a binary-compatibility anchor while generated callers migrate.
     jsl ScummV5_Controller_BuildHudText_Far
     lda.l SAME_SCUMM_TALK_VISUAL_STATUS
     bne ScummV5_Controller_ShowHud__dynamic_unusable
+    ; BuildHudText resolved the selected C17 record, including high verb IDs.
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C17_RECORD_OFFSET
+    tax
+    sep #$20
+    .a8
+    ; SNES prompt adaptation: mode 1 highlights the selected verb. This is
+    ; not a reconstruction of the original game's on-screen verb grid.
+    lda.l SAME_SCUMM_CONTROLLER_MODE
+    cmp #$01
+    bne ScummV5_Controller_ShowHud__normal_color
+    lda.l SAME_SCUMM_C17_VERBS+SAME_SCUMM_C17_V_HICOLOR,x
+    bra ScummV5_Controller_ShowHud__color_ready
+ScummV5_Controller_ShowHud__normal_color:
+    .a8
+    lda.l SAME_SCUMM_C17_VERBS+SAME_SCUMM_C17_V_COLOR,x
+ScummV5_Controller_ShowHud__color_ready:
+    .a8
+    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_COLOR
+    lda.l SAME_SCUMM_C17_VERBS+SAME_SCUMM_C17_V_CHARSET,x
+    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_CHARSET
+    lda #$00
+    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_FLAGS
     brl ScummV5_Controller_ShowHud__dynamic_finalize
 ScummV5_Controller_ShowHud__dynamic_unusable:
-    rtl
+    .a8
+    jmp ScummV5_Controller_ShowHud__done
     lda.l SAME_SCUMM_CONTROLLER_MODE
     cmp #$01
     bne ScummV5_Controller_ShowHud__mode_not_verb
@@ -4663,6 +4715,26 @@ ScummV5_Controller_ShowHud__dynamic_finalize:
     jsl Same_VideoText_ShowSegment_Far
     .endif
 ScummV5_Controller_ShowHud__done:
+    rep #$30
+    .a16
+    .i16
+    pla
+    sta.l SAME_SCUMM_C23_SLOTS+$0A
+    pla
+    sta.l SAME_SCUMM_C23_SLOTS+$08
+    pla
+    sta.l SAME_SCUMM_C23_SLOTS+$06
+    pla
+    sta.l SAME_SCUMM_C23_SLOTS+$04
+    pla
+    sta.l SAME_SCUMM_C23_SLOTS+$02
+    pla
+    sta.l SAME_SCUMM_C23_SLOTS+$00
+    plb
+    ply
+    plx
+    pla
+    plp
     rtl
 .endif
 
