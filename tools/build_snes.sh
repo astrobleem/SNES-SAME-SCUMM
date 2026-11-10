@@ -1473,10 +1473,8 @@ echo "SNES layout map: $SAME_SNES_MAP"
 "$PYTHON" tools/report_snes_layout.py "$SAME_SNES_MAP"
 "$PYTHON" tools/finalize_snes_rom.py "$SAME_SNES_OUTPUT" \
     --carrier "$SAME_SNES_CARRIER" --manifest "$CARRIER_MANIFEST"
-ROM_AUDIT_ARGS=(--carrier "$SAME_SNES_CARRIER" --manifest "$CARRIER_MANIFEST")
-if [[ "$SAME_SNES_CARRIER" == "lorom" ]]; then
-    ROM_AUDIT_ARGS+=(--map "$SAME_SNES_MAP")
-fi
+# Both carriers emit Poppy banks into 32 KiB S-CPU ROM windows.
+ROM_AUDIT_ARGS=(--carrier "$SAME_SNES_CARRIER" --manifest "$CARRIER_MANIFEST" --map "$SAME_SNES_MAP")
 "$PYTHON" tools/audit_snes_rom.py "$SAME_SNES_OUTPUT" "${ROM_AUDIT_ARGS[@]}"
 sha256sum "$SAME_SNES_OUTPUT"
 "$PYTHON" tools/write_build_identity.py \

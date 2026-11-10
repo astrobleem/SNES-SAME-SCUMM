@@ -30,6 +30,7 @@ if ($VideoBackend -eq "mode3_surface" -and $Carrier -ne "sa1_bwram") {
     throw "mode3_surface requires SAME_SNES_CARRIER=sa1_bwram"
 }
 $Output = if ($env:SAME_SNES_OUTPUT) { $env:SAME_SNES_OUTPUT } else { "build\same-engine-host.sfc" }
+$Map = [System.IO.Path]::ChangeExtension($Output, "map")
 $CarrierManifest = [System.IO.Path]::ChangeExtension($Output, "carrier.json")
 $VideoBackendManifest = [System.IO.Path]::ChangeExtension($Output, "video-backend.json")
 
@@ -100,13 +101,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Poppy static checks failed" }
 
     New-Item -ItemType Directory -Force -Path "build" | Out-Null
-    & $DotnetExe $PoppyDll -t snes -I "runtime\snes" "runtime\snes\main.pasm" -o $Output --no-verify
+    & $DotnetExe $PoppyDll -t snes -I "runtime\snes" "runtime\snes\main.pasm" -o $Output -m $Map --no-verify
     if ($LASTEXITCODE -ne 0) { throw "Poppy assembly failed" }
 
     & $PythonExe "tools\finalize_snes_rom.py" $Output --carrier $Carrier --manifest $CarrierManifest
     if ($LASTEXITCODE -ne 0) { throw "SNES ROM finalization failed" }
 
-    & $PythonExe "tools\audit_snes_rom.py" $Output --carrier $Carrier --manifest $CarrierManifest
+    & $PythonExe "tools\audit_snes_rom.py" $Output --carrier $Carrier --manifest $CarrierManifest --map $Map
     if ($LASTEXITCODE -ne 0) { throw "SNES ROM audit failed" }
 
     $Hash = (Get-FileHash $Output -Algorithm SHA256).Hash.ToLowerInvariant()

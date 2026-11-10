@@ -2462,7 +2462,7 @@ def main() -> int:
         "ScummV5_PutActor_LoadGeometry_Far:",
         ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
         "    jml ScummV5_LiveRoom_LoadGeometry_Far",
-        ".endif",
+        ".else",
         "; Input X=u16 box index; output A width=8, X width=16; carry clear",
         "; on success and set on missing record/box. Callers must restore M",
         "; themselves after consuming the carry result.",
@@ -2489,7 +2489,7 @@ def main() -> int:
             "    sep #$20", "    .a8", "    sec", "    rtl",
             f"ScummV5_PutActor_LoadGeometry__next_{index}:", "    .a8",
         ))
-    data_lines.extend(("    sec", "    rtl"))
+    data_lines.extend(("    sec", "    rtl", ".endif"))
     # Read-only profile-generated queries used by the semantic sentence and
     # movement closures.  All dispatch is selected by active record; no title,
     # room number, object number, verb, or route is embedded in engine code.
