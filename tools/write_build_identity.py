@@ -24,6 +24,21 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def artifact_record(path: Path, root: Path = ROOT) -> dict[str, str]:
+    """Describe an input artifact without assuming it lives in the checkout.
+
+    Builds commonly place ROMs, maps, and generated directories in a separate
+    build root. Keep repository-owned inputs relocatable while retaining an
+    unambiguous absolute identity for intentionally external build artifacts.
+    """
+    resolved = path.resolve()
+    try:
+        display_path = resolved.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        display_path = str(resolved)
+    return {"path": display_path, "sha256": sha256(resolved)}
+
+
 def git(*args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
 
@@ -62,6 +77,13 @@ def main() -> int:
     status = git("status", "--short")
     tracked_diff = subprocess.check_output(
         ["git", "diff", "HEAD", "--binary"], cwd=ROOT)
+    environment = {
+        key: value
+        for key, value in sorted(os.environ.items())
+        if key.startswith("SAME_") or key in {
+            "POPPY_ROOT", "DOTNET_ROOT", "PYTHON"
+        }
+    }
     generated = []
     candidates = [
         ROOT / "runtime/snes/generated/active_engine.inc.pasm",
@@ -77,17 +99,16 @@ def main() -> int:
         args.video_overlay_manifest.resolve(),
         args.rom.with_suffix(".charset.json").resolve(),
     ]
+    actor_probe_audit = environment.get("SAME_SCUMM_ACTOR_PROBE_AUDIT")
+    if actor_probe_audit:
+        audit_path = Path(actor_probe_audit).resolve()
+        if not audit_path.is_file():
+            raise RuntimeError(f"actor diagnostic audit is missing: {audit_path}")
+        candidates.append(audit_path)
     for path in candidates:
         if path.is_file():
-            generated.append({"path": str(path.relative_to(ROOT)), "sha256": sha256(path)})
+            generated.append(artifact_record(path))
 
-    environment = {
-        key: value
-        for key, value in sorted(os.environ.items())
-        if key.startswith("SAME_") or key in {
-            "POPPY_ROOT", "DOTNET_ROOT", "PYTHON"
-        }
-    }
     identity = {
         "format": "same-build-identity-v1",
         "rom": {"path": str(args.rom), "sha256": sha256(args.rom)},
@@ -111,10 +132,23 @@ def main() -> int:
         "generated_inputs_sha256": hashlib.sha256(
             json.dumps(generated, sort_keys=True).encode()
         ).hexdigest(),
-        "corpus": corpus_identity(environment.get("SAME_FATE_DEMO_ARCHIVE")),
+        "corpus": corpus_identity(
+            environment.get("SAME_FATE_DEMO_ARCHIVE")
+            or environment.get("SAME_FATE_ARCHIVE")
+        ),
         "poppy_sha256": args.poppy_sha256,
         "built_at_utc": datetime.now(timezone.utc).isoformat(),
     }
+    if actor_probe_audit:
+        identity["diagnostics"] = {
+            "actor_probe": {
+                "kind": "SYNTHETIC_GRAPHICS_DIAGNOSTIC",
+                "production_release_eligible": False,
+                "gameplay_authentic": False,
+                "audit": artifact_record(Path(actor_probe_audit)),
+                "audit_sha256": sha256(Path(actor_probe_audit)),
+            }
+        }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(identity, indent=2, sort_keys=True) + "\n")
     print(json.dumps({

@@ -766,17 +766,19 @@ class LiveRoomResourceTests(unittest.TestCase):
             "SAME_SCUMM_LIVE_ROOM_PIXEL_STAGE_BASE = SAME_BWRAM_TILE_SHADOW_BASE",
             constants,
         )
+        live = (root / "runtime/snes/engines/scumm_v5_msu_live_room.pasm").read_text()
+        publish = live.split("ScummV5_LiveRoom_PublishVisual_Far:", 1)[1].split(
+            "ScummV5_LiveRoom_PublishVisual_Far__bad:", 1,
+        )[0]
+        self.assertIn("Same_VideoSurface_InvalidateTileCache_Far", publish)
+        self.assertLess(
+            publish.index("cpx #$E000"),
+            publish.index("Same_VideoSurface_InvalidateTileCache_Far"),
+        )
         accepted = mode3.split("Same_Mode3_HandlePresent__accept:", 1)[1].split(
             "Same_Mode3_HandlePresent__reject:", 1,
         )[0]
-        self.assertIn(
-            ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES", accepted,
-        )
-        self.assertIn("sta.l SAME_BWRAM_CONTROL_TILE_VALID", accepted)
-        self.assertLess(
-            accepted.index("sta.l SAME_BWRAM_CONTROL_TILE_VALID"),
-            accepted.index("SAME_MODE3_STATE_CONVERTING"),
-        )
+        self.assertNotIn("sta.l SAME_BWRAM_CONTROL_TILE_VALID", accepted)
 
     def test_invalid_mode3_tile_shadow_forces_upload_of_blank_and_nonblank_tiles(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -796,6 +798,25 @@ class LiveRoomResourceTests(unittest.TestCase):
             present.index("Same_Mode3_HandlePresent__tile_candidates_ready:"),
             present.index("lda #$01\n    sta.l SAME_MODE3_CONTROL_SURFACE_LOCKED"),
         )
+
+    def test_actor_damage_present_preserves_valid_tile_shadow(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        mode3 = (root / "runtime/snes/services/video_mode3.pasm").read_text()
+        surface = (root / "runtime/snes/services/video_surface.pasm").read_text()
+        present = mode3.split("Same_Mode3_HandlePresent__accept:", 1)[1].split(
+            "Same_Mode3_HandlePresent__reject:", 1,
+        )[0]
+        damage = surface.split("Same_VideoSurface_PushDamagePresent:", 1)[1].split(
+            "Same_VideoSurface_PushDamagePresent__fail_capacity:", 1,
+        )[0]
+        invalidate = surface.split(
+            "Same_VideoSurface_InvalidateTileCache_Far:", 1,
+        )[1].split("Same_VideoSurface_CanWrite_Far:", 1)[0]
+        self.assertNotRegex(
+            present, r"(?:sta|stz)\.l SAME_BWRAM_CONTROL_TILE_VALID",
+        )
+        self.assertNotIn("SAME_BWRAM_CONTROL_TILE_VALID", damage)
+        self.assertIn("sta.l SAME_BWRAM_CONTROL_TILE_VALID", invalidate)
 
     def test_video_wait_holds_scheduler_until_room_commit_can_resume(self) -> None:
         root = Path(__file__).resolve().parents[1]

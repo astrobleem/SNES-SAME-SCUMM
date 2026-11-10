@@ -528,19 +528,6 @@ Same_Mode3_HandlePresent__generation_lo_not_less:
 Same_Mode3_HandlePresent__generation_valid:
 Same_Mode3_HandlePresent__accept:
     .a16
-    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
-    ; The live-room transaction stages the checked SC5VIS pixels in the
-    ; tile-shadow allocation before publishing them to the active surface.
-    ; The upcoming full-room presentation must therefore rebuild the shadow
-    ; from the encoded surface instead of trusting bytes overwritten by the
-    ; resource transfer. Camera-only dirty presents do not take this path.
-    sep #$20
-    .a8
-    lda #$00
-    sta.l SAME_BWRAM_CONTROL_TILE_VALID
-    rep #$20
-    .a16
-    .endif
     lda.l SAME_EVENT_STAGING+SAME_PKT_ARG0
     sta.l SAME_BWRAM_CONTROL_PENDING_GENERATION
     lda.l SAME_EVENT_STAGING+SAME_PKT_ARG0+$02
@@ -559,8 +546,8 @@ Same_Mode3_HandlePresent__accept:
     ; A full presentation with an invalid tile shadow must upload every
     ; character tile, including all-zero tiles. Otherwise blank SC5VIS tiles
     ; can be elided as "unchanged" in the shadow while VRAM still contains
-    ; power-on/stale bytes. This also covers the live-room pixel-stage alias,
-    ; which deliberately invalidates TILE_VALID above.
+    ; power-on/stale bytes. A producer that overwrites the aliased tile shadow
+    ; invalidates TILE_VALID at the surface replacement boundary.
     sep #$20
     .a8
     lda.l SAME_BWRAM_CONTROL_TILE_VALID

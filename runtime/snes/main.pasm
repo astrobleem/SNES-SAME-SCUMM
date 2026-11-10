@@ -650,6 +650,9 @@ ScummV5_M24RB_FarCodeEnd:
 .include "generated/scumm_v5_actor_sprite.inc.pasm"
 .include "generated/scumm_v5_object_sprite.inc.pasm"
 .endif
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+.include "generated/scumm_v5_actor_poses.inc.pasm"
+.endif
 .include "services/video_surface.pasm"
 .include "engines/scumm_v5_visual.pasm"
 .endif

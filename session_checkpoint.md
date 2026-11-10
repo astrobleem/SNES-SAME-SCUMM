@@ -3625,3 +3625,49 @@ drift remains adjudicated and unchanged.
   independent package runs 7 and 9 had identical 401-artifact sets and
   contents. Whole-game readiness remains `NOT_READY`; no whole-game runtime
   claim or FATE-specific production hook was added.
+
+## Actor visibility restored (2026-11-09)
+
+- Continued on `scumm-fate-visible-actor` from `add72d1`; preserved the separate
+  progression recovery worktree and all earlier evidence. No story replay.
+- Corrected underlay stack widths, controller-latch scratch overlap, visual
+  flag width, span damage lifetime, animation presentation backpressure, and
+  palette-index zero extension. Fixed the actor-disabled clean include path.
+- The final private diagnostic completed in 68.099 seconds: standing, turned,
+  two animation steps, moved/restored. All five native indexed surfaces match
+  the source-costume host oracle exactly; VRAM/CGRAM comparisons and zero old
+  residue pass. No test-owned emulator remained; no desktop display used.
+- Full evidence identities and limitations are recorded in
+  `docs/scumm-toolchain/ACTOR_VISIBILITY_CHECKPOINT.md`. This is a synthetic
+  graphics diagnostic, not gameplay acceptance. Local 213 is NOT_VERIFIED.
+- Local tests: 1,196 with 12 skips; validate, pinned assembly, ROM/memory audits,
+  and source checks pass. Hosted PR checks remain a separate publication gate.
+
+### Actor integration review — 2026-11-09
+
+Corrected retained-B contamination of the explicit-animation array index in
+three native actor paths. All actor IDs are covered by a focused source-model
+test; 1,197 host tests pass with 12 skips, validation and pinned assembly/ROM
+audit pass. Native regression initially stopped at its identity preflight:
+`make test` had regenerated the working checkout's carrier include. No
+emulator launched in that attempt. Build/validation sources are now isolated;
+do not bypass that guard or reuse the old ROM's evidence for this correction.
+The separate progression recovery worktree is untouched.
+
+### Actor review complete — 2026-11-09
+
+Fixed signed edge damage and an explicit-animation/Mode-3 scratch overlap.
+Packed flags now own four previously free bytes after backend scratch. The
+corrected edge proof passed in 62.701 seconds with five source-matching native
+captures and zero movement residue; see ACTOR_VISIBILITY_CHECKPOINT.md for
+identities and limitations. 1,209 tests/12 skips, validate, memory audit and
+pinned assembly/ROM audit pass. No FATE route replay occurred.
+
+Next authentic-room blockers are concrete: script palette mutations have no
+native presentation consumer; actor/world coordinates do not yet follow the
+background's aspect-fit projection; authored intro costume 26 has sparse
+poses whose bounding rectangles exceed the fixed 64x72 envelope and may
+exceed rectangular-underlay capacity. The source compiler represents these
+poses. Do not relax the capacity guard or claim them rendered without a
+correct bounded restoration path. Original full-source reanalysis remains
+NOT_READY; report is local at /tmp/astra-authentic-room-capabilities-20261109.

@@ -60,6 +60,8 @@ def generate(
         lines.extend([
             f"SAME_MSU1_SECTION_{symbol}_INDEX = ${index:04X}",
             f"SAME_MSU1_SECTION_{symbol}_OFFSET = ${section.offset:08X}",
+            f"SAME_MSU1_SECTION_{symbol}_OFFSET_LOW_WORD = ${section.offset & 0xFFFF:04X}",
+            f"SAME_MSU1_SECTION_{symbol}_OFFSET_HIGH_WORD = ${(section.offset >> 16) & 0xFFFF:04X}",
             f"SAME_MSU1_SECTION_{symbol}_SIZE = ${section.size:08X}",
             f"SAME_MSU1_SECTION_{symbol}_CRC32 = ${section.crc32:08X}",
             "",

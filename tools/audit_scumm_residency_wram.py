@@ -16,8 +16,14 @@ MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 # Intervals are half-open. Their endpoints are ownership boundaries declared
 # in memory.pasm; unrelated ownership overlap fails closed.
 REGIONS = (
+    ("mode3_backend_scratch", "SAME_MODE3_WORK_OWNER_START",
+     "SAME_MODE3_WORK_OWNER_END"),
     ("program_cache_page2", "SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_START",
      "SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_END"),
+    ("actor_explicit_animation", "SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION",
+     "SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION_END"),
+    ("actor_pose_state", "SAME_SCUMM_ACTOR_POSE_STATE_BASE",
+     "SAME_SCUMM_ACTOR_POSE_STATE_END"),
     ("generated_variables_and_stack_guard", "SAME_SCUMM_VARIABLES_RESERVED_START",
      "SAME_SCUMM_VARIABLES_RESERVED_END"),
     ("program_cache", "SAME_SCUMM_MSU_PROGRAM_CACHE_BASE",
@@ -57,10 +63,21 @@ REGIONS = (
 
 def symbols() -> dict[str, int]:
     result: dict[str, int] = {}
+    aliases: dict[str, str] = {}
     for line in MEMORY.read_text(encoding="utf-8").splitlines():
         match = re.match(r"\s*([A-Z][A-Z0-9_]*)\s*=\s*\$([0-9A-Fa-f]+)(?:\s|$)", line)
         if match:
             result[match.group(1)] = int(match.group(2), 16)
+        else:
+            alias = re.match(r"\s*([A-Z][A-Z0-9_]*)\s*=\s*([A-Z][A-Z0-9_]*)(?:\s*(?:;.*)?)$", line)
+            if alias:
+                aliases[alias.group(1)] = alias.group(2)
+    for _ in range(len(aliases)):
+        added = {name: result[target] for name, target in aliases.items()
+                 if name not in result and target in result}
+        if not added:
+            break
+        result.update(added)
     return result
 
 
@@ -95,6 +112,23 @@ def audit() -> dict[str, Any]:
     cache = next(item for item in intervals if item["owner"] == "program_cache")
     if cache["bytes"] != 0x1000:
         raise ValueError(f"ProgramUnit base cache span changed: {cache['bytes']} bytes")
+    controller_region = next(item for item in intervals
+                             if item["owner"] == "controller_and_interaction")
+    underlay_scratch_start = values["SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_BASE"]
+    underlay_scratch_end = values["SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_END"]
+    restore_aliases = ("CALL_X", "LOOP_ROW", "LOOP_COL", "LOOP_W",
+                       "LOOP_H", "LOOP_DST", "LOOP_SRC")
+    underlay_fields = ("RECORD_LENGTH", "DATA_BASE", "AREA", "ROW",
+                       "COLUMN", "SURFACE_CURSOR", "RECORD_CURSOR")
+    expected = [underlay_scratch_start + 2 * i for i in range(7)]
+    if (underlay_scratch_end - underlay_scratch_start != 14
+            or underlay_scratch_start < int(controller_region["start"][1:], 16)
+            or underlay_scratch_end > values["SAME_SCUMM_CONTROLLER_ROOM_READY"]
+            or [values["SAME_SCUMM_CONTROLLER_RESTORE_" + name]
+                for name in restore_aliases] != expected
+            or [values["SAME_VIDEO_ACTOR_UNDERLAY_" + name]
+                for name in underlay_fields] != expected):
+        raise ValueError("actor-underlay scratch must alias only nonconcurrent restore witnesses, never room readiness")
     bwram = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json").read_text())
     video = json.loads((ROOT / "runtime/snes/video_backends/mode3_surface_layout.json").read_text())
     fixture_address = parse_address(str(video["fixture"]["address"]))
@@ -102,11 +136,65 @@ def audit() -> dict[str, Any]:
     if (page2["start"], page2["end_exclusive"], page2["bytes"]) != (
             "$7F1000", "$7F1800", 0x800):
         raise ValueError("third ProgramUnit page must occupy the audited bank-$7F gap")
+    pose_state = next(item for item in intervals if item["owner"] == "actor_pose_state")
+    if (pose_state["start"], pose_state["end_exclusive"], pose_state["bytes"]) != (
+            "$41E780", "$41E800", 0x80):
+        raise ValueError("actor pose state differs from its Mode-3 work suballocation")
+    if "SAME_SCUMM_ACTOR_POSE_BUFFER              = SAME_SCUMM_LIVE_ROOM_PENDING_BASE" not in MEMORY.read_text(encoding="utf-8"):
+        raise ValueError("actor pose buffer must use the exclusively owned room-pending scratch")
+    if "SAME_SCUMM_ACTOR_POSE_BUFFER_SIZE         = $0800" not in MEMORY.read_text(encoding="utf-8"):
+        raise ValueError("actor pose chunk must remain bounded to one checked 2-KiB transfer")
+    work = video["work"]
+    work_start = parse_address(str(work["address"]))
+    allocation = work.get("allocations", {}).get("actor_pose_state", {})
+    if (allocation.get("offset"), allocation.get("bytes"),
+            pose_state["bytes"]) != (0x30, 0x80, 0x80):
+        raise ValueError("actor pose state suballocation differs from the Mode-3 work owner")
+    if work_start + allocation["offset"] != int(pose_state["start"][1:], 16):
+        raise ValueError("actor pose state address is outside its declared Mode-3 work owner")
+    if allocation["offset"] + allocation["bytes"] > work["bytes"]:
+        raise ValueError("actor pose state exceeds the Mode-3 work owner")
+    backend = work.get("allocations", {}).get("backend_scratch", {})
+    if backend != {"offset": 0, "bytes": 0x24, "owner": "Mode-3 backend scratch"}:
+        raise ValueError("Mode-3 backend scratch must own work offsets $00..$23")
+    if (values["SAME_MODE3_WORK_OWNER_START"] != work_start
+            or values["SAME_MODE3_WORK_OWNER_END"] != work_start + 0x24):
+        raise ValueError("Mode-3 backend scratch boundaries differ from generated work")
+    generator = (ROOT / "tools/generate_snes_video_backend.py").read_text()
+    offsets = [int(value, 16) for value in re.findall(
+        r"SAME_MODE3_WORK_[A-Z0-9_]+ = SAME_MODE3_WORK\+\$([0-9A-Fa-f]+)", generator)]
+    # All generated fields fit within a word; conservatively reserve two
+    # bytes even for byte fields. TIMEOUT at $22 consumes the last word.
+    if not offsets or max(offsets) + 2 != backend["bytes"]:
+        raise ValueError("generated Mode-3 work fields exceed/differ from audited scratch")
+    explicit_animation = work.get("allocations", {}).get("actor_explicit_animation", {})
+    if (explicit_animation.get("offset"), explicit_animation.get("bytes"),
+            explicit_animation.get("owner")) != (
+                36, 4, "generic SCUMM actor animation state"):
+        raise ValueError("explicit animation state differs from the Mode-3 work owner")
+    if work_start + explicit_animation["offset"] != values["SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION"]:
+        raise ValueError("explicit animation state address differs from its memory contract")
+    if (values["SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION_END"]
+            - values["SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION"] != 4):
+        raise ValueError("explicit animation state must be a four-byte bitset")
+    if explicit_animation["offset"] < backend["offset"] + backend["bytes"]:
+        raise ValueError("explicit animation state overlaps backend scratch")
+    if explicit_animation["offset"] + explicit_animation["bytes"] > allocation["offset"]:
+        raise ValueError("explicit animation state overlaps actor pose state")
     if fixture_address < 0x41E800 or fixture_address >= 0x41F000:
         raise ValueError("Mode-3 fixture alias bounds changed")
-    runtime_source = (ROOT / "runtime/snes/services/video_mode3.pasm").read_text()
+    live_room_source = (ROOT / "runtime/snes/engines/scumm_v5_msu_live_room.pasm").read_text()
     live_constants = (ROOT / "tools/generate_snes_carrier.py").read_text()
     video_surface_source = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()
+    if values.get("SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_SIZE") != 0x0E:
+        raise ValueError("actor-underlay copy cursor must remain a bounded 14-byte scratch owner")
+    if values.get("SAME_VIDEO_ACTOR_UNDERLAY_SCRATCH_END") != values["SAME_SCUMM_CONTROLLER_ROOM_READY"]:
+        raise ValueError("actor-underlay scratch must end before persistent room readiness")
+    if "SAME_VIDEO_DIAG_BASE                  = $7E5E90" not in video_surface_source:
+        raise ValueError("actor-underlay scratch no longer meets the declared video diagnostic boundary")
+    if ("Same_VideoSurface_CaptureActorUnderlay_Far" not in video_surface_source
+            or "Same_VideoSurface_RestoreActorUnderlay_Far" not in video_surface_source):
+        raise ValueError("live actor underlay services are not present in the indexed-surface owner")
     if "SAME_VIDEO_SURFACE_STATE              = SAME_BWRAM_VIDEO_SURFACE_STATE" not in video_surface_source:
         raise ValueError("video surface state must use its generated BWRAM allocation")
     if "SAME_BWRAM_VIDEO_SURFACE_STATE" not in live_constants:
@@ -115,10 +203,17 @@ def audit() -> dict[str, Any]:
     pixel_stage_address = parse_address(str(tile_shadow["address"]))
     if "SAME_SCUMM_LIVE_ROOM_PIXEL_STAGE_BASE = SAME_BWRAM_TILE_SHADOW_BASE" not in live_constants:
         raise ValueError("live SC5VIS staging must declare its tile-shadow alias")
-    if "SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES" not in runtime_source or (
-        "sta.l SAME_BWRAM_CONTROL_TILE_VALID" not in runtime_source
-    ):
+    surface_source = (ROOT / "runtime/snes/services/video_surface.pasm").read_text()
+    mode3_source = (ROOT / "runtime/snes/services/video_mode3.pasm").read_text()
+    if "Same_VideoSurface_InvalidateTileCache_Far" not in live_room_source:
         raise ValueError("live SC5VIS publication must invalidate the aliased tile shadow")
+    if "sta.l SAME_BWRAM_CONTROL_TILE_VALID" not in surface_source:
+        raise ValueError("surface-owned tile-cache invalidation API is missing")
+    present_accept = mode3_source.split(
+        "Same_Mode3_HandlePresent__accept:", 1,
+    )[1].split("Same_Mode3_HandlePresent__reject:", 1)[0]
+    if "sta.l SAME_BWRAM_CONTROL_TILE_VALID" in present_accept:
+        raise ValueError("ordinary PRESENT must not invalidate cached tiles")
     active = bwram["live_room_active"]
     active_start = parse_address(str(active["address"]))
     active_end = active_start + int(active["bytes"])
@@ -141,8 +236,25 @@ def audit() -> dict[str, Any]:
         "interval_convention": "half-open",
         "features_coexist": ["resolver", "controller/input", "name cache",
                              "save validator", "C4", "C19", "room lifecycle",
-                             "three-page streamed-program cache", "Mode-3 live staging"],
-        "bwram_aliases": [],
+                             "three-page streamed-program cache", "Mode-3 live staging",
+                             "exclusive actor/room SC5ACT pending scratch"],
+        "bwram_aliases": [{
+            "owner": "live SC5LIVE actor underlay snapshot",
+            "address_rule": "$41E800 + validated active SC5LIVE total_size",
+            "maximum_bytes": int(active["bytes"]),
+            "aliases": "unused tail of the same active metadata allocation",
+            "lifetime": "displayed actor pose until the next redraw or checked room-surface publication",
+            "capacity_rule": "16-byte checked header + clipped pose bounds must fit before active allocation end",
+            "coherency": "valid marker is written last and invalidated on new checked background publication",
+        }],
+        "wram_lifetime_aliases": [{
+            "owner": "actor-underlay cursor during live SC5LIVE actor composition",
+            "address": f"${underlay_scratch_start:06X}",
+            "bytes": underlay_scratch_end - underlay_scratch_start,
+            "aliases": "RestoreRect debug-only call/loop witnesses; excludes persistent room readiness",
+            "lifetime": "RestoreRect bypasses its ROM row loop for live rooms; cursor use occurs only inside the underlay helpers",
+            "coherency": "no simultaneous reader; persistent underlay pixels reside in the validated active-room tail",
+        }],
         "wram_cache_page2": {
             "address": page2["start"], "bytes": page2["bytes"],
             "exclusive_with": [],
@@ -154,11 +266,19 @@ def audit() -> dict[str, Any]:
             "aliases": "Mode-3 encoded tile shadow",
             "lifetime": "incoming visual transfer through checked publication",
             "coherency": "full room present invalidates shadow before re-encoding",
+        }, {
+            "owner": "SCUMM actor chunk / live-room transaction",
+            "address": f"${parse_address(str(bwram['backend_reserved']['address'])) + int(bwram['backend_reserved']['allocations']['live_room_pending']['offset']):06X}",
+            "bytes": int(bwram["backend_reserved"]["allocations"]["live_room_pending"]["bytes"]),
+            "aliases": "exclusive owner field NONE/ACTOR/ROOM",
+            "lifetime": "checked actor chunk until synchronous composition; complete room transaction otherwise",
+            "coherency": "room request preempts actor; provider is drained before reuse",
         }],
         "live_room_metadata_alias": {
             "address": f"${active_start:06X}", "bytes": int(active["bytes"]),
             "exclusive_with": ["Mode-3 fixture workspace", "Mode-3 reserved alias"],
             "active_video_staging_overlaps": False,
+            "actor_underlay_uses_only_unreferenced_tail": True,
         },
         "regions": intervals,
         "overlaps": [],
