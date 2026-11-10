@@ -69,7 +69,7 @@ class CharsetGlyph:
     height: int
     x_offset: int
     y_offset: int
-    pixels: bytes
+    pixels: bytes  # Unmapped source color slots; zero is transparent.
 
     @property
     def advance(self) -> int:
@@ -81,15 +81,20 @@ def _signed_byte(value: int) -> int:
 
 
 class ScummV5Charset:
-    """Strict decoder for the v5 CHAR offset-table and 1bpp glyph shape."""
+    """Strict v5 CHAR decoder, returning unmapped source color slots.
 
-    def __init__(self, data: bytes, *, key: str) -> None:
+    Multibit decoding requires explicit opt-in: existing text renderers and
+    SC5FNT cooking consume binary coverage, not multicolor source slots.
+    """
+
+    def __init__(self, data: bytes, *, key: str, allow_multibit: bool = False) -> None:
         self.data = bytes(data)
         self.key = key
         if len(self.data) < 25:
             raise ResourceError(f"SCUMM charset {key!r} is shorter than its header")
         declared = struct.unpack_from("<I", self.data, 0)[0]
         self._base = 0
+        self.bits_per_pixel = 1
         self._header_size = _CHARSET_HEADER_SIZE
         if declared == len(self.data):
             if len(self.data) < _CHARSET_HEADER_SIZE:
@@ -114,11 +119,17 @@ class ScummV5Charset:
         bits_per_pixel, _height, character_count = struct.unpack_from(
             "<BBH", self.data, self._base
         )
-        if bits_per_pixel != 1 or not 1 <= character_count <= 256:
+        if bits_per_pixel not in (1, 2, 4) or not 1 <= character_count <= 256:
             raise ResourceError(
                 f"SCUMM charset {key!r} has unsupported {bits_per_pixel}bpp/"
                 f"{character_count}-character header"
             )
+        if bits_per_pixel != 1 and not allow_multibit:
+            raise ResourceError(
+                f"SCUMM charset {key!r} requires explicit multibit decoding; "
+                "binary-mask rendering/cooking does not support source color slots"
+            )
+        self.bits_per_pixel = bits_per_pixel
         table = self._base + 4
         self._header_size = table + character_count * 4
         if self._header_size > len(self.data):
@@ -152,15 +163,23 @@ class ScummV5Charset:
                 f"SCUMM charset {self.key!r} glyph {codepoint} is {width}x{height}"
             )
         pixel_count = width * height
-        byte_count = (pixel_count + 7) // 8
+        byte_count = (pixel_count * self.bits_per_pixel + 7) // 8
         end = absolute_offset + 4 + byte_count
         if end > len(self.data):
             raise ResourceError(
                 f"SCUMM charset {self.key!r} glyph {codepoint} pixels are truncated"
             )
         packed = self.data[absolute_offset + 4 : end]
+        # ScummVM CharsetRendererClassic::drawBitsN (charset.cpp): consume
+        # MSB-first bpp-bit slots continuously, without row padding. It tests
+        # source slot zero before applying the runtime charset color map.
+        # Keep slots intact here, including nonzero slots mapped to color 0;
+        # palette selection and transparency belong to a future consumer.
+        per_byte = 8 // self.bits_per_pixel
+        slot_mask = (1 << self.bits_per_pixel) - 1
         pixels = bytes(
-            (packed[index // 8] >> (7 - index % 8)) & 1
+            (packed[index // per_byte] >>
+             (8 - self.bits_per_pixel * (index % per_byte + 1))) & slot_mask
             for index in range(pixel_count)
         )
         return CharsetGlyph(
@@ -317,6 +336,10 @@ class ScummV5VideoAdapter:
         text: SceneText,
         font: ScummV5Charset,
     ) -> int:
+        # A caller can explicitly decode multibit source outside this adapter.
+        # This renderer still supports masks only; do not flatten source slots.
+        if font.bits_per_pixel != 1:
+            raise ResourceError("SCUMM scene text rendering requires a 1bpp charset")
         origin_x = pen_x = text.x
         pen_y = text.y
         drawn = 0
