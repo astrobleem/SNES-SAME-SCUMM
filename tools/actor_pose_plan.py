@@ -152,6 +152,77 @@ def compile_pose(pose: PoseLike, palette: Sequence[int], *,
                     tuple(spans), colors, len(painted))
 
 
+def project_pose_aspect_fit(
+    plan: PosePlan, *, foot_x: int, foot_y: int,
+    source_width: int, source_height: int,
+    target_width: int = 256, target_height: int = 224,
+    actor_scale: int = 255,
+) -> PosePlan:
+    """Sample a composed, unscaled pose on project_room_visual's global grid.
+
+    Foot coordinates are logical room coordinates with elevation already
+    applied. Add signed spans BEFORE sampling; separately rounding the foot
+    and scaling the cel changes the sampling phase. Source-room clipping also
+    precedes projection, so actors never paint the letterbox/pillarbox border.
+
+    The result contains absolute screen coordinates and SOURCE palette slots,
+    including slots whose mapped color is zero. Use chunks()/visible_runs()
+    with anchor (0, 0) to map colors for Capture/Blit. Runs are at most 256
+    pixels; the default target matches the native 256-pitch INDEX8 surface.
+    This host oracle accepts compiled lossless plans and scale 255 only; it
+    does not implement costume scaling or allocate a logical-room framebuffer.
+    """
+    _integer(actor_scale, 255, 255, 'actor scale')
+    _integer(foot_x, -32768, 32767, 'foot x')
+    _integer(foot_y, -32768, 32767, 'foot y')
+    _integer(source_width, 1, 65535, 'source width')
+    _integer(source_height, 1, 65535, 'source height')
+    _integer(target_width, 1, 256, 'target width')
+    _integer(target_height, 1, 256, 'target height')
+    if target_width * source_height <= target_height * source_width:
+        cw = target_width
+        ch = max(1, source_height * target_width // source_width)
+    else:
+        ch = target_height
+        cw = max(1, source_width * target_height // source_height)
+    ox, oy = (target_width - cw) // 2, (target_height - ch) // 2
+
+    rows: dict[int, dict[int, int]] = {}
+    for span in plan.spans:
+        y = foot_y + span.y
+        if 0 <= y < source_height:
+            row = rows.setdefault(y, {})
+            for i, slot in enumerate(span.slots):
+                x = foot_x + span.x + i
+                if 0 <= x < source_width:
+                    row[x] = slot
+
+    sample_x = [(2 * x + 1) * source_width // (2 * cw) for x in range(cw)]
+    spans: list[Span] = []
+    for y in range(ch):
+        row = rows.get((2 * y + 1) * source_height // (2 * ch))
+        if not row:
+            continue
+        start = 0
+        slots = bytearray()
+        for x, sx in enumerate(sample_x):
+            slot = row.get(sx, 0)
+            if slot:
+                if not slots:
+                    start = x
+                slots.append(slot)
+            elif slots:
+                spans.append(Span(ox + start, oy + y, bytes(slots)))
+                slots.clear()
+        if slots:
+            spans.append(Span(ox + start, oy + y, bytes(slots)))
+    bounds = ((min(s.x for s in spans), spans[0].y,
+               max(s.x + len(s.slots) for s in spans), spans[-1].y + 1)
+              if spans else (0, 0, 0, 0))
+    return PosePlan(bounds, tuple(spans), plan.palette,
+                    sum(len(s.slots) for s in spans))
+
+
 def validate_chunk(chunk: Chunk, palette_size: int, *, capacity: int = 2048) -> None:
     if not 1 <= len(chunk.data) <= capacity <= 2048:
         raise PoseError('chunk length exceeds checked transfer capacity')
