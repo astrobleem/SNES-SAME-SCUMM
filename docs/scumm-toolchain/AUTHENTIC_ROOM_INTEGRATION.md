@@ -151,3 +151,29 @@ The original failing build and its 59.124-second first-error capture remain
 preserved separately. The observer's new playable-scene mode uses the existing
 authored intro acknowledgements and stops before all object-action replay steps;
 it has not yet established an authentic scene acceptance.
+
+## Authentic scene observation remains blocked
+
+The original-script projected build (`ae82819486a047aba09868bc331cf708f37d665445fa438b7f863ac033e6e717`)
+passed assembly and ROM audit. Its scene observation stopped after 91.022 seconds
+when Nexen advanced 15 of 16 requested frames before its per-call wall-clock
+cap. The observer had enabled continuous instruction tracing unnecessarily.
+Graphics-only mode now omits that tracing without changing frame, socket or
+600-second process-tree deadlines, and persists startup progress/failure state.
+
+A single corrected observation stopped after 119.438 seconds at the same class
+of per-call cap. It preserved room68, SCUMM error0, lifecycle RUNNING, CPU
+`$15:81E9`, status `$04`, stack `$0FE7`, DB/D=0, and CPU stop state Running.
+The requested 16 frames advanced by15. This does not establish engine deadlock
+or a successful authentic actor scene. No additional startup retry is planned
+without new evidence. Normal intro/object interactions were not reached.
+
+Evidence is preserved in `/tmp/astra-authentic-playable-scene-20261110` and
+`/tmp/astra-authentic-scene-no-trace-20261110`. All test-owned emulator processes
+exited; unrelated user processes remain untouched. Native captures and package
+payloads are local only. The existing full seven-action route was not run.
+
+At projected-actor commit `82bdbc9`, 1,274 tests pass with12 skips, make validate
+and memory audit pass, and both hosted checks pass in run `42755315305`.
+Subsequent observer-only corrections have focused regression coverage; their
+CI status must be read independently.
