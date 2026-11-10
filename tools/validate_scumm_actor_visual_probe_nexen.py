@@ -757,6 +757,17 @@ class ProbeObserver:
             "actor_render_pose_step": pose[0x16],
             "actor_render_generation": read_u16(pose, 0x7D),
         }
+        for key in (
+            "backend_pending_generation", "backend_committed_generation",
+            "backend_pending_generation_hi", "backend_committed_generation_hi",
+            "mode3_state", "mode3_surface_locked", "mode3_last_status",
+            "mode3_pending_count", "mode3_inflight_count", "mode3_candidate_count",
+            "mode3_scan_tile", "mode3_scan_palette", "mode3_converted_count",
+            "mode3_unchanged_count", "mode3_rejected_present", "mode3_rejected_dirty",
+            "mode3_rejected_palette", "event_count", "surface_packets_pending",
+            "surface_pending_visual", "surface_presented_room",
+        ):
+            sample[key] = state[key]
         self.progress.append(sample)
         path = self.output / "actor-progress.json"
         temp = path.with_suffix(".json.tmp")
@@ -860,7 +871,7 @@ class ProbeObserver:
                             expected_facing: int | None = None,
                             expected_x: int | None = None) -> dict:
         end = self.logical_frames + max_frames
-        while self.logical_frames < end:
+        while True:
             state = self.read_scene()
             require(state["error"] == 0, f"SCUMM error before pose presentation: {state}")
             next_generation = state["surface_next_generation"]
@@ -889,55 +900,19 @@ class ProbeObserver:
                 expected_x=expected_x,
             )
             if state["room"] == 4 and state["lifecycle"] == 2 and is_ready:
-                # Require the same committed generation and render key across
-                # one completed logical frame before taking indexed/PPU output.
-                stable_key = (
-                    next_generation, state["actor_render_generation"],
-                    state["actor_render_pose_frame"],
-                    state["actor_render_pose_step"], state["actor_render_facing"],
-                    read_u16(pose, 0x6C), read_u16(pose, 0x6E),
-                )
-                state = self.advance(1)
-                pose = self.session.read_memory("snesMemory", ACTOR_STATE, 128)
-                stable = pose_is_presented(
-                    pose,
-                    render_valid=state["actor_render_valid"],
-                    render_frame=state["actor_render_pose_frame"],
-                    render_step=state["actor_render_pose_step"],
-                    render_generation=state["actor_render_generation"],
-                    render_facing=state["actor_render_facing"],
-                    next_generation=state["surface_next_generation"],
-                    backend_pending_generation=state["backend_pending_generation"],
-                    backend_committed_generation=state["backend_committed_generation"],
-                    backend_pending_generation_hi=state["backend_pending_generation_hi"],
-                    backend_committed_generation_hi=state["backend_committed_generation_hi"],
-                    backend_state=state["mode3_state"],
-                    surface_locked=state["mode3_surface_locked"],
-                    pending_visual=state["surface_pending_visual"],
-                    presented_room=state["surface_presented_room"],
-                    room=state["room"],
-                    surface_packets_pending=state["surface_packets_pending"],
-                    composition_active=state.get("composition_active", 0),
-                expected_frame=expected_frame,
-                    expected_facing=expected_facing,
-                    expected_x=expected_x,
-                )
-                current_key = (
-                    state["surface_next_generation"], state["actor_render_generation"],
-                    state["actor_render_pose_frame"], state["actor_render_pose_step"],
-                    state["actor_render_facing"], read_u16(pose, 0x6C),
-                    read_u16(pose, 0x6E),
-                )
-                if not stable or current_key != stable_key:
-                    continue
+                # The paused state already satisfies the production commit fence.
+                # Advancing here can start a new composition and discard this one.
                 state["pose_generation"] = read_u16(pose, 7)
                 state.update(decode_pose_observation(pose))
                 state["direction"] = pose[4]
                 state["room_epoch"] = read_u16(pose, 0x29)
                 state["pose_validation_generation"] = read_u16(pose, 0x2B)
                 state["render_bounds_valid_reserved"] = pose[0x63]
-                state["presentation_fence"] = "mode3-committed-stable-one-frame"
+                state["presentation_fence"] = "mode3-committed-paused-state"
                 return state
+            # Inspect the exact terminal boundary before declaring a timeout.
+            if self.logical_frames >= end:
+                break
             self.advance(min(10, end - self.logical_frames))
         self.capture_timeout_boundary()
         raise TimeoutError(f"no composed actor pose reached the PPU: {self.last_state}")
