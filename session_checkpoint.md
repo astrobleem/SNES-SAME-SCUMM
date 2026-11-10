@@ -1,5 +1,27 @@
 # SAME / SCUMM v5 session checkpoint
 
+## Authentic-room integration checkpoint (2026-11-10)
+
+- PR #13 merged normally into protected main at `99127067`; main hosted CI run
+  `42749057867` passed. Baseline tag and progression recovery worktree unchanged.
+- Active branch `scumm-fate-authentic-room`, draft PR #14. Sparse actor restoration
+  and ordered room-palette integration are committed; no automatic merge planned.
+- Five native frames of the larger original source costume match the host decoder,
+  indexed surface, VRAM and CGRAM exactly; zero old-position residue. This uses a
+  synthetic graphics driver, not original gameplay. Exact identities and snapshot
+  boundaries: `docs/scumm-toolchain/AUTHENTIC_ROOM_INTEGRATION.md`.
+- Combined original startup diagnostic reached room 4/error zero, but actor1 was
+  still room0/invisible at the captured boundaries. No actor image was accepted.
+  Single run ended after 241.784 seconds; no unchanged retry or seven-action replay.
+- Host projection oracle now follows the same center-sampling grid as SC5VIS.
+  Native projection is in progress; logical actor scale remains separate.
+- Local full suite: 1,251 tests, 12 skipped; make validate passes. Hosted checks on
+  PR #14 are independent and were pending when this checkpoint was written.
+- Local native evidence: `/tmp/astra-sparse-costume26-proof-20261110` and
+  `/tmp/astra-authentic-room-entry-directoryfix-20261110`. No commercial artifacts
+  are committed. Room3 Local213 remains conditional and NOT_VERIFIED.
+
+
 ## Refresh-clear diagnosis and fix (2026-09-09)
 
 - The BAD clear is a semantic revalidation hit-test failure, not C17 display
