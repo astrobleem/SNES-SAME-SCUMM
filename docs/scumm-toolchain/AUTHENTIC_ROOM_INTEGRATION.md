@@ -234,3 +234,7 @@ Immutable source: `/tmp/astra-cursor-source._2oki1fg`.
 This remains an original synthetic SCUMM driver with externally supplied
 commercial images/costumes, not authentic story or interactive acceptance.
 The earlier failed run is retained. No payloads or captures are in Git.
+
+Validation at the cursor checkpoint: 1,312 host tests, 12 skips; `make validate`,
+pinned assembly/ROM audit, WRAM/BW-RAM audit, Python compilation, tracked JSON
+and Bash syntax pass. Hosted CI is reported separately for the pushed commit.
