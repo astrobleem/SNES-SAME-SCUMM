@@ -87,3 +87,27 @@ acceptance. The first authentic entry attempt was rejected before emulator
 launch because the observer still assumed a selected-build report directory.
 The observer now follows the identity-owned whole-source root, with regression
 coverage; it does not bypass ROM/map/directory identity checks.
+
+## Original startup observation (not accepted)
+
+The corrected full-directory observer ran once for 241.784 seconds and exited
+with a bounded actor-presentation timeout, below its 600-second process-tree
+limit. Original startup reached room 4 with SCUMM error zero, but no composed
+actor reached the PPU during the observation window. No controller actions
+were submitted. The final snapshot has pending presentation generation 6 and
+committed generation 4; that snapshot alone does not establish a deadlock or
+a renderer failure. The test-owned emulator exited; the unrelated user session
+was left untouched.
+
+Evidence remains under
+`/tmp/astra-authentic-room-entry-directoryfix-20261110/`. The full final state is
+in `process.log`; `observations/authentic-entry.json` retains the source/build
+identities and room publication observation. No native acceptance is claimed
+for the combined palette build.
+
+The independent host projection oracle now compares sparse actors against
+compositing in logical room space followed by the existing SC5VIS aspect-fit
+projection. It covers signed offsets, sampling phase, letterboxing, transparent
+holes, and opaque mapped-zero colors. Five tests include 100 randomized
+differential cases. Native projection is still pending; actor scaling is a
+separate unimplemented capability in this oracle.
