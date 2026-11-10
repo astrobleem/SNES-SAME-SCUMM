@@ -14,11 +14,24 @@ from tools.generate_snes_cooked_rooms import apply_synthetic_actor_probe
 from tools.validate_scumm_actor_visual_probe_nexen import (
     decode_pose_observation, direction_index_for_facing, pose_is_presented,
     same_room_costume_source, actor_bounds_on_surface,
-    read_surface_packets_pending, validate_animation_constants,
+    read_surface_packets_pending, validate_animation_constants, validate_projection_rom_operands,
 )
 
 
 class ActorProbeIntegrationTests(unittest.TestCase):
+    def test_projection_header_bank_is_verified_in_actual_rom_bytes(self) -> None:
+        listing = ("; ScummV5_ActorPose_Compose__header_in_range = $9000 (Label)\n"
+                   "; ScummV5_ActorPose_Compose__geometry_check_10 = $9040 (Label)\n"
+                   "; ScummV5_MsuVisualProjectionData = $8200 (Label)\n")
+        rom = bytearray(10 * 32768)
+        start = 9 * 32768 + 0x1000
+        for offset in (0, 8, 16, 24):
+            rom[start + offset:start + offset + 4] = bytes((0xBF, 0, 0x82, 19))
+        validate_projection_rom_operands(bytes(rom), listing, 19)
+        rom[start + 3] = 0  # historical label+constant bank loss
+        with self.assertRaisesRegex(RuntimeError, "lost their ROM bank"):
+            validate_projection_rom_operands(bytes(rom), listing, 19)
+
     def test_wrong_assembled_actor_mask_is_rejected_before_native_launch(self) -> None:
         listing = ("; SCUMM_V5_ACTOR_ANIMATION_BYTE = $0000 (Constant)\n"
                    "; SCUMM_V5_ACTOR_ANIMATION_MASK = $0002 (Constant)\n")
@@ -301,6 +314,11 @@ class ActorProbeIntegrationTests(unittest.TestCase):
         # This is reserved state and has no native production writer.
         pose[0x63] = 0
         self.assertEqual(actor_bounds_on_surface(pose), (151, 96, 170, 136))
+        projection = dict(source_width=320, source_height=200,
+                          content_width=256, content_height=160, offset_x=0, offset_y=32)
+        self.assertEqual(actor_bounds_on_surface(pose, projection), (121, 109, 136, 141))
+        with self.assertRaisesRegex(RuntimeError, "invalid compiled actor projection"):
+            actor_bounds_on_surface(pose, projection | {"content_width": 257})
 
         pose[0x6C:0x6E] = (3).to_bytes(2, "little", signed=True)
         pose[0x6E:0x70] = (5).to_bytes(2, "little", signed=True)

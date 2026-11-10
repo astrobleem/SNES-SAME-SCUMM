@@ -1,6 +1,8 @@
 """Execute controller source with sparse video ABI stubs; no ROM/emulator needed."""
 from pathlib import Path
 import unittest
+import struct
+from same.engines.scumm_v5.program_storage import _projection_directory
 
 SOURCE = Path(__file__).resolve().parents[1] / 'runtime/snes/engines/scumm_v5_controller_far.pasm'
 P = 'ScummV5_ActorPose_Compose'
@@ -10,10 +12,11 @@ D = 'SAME_VIDEO_SURFACE_DAMAGE_'
 
 class ControllerMachine:
     def __init__(self, spans, foot=(50, 130), bounds=(-300, -200, 300, 200),
-                 fail_capture=0, writable=True, visible=True, fail_draw=0, fail_commit=False):
+                 fail_capture=0, writable=True, visible=True, fail_draw=0, fail_commit=False,
+                 source_size=(256, 224), target_size=(256, 224)):
         source = SOURCE.read_text()
         source = source[source.index(P + '_Far:'):]
-        source = source[:source.index('\n    rtl', source.index(P + '__invalid:')) + 8]
+        source = source[:source.index('; The provider has one global cursor.')]
         self.code, self.labels = [], {}
         for raw in source.splitlines():
             line = raw.split(';', 1)[0].strip()
@@ -23,7 +26,16 @@ class ControllerMachine:
                 self.labels[line[:-1]] = len(self.code)
             else:
                 self.code.append(line)
+        self.offsets, self.geometry = _projection_directory([dict(
+            room=4, width=target_size[0], height=target_size[1], pitch=target_size[0],
+            projection=dict(source_width=source_size[0], source_height=source_size[1]))])
+        self.source_size, self.target_size = source_size, target_size
+        self.call_returns = []
+        self.instructions = 0
+        self.search_instructions = 0
         self.mem = {
+            'SAME_VIDEO_SURFACE_ROOM': 4,
+            'SAME_SCUMM_C14_ACTORS+(SCUMM_V5_ACTOR_RENDER_ID*$40)+SAME_SCUMM_C14_A_SCALE_X': 65535,
             M + 'POSE_STATE': 2, M + 'TICKET_ROOM_EPOCH': 7,
             'SAME_VIDEO_SURFACE_ROOM_GENERATION': 7,
             M + 'TICKET_COSTUME_EPOCH': 3, M + 'POSE_GENERATION': 3,
@@ -43,8 +55,12 @@ class ControllerMachine:
             offset += length
         self.a, self.x, self.y = 0xBEEF, 0x1234, 0x5678
         self.initial = (self.a, self.x, self.y)
+        self.pixels = bytes((i * 37) & 255 for i in range(offset))
+        self.damage = None
         self.width, self.iwidth = 8, 8
         self.c = self.z = self.n = self.v = False
+        self.decimal = True
+        self.db = 0x87
         self.stack = [0x54, 0x90, 0xCA]  # caller's JSL frame
         self.events, self.captures, self.draws = [], [], []
         self.surface = bytearray((i * 17 + 3) & 255 for i in range(256 * 224))
@@ -69,11 +85,20 @@ class ControllerMachine:
         if arg.startswith('#'):
             return {'SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR': 1,
                     'SCUMM_ERR_RESOURCE': 9,
+                    'SCUMM_MSU1_PROJECTION_MISSING': 65535,
+                    'SCUMM_MSU1_PROJECTION_HEADER_SIZE': 12,
+                    'SCUMM_MSU1_PROJECTION_RECORD_BYTES': len(self.geometry),
                     '<SAME_SCUMM_ACTOR_POSE_BUFFER': 0,
                     '>SAME_SCUMM_ACTOR_POSE_BUFFER': 0,
                     'SAME_SCUMM_LIVE_ROOM_PENDING_BANK': 0x41}[arg[1:]]
-        if arg == '1,s':
-            return self.stack[-1] | self.stack[-2] << 8
+        if arg.endswith(',s'):
+            n = int(arg[:-2])
+            return self.stack[-n] | self.stack[-n-1] << 8
+        if arg.startswith('ScummV5_MsuVisualProjection') and arg.endswith(',x'):
+            label = arg[:-2]
+            name, _, add = label.partition('+')
+            data = self.offsets if name.endswith('Offsets') else self.geometry
+            return struct.unpack_from('<H', data, self.x + int(add or '0'))[0]
         return self.mem.get(arg, 0)
 
     def service(self, name):
@@ -99,6 +124,12 @@ class ControllerMachine:
                 assert self.a % 256 + self.x <= 256
                 assert self.a // 256 < 224
                 self.captures.append((self.a, self.x, bytes(self.surface[self.a:self.a + self.x])))
+                x, y = self.a % 256, self.a // 256
+                box = (x, y, x + self.x, y + 1)
+                if self.damage:
+                    box = (min(x, self.damage[0]), min(y, self.damage[1]),
+                           max(box[2], self.damage[2]), max(box[3], self.damage[3]))
+                self.damage = box
         elif name == 'Same_VideoSurface_CommitActorUnderlay_Far':
             self.events.append('commit')
             self.mem['SAME_VIDEO_SURFACE_DP_SOURCE+$02'] = 0xDE
@@ -107,18 +138,23 @@ class ControllerMachine:
         elif name == 'Same_VideoSurface_BlitCheckedOpaqueRun_Far':
             assert [self.mem['SAME_VIDEO_SURFACE_DP_SOURCE' + suffix] for suffix in ('', '+$01', '+$02')] == [0, 0, 0x41], 'checked actor pointer not reset after commit'
             assert self.committed, 'draw before journal commit'
-            assert len(self.captures) > len(self.draws), 'draw before all captures'
+            assert any(a <= self.a and self.a + self.x <= a + n
+                       for a, n, _ in self.captures), 'draw outside captured coverage'
             self.events.append('draw')
             self.draws.append((self.a, self.x, self.y))
             self.c = len(self.draws) == self.fail_draw
             if not self.c:
-                self.surface[self.a:self.a + self.x] = b'\xff' * self.x
+                self.surface[self.a:self.a + self.x] = self.pixels[self.y:self.y + self.x]
+            self.a, self.x, self.y = 0xDDDD, 0xEEEE, 0xFFFF  # opaque ABI clobbers
         else:
             raise AssertionError(name)
 
     def run(self):
         pc = 0
-        for _ in range(50000):
+        for _ in range(2000000):
+            self.instructions += 1
+            if self.call_returns:
+                self.search_instructions += 1
             line = self.code[pc]
             pc += 1
             op, _, arg = line.partition(' ')
@@ -133,17 +169,19 @@ class ControllerMachine:
             elif op in ('lda', 'lda.l'):
                 result = value
             elif op in ('sta', 'sta.l'):
-                if arg == '1,s':
-                    self.stack[-1], self.stack[-2] = self.a & 255, self.a >> 8
+                if arg.endswith(',s'):
+                    n = int(arg[:-2])
+                    self.stack[-n], self.stack[-n-1] = self.a & 255, self.a >> 8
                 else:
                     old = self.mem.get(arg, 0)
                     self.mem[arg] = (old & ~mask) | (self.a & mask)
             elif op == 'php':
                 self.stack.append((0x20 if self.width == 8 else 0) |
                                   (0x10 if self.iwidth == 8 else 0) |
-                                  int(self.c) | int(self.z) * 2 | int(self.n) * 128 | int(self.v) * 64)
+                                  int(self.c) | int(self.z) * 2 | int(self.n) * 128 | int(self.v) * 64 | int(self.decimal) * 8)
             elif op == 'plp':
                 flags = self.stack.pop()
+                self.decimal = bool(flags & 8)
                 self.width = 8 if flags & 32 else 16
                 self.iwidth = 8 if flags & 16 else 16
                 self.c, self.z, self.n, self.v = (bool(flags & b) for b in (1, 2, 128, 64))
@@ -170,24 +208,45 @@ class ControllerMachine:
             elif op in ('eor', 'and', 'ora', 'ora.l'):
                 result = {'eor': lambda: self.a ^ value, 'and': lambda: self.a & value,
                           'ora': lambda: self.a | value, 'ora.l': lambda: self.a | value}[op]()
-            elif op == 'dec':
-                result = self.a - 1
+            elif op in ('dec', 'inc'):
+                result = self.a + (1 if op == 'inc' else -1)
+            elif op in ('asl', 'lsr'):
+                self.c = bool(self.a & (1 << (self.width - 1) if op == 'asl' else 1))
+                result = self.a << 1 if op == 'asl' else (self.a & mask) >> 1
+            elif op == 'inx':
+                self.x = (self.x + 1) & ((1 << self.iwidth) - 1)
+                self.z, self.n = self.x == 0, bool(self.x & (1 << (self.iwidth - 1)))
+            elif op == 'tya':
+                result = self.y
+            elif op == 'cld':
+                self.decimal = False
             elif op == 'xba':
                 self.a = (self.a & 255) << 8 | self.a >> 8
                 self.z, self.n = (self.a & 255) == 0, bool(self.a & 128)
             elif op in ('tax', 'tay'):
                 setattr(self, op[-1], self.a & ((1 << self.iwidth) - 1))
             elif op == 'jsl':
-                self.service(arg)
-            elif op in ('jmp', 'jml', 'brl', 'bra', 'bcc', 'bcs', 'bne', 'beq', 'bmi', 'bpl', 'bvc'):
+                if arg in self.labels:
+                    self.call_returns.append(pc)
+                    self.stack.extend([0x21, 0x88, 0x00])
+                    pc = self.labels[arg]
+                else:
+                    self.service(arg)
+            elif op in ('jmp', 'jml', 'brl', 'bra', 'bcc', 'bcs', 'bne', 'beq', 'bmi', 'bpl', 'bvc', 'bvs'):
                 take = {'bcc': not self.c, 'bcs': self.c, 'bne': not self.z,
-                        'beq': self.z, 'bmi': self.n, 'bpl': not self.n, 'bvc': not self.v}.get(op, True)
+                        'beq': self.z, 'bmi': self.n, 'bpl': not self.n, 'bvc': not self.v, 'bvs': self.v}.get(op, True)
                 if take:
                     pc = self.labels[arg]
             elif op == 'rtl':
+                if self.call_returns:
+                    assert self.stack[-3:] == [0x21, 0x88, 0x00]
+                    del self.stack[-3:]
+                    pc = self.call_returns.pop()
+                    continue
                 assert self.stack == [0x54, 0x90, 0xCA], self.stack
                 assert (self.a, self.x, self.y) == self.initial
                 assert self.width == self.iwidth == 8
+                assert self.decimal and self.db == 0x87
                 return self
             else:
                 raise AssertionError(line)
@@ -232,8 +291,8 @@ class SparseControllerTests(unittest.TestCase):
         self.assertEqual(vm.surface, vm.original)
 
     def test_projected_foot_overflow_rejected_before_begin(self):
-        for field, value in [('SAME_VIDEO_SURFACE_DEST_X', 100),
-                             ('SAME_VIDEO_SURFACE_SOURCE_X', -100)]:
+        for field, value in [('SAME_VIDEO_SURFACE_DEST_X', 32760),
+                             ('SAME_VIDEO_SURFACE_SOURCE_X', -32760)]:
             vm = ControllerMachine([(0, 0, 2)], foot=(32760, 0))
             vm.mem[field] = value & 65535
             vm.run()

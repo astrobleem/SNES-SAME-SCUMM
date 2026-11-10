@@ -1087,7 +1087,8 @@ else
             --msu1-program-directory-include runtime/snes/generated/scumm_v5_msu_programs.inc.pasm
             --msu1-program-directory-bank 10
             --msu1-program-page-directory-bank 12
-            --reserved-bank 10 --reserved-bank 11 --reserved-bank 12)
+            --msu1-projection-directory-bank 19
+            --reserved-bank 10 --reserved-bank 11 --reserved-bank 12 --reserved-bank 19)
         if [[ "${SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE:-0}" == "1" ]]; then
             SAME_SCUMM_ACTOR_PROBE_AUDIT="$MSU_PROGRAM_STORAGE_DIR/actor-probe-audit.json"
             export SAME_SCUMM_ACTOR_PROBE_AUDIT

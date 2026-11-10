@@ -111,3 +111,43 @@ projection. It covers signed offsets, sampling phase, letterboxing, transparent
 holes, and opaque mapped-zero colors. Five tests include 100 randomized
 differential cases. Native projection is still pending; actor scaling is a
 separate unimplemented capability in this oracle.
+
+## Shared actor/background projection
+
+The native compositor now samples signed source-space actor runs on exactly
+the existing SC5VIS aspect-fit grid. Room geometry is selected by installed
+surface identity/generation. Four binary lower-bound searches replace per-run
+full-screen scans. Capture and draw use the same projected coverage; skipped
+or repeated source samples are emitted through the existing opaque blitter.
+Actor scaling remains independently limited to 255/255 and fails explicitly
+otherwise. Multiple actors, occlusion and multi-chunk poses remain pending.
+
+All 96 source room records produce 31 geometry tables. The projection map and
+tables occupy 20,960 bytes in explicitly reserved ROM bank 19. Existing bank-10
+directories use 29,151 bytes, and bank-12 page directories use 27,820. There is
+no additional WRAM allocation; the compositor uses 26 bytes of stack-local
+iterator state. Package bytes are unchanged by this ROM lookup extension.
+
+The first projected build rejected its pose before drawing. Assembled bytes
+showed Poppy dropping the ROM bank from label-plus-constant long operands.
+Header reads now advance X and use plain banked labels. An actual ROM-byte
+preflight rejects the original failing image and admits the corrected image.
+No compiler version or integrity policy was changed.
+
+The corrected single native diagnostic completed in 77.594 seconds. Five
+source-costume images match the independent host projection exactly, with
+zero indexed/PPU/CGRAM differences and zero old-position residue. This remains
+a synthetic graphics driver, not original gameplay acceptance.
+
+- rom_sha256: `c44ba1ca39d5b29fb743b712d120cd853e80ba0c4facb7157592e77d1b9841bb`
+- map_sha256: `6e30609e4fa3905b52ff770427ac5cb8afb9c73952187a5c208e830d037674b6`
+- package_sha256: `281589a71af44c7476d79d7109977439bc94c31832653deb9cb0eb775183297a`
+- build_identity_sha256: `4e7f23b20168acba6e7e92f4894a59b255785f5d5b9b5ea41de5d0fca9c074e4`
+- actor_probe_audit_sha256: `dd1fee2033e5f9a5aaa3306ccf06f12f196dc4690bbaddf41c53cf8e67e3d146`
+
+Evidence: `/tmp/astra-projection-bankfix-proof-20261110/observations`.
+Immutable build source: `/tmp/astra-projection-bankfix-source.emed2144`.
+The original failing build and its 59.124-second first-error capture remain
+preserved separately. The observer's new playable-scene mode uses the existing
+authored intro acknowledgements and stops before all object-action replay steps;
+it has not yet established an authentic scene acceptance.

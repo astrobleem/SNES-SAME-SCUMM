@@ -534,6 +534,8 @@ def main() -> int:
     )
     parser.add_argument("--msu1-program-directory-include", type=Path)
     parser.add_argument("--msu1-program-directory-bank", type=int, default=10)
+    parser.add_argument("--msu1-projection-directory-bank", type=int, default=19,
+                        help="reserved LoROM bank for room projection lookup tables")
     parser.add_argument(
         "--msu1-program-page-directory-bank", type=int,
         help="ROM bank for compiler-proven bytecode page index/CRC records",
@@ -1809,6 +1811,7 @@ def main() -> int:
             ),
             room_visual_resources=room_visual_resources,
             rom_bank=args.msu1_program_directory_bank,
+            projection_directory_bank=args.msu1_projection_directory_bank,
             page_directory_bank=(
                 args.msu1_program_directory_bank + 2
                 if args.msu1_program_page_directory_bank is None
@@ -1851,6 +1854,8 @@ def main() -> int:
         hold_after_started_global_program = int(match["id"])
 
     reserved_banks = set(args.reserved_bank)
+    if args.msu1_program_storage_dir is not None:
+        reserved_banks.add(args.msu1_projection_directory_bank)
 
     def cpu_rom_address(bank: int) -> str:
         visible_bank = cpu_visible_rom_bank(bank, sa1_aliases=args.sa1_rom_bank_aliases)

@@ -212,6 +212,32 @@ def validate_animation_constants(listing: str, actor: int) -> None:
                 f"assembled {name} differs from diagnostic actor {actor}")
 
 
+def validate_projection_rom_operands(rom: bytes, listing: str, projection_bank: int) -> None:
+    """Pinned Poppy must retain the bank on every geometry header read.
+
+    Label+constant long operands can lose their ROM bank in this compiler.
+    The controller uses four indexed plain-label loads instead. Check their
+    actual bytes, not only assembly source or successful process exit.
+    """
+    def address(label: str) -> int:
+        found = re.search(rf"^;\s*{re.escape(label)}\s*=\s*\$([0-9a-fA-F]+)\s+\(Label\)",
+                          listing, re.MULTILINE)
+        require(found is not None, f"projection operand audit lacks {label}")
+        return int(found.group(1), 16)
+    require(type(projection_bank) is int and 0 <= projection_bank < 0x40,
+            "projection operand audit requires low mapped LoROM bank")
+    start = address("ScummV5_ActorPose_Compose__header_in_range")
+    end = address("ScummV5_ActorPose_Compose__geometry_check_10")
+    data = address("ScummV5_MsuVisualProjectionData")
+    require(0x8000 <= start < end <= 0xFFFF and 0x8000 <= data <= 0xFFFF,
+            "projection operand audit has invalid bank-local addresses")
+    # The established controller personality is linked in bank 9.
+    code = rom[9 * 0x8000 + start - 0x8000:9 * 0x8000 + end - 0x8000]
+    expected = bytes((0xBF, data & 255, data >> 8, projection_bank))
+    require(code.count(expected) == 4,
+            "assembled projection header reads lost their ROM bank or differ from the four-load ABI")
+
+
 def validate_build(args: argparse.Namespace) -> tuple[dict, dict, dict, bytes]:
     for path in (args.rom, args.package, args.map, args.identity,
                  args.listing, args.directory, args.storage, args.audit,
@@ -303,6 +329,9 @@ def validate_build(args: argparse.Namespace) -> tuple[dict, dict, dict, bytes]:
     require(len(matches) == 1 and int(matches[0]["program_unit_id"]) == 0,
             "ROM-bound full directory does not resolve boot script 1 to canonical ID 0")
     storage = json.loads(args.storage.read_text())
+    if "ScummV5_ActorPose_ProjectSpan_Far" in args.listing.read_text():
+        validate_projection_rom_operands(args.rom.read_bytes(), args.listing.read_text(),
+                                         storage["projection_directory_bank"])
     require(storage.get("package_sha256") == package_hash,
             "package does not match the compiler storage directory")
     visual = [row for row in storage.get("visual_records", [])
@@ -340,7 +369,7 @@ def read_surface_packets_pending(session) -> bool:
     return False
 
 
-def actor_bounds_on_surface(raw: bytes) -> tuple[int, int, int, int]:
+def actor_bounds_on_surface(raw: bytes, projection: dict | None = None) -> tuple[int, int, int, int]:
     """Project the checked pose's signed half-open bounds around its foot.
 
     The old POSE_RENDER_BOUNDS_VALID bytes are reserved and have no runtime
@@ -358,6 +387,19 @@ def actor_bounds_on_surface(raw: bytes) -> tuple[int, int, int, int]:
     require(left <= right and top <= bottom,
             f"invalid signed costume bounds: {(left, top, right, bottom)}")
     foot_x, foot_y = signed_word(0x6C), signed_word(0x6E)
+    if projection is not None:
+        sw, sh = int(projection["source_width"]), int(projection["source_height"])
+        cw, ch = int(projection["content_width"]), int(projection["content_height"])
+        ox, oy = int(projection["offset_x"]), int(projection["offset_y"])
+        require(0 < sw <= 65535 and 0 < sh <= 65535
+                and 0 < cw <= 256 and 0 < ch <= 224
+                and 0 <= ox <= 256 - cw and 0 <= oy <= 224 - ch,
+                "invalid compiled actor projection geometry")
+        xs = [ox + x for x in range(cw)
+              if foot_x + left <= (2 * x + 1) * sw // (2 * cw) < foot_x + right]
+        ys = [oy + y for y in range(ch)
+              if foot_y + top <= (2 * y + 1) * sh // (2 * ch) < foot_y + bottom]
+        return (min(xs), min(ys), max(xs) + 1, max(ys) + 1) if xs and ys else (0, 0, 0, 0)
     bounds = (max(0, foot_x + left), max(0, foot_y + top),
               min(256, foot_x + right), min(224, foot_y + bottom))
     require(bounds[0] <= bounds[2] and bounds[1] <= bounds[3],
@@ -366,7 +408,7 @@ def actor_bounds_on_surface(raw: bytes) -> tuple[int, int, int, int]:
 
 
 def capture_surface(session, directory: Path, label: str,
-                    backdrop: bytes) -> dict:
+                    backdrop: bytes, *, projection: dict | None = None) -> dict:
     pixels = session.read_memory("snesMemory", SURFACE, 256 * 224)
     palette = session.read_memory("snesMemory", PALETTE, 768)
     require(len(pixels) == len(backdrop), "incomplete indexed surface read")
@@ -402,7 +444,7 @@ def capture_surface(session, directory: Path, label: str,
         bounds = None
     state = session.read_memory("snesMemory", ACTOR_STATE, 128)
     pose = decode_pose_observation(state)
-    actor_bounds = actor_bounds_on_surface(state)
+    actor_bounds = actor_bounds_on_surface(state, projection)
     require(actor_bounds[0] < actor_bounds[2]
             and actor_bounds[1] < actor_bounds[3],
             f"the diagnostic pose has no visible clipped bounds: {actor_bounds}")
@@ -452,6 +494,8 @@ def capture_surface(session, directory: Path, label: str,
             for offset in (0x4B, 0x4D, 0x4F, 0x51)],
         "actor_bounds_screen_from_pose": list(actor_bounds),
         "foot_screen": [read_u16(state, 0x6C), read_u16(state, 0x6E)],
+        "foot_coordinate_space": "source_room" if projection is not None else "surface",
+        "room_projection": projection,
     }
     actual_visible_pixels = sum(1 for i in changed
                                 if actor_bounds[0] <= i % 256 < actor_bounds[2]
@@ -470,10 +514,12 @@ def capture_surface(session, directory: Path, label: str,
 
 
 class ProbeObserver:
-    def __init__(self, session, output: Path, backdrop: bytes, *, deadline: float):
+    def __init__(self, session, output: Path, backdrop: bytes, *, deadline: float,
+                 projection: dict | None = None):
         self.session = session
         self.output = output
         self.backdrop = backdrop
+        self.projection = projection
         self.deadline = deadline
         self.logical_frames = 0
         self.last_state = {}
@@ -832,7 +878,8 @@ class ProbeObserver:
         state = self.wait_presented_pose(expected_frame=expected_frame,
                                          expected_facing=expected_facing,
                                          expected_x=expected_x)
-        record = capture_surface(self.session, self.output, label, self.backdrop)
+        record = capture_surface(self.session, self.output, label, self.backdrop,
+                                 projection=self.projection)
         record["vm"] = state
         require(record["pose"]["actor_composed"] == 1
                 and record["pose"]["actor_pose_state"] in (0, 2)
@@ -1464,8 +1511,12 @@ def main() -> int:
                 })
                 return 0 if events else 2
             session.set_input(0, 1)
+            projection = (source_records["visual"].get("projection")
+                          if "ScummV5_ActorPose_ProjectSpan_Far" in args.listing.read_text()
+                          else None)
             observer = ProbeObserver(session, args.output, backdrop,
-                                     deadline=started + INTERNAL_DEADLINE_SECONDS)
+                                     deadline=started + INTERNAL_DEADLINE_SECONDS,
+                                     projection=projection)
             if args.room_commit_trace_probe:
                 trace = None
                 while observer.logical_frames < 2400:

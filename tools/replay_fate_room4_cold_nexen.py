@@ -2927,7 +2927,10 @@ def main() -> int:
     parser.add_argument("--nexen-boot-wait", type=float, default=10.0)
     parser.add_argument("--socket-timeout", type=float, default=300.0)
     parser.add_argument("--startup-frames", type=int, default=1600)
-    parser.add_argument("--capture-room4-actor-entry", action="store_true",
+    capture_mode = parser.add_mutually_exclusive_group()
+    capture_mode.add_argument("--capture-room4-playable-scene", action="store_true",
+                        help="use existing intro controller acknowledgements, capture scene, stop before object actions")
+    capture_mode.add_argument("--capture-room4-actor-entry", action="store_true",
                         help="capture authentic startup actor presentation and stop before controller actions")
     parser.add_argument(
         "--break-on-cpu-address", type=lambda value: int(value, 0),
@@ -3004,7 +3007,7 @@ def main() -> int:
         ) == "1"
     )
     explicit_environment = build_identity.get("explicit_environment", {})
-    if args.capture_room4_actor_entry:
+    if args.capture_room4_actor_entry or args.capture_room4_playable_scene:
         if (explicit_environment.get("SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER") != "1"
                 or explicit_environment.get("SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE", "0") != "0"
                 or build_identity.get("diagnostics", {}).get("actor_probe")):
@@ -3393,9 +3396,7 @@ def main() -> int:
                 session, variable_base=variable_layout["base"],
                 variable_count=variable_layout["count"],
             )
-            if args.capture_room4_actor_entry:
-                # Read-only observation of original startup scripts; no synthetic
-                # ACK writes, object actions, or continuation of the old route.
+            def capture_authentic_actor(evidence_class: str) -> int:
                 import time
                 import zlib
                 from validate_scumm_actor_visual_probe_nexen import ProbeObserver, capture_surface
@@ -3403,6 +3404,10 @@ def main() -> int:
                 if not storage_root.is_absolute():
                     storage_root = ROOT / storage_root
                 storage = json.loads((storage_root / "program-storage.json").read_text())
+                if "ScummV5_ActorPose_ProjectSpan_Far" in rom.with_suffix(".lst").read_text():
+                    from validate_scumm_actor_visual_probe_nexen import validate_projection_rom_operands
+                    validate_projection_rom_operands(rom.read_bytes(), rom.with_suffix(".lst").read_text(),
+                                                     storage["projection_directory_bank"])
                 package = rom.with_suffix(".msu")
                 package_bytes = package.read_bytes()
                 if hashlib.sha256(package_bytes).hexdigest() != storage["package_sha256"]:
@@ -3412,27 +3417,36 @@ def main() -> int:
                 backdrop = package_bytes[offset:offset + length]
                 if len(backdrop) != 256 * 224 or zlib.crc32(backdrop) & 0xffffffff != int(visual["pixel_crc32"], 16):
                     raise RuntimeError("authentic room backdrop length/CRC differs")
-                report.update({"evidence_class": "authentic cold startup, read-only actor entry capture",
-                               "controller_actions_submitted": 0,
+                report.update({"evidence_class": evidence_class,
+                               "object_actions_submitted": 0,
                                "package_sha256": storage["package_sha256"],
                                "gameplay_interaction_verified": False})
                 args.output.write_text(json.dumps(report, indent=2) + "\n")
                 capture_dir = args.output.parent / "actor-entry"
                 capture_dir.mkdir(exist_ok=False)
+                projection = (visual.get("projection")
+                              if "ScummV5_ActorPose_ProjectSpan_Far" in rom.with_suffix(".lst").read_text()
+                              else None)
                 observer = ProbeObserver(session, capture_dir, backdrop,
-                                         deadline=time.monotonic() + 120)
+                                         deadline=time.monotonic() + 120,
+                                         projection=projection)
                 state = observer.wait_presented_pose(max_frames=1200)
-                capture = capture_surface(session, capture_dir, "authentic-room4-entry", backdrop)
+                capture = capture_surface(session, capture_dir, "authentic-room4-entry", backdrop,
+                                          projection=projection)
                 report["actor_entry"] = {"state": state, "capture": capture}
                 if capture["ppu_indexed_differences"] or capture["cgram_difference_bytes"]:
                     raise RuntimeError("authentic entry PPU differs from indexed presentation")
                 if capture["actor_bound_difference_pixels"] < 40:
                     raise RuntimeError("authentic entry actor is not visibly distinguishable")
-                report["result"] = "ACTOR_ENTRY_CAPTURED_NOT_GAMEPLAY_ACCEPTANCE"
+                report["result"] = "ACTOR_SCENE_CAPTURED_NOT_OBJECT_GAMEPLAY_ACCEPTANCE"
                 if pcm_capture_path is not None:
                     report["pcm_capture_stop"] = session.stop_audio()
                 args.output.write_text(json.dumps(report, indent=2) + "\n")
                 return 0
+
+            if args.capture_room4_actor_entry:
+                report["controller_actions_submitted"] = 0
+                return capture_authentic_actor("authentic cold startup, read-only actor entry capture")
             # A streamed room becomes drawable before its ENCD continuation
             # necessarily finishes the nested authentic global setup. Keep
             # advancing the ordinary scheduler (with no injected input) until
@@ -3641,6 +3655,11 @@ def main() -> int:
                 },
                 "result_detail": report["room4_intro"]["result"],
             }
+            if args.capture_room4_playable_scene:
+                # Reuse the authored intro/acknowledgement path above, but never
+                # enter any of the seven object-action replay steps below.
+                report["intro_controller_inputs"] = "recorded in cutscene/intro observations"
+                return capture_authentic_actor("authentic scene after normal intro controller acknowledgements")
             action_baseline_slots: list[dict[str, Any]] = []
 
             def remember_submission_baseline(

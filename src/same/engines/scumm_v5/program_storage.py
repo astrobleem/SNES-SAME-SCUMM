@@ -169,6 +169,69 @@ def read_package_prefix_sections(
     return tuple(result)
 
 
+def _projection_directory(visual_records: list[dict[str, object]]) -> tuple[bytes, bytes]:
+    """ROM-only ABI: 256 u16 offsets (FFFF absent), relative to Records.
+
+    Records: six LE u16 values (source W/H, content W/H, offset X/Y),
+    then content W X-sample words followed by content H Y-sample words.
+    Geometry is derived from source dimensions, never from actor scaling.
+    """
+    offsets = [0xFFFF] * 256
+    records = bytearray()
+    geometries: dict[tuple[int, ...], int] = {}
+
+    def integer(value: object, low: int, high: int, field: str) -> int:
+        if type(value) is not int or not low <= value <= high:
+            raise ValueError(f"visual projection {field} must be an integer in {low}..{high}")
+        return value
+
+    for row in sorted(visual_records, key=lambda row: int(row["room"])):
+        room = integer(row["room"], 0, 255, "room")
+        if offsets[room] != 0xFFFF:
+            raise ValueError("visual projection duplicate room")
+        tw = integer(row["width"], 1, 256, "target width")
+        th = integer(row["height"], 1, 224, "target height")
+        integer(row["pitch"], tw, 65535, "target pitch")
+        # Older callers supply already projected fixtures without provenance.
+        # Only absent metadata gets identity fallback; malformed metadata fails.
+        projection = row.get("projection") if "projection" in row else {
+            "source_width": tw, "source_height": th,
+        }
+        if not isinstance(projection, Mapping):
+            raise ValueError("visual projection metadata must be a mapping")
+        sw = integer(projection.get("source_width"), 1, 65535, "source_width")
+        sh = integer(projection.get("source_height"), 1, 65535, "source_height")
+        if tw * sh <= th * sw:
+            cw, ch = tw, max(1, sh * tw // sw)
+        else:
+            cw, ch = max(1, sw * th // sh), th
+        ox, oy = (tw - cw) // 2, (th - ch) // 2
+        expected = dict(target_width=tw, target_height=th, content_width=cw,
+                        content_height=ch, offset_x=ox, offset_y=oy)
+        for key, value in expected.items():
+            if key in projection and integer(projection[key], 0, 65535, key) != value:
+                raise ValueError(f"visual projection {key} disagrees with source aspect fit")
+        if "source_pitch" in projection:
+            integer(projection["source_pitch"], sw, 65535, "source_pitch")
+        if projection.get("sampling", "nearest_neighbor_aspect_fit") != "nearest_neighbor_aspect_fit":
+            raise ValueError("visual projection sampling is unsupported")
+        if projection.get("border_palette_index", 0) != 0:
+            raise ValueError("visual projection border must be palette index zero")
+        geometry = (sw, sh, cw, ch, ox, oy)
+        if geometry not in geometries:
+            length = 12 + 2 * (cw + ch)
+            if len(records) + length > 0xFFFF:
+                raise ValueError("visual projection records exceed u16 offset range")
+            geometries[geometry] = len(records)
+            values = (*geometry,
+                      *((2 * x + 1) * sw // (2 * cw) for x in range(cw)),
+                      *((2 * y + 1) * sh // (2 * ch) for y in range(ch)))
+            for value in values:
+                records.extend(value.to_bytes(2, "little"))
+        offsets[room] = geometries[geometry]
+    return b"".join(value.to_bytes(2, "little") for value in offsets), bytes(records)
+
+
 def _record_include(
     records: list[dict[str, object]],
     room_records: list[dict[str, object]],
@@ -181,6 +244,7 @@ def _record_include(
     page_indices: list[dict[str, int]] | None = None,
     page_records: list[dict[str, object]] | None = None,
     page_directory_bank: int | None = None,
+    projection_directory_bank: int | None = None,
 ) -> str:
     live_room_records = live_room_records or []
     live_route_records = live_route_records or []
@@ -214,6 +278,18 @@ def _record_include(
             if len(str(row[field])) != 8:
                 raise ValueError(f"visual {field} must be eight hexadecimal digits")
             int(str(row[field]), 16)
+    projection_map, projection_records = (_projection_directory(visual_records)
+                                          if visual_records else (b"", b""))
+    projection_bytes = len(projection_map) + len(projection_records)
+    if projection_directory_bank is not None:
+        if type(projection_directory_bank) is not int or not 0 <= projection_directory_bank <= 0x7F:
+            raise ValueError("projection directory bank must be a mapped LoROM bank")
+        effective_page_bank = (page_directory_bank if page_directory_bank is not None
+                               else (2 if rom_bank is None else rom_bank + 2))
+        if projection_directory_bank in {rom_bank, effective_page_bank, 11}:
+            raise ValueError("projection directory bank aliases program/page/package directory")
+        if projection_bytes > 0x8000:
+            raise ValueError("projection directory exceeds one LoROM data bank")
     directory_bytes = (
         len(records) * 10 + room_count * 10
         + room_count * (SECTIONED_LIVE_ROOM_DIRECTORY_RECORD_SIZE
@@ -221,6 +297,8 @@ def _record_include(
         + room_count * (LIVE_ROOM_DIRECTORY_RECORD_SIZE if live_route_records else 0)
         + len(live_room_chunks) * LIVE_ROOM_CHUNK_RECORD_SIZE
         + room_count * VISUAL_DIRECTORY_RECORD_SIZE
+        + (projection_bytes if projection_directory_bank is None else 0)
+        + (not records) + (not room_count)  # emitted empty-table sentinel bytes
     )
     if directory_bytes > 0x8000:
         raise ValueError(
@@ -347,6 +425,23 @@ def _record_include(
                 raw += int(row["pitch"]).to_bytes(2, "little")
         for start in range(0, len(raw), 16):
             lines.append("    .byte " + ",".join(f"${value:02X}" for value in raw[start:start + 16]))
+    if visual_records:
+        if projection_directory_bank is not None:
+            lines.extend((f".bank {projection_directory_bank}", ".org $8000"))
+        lines.extend((
+            "; Projection offsets are relative to ScummV5_MsuVisualProjectionData.",
+            "; Header u16: source W/H, content W/H, offset X/Y; then X and Y samples.",
+            "SCUMM_MSU1_PROJECTION_ROOM_COUNT = $0100",
+            "SCUMM_MSU1_PROJECTION_MISSING = $FFFF",
+            "SCUMM_MSU1_PROJECTION_HEADER_SIZE = $000C",
+            f"SCUMM_MSU1_PROJECTION_RECORD_BYTES = ${len(projection_records):04X}",
+        ))
+        for label, payload in (("ScummV5_MsuVisualProjectionOffsets", projection_map),
+                               ("ScummV5_MsuVisualProjectionData", projection_records)):
+            lines.append(label + ":")
+            for start in range(0, len(payload), 16):
+                lines.append("    .byte " + ",".join(
+                    f"${value:02X}" for value in payload[start:start + 16]))
     if page_indices or page_records:
         if len(page_indices) != len(records):
             raise ValueError("ProgramUnit page index count differs from the body directory")
@@ -410,6 +505,7 @@ def build_program_storage(
     room_visual_resources: Mapping[int, bytes] | None = None,
     rom_bank: int | None = None,
     page_directory_bank: int | None = None,
+    projection_directory_bank: int | None = None,
 ) -> dict[str, object]:
     """Package all selector-bearing units and emit a deterministic ROM index.
 
@@ -813,6 +909,7 @@ def build_program_storage(
             + len(page_records) * PROGRAM_PAGE_RECORD_SIZE
         ),
         "program_page_directory_bank": page_directory_bank,
+        "projection_directory_bank": projection_directory_bank,
         "page_indices": page_indices,
         "page_records": page_records,
         "room_resource_count": len(room_rows),
@@ -851,7 +948,7 @@ def build_program_storage(
         _record_include(
             rows, room_rows, room_directory_count, rom_bank,
             live_room_rows, live_route_rows, live_room_chunks, visual_rows,
-            page_indices, page_records, page_directory_bank,
+            page_indices, page_records, page_directory_bank, projection_directory_bank,
         ), encoding="ascii",
     )
     return result

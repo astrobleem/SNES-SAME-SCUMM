@@ -30,3 +30,13 @@ python tools/lint_poppy.py runtime/snes/main.pasm
 
 This check does not prove assembly or hardware behavior. It catches the known
 silent/misleading source shapes before invoking Poppy.
+
+## Banked label arithmetic in long operands
+
+At pinned revision `8ee859b33bad94e3a01e9c78026803e482292801`, an
+`lda.l BankedLabel+4,x` operand was observed as bank `$00` while the same
+plain `lda.l BankedLabel,x` retained its actual bank. For banked ROM table
+fields, advance X and use the plain label. This does not apply to the existing
+numeric far-WRAM address constants. Actor projection preflight checks the
+actual four assembled header-load operands; source-model tests alone cannot
+certify assembler relocation.
