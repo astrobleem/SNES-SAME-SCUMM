@@ -198,6 +198,151 @@ def pose_is_presented(raw: bytes, *, render_valid: int,
     return True
 
 
+def read_committed_pose(session, *, cursor_base: int) -> dict:
+    """Read persistent render fields, never the next request's pose/scratch.
+
+    Caller must keep the emulator paused. RENDER_X/Y are source-room actor
+    positions BEFORE elevation; no persistent committed elevation/bounds exist.
+    Room installation invalidates RENDER_VALID, so the installed surface epoch
+    binds a valid render key to its room. RENDER_ROOM has no publication writer.
+    """
+    require(isinstance(cursor_base, int) and cursor_base > 0,
+            "committed capture requires the matching carrier cursor_base")
+    def signed(address):
+        value = session.read_u16(address)
+        return value - 65536 if value & 0x8000 else value
+    return {
+        "pose_contract": "committed-render-key",
+        "error": session.read_u8(ERROR), "lifecycle": session.read_u8(LIFECYCLE),
+        "room": session.read_u8(ROOM),
+        "surface_room": session.read_u8(SURFACE_STATE),
+        "surface_presented_room": session.read_u8(SURFACE_PRESENTED_ROOM),
+        "surface_room_generation": session.read_u16(SURFACE_ROOM_GENERATION),
+        "surface_pending_visual": session.read_u8(SURFACE_PENDING_VISUAL),
+        "actor_render_valid": session.read_u8(ACTOR_RENDER_VALID),
+        "actor_render_retry": session.read_u8(0x7E5E24),
+        "actor_position_source_room": [signed(0x7E5E10), signed(0x7E5E12)],
+        "actor_render_facing": session.read_u16(ACTOR_RENDER_FACING),
+        "costume_id": session.read_u8(0x7E5E50),
+        "actor_render_visible": session.read_u8(0x7E5E51),
+        "actor_render_pose_frame": session.read_u8(ACTOR_STATE + 0x15),
+        "actor_render_pose_step": session.read_u8(ACTOR_STATE + 0x16),
+        "actor_render_generation": session.read_u16(ACTOR_STATE + 0x7D),
+        "surface_next_generation": session.read_u16(SURFACE_NEXT_GENERATION),
+        "backend_pending_generation": session.read_u16(MODE3_PENDING_GENERATION),
+        "backend_committed_generation": session.read_u16(MODE3_COMMITTED_GENERATION),
+        "backend_pending_generation_hi": session.read_u16(MODE3_PENDING_GENERATION_HI),
+        "backend_committed_generation_hi": session.read_u16(MODE3_COMMITTED_GENERATION_HI),
+        "mode3_state": session.read_u8(MODE3_CONTROL_STATE),
+        "mode3_surface_locked": session.read_u8(MODE3_SURFACE_LOCKED),
+        "mode3_pending_count": session.read_u16(MODE3_PENDING_COUNT),
+        "mode3_inflight_count": session.read_u16(MODE3_INFLIGHT_COUNT),
+        "event_count": session.read_u16(EVENT_COUNT),
+        "surface_packets_pending": read_surface_packets_pending(session),
+        "composition_active": session.read_u16(cursor_base + 56),
+    }
+
+
+def committed_pose_is_presented(state: dict, *, expected_room: int | None = None,
+                                 expected_x: int | None = None,
+                                 expected_y: int | None = None) -> bool:
+    """Fence a committed actor while a different pose may be fetching."""
+    generation = state["surface_next_generation"]
+    return bool(
+        state["error"] == 0 and state["lifecycle"] == 2
+        and state["actor_render_valid"] == 1 and state["actor_render_visible"] == 1
+        and state["actor_render_generation"] != 0 and not state["actor_render_retry"]
+        and not state["composition_active"] and generation != 0
+        and generation == state["backend_pending_generation"] == state["backend_committed_generation"]
+        and state["backend_pending_generation_hi"] == state["backend_committed_generation_hi"] == 0
+        and state["mode3_state"] == 1 and state["mode3_surface_locked"] == 0
+        and state["mode3_pending_count"] == state["mode3_inflight_count"] == 0
+        and state["event_count"] == 0 and not state["surface_packets_pending"]
+        and state["surface_pending_visual"] == 0
+        and state["room"] == state["surface_room"] == state["surface_presented_room"]
+        and (expected_room is None or state["room"] == expected_room)
+        and (expected_x is None or state["actor_position_source_room"][0] == expected_x)
+        and (expected_y is None or state["actor_position_source_room"][1] == expected_y)
+    )
+
+
+def capture_committed_surface(session, directory: Path, label: str, *,
+                              cursor_base: int, projection: dict | None = None,
+                              source_foot: tuple[int, int] | None = None,
+                              expected_room: int | None = None,
+                              expected_x: int | None = None,
+                              expected_y: int | None = None) -> dict:
+    """Capture a paused committed surface without consulting pending pose data.
+
+    Bounds are omitted. Optional source_foot must be supplied from independently
+    established committed elevation; it is never inferred from live actor state.
+    Without it, report pre-elevation position only, not an invented drawn foot.
+    """
+    require(bool(label) and Path(label).name == label and label not in ('.', '..'),
+            "capture label must be a single filename component")
+    state = read_committed_pose(session, cursor_base=cursor_base)
+    require(committed_pose_is_presented(state, expected_room=expected_room,
+                                       expected_x=expected_x, expected_y=expected_y),
+            f"committed actor presentation fence is not satisfied: {state}")
+    pixels = session.read_memory("snesMemory", SURFACE, 256 * 224)
+    palette = session.read_memory("snesMemory", PALETTE, 768)
+    vram = session.read_memory("snesVideoRam", 0, 0x10000)
+    cgram = session.read_memory("snesCgRam", 0, 0x200)
+    require(tuple(map(len, (pixels, palette, vram, cgram))) == (57344, 768, 65536, 512),
+            "incomplete committed surface capture")
+    cursor = session.read_memory("snesMemory", cursor_base, 64)
+    require(len(cursor) == 64, "incomplete cursor capture")
+    screenshot = session.take_screenshot(format="base64").get("base64")
+    require(isinstance(screenshot, str) and bool(screenshot),
+            "Nexen returned no actual PPU screenshot")
+    screenshot_bytes = base64.b64decode(screenshot, validate=True)
+    ppu_state = session.get_ppu_state()
+    # No execution/advance is permitted between these observations.
+    after = read_committed_pose(session, cursor_base=cursor_base)
+    require(after == state, "committed key/fence changed during capture")
+    pose = dict(state, room_projection=projection,
+                accepted_frame=state["actor_render_pose_frame"],
+                accepted_step=state["actor_render_pose_step"],
+                accepted_direction=direction_index_for_facing(state["actor_render_facing"]))
+    pose["builtin_cursor"] = {
+        "valid": read_u16(cursor, 0), "logical_x": read_u16(cursor, 2),
+        "logical_y": read_u16(cursor, 4), "id": read_u16(cursor, 6),
+        "color": read_u16(cursor, 8), "visible": read_u16(cursor, 10),
+        "room_generation": read_u16(cursor, 12), "pending": read_u16(cursor, 14),
+        "composing": read_u16(cursor, 56),
+        "left": int.from_bytes(cursor[16:18], 'little', signed=True),
+        "top": int.from_bytes(cursor[18:20], 'little', signed=True),
+    }
+    if source_foot is not None:
+        require(len(source_foot) == 2 and all(type(v) is int and -32768 <= v <= 32767 for v in source_foot),
+                "source_foot must be two signed source-room coordinates")
+        require(source_foot[0] == state["actor_position_source_room"][0],
+                "source foot X differs from committed actor X")
+        pose.update(foot_screen=list(source_foot), foot_coordinate_space="source_room",
+                    foot_evidence="caller-provided committed foot; elevation not persisted natively")
+    ppu_pixels = decode_bundle_indexed(SnesIndexedSurfaceBundle(
+        vram[:0xE000], vram[0xE000:0xE800], cgram))
+    expected_cgram = encode_cgram(tuple(tuple(palette[i:i+3]) for i in range(0, 768, 3)))
+    record = {
+        "label": label, "pose": pose,
+        "presentation_fence": "committed-render-key-paused-state",
+        "indexed_surface_sha256": hashlib.sha256(pixels).hexdigest(),
+        "ppu_indexed_differences": sum(a != b for a,b in zip(ppu_pixels, pixels)),
+        "cgram_difference_bytes": sum(a != b for a,b in zip(cgram, expected_cgram)),
+    }
+    directory.mkdir(parents=True, exist_ok=True)
+    for suffix, data in (("indexed.bin", pixels), ("palette-rgb.bin", palette),
+                         ("vram.bin", vram), ("cgram.bin", cgram)):
+        (directory / f"{label}.{suffix}").write_bytes(data)
+    rgb = b"".join(palette[index*3:index*3+3] for index in pixels)
+    (directory / f"{label}.surface.ppm").write_bytes(b"P6\n256 224\n255\n" + rgb)
+    (directory / f"{label}.ppu.png").write_bytes(screenshot_bytes)
+    (directory / f"{label}.ppu-state.json").write_text(
+        json.dumps(ppu_state, indent=2, sort_keys=True) + "\n")
+    (directory / f"{label}.committed.json").write_text(json.dumps(record, indent=2) + "\n")
+    return record
+
+
 def eq_symbol(source: str, name: str) -> int:
     match = re.search(rf"^\s*{re.escape(name)}\s*=\s*\$([0-9A-Fa-f]+)\b",
                       source, re.MULTILINE)
@@ -865,6 +1010,41 @@ class ProbeObserver:
             snapshot["screenshot_error"] = str(exc)
         (self.output / "first-error-boundary.json").write_text(
             json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
+
+    def wait_committed_pose(self, *, max_frames: int = 1800,
+                            expected_room: int | None = None,
+                            expected_x: int | None = None,
+                            expected_y: int | None = None) -> dict:
+        """Wait for the committed actor, independently of the next pose request."""
+        require(type(max_frames) is int and max_frames >= 0, "invalid committed wait budget")
+        end = self.logical_frames + max_frames
+        while True:
+            state = read_committed_pose(self.session, cursor_base=self.cursor_base)
+            require(state["error"] == 0, f"SCUMM error before committed presentation: {state}")
+            if committed_pose_is_presented(state, expected_room=expected_room,
+                                            expected_x=expected_x, expected_y=expected_y):
+                return dict(state, logical_frame=self.logical_frames)
+            if self.logical_frames >= end:
+                break
+            # Continuous animation may expose only a single committed boundary.
+            self.advance(1)
+        self.capture_timeout_boundary()
+        raise TimeoutError(f"no committed actor presentation: {state}")
+
+    def capture_committed_stage(self, label: str, *, max_frames: int = 1800,
+                                expected_room: int | None = None,
+                                expected_x: int | None = None,
+                                expected_y: int | None = None,
+                                source_foot: tuple[int, int] | None = None) -> dict:
+        state = self.wait_committed_pose(max_frames=max_frames, expected_room=expected_room,
+                                         expected_x=expected_x, expected_y=expected_y)
+        record = capture_committed_surface(
+            self.session, self.output, label, cursor_base=self.cursor_base,
+            projection=self.projection, source_foot=source_foot,
+            expected_room=expected_room, expected_x=expected_x, expected_y=expected_y)
+        record["vm"] = state
+        self.captures.append(record)
+        return record
 
     def wait_presented_pose(self, *, max_frames: int = 1800,
                             expected_frame: int | None = None,
