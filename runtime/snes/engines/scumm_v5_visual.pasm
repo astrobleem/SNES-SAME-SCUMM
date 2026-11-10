@@ -80,7 +80,8 @@ ScummV5_Visual_Frame_Far:
     jsl Same_VideoSurface_ServicePending_Far
     jsl Same_VideoSurface_ServiceEvents_Far
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
-    jsl ScummV5_Palette_Flush_Far
+    ; Prepare colors without taking the writable surface away from actors.
+    jsl ScummV5_Palette_Prepare_Far
     .endif
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
       ; Do not start a costume transfer or mutate the indexed surface while
@@ -138,6 +139,23 @@ ScummV5_Visual_Frame__prewalk_actor:
       jsl ScummV5_Controller_RenderActor_Far
     .endif
 ScummV5_Visual_Frame__skip_actor:
+    jsl Same_VideoSurface_ServiceEvents_Far
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; Never let a palette-only publication expose an incomplete compositor.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    bne ScummV5_Visual_Frame__palette_deferred
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CURSOR_COMPOSING
+    bne ScummV5_Visual_Frame__palette_deferred
+      .endif
+    ; Coalesce palette intent with an accepted scene PRESENT when possible.
+    jsl ScummV5_Palette_Flush_Far
+ScummV5_Visual_Frame__palette_deferred:
+    .endif
     jsl Same_VideoSurface_ServiceEvents_Far
     plp
     rtl

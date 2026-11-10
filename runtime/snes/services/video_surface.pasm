@@ -45,6 +45,7 @@ SAME_VIDEO_SURFACE_DAMAGE_Y1          = SAME_VIDEO_SURFACE_STATE+$3E
 ; validated source pointer; this service alone knows the selected backend's
 ; palette storage and copies the fixed 256-entry palette into it.
 SAME_VIDEO_SURFACE_PALETTE_SOURCE      = SAME_VIDEO_SURFACE_STATE+$40
+SAME_VIDEO_SURFACE_PALETTE_DIRTY      = SAME_VIDEO_SURFACE_STATE+$43 ; u8 service-owned, until accepted PRESENT
 SAME_VIDEO_SURFACE_STATE_SIZE         = SAME_BWRAM_VIDEO_SURFACE_STATE_SIZE
 SAME_VIDEO_ACTOR_UNDERLAY_MAGIC       = $A8
 SAME_VIDEO_ACTOR_UNDERLAY_BUILDING    = $A9 ; not a restorable journal
@@ -113,6 +114,12 @@ SAME_VIDEO_DIAG_RENDER_MOVING_ENTRIES   = SAME_VIDEO_DIAG_BASE+$44
 ; The SCUMM producer never names Mode-3 storage or a carrier address.
 Same_VideoSurface_InstallPalette_Far:
     php
+    jsl Same_VideoSurface_CanWrite_Far
+    bcc Same_VideoSurface_InstallPalette_Far__writable
+    plp
+    sec
+    rtl
+Same_VideoSurface_InstallPalette_Far__writable:
     rep #$30
     .a16
     .i16
@@ -141,6 +148,10 @@ Same_VideoSurface_InstallPalette_Far__copy:
     iny
     cpy #$0300
     bcc Same_VideoSurface_InstallPalette_Far__copy
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_VIDEO_SURFACE_PALETTE_DIRTY
     plp
     clc
     rtl
@@ -175,12 +186,68 @@ Same_VideoSurface_CanWrite_Far:
     .a8
     lda.l SAME_MODE3_CONTROL_STATE
     cmp #SAME_MODE3_STATE_IDLE
-    bne Same_VideoSurface_CanWrite__no
+    beq Same_VideoSurface_CanWrite__idle
+    jmp Same_VideoSurface_CanWrite__no
+Same_VideoSurface_CanWrite__idle:
+    .a8
     lda.l SAME_MODE3_CONTROL_SURFACE_LOCKED
-    bne Same_VideoSurface_CanWrite__no
+    beq Same_VideoSurface_CanWrite__unlocked
+    jmp Same_VideoSurface_CanWrite__no
+Same_VideoSurface_CanWrite__unlocked:
+    ; An accepted queued PRESENT owns the backing even before kernel drain.
+    ; Scan exactly COUNT live slots; stale packets outside the ring are inert.
+    rep #$30
+    .a16
+    .i16
+    phx
+    phy
+    cld
+    lda.l SAME_EVENT_COUNT
+    cmp #(SAME_EVENT_CAPACITY+1)
+    bcs Same_VideoSurface_CanWrite__queued
+    tay
+    beq Same_VideoSurface_CanWrite__available
+    lda.l SAME_EVENT_HEAD
+    and #SAME_EVENT_MASK
+    asl
+    asl
+    asl
+    asl
+    tax
+Same_VideoSurface_CanWrite__scan:
+    sep #$20
+    .a8
+    lda.l SAME_EVENT_BUFFER+SAME_PKT_SERVICE,x
+    cmp #SAME_SERVICE_VIDEO
+    bne Same_VideoSurface_CanWrite__next
+    lda.l SAME_EVENT_BUFFER+SAME_PKT_OPCODE,x
+    cmp #SAME_VIDEO_OP_PRESENT
+    beq Same_VideoSurface_CanWrite__queued
+Same_VideoSurface_CanWrite__next:
+    rep #$20
+    .a16
+    txa
+    clc
+    adc #$0010
+    and #(SAME_EVENT_CAPACITY*16-1)
+    tax
+    dey
+    bne Same_VideoSurface_CanWrite__scan
+Same_VideoSurface_CanWrite__available:
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
     plp
     clc
     rtl
+Same_VideoSurface_CanWrite__queued:
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
 Same_VideoSurface_CanWrite__no:
     plp
     sec
@@ -878,6 +945,11 @@ Same_VideoSurface_BlitProjection__done:
     rts
 
 Same_VideoSurface_PushPresentation:
+    jsl Same_VideoSurface_CanWrite_Far
+    bcc Same_VideoSurface_PushPresentation__writable
+    sec
+    rts
+Same_VideoSurface_PushPresentation__writable:
     rep #$20
     .a16
     lda.l SAME_VIDEO_DIAG_PUSH_ENTRIES
@@ -949,6 +1021,10 @@ Same_VideoSurface_PushPresentation__generation_ok:
     sta.l SAME_EVENT_STAGING+SAME_PKT_ARG0
     jsl Same_Mode3_Event_Push_Far
     bcs Same_VideoSurface_PushPresentation__fail_present
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_VIDEO_SURFACE_PALETTE_DIRTY
     rep #$20
     .a16
     lda.l SAME_EVENT_COUNT
@@ -990,13 +1066,58 @@ Same_VideoSurface_PushPresentation__fail:
     sec
     rts
 
-; Same-room camera reprojection retains the installed RGB8 palette and emits
-; only full-display dirty plus the next generation PRESENT.
-Same_VideoSurface_PushDirtyPresent:
+; Common dirty/damage publication preflight: reserve the entire packet group.
+; A queued PRESENT is already an owner even when the backend is still idle.
+Same_VideoSurface_PreflightDirtyPresent:
+    jsl Same_VideoSurface_CanWrite_Far
+    bcs Same_VideoSurface_PreflightDirtyPresent__fail
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_SURFACE_PALETTE_DIRTY
+    beq Same_VideoSurface_PreflightDirtyPresent__clean
+    rep #$20
+    .a16
+    lda.l SAME_EVENT_COUNT
+    cmp #(SAME_EVENT_CAPACITY-2)
+    bra Same_VideoSurface_PreflightDirtyPresent__result
+Same_VideoSurface_PreflightDirtyPresent__clean:
     rep #$20
     .a16
     lda.l SAME_EVENT_COUNT
     cmp #(SAME_EVENT_CAPACITY-1)
+Same_VideoSurface_PreflightDirtyPresent__result:
+    rts ; comparison carry is the refusal result
+Same_VideoSurface_PreflightDirtyPresent__fail:
+    sec
+    rts
+
+; Optional palette candidate event. Dirty remains set through any queue failure.
+Same_VideoSurface_PushPendingPalette:
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_SURFACE_PALETTE_DIRTY
+    beq Same_VideoSurface_PushPendingPalette__clean
+    jsl Same_Mode3_Event_Stage_Far
+    sep #$20
+    .a8
+    lda #SAME_SERVICE_VIDEO
+    sta.l SAME_EVENT_STAGING+SAME_PKT_SERVICE
+    lda #SAME_VIDEO_OP_PALETTE_WRITE
+    sta.l SAME_EVENT_STAGING+SAME_PKT_OPCODE
+    rep #$20
+    .a16
+    lda #$0100
+    sta.l SAME_EVENT_STAGING+SAME_PKT_ARG0+$02
+    jsl Same_Mode3_Event_Push_Far
+    rts
+Same_VideoSurface_PushPendingPalette__clean:
+    clc
+    rts
+
+; Same-room camera reprojection retains the installed RGB8 palette and emits
+; full-display dirty, any installed palette, then the next generation PRESENT.
+Same_VideoSurface_PushDirtyPresent:
+    jsr Same_VideoSurface_PreflightDirtyPresent
     bcc Same_VideoSurface_PushDirtyPresent__capacity_ok
     jmp Same_VideoSurface_PushDirtyPresent__fail
 Same_VideoSurface_PushDirtyPresent__capacity_ok:
@@ -1017,7 +1138,13 @@ Same_VideoSurface_PushDirtyPresent__capacity_ok:
     lda #$00E0
     sta.l SAME_EVENT_STAGING+SAME_PKT_ARG1+$02
     jsl Same_Mode3_Event_Push_Far
-    bcs Same_VideoSurface_PushDirtyPresent__fail
+    bcc Same_VideoSurface_PushDirtyPresent__dirty_queued
+    jmp Same_VideoSurface_PushDirtyPresent__fail
+Same_VideoSurface_PushDirtyPresent__dirty_queued:
+    jsr Same_VideoSurface_PushPendingPalette
+    bcc Same_VideoSurface_PushDirtyPresent__palette_queued
+    jmp Same_VideoSurface_PushDirtyPresent__fail
+Same_VideoSurface_PushDirtyPresent__palette_queued:
     jsl Same_Mode3_Event_Stage_Far
     sep #$20
     .a8
@@ -1036,6 +1163,10 @@ Same_VideoSurface_PushDirtyPresent__generation_ok:
     sta.l SAME_EVENT_STAGING+SAME_PKT_ARG0
     jsl Same_Mode3_Event_Push_Far
     bcs Same_VideoSurface_PushDirtyPresent__fail
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_VIDEO_SURFACE_PALETTE_DIRTY
     clc
     rts
 Same_VideoSurface_PushDirtyPresent__fail:
@@ -2166,10 +2297,7 @@ Same_VideoSurface_PushDamagePresent:
     .a8
     lda #$00
     sta.l SAME_VIDEO_DIAG_PUSH_FAIL_STAGE
-    rep #$20
-    .a16
-    lda.l SAME_EVENT_COUNT
-    cmp #(SAME_EVENT_CAPACITY-1)
+    jsr Same_VideoSurface_PreflightDirtyPresent
     bcc Same_VideoSurface_PushDamagePresent__capacity_ok
     brl Same_VideoSurface_PushDamagePresent__fail_capacity
 Same_VideoSurface_PushDamagePresent__capacity_ok:
@@ -2191,7 +2319,13 @@ Same_VideoSurface_PushDamagePresent__capacity_ok:
     lda.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
     sta.l SAME_EVENT_STAGING+SAME_PKT_ARG1+$02
     jsl Same_Mode3_Event_Push_Far
-    bcs Same_VideoSurface_PushDamagePresent__fail_dirty
+    bcc Same_VideoSurface_PushDamagePresent__dirty_queued
+    jmp Same_VideoSurface_PushDamagePresent__fail_dirty
+Same_VideoSurface_PushDamagePresent__dirty_queued:
+    jsr Same_VideoSurface_PushPendingPalette
+    bcc Same_VideoSurface_PushDamagePresent__palette_queued
+    jmp Same_VideoSurface_PushDamagePresent__fail_dirty
+Same_VideoSurface_PushDamagePresent__palette_queued:
     jsl Same_Mode3_Event_Stage_Far
     sep #$20
     .a8
@@ -2210,6 +2344,10 @@ Same_VideoSurface_PushDamagePresent__generation_ok:
     sta.l SAME_EVENT_STAGING+SAME_PKT_ARG0
     jsl Same_Mode3_Event_Push_Far
     bcs Same_VideoSurface_PushDamagePresent__fail_present
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_VIDEO_SURFACE_PALETTE_DIRTY
     rep #$20
     .a16
     lda.l SAME_EVENT_COUNT

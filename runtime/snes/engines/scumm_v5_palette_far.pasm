@@ -1,10 +1,12 @@
 ; Generic classic-v5 palette producer. Included in visual bank 21 by the
 ; MSU live-room feature guard; no bank/origin directive or PPU ownership here.
 ; Generated BASE/DESIRED own 768 bytes each. STATE owns exactly 32 bytes:
-; +00 valid, +01 pending, +02..06 RGB/first/last arguments, +07 padding,
+; +00 valid, +01 pending (0 clean, 1 desired, 2 prepared),
+; +02..06 RGB/first/last arguments, +07 padding,
 ; +08 index, +0A last, +0C RGB offset, +0E component, +10 multiplicand,
 ; +12 multiplier, +14 product, +16 bit count, +18 divide scratch (all u16),
-; +1A..1F reserved. Scratch is synchronous S-CPU state, never NMI-owned.
+; +1A..1F reserved.
+; Scratch is synchronous S-CPU state, never NMI-owned.
 ; Every public entry preserves P/A/X/Y/DB, including carry.
 SAME_SCUMM_PALETTE_VALID = SAME_SCUMM_ROOM_PALETTE_STATE+$00
 SAME_SCUMM_PALETTE_PENDING = SAME_SCUMM_ROOM_PALETTE_STATE+$01
@@ -278,10 +280,9 @@ ScummV5_Palette_ApplyIntensity__done:
     sta.l SAME_SCUMM_PALETTE_PENDING
     jmp ScummV5_Palette_Return
 
-; Called at the ordinary visual frame boundary before actor composition.
-; Desired colors may change while the backend owns LIVE_PALETTE. Copy them
-; only when writable; retain pending across either service failure.
-ScummV5_Palette_Flush_Far:
+; Before actor/cursor composition: install desired colors without publishing
+; or taking surface ownership. The subsequent scene PRESENT can carry them.
+ScummV5_Palette_Prepare_Far:
     php
     rep #$30
     .a16
@@ -294,11 +295,20 @@ ScummV5_Palette_Flush_Far:
     sep #$20
     .a8
     lda.l SAME_SCUMM_PALETTE_VALID
-    beq ScummV5_Palette_Return
+    bne ScummV5_Palette_Prepare__valid
+    jmp ScummV5_Palette_Return
+ScummV5_Palette_Prepare__valid:
+    .a8
     lda.l SAME_SCUMM_PALETTE_PENDING
-    beq ScummV5_Palette_Return
+    cmp #$01
+    beq ScummV5_Palette_Prepare__desired
+    jmp ScummV5_Palette_Return
+ScummV5_Palette_Prepare__desired:
+    .a8
     jsl Same_VideoSurface_CanWrite_Far
-    bcs ScummV5_Palette_Return
+    bcc ScummV5_Palette_Prepare__writable
+    jmp ScummV5_Palette_Return
+ScummV5_Palette_Prepare__writable:
     sep #$20
     .a8
     lda #<SAME_SCUMM_ROOM_PALETTE_DESIRED
@@ -308,12 +318,48 @@ ScummV5_Palette_Flush_Far:
     lda #SAME_SCUMM_PALETTE_DESIRED_BANK
     sta.l SAME_VIDEO_SURFACE_PALETTE_SOURCE+$02
     jsl Same_VideoSurface_InstallPalette_Far
+    bcc ScummV5_Palette_Prepare__installed
+    jmp ScummV5_Palette_Return
+ScummV5_Palette_Prepare__installed:
+    sep #$20
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_PALETTE_PENDING
+    jmp ScummV5_Palette_Return
+
+; After completed actor/cursor composition and service drain (caller guards
+; unfinished composition). The service owns dirty colors until PRESENT enqueue
+; succeeds; generation changes alone never acknowledge palette publication.
+; Calling Flush alone still performs preparation and publication in order.
+ScummV5_Palette_Flush_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    cld
+    jsl ScummV5_Palette_Prepare_Far
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_PALETTE_VALID
+    beq ScummV5_Palette_Return
+    lda.l SAME_SCUMM_PALETTE_PENDING
+    cmp #$02
+    bne ScummV5_Palette_Return
+    lda.l SAME_VIDEO_SURFACE_PALETTE_DIRTY
+    beq ScummV5_Palette_Flush__included
+    jsl Same_VideoSurface_CanWrite_Far
     bcs ScummV5_Palette_Return
     sep #$20
     .a8
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
     jsl Same_VideoSurface_PushDirtyPresent_Far
-    bcs ScummV5_Palette_Return
+    bcc ScummV5_Palette_Flush__included
+    jmp ScummV5_Palette_Return
+ScummV5_Palette_Flush__included:
     sep #$20
     .a8
     lda #$00

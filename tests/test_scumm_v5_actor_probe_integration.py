@@ -19,6 +19,21 @@ from tools.validate_scumm_actor_visual_probe_nexen import (
 
 
 class ActorProbeIntegrationTests(unittest.TestCase):
+    def test_backend_progress_preserves_stalled_and_advancing_evidence(self):
+        from tools.validate_scumm_actor_visual_probe_nexen import decode_backend_progress
+        raw = bytearray(64)
+        for offset, value in ((0x22, 7), (0x38, 896), (0x3A, 256),
+                              (0x2A, 432), (0x2C, 457), (0x1C, 2)):
+            raw[offset:offset+2] = value.to_bytes(2, "little")
+        result = decode_backend_progress(bytes(raw))
+        self.assertEqual(result["mode3_scan_tile"], 896)
+        self.assertEqual(result["mode3_candidate_count"], 7)
+        self.assertEqual(result["mode3_rejected_present"], 2)
+        self.assertEqual(bytes(result["mode3_control_bytes"]), raw)
+        self.assertNotIn("deadlock", result)
+        with self.assertRaisesRegex(RuntimeError, "truncated"):
+            decode_backend_progress(bytes(raw[:-1]))
+
     def test_probe_advance_accounts_actual_progress_and_never_retries_timeout(self):
         import time
         from unittest.mock import Mock

@@ -99,6 +99,20 @@ def read_u16(raw: bytes, offset: int = 0) -> int:
     return raw[offset] | raw[offset + 1] << 8
 
 
+def decode_backend_progress(raw: bytes) -> dict:
+    """Retain conversion progress without inferring a deadlock from a timeout."""
+    require(len(raw) == 0x40, "Mode-3 control observation is truncated")
+    offsets = {
+        "candidate_count": 0x22, "scan_tile": 0x38, "scan_palette": 0x3A,
+        "converted_count": 0x2A, "unchanged_count": 0x2C,
+        "rejected_present": 0x1C, "rejected_dirty": 0x1E,
+        "rejected_palette": 0x20,
+    }
+    return {"mode3_control_bytes": list(raw), **{
+        "mode3_" + name: read_u16(raw, offset) for name, offset in offsets.items()
+    }}
+
+
 def decode_pose_observation(raw: bytes) -> dict:
     """Decode the phase-local actor pose fields used by visual evidence.
 
@@ -590,7 +604,9 @@ class ProbeObserver:
         actor_pose = self.session.read_memory("snesMemory", ACTOR_STATE, 0x80)
         pose_fields = decode_pose_observation(actor_pose)
         provider = self.session.read_memory("snesMemory", 0x7E2F00, 0x80)
+        backend = self.session.read_memory("snesMemory", MODE3_BACKEND, 0x40)
         state = {
+            **decode_backend_progress(backend),
             "logical_frame": self.logical_frames,
             "room": room,
             "error": error,

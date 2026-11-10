@@ -238,3 +238,61 @@ The earlier failed run is retained. No payloads or captures are in Git.
 Validation at the cursor checkpoint: 1,312 host tests, 12 skips; `make validate`,
 pinned assembly/ROM audit, WRAM/BW-RAM audit, Python compilation, tracked JSON
 and Bash syntax pass. Hosted CI is reported separately for the pushed commit.
+
+### Authentic room-4 observation after cursor integration
+
+The original full-directory startup run
+`/tmp/astra-authentic-cursor-scene-20261110` ended after 320.803 seconds,
+without a watchdog overrun or remaining owned emulator. It reached room 4,
+lifecycle RUNNING, error zero, and performed only the established intro
+acknowledgements—not the seven object actions. Actor visibility was **not
+accepted** within the bounded capture.
+
+ROM: `60161ea762ea0f55cd1305360620bacd437407fc39d30ddb7e4544172d9129ff`.
+Build identity: `e54df53fa2da4c54b944a68009db9a5e4364d662500f9927b1b84fd1c9f468bb`.
+Immutable source: `/tmp/astra-authentic-cursor-source.80ov83at`.
+The source-bound final slots were Local221 at PC19, Global75 at PC7,
+Global79 at PC165, and a frozen room-owned activation at PC423.
+The actor's 534-byte costume request completed with provider error zero,
+but actor composition remained pending while Mode-3 was CONVERTING/locked,
+pending generation9 and committed generation8. Producer next-generation10
+is not proof that the backend accepted that generation. The captured engine
+entries/returns both advanced to1417. This does **not** establish a deadlock.
+
+Offline inspection found two concrete publication risks: palette installation
+copied RGB without issuing PALETTE_WRITE, and CanWrite did not recognize an
+already queued PRESENT before backend event consumption. Local221 and Global79
+contain no palette writes; repeated palette starvation is therefore not proven
+by this evidence. Conversion scan/candidate counters were NOT_CAPTURED. The
+next bounded observation records them rather than inferring a cause from time.
+
+Hosted CI on `1893b39` passed both jobs in run `42759128321`: 1,318 host tests,
+12 skips, pinned assembly and ROM audit. Hosted CI does not execute Nexen.
+
+### Publication ownership and cold-readiness corrections
+
+Palette RGB installation now transfers a dirty intent to the video service.
+Dirty/damage publication reserves the complete packet group and emits
+PALETTE_WRITE before PRESENT; failed queue insertion retains the intent.
+The existing surface-state byte +0x43 holds the flag, within its 0x44-byte
+allocation. CanWrite treats a queued PRESENT as ownership even before backend
+consumption, scanning only the bounded live FIFO. It preserves X/Y and P except
+its carry result. Actor/cursor composition precedes palette-only publication;
+an unfinished composition is never exposed by the palette flush.
+
+A corrected-build native startup stopped at frame92 with resource error16,
+run `/tmp/astra-authentic-publication-scene-20261110` (20.243 seconds).
+A separate first-error breakpoint observation ended at its200-frame limit
+(19.809 seconds), without reaching ScummV5_SetError: this does not identify
+the direct writer. Both are retained as failures, not acceptance.
+The captures showed ROOM_READY249 and23 before any room had been installed.
+Source inspection confirmed the latch had no boot initialization; it was
+cleared and armed only during room installation. Engine boot now explicitly
+clears it for the generic controller configuration. This prevents power-on
+WRAM from authorizing premature actor/cursor presentation. Native confirmation
+of the corrected startup remains separate from the source invariant.
+
+The observer also mislabeled address7E2364 (C1_HOLD_AFTER) as VM PC. It now
+reads the true PC at7E2300 and reports the hold field under its own name.
+Thus the failed capture's42496 value was not a corrupted VM PC; actual PC13625
+matched the saved Global1 continuation. No historical report is rewritten.

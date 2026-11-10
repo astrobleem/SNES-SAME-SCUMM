@@ -20,6 +20,8 @@ SYMBOLS = {
     'SAME_SCUMM_CONDITION': 0x7E2347,
     'SAME_SCUMM_M23A_ACTIVE_ROOM': 0x7E3000,
     'SAME_VIDEO_SURFACE_PALETTE_SOURCE': 0x401060,
+    'SAME_VIDEO_SURFACE_PALETTE_DIRTY': 0x401063,
+    'SAME_VIDEO_SURFACE_NEXT_GENERATION': 0x401070,
 }
 BASE = SYMBOLS['SAME_SCUMM_ROOM_PALETTE_BASE']
 DESIRED = SYMBOLS['SAME_SCUMM_ROOM_PALETTE_DESIRED']
@@ -61,6 +63,8 @@ class PaletteMachine:
         self.live = bytes([0xE7] * 768)
         self.calls = []
         self.busy = self.install_failed = self.queue_failed = False
+        self.queue_failure_advances_generation = False
+        self.presentations = []
         self.write(STAGE, bytes((i * 17 + 3) & 255 for i in range(768)))
         self.write(SYMBOLS['SAME_SCUMM_M23A_ACTIVE_ROOM'], bytes((4,)))
 
@@ -94,6 +98,7 @@ class PaletteMachine:
         self.w = 8 if flags & 32 else 16
         self.iw = 8 if flags & 16 else 16
         pc = self.labels['ScummV5_Palette_' + name + '_Far']
+        returns = []
 
         def push(value, width):
             if width == 16:
@@ -174,6 +179,11 @@ class PaletteMachine:
                 if {'bcc': not self.c, 'bcs': self.c, 'bne': not self.z, 'beq': self.z}.get(op, True):
                     pc = operand
             elif op == 'jsl':
+                if operand in self.labels:
+                    returns.append(pc)
+                    self.stack.extend([0x21, 0x88, 0x00])
+                    pc = self.labels[operand]
+                    continue
                 self.calls.append(operand)
                 if operand == 'Same_VideoSurface_CanWrite_Far':
                     self.c = self.busy
@@ -183,14 +193,24 @@ class PaletteMachine:
                     self.c = self.install_failed
                     if not self.c:
                         self.live = self.read(pointer, 768)
+                        self.write(SYMBOLS['SAME_VIDEO_SURFACE_PALETTE_DIRTY'], b'\x01')
                 elif operand == 'Same_VideoSurface_PushDirtyPresent_Far':
                     assert self.a & 255 == 4
                     self.c = self.queue_failed
+                    if self.c and self.queue_failure_advances_generation:
+                        self.advance_generation()
+                    if not self.c:
+                        self.scene_present()
                 else:
                     raise AssertionError(operand)
                 # Service ABI may clobber these; the public producer restores all.
                 self.a, self.x, self.y, self.db = 0xABCD, 0x1234, 0x5678, 0x40
             elif op == 'rtl':
+                if returns:
+                    assert self.stack[-3:] == [0x21, 0x88, 0x00]
+                    del self.stack[-3:]
+                    pc = returns.pop()
+                    continue
                 assert self.stack == [0x56, 0x90, 0xCA]
                 assert (self.a, self.x, self.y, self.db, self.p) == initial
                 return
@@ -202,24 +222,36 @@ class PaletteMachine:
                 self.z, self.n = result == 0, bool(result & (1 << (self.w - 1)))
         raise AssertionError('palette source did not terminate')
 
+    def scene_present(self):
+        """Service queues PALETTE_WRITE when dirty, then accepts PRESENT."""
+        assert not self.busy
+        self.advance_generation()
+        self.presentations.append(self.live)
+        self.write(SYMBOLS['SAME_VIDEO_SURFACE_PALETTE_DIRTY'], b'\x00')
+        self.busy = True
+
+    def advance_generation(self):
+        generation = int.from_bytes(self.read(SYMBOLS['SAME_VIDEO_SURFACE_NEXT_GENERATION'], 2), 'little')
+        self.word('SAME_VIDEO_SURFACE_NEXT_GENERATION', ((generation + 1) & 65535) or 1)
+
 
 class NativePaletteTests(unittest.TestCase):
     def test_install_exactly_768_bytes_and_all_entries_preserve_decimal_registers(self):
         for flags in (0x08, 0x19, 0x28, 0x39):
             vm = PaletteMachine()
-            vm.write(STATE + 26, bytes([0xBD] * 6))
+            vm.write(STATE + 28, bytes([0xBD] * 4))
             vm.entry('InstallRoom', flags)
             self.assertEqual(vm.read(BASE, 768), vm.read(STAGE, 768))
             self.assertEqual(vm.read(DESIRED, 768), vm.read(STAGE, 768))
             self.assertEqual(vm.read(STATE, 2), b'\x01\x00')
-            for entry in ('SetColor', 'Intensity', 'RgbIntensity', 'Flush'):
+            for entry in ('SetColor', 'Intensity', 'RgbIntensity', 'Prepare', 'Flush'):
                 vm.entry(entry, flags)
-            self.assertEqual(vm.read(STATE + 26, 6), bytes([0xBD] * 6))
+            self.assertEqual(vm.read(STATE + 28, 4), bytes([0xBD] * 4))
 
     def test_invalid_zero_is_noop_for_all_mutations_and_flush(self):
         vm = PaletteMachine()
         before = dict(vm.mem)
-        for name in ('SetColor', 'Intensity', 'RgbIntensity', 'Flush'):
+        for name in ('SetColor', 'Intensity', 'RgbIntensity', 'Prepare', 'Flush'):
             vm.entry(name)
         self.assertEqual(vm.mem, before)
         self.assertEqual(vm.calls, [])
@@ -289,14 +321,13 @@ class NativePaletteTests(unittest.TestCase):
         vm.queue_failed = True
         vm.entry('Flush')
         self.assertEqual(vm.live, desired)
-        self.assertEqual(vm.mem[STATE + 1], 1)
+        self.assertEqual(vm.mem[STATE + 1], 2)
         self.assertEqual(vm.read(BASE, 768), base)
         self.assertEqual(vm.read(DESIRED, 768), desired)
         vm.queue_failed = False
         vm.entry('Flush')
         self.assertEqual(vm.mem[STATE + 1], 0)
-        self.assertEqual(vm.calls[-3:], ['Same_VideoSurface_CanWrite_Far',
-                                      'Same_VideoSurface_InstallPalette_Far',
+        self.assertEqual(vm.calls[-2:], ['Same_VideoSurface_CanWrite_Far',
                                       'Same_VideoSurface_PushDirtyPresent_Far'])
         count = len(vm.calls)
         vm.entry('Flush')
@@ -314,6 +345,133 @@ class NativePaletteTests(unittest.TestCase):
         self.assertEqual(vm.read(BASE, 768), bytes([201] * 768))
         self.assertEqual(vm.read(DESIRED, 768), bytes([201] * 768))
         self.assertEqual(vm.mem[STATE + 1], 0)
+
+    def test_recurring_palette_intent_leaves_writable_pass_for_actor(self):
+        vm = PaletteMachine()
+        vm.entry('InstallRoom')
+        for value in (9, 21, 87, 132):
+            vm.busy = False  # previous scene conversion completed
+            vm.word('SAME_SCUMM_C10_PARAM0', value)
+            vm.entry('SetColor')
+            before = int.from_bytes(vm.read(SYMBOLS['SAME_VIDEO_SURFACE_NEXT_GENERATION'], 2), 'little')
+            vm.entry('Prepare')
+            self.assertEqual(vm.mem[STATE+1], 2)
+            self.assertEqual(int.from_bytes(vm.read(SYMBOLS['SAME_VIDEO_SURFACE_NEXT_GENERATION'], 2), 'little'), before)
+            self.assertEqual(vm.read(SYMBOLS['SAME_VIDEO_SURFACE_PALETTE_DIRTY'], 1), b'\x01')
+            self.assertFalse(vm.busy, 'palette prepare stole actor writable pass')
+            self.assertNotIn('Same_VideoSurface_PushDirtyPresent_Far', vm.calls)
+            vm.scene_present()  # actor/cursor accepts the installed colors
+            calls = len(vm.calls)
+            vm.entry('Flush')
+            self.assertEqual(len(vm.calls), calls)
+            self.assertEqual(vm.mem[STATE+1], 0)
+            self.assertEqual(vm.presentations[-1], vm.read(DESIRED, 768))
+        self.assertEqual(len(vm.presentations), 4)
+
+    def test_prepare_busy_and_failed_install_preserve_unprepared_intent(self):
+        vm = PaletteMachine()
+        vm.entry('InstallRoom')
+        vm.word('SAME_SCUMM_C10_PARAM0', 42)
+        vm.entry('SetColor')
+        desired, live = vm.read(DESIRED, 768), vm.live
+        vm.write(STATE+26, b'\xAD\xDE')
+        for busy, failed in ((True, False), (False, True)):
+            vm.busy, vm.install_failed = busy, failed
+            vm.entry('Prepare')
+            self.assertEqual(vm.mem[STATE+1], 1)
+            self.assertEqual(vm.read(STATE+26, 2), b'\xAD\xDE')
+            self.assertEqual(vm.live, live)
+            self.assertEqual(vm.read(DESIRED, 768), desired)
+            self.assertEqual(vm.presentations, [])
+        vm.busy = vm.install_failed = False
+        vm.entry('Prepare')
+        count = len(vm.calls)
+        vm.entry('Prepare')
+        self.assertEqual(len(vm.calls), count, 'prepared colors were needlessly reinstalled')
+        self.assertEqual(vm.live, desired)
+
+    def test_new_intent_supersedes_prepared_even_after_prior_scene_present(self):
+        vm = PaletteMachine()
+        vm.entry('InstallRoom')
+        vm.word('SAME_SCUMM_C10_PARAM0', 17)
+        vm.entry('SetColor')
+        vm.entry('Prepare')
+        vm.scene_present()
+        old_live = vm.live
+        vm.word('SAME_SCUMM_C10_PARAM0', 99)
+        vm.entry('SetColor')
+        self.assertEqual(vm.mem[STATE+1], 1)
+        vm.entry('Flush')  # busy; old generation cannot acknowledge new intent
+        self.assertEqual(vm.mem[STATE+1], 1)
+        self.assertEqual(vm.live, old_live)
+        vm.busy = False
+        vm.entry('Flush')
+        self.assertEqual(vm.mem[STATE+1], 0)
+        self.assertEqual(vm.presentations[-1], vm.read(DESIRED, 768))
+        self.assertEqual(vm.presentations[-1][0], 99)
+        self.assertEqual(len(vm.presentations), 2)
+
+    def test_new_intensity_intent_also_replaces_prepared_state(self):
+        for entry, symbol in (('Intensity','SAME_SCUMM_C10_INTENSITY'),
+                              ('RgbIntensity','SAME_SCUMM_C10_RGB_INTENSITY')):
+            vm = PaletteMachine()
+            vm.entry('InstallRoom')
+            vm.entry('SetColor')
+            vm.entry('Prepare')
+            vm.write(SYMBOLS[symbol], bytes((128, 64, 0, 0, 0)))
+            vm.entry(entry)
+            self.assertEqual(vm.mem[STATE+1], 1)
+            vm.entry('Prepare')
+            self.assertEqual(vm.mem[STATE+1], 2)
+            self.assertEqual(vm.live, vm.read(DESIRED, 768))
+
+    def test_generation_changes_never_acknowledge_dirty_palette(self):
+        for before, after in ((10, 11), (65535, 1), (65535, 0), (0, 65535)):
+            vm = PaletteMachine()
+            vm.entry('InstallRoom')
+            vm.entry('SetColor')
+            vm.word('SAME_VIDEO_SURFACE_NEXT_GENERATION', before)
+            vm.entry('Prepare')
+            vm.word('SAME_VIDEO_SURFACE_NEXT_GENERATION', after)
+            vm.busy = True
+            vm.entry('Flush')
+            self.assertEqual(vm.mem[STATE+1], 2)
+            self.assertEqual(vm.read(SYMBOLS['SAME_VIDEO_SURFACE_PALETTE_DIRTY'], 1), b'\x01')
+            vm.busy = False
+            vm.entry('Flush')
+            self.assertEqual(vm.mem[STATE+1], 0)
+            self.assertEqual(len(vm.presentations), 1)
+
+    def test_service_acknowledgement_does_not_need_generation_change(self):
+        vm = PaletteMachine()
+        vm.entry('InstallRoom')
+        vm.entry('SetColor')
+        vm.entry('Prepare')
+        vm.write(SYMBOLS['SAME_VIDEO_SURFACE_PALETTE_DIRTY'], b'\x00')
+        vm.busy = True
+        count = len(vm.calls)
+        vm.entry('Flush')
+        self.assertEqual(len(vm.calls), count)
+        self.assertEqual(vm.mem[STATE+1], 0)
+        self.assertNotIn('NEXT_GENERATION', SOURCE.read_text())
+
+    def test_failed_final_queue_push_generation_change_is_not_acknowledgement(self):
+        vm = PaletteMachine()
+        vm.entry('InstallRoom')
+        vm.entry('SetColor')
+        vm.word('SAME_VIDEO_SURFACE_NEXT_GENERATION', 65535)
+        vm.queue_failed = vm.queue_failure_advances_generation = True
+        vm.entry('Flush')
+        self.assertEqual(vm.mem[STATE+1], 2)
+        self.assertEqual(vm.read(SYMBOLS['SAME_VIDEO_SURFACE_PALETTE_DIRTY'], 1), b'\x01')
+        vm.entry('Flush')
+        self.assertEqual(vm.mem[STATE+1], 2)
+        self.assertEqual(vm.read(SYMBOLS['SAME_VIDEO_SURFACE_PALETTE_DIRTY'], 1), b'\x01')
+        self.assertEqual(vm.presentations, [])
+        vm.queue_failed = False
+        vm.entry('Flush')
+        self.assertEqual(vm.mem[STATE+1], 0)
+        self.assertEqual(len(vm.presentations), 1)
 
 
 if __name__ == '__main__':

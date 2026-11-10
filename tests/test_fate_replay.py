@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import re
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -9,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from fate_replay import (  # noqa: E402
+    SAME_SCUMM_PC,
+    SAME_SCUMM_C1_HOLD_AFTER,
     ControllerInputLease,
     activation_observation,
     advance_bounded,
@@ -670,6 +673,20 @@ class FateReplayTests(unittest.TestCase):
         self.assertNotEqual(
             baseline[3], _activation_identity_by_slot(slots)[3],
         )
+
+    def test_snapshot_vm_pc_uses_interpreter_symbol_not_debug_hold(self) -> None:
+        source = (ROOT / 'runtime/snes/kernel/memory.pasm').read_text()
+        for symbol, address in (('SAME_SCUMM_PC', SAME_SCUMM_PC),
+                                ('SAME_SCUMM_C1_HOLD_AFTER', SAME_SCUMM_C1_HOLD_AFTER)):
+            match = re.search(r'^' + symbol + r'\s*=\s*\$([0-9A-Fa-f]+)', source, re.M)
+            self.assertIsNotNone(match)
+            self.assertEqual(address, int(match.group(1), 16))
+        session = FakeRoom4Session()
+        session.values[SAME_SCUMM_PC] = 13625
+        session.values[SAME_SCUMM_C1_HOLD_AFTER] = 42496
+        state = room4_controller_snapshot(session)
+        self.assertEqual(state['vm_pc'], 13625)
+        self.assertEqual(state['c1_hold_after'], 42496)
 
     def test_room4_cursor_world_coordinates_follow_native_camera_transform(self) -> None:
         session = FakeRoom4Session(cursor=(-31, 140), camera=(148, 98))

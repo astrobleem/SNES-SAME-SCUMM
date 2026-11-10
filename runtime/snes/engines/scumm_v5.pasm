@@ -64,6 +64,11 @@ ScummV5_Engine_Boot:
     sta.l SAME_SCUMM_FIXTURE_ACTIVE
     sta.l SAME_SCUMM_PROGRAM_SELECT
     sta.l SAME_SCUMM_RETURN_MODE
+    .if SAME_BUILD_SCUMM_CONTROLLER
+    ; No room is installed at engine boot. Uninitialized WRAM must not arm
+    ; controller/actor presentation before the normal room-install callback.
+    sta.l SAME_SCUMM_CONTROLLER_ROOM_READY
+    .endif
     .if SAME_BUILD_SCUMM_M19
     sta.l SAME_SCUMM_C1_HOLD_AFTER
     .endif
