@@ -1093,6 +1093,10 @@ else
             export SAME_SCUMM_ACTOR_PROBE_AUDIT
             ROOM_GENERATOR_ARGS+=(--diagnostic-actor-probe
                 --actor-probe-audit "$SAME_SCUMM_ACTOR_PROBE_AUDIT")
+            if [[ -n "${SAME_SCUMM_ACTOR_PROBE_POSE:-}" ]]; then
+                IFS=, read -r PROBE_COSTUME PROBE_STAND PROBE_ANIMATE <<< "$SAME_SCUMM_ACTOR_PROBE_POSE"
+                ROOM_GENERATOR_ARGS+=(--actor-probe-pose "$PROBE_COSTUME" "$PROBE_STAND" "$PROBE_ANIMATE")
+            fi
             if [[ -n "${SAME_SCUMM_ACTOR_PROBE_POSITION:-}" ]]; then
                 IFS=, read -r PROBE_X PROBE_Y PROBE_MOVED_X <<< "$SAME_SCUMM_ACTOR_PROBE_POSITION"
                 ROOM_GENERATOR_ARGS+=(--actor-probe-position "$PROBE_X" "$PROBE_Y" "$PROBE_MOVED_X")

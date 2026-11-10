@@ -283,8 +283,8 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             "maximum_bytes": 6144,
             "aliases": "unused tail of the same active metadata allocation",
             "lifetime": "displayed actor pose until the next redraw or checked room-surface publication",
-            "capacity_rule": "16-byte checked header + clipped pose bounds must fit before active allocation end",
-            "coherency": "valid marker is written last and invalidated on new checked background publication",
+            "capacity_rule": "used = 16 + sum(4 + run_count); bounded by active allocation tail; runs stay within one 256-pixel row",
+            "coherency": "capture all runs before drawing; A9 remains unpublished until Commit writes A8 last; Restore validates all records before writes and consumes magic; room publication invalidates",
         }])
         self.assertEqual(report["wram_lifetime_aliases"], [{
             "owner": "actor-underlay cursor during live SC5LIVE actor composition",

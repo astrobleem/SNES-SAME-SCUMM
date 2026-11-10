@@ -932,7 +932,9 @@ def _native_directory_for_build(identity_path: Path) -> dict[str, Any]:
         # build_snes.sh deliberately isolates dynamic-residency artifacts from
         # the legacy/static M23A build root. Follow that build-owned location;
         # never glob for a report or consume stale compiler output.
-        configured_root = explicit_environment.get("SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR")
+        configured_root = (explicit_environment.get("SAME_SCUMM_WHOLE_SOURCE_BUILD_DIR")
+                           if explicit_environment.get("SAME_SCUMM_WHOLE_SOURCE_MANIFEST")
+                           else explicit_environment.get("SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR"))
         if configured_root:
             root = Path(str(configured_root))
             if not root.is_absolute():
@@ -1855,7 +1857,8 @@ def _finish_room4_intro(session: Any, *, max_frames: int,
     )
 
 
-def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _cold_wait_room4(session: Any, max_frames: int, *,
+                     require_interactive: bool = True) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     from fate_replay import advance_bounded
 
     transitions: list[dict[str, Any]] = []
@@ -1888,7 +1891,7 @@ def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], lis
         mode = session.read_u8(0x7E5FE0)
         if (
             room == 4 and phase == 0 and error == 0 and lifecycle == 2
-            and ready == 1 and talk_active == 0 and mode == 0
+            and ready == 1 and (not require_interactive or (talk_active == 0 and mode == 0))
         ):
             return _snapshot(session), transitions
         # Startup has no controller actions while it waits for the authored
@@ -2900,6 +2903,17 @@ def _room_entry_failure_summary(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def authentic_full_source_configuration(explicit: dict[str, str]) -> bool:
+    """Original cold bootstrap; the older selected-profile switch is not required."""
+    return (bool(explicit.get("SAME_SCUMM_WHOLE_SOURCE_MANIFEST"))
+            and explicit.get("SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY") == "1"
+            and explicit.get("SAME_BUILD_SCUMM_MSU1_PROGRAMS") == "1"
+            and explicit.get("SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES") == "1"
+            and explicit.get("SAME_SCUMM_DYNAMIC_BOOT_SCRIPT") == "1"
+            and explicit.get("SAME_SCUMM_DYNAMIC_BOOT_ARGUMENT") == "0"
+            and explicit.get("SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE", "0") == "0")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rom", type=Path, required=True)
@@ -2913,6 +2927,8 @@ def main() -> int:
     parser.add_argument("--nexen-boot-wait", type=float, default=10.0)
     parser.add_argument("--socket-timeout", type=float, default=300.0)
     parser.add_argument("--startup-frames", type=int, default=1600)
+    parser.add_argument("--capture-room4-actor-entry", action="store_true",
+                        help="capture authentic startup actor presentation and stop before controller actions")
     parser.add_argument(
         "--break-on-cpu-address", type=lambda value: int(value, 0),
         help=("diagnostic only: stop at a CPU bus address during cold startup, "
@@ -2988,6 +3004,14 @@ def main() -> int:
         ) == "1"
     )
     explicit_environment = build_identity.get("explicit_environment", {})
+    if args.capture_room4_actor_entry:
+        if (explicit_environment.get("SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER") != "1"
+                or explicit_environment.get("SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE", "0") != "0"
+                or build_identity.get("diagnostics", {}).get("actor_probe")):
+            parser.error("authentic actor entry requires original scripts and the live actor renderer")
+        if any((args.continue_trapdoor_use, args.continue_room5_rope,
+                args.continue_room6_books, args.continue_room7_book, args.continue_room7_cats)):
+            parser.error("actor entry capture cannot continue the gameplay replay")
     ACTIVE_MSU_PROGRAMS = (
         explicit_environment.get("SAME_BUILD_SCUMM_MSU1_PROGRAMS") == "1"
     )
@@ -3021,12 +3045,14 @@ def main() -> int:
     RESIDENCY_POSTINIT_UNKNOWN_ROWS.clear()
     if ACTIVE_DYNAMIC_RESIDENCY:
         explicit = explicit_environment
-        if (explicit.get("SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT") != "1"
+        full_source = authentic_full_source_configuration(explicit)
+        if ((explicit.get("SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT") != "1"
+                and not full_source)
                 or explicit.get("SAME_FATE_PROFILE") != (
                     "examples/profiles/templates/fate_of_atlantis_dos_cd.json"
                 )):
             parser.error(
-                "dynamic replay requires the explicit canonical DOS-CD FATE experiment build"
+                "dynamic replay requires the canonical selected or original full-source build"
             )
         directory = _native_directory_for_build(identity_path)
         ACTIVE_PROGRAM_DIRECTORY = directory["by_id"]
@@ -3098,6 +3124,7 @@ def main() -> int:
         symbols["ScummV5_Resident_Reset_Far"] = 9
     report: dict[str, Any] = {
         "result": "running",
+        "observer_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "evidence_class": "fresh-power-on Nexen cold startup plus normal controller input",
         "rom": str(rom),
         "rom_sha256": rom_sha,
@@ -3357,13 +3384,55 @@ def main() -> int:
                     return 0
                 finally:
                     session.remove_hook(fault_hook)
-            ready, transitions = _cold_wait_room4(session, args.startup_frames)
+            ready, transitions = _cold_wait_room4(
+                session, args.startup_frames,
+                require_interactive=not args.capture_room4_actor_entry)
             report["room_transitions"] = transitions
             report["room4_ready"] = ready
             report["room4_ready_source_probe"] = _room4_source_probe(
                 session, variable_base=variable_layout["base"],
                 variable_count=variable_layout["count"],
             )
+            if args.capture_room4_actor_entry:
+                # Read-only observation of original startup scripts; no synthetic
+                # ACK writes, object actions, or continuation of the old route.
+                import time
+                import zlib
+                from validate_scumm_actor_visual_probe_nexen import ProbeObserver, capture_surface
+                storage_root = Path(explicit_environment["SAME_SCUMM_MSU1_PROGRAM_STORAGE_DIR"])
+                if not storage_root.is_absolute():
+                    storage_root = ROOT / storage_root
+                storage = json.loads((storage_root / "program-storage.json").read_text())
+                package = rom.with_suffix(".msu")
+                package_bytes = package.read_bytes()
+                if hashlib.sha256(package_bytes).hexdigest() != storage["package_sha256"]:
+                    raise RuntimeError("authentic actor package identity differs")
+                visual = next(row for row in storage["visual_records"] if row["room"] == 4)
+                offset, length = visual["pixel_package_offset"], visual["pixel_length"]
+                backdrop = package_bytes[offset:offset + length]
+                if len(backdrop) != 256 * 224 or zlib.crc32(backdrop) & 0xffffffff != int(visual["pixel_crc32"], 16):
+                    raise RuntimeError("authentic room backdrop length/CRC differs")
+                report.update({"evidence_class": "authentic cold startup, read-only actor entry capture",
+                               "controller_actions_submitted": 0,
+                               "package_sha256": storage["package_sha256"],
+                               "gameplay_interaction_verified": False})
+                args.output.write_text(json.dumps(report, indent=2) + "\n")
+                capture_dir = args.output.parent / "actor-entry"
+                capture_dir.mkdir(exist_ok=False)
+                observer = ProbeObserver(session, capture_dir, backdrop,
+                                         deadline=time.monotonic() + 120)
+                state = observer.wait_presented_pose(max_frames=1200)
+                capture = capture_surface(session, capture_dir, "authentic-room4-entry", backdrop)
+                report["actor_entry"] = {"state": state, "capture": capture}
+                if capture["ppu_indexed_differences"] or capture["cgram_difference_bytes"]:
+                    raise RuntimeError("authentic entry PPU differs from indexed presentation")
+                if capture["actor_bound_difference_pixels"] < 40:
+                    raise RuntimeError("authentic entry actor is not visibly distinguishable")
+                report["result"] = "ACTOR_ENTRY_CAPTURED_NOT_GAMEPLAY_ACCEPTANCE"
+                if pcm_capture_path is not None:
+                    report["pcm_capture_stop"] = session.stop_audio()
+                args.output.write_text(json.dumps(report, indent=2) + "\n")
+                return 0
             # A streamed room becomes drawable before its ENCD continuation
             # necessarily finishes the nested authentic global setup. Keep
             # advancing the ordinary scheduler (with no injected input) until

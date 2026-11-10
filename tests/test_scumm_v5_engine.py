@@ -1560,11 +1560,17 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(room["shadow"], [50, 60, 70, 3, 9])
         self.assertEqual(room["transform"], [6, 2, 10, 12])
         self.assertEqual(room["cycle_delays"][2], 107)
-        self.assertEqual(room["palette_overrides"], {"7": [10, 20, 30]})
+        # Intensity operations overwrite current colors from the immutable
+        # room palette; the existing serialized delta retains both ranges.
+        expected_palette = {"2": [5, 4, 10], "3": [8, 6, 15],
+                            "4": [10, 8, 20], "5": [13, 10, 25],
+                            "6": [16, 12, 31], "7": [19, 15, 36],
+                            "8": [21, 17, 41], "9": [31, 22, 49]}
+        self.assertEqual(room["palette_overrides"], expected_palette)
         self.assertEqual(room["save_load_request"], [1, 99])
         self.assertEqual(room["auxiliary_files"], {"aux": [65, 66, 67, 0]})
         self.assertEqual(state["strings"]["5"]["raw"], [65, 66, 67, 0])
-        self.assertEqual(host.services.video.surface.palette[7], (10, 20, 30))
+        self.assertEqual(host.services.video.surface.palette[7], (19, 15, 36))
 
         saved = host.save(0)
         host.engine.state.room_ops.palette_overrides.clear()
@@ -1574,7 +1580,7 @@ class ScummV5EngineTests(unittest.TestCase):
         restored = host.engine.inspect_state()["room_ops"]
         self.assertTrue(restored["shake"])
         self.assertEqual(restored["auxiliary_files"], {"aux": [65, 66, 67, 0]})
-        self.assertEqual(host.services.video.surface.palette[7], (10, 20, 30))
+        self.assertEqual(host.services.video.surface.palette[7], (19, 15, 36))
         self.assertEqual(saved.schema, 6)
 
         assert host.context is not None

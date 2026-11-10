@@ -88,6 +88,21 @@ def _validate_layout(layout: dict[str, Any]) -> tuple[MemoryRegion, ...]:
         raise ValueError("live surface is not INDEX8")
     if layout["tile_shadow"].get("tiles") != 896 or layout["tile_shadow"].get("tile_bytes") != 64:
         raise ValueError("tile shadow dimensions differ")
+    # The former low reservation now has explicit SCUMM palette ownership.
+    # It remains disjoint from the production save slot at $40:0800.
+    palette_allocations = layout["protected_low"].get("allocations", {})
+    expected_palette = {
+        "room_palette_base": (0, 768, "SCUMM immutable installed room palette"),
+        "room_palette_desired": (768, 768, "SCUMM ordered palette intent"),
+        "room_palette_state": (1536, 32, "SCUMM palette publication state"),
+    }
+    if set(palette_allocations) != set(expected_palette):
+        raise ValueError("protected-low palette owners differ")
+    for name, (offset, size, owner) in expected_palette.items():
+        if palette_allocations[name] != {"offset": offset, "bytes": size, "owner": owner}:
+            raise ValueError(f"protected-low palette allocation {name} differs")
+        if offset + size > layout["protected_low"]["bytes"]:
+            raise ValueError(f"protected-low palette allocation {name} escapes owner")
     subregions = layout["backend_reserved"].get("allocations")
     if not isinstance(subregions, dict):
         raise ValueError("backend-reserved BW-RAM requires explicit internal allocations")

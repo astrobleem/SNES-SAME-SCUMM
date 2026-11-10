@@ -2253,6 +2253,7 @@ ScummV5_LiveRoom_PublishVisual_Far__pixels:
     lda #$40
     sta.l SAME_VIDEO_SURFACE_PALETTE_SOURCE+$02
     jsl Same_VideoSurface_InstallPalette_Far
+    jsl ScummV5_Palette_InstallRoom_Far
     rep #$20
     .a16
     lda #$0100

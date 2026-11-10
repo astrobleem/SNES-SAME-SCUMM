@@ -4,7 +4,24 @@
   "bwram_bytes": 131072,
   "protected_low": {
     "address": "40:0000",
-    "bytes": 2048
+    "bytes": 2048,
+    "allocations": {
+      "room_palette_base": {
+        "offset": 0,
+        "bytes": 768,
+        "owner": "SCUMM immutable installed room palette"
+      },
+      "room_palette_desired": {
+        "offset": 768,
+        "bytes": 768,
+        "owner": "SCUMM ordered palette intent"
+      },
+      "room_palette_state": {
+        "offset": 1536,
+        "bytes": 32,
+        "owner": "SCUMM palette publication state"
+      }
+    }
   },
   "save_reserved": {
     "address": "40:0800",

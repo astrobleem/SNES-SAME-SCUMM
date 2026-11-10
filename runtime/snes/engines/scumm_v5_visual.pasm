@@ -79,6 +79,9 @@ ScummV5_Visual_Frame_Far:
     jsl Same_VideoSurface_ServiceEvents_Far
     jsl Same_VideoSurface_ServicePending_Far
     jsl Same_VideoSurface_ServiceEvents_Far
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    jsl ScummV5_Palette_Flush_Far
+    .endif
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
       ; Do not start a costume transfer or mutate the indexed surface while
       ; the room's first presentation is pending, or while the video backend
@@ -137,3 +140,7 @@ ScummV5_Visual_Frame__skip_actor:
     jsl Same_VideoSurface_ServiceEvents_Far
     plp
     rtl
+
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+.include "scumm_v5_palette_far.pasm"
+.endif

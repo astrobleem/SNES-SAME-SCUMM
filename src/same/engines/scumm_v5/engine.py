@@ -291,6 +291,8 @@ class RoomOpsState:
     transform: tuple[int, int, int, int] = (0, 0, 0, 0)
     cycle_delays: list[int] = field(default_factory=lambda: [0] * 16)
     palette_overrides: dict[int, tuple[int, int, int]] = field(default_factory=dict)
+    # Immutable resource palette survives resource-less room zero.
+    base_palette: tuple[tuple[int, int, int], ...] = ()
     save_load_request: tuple[int, int] = (0, 0)
     auxiliary_files: dict[str, bytearray] = field(default_factory=dict)
 
@@ -904,6 +906,9 @@ class ScummV5Engine(Engine):
                 str(scene_key),
                 cursor_key=None if cursor_key is None else str(cursor_key),
             )
+            self.state.room_ops.base_palette = (
+                self._video.scene.palette + ((0, 0, 0),) * (256 - len(self._video.scene.palette))
+            )
             self._video.move_cursor(self.state.cursor_x, self.state.cursor_y)
         else:
             self._video = None
@@ -1083,6 +1088,10 @@ class ScummV5Engine(Engine):
                 self._video.project_composition()
             else:
                 self._video.project()
+            if isinstance(self._video, ScummV5VideoAdapter):
+                # Synthetic scene projection also starts from its source palette.
+                for index, rgb in self.state.room_ops.palette_overrides.items():
+                    self._set_current_room_palette(context, index, (rgb,))
             self.state.room_hash = context.services.video.surface.hash()
         self._presentation_dirty = False
         self._presentation_rebuild = False
@@ -3901,6 +3910,41 @@ class ScummV5Engine(Engine):
             )
         return values
 
+    def _set_current_room_palette(
+        self, context: EngineContext, first: int,
+        colors: tuple[tuple[int, int, int], ...],
+    ) -> None:
+        # This existing serialized map is the effective palette delta, in
+        # execution order, including direct colors and intensity results. The
+        # decoded room/scene palette remains immutable and is never darkened.
+        for index, color in enumerate(colors, first):
+            self.state.room_ops.palette_overrides[index] = color
+        if self._video is not None:
+            for surface in (self._video.logical_surface, self._video.composition_surface):
+                if surface is not None:
+                    surface.set_palette(first, colors)
+            if self._video.logical_surface is not None:
+                self._video.logical_sha256 = self._video.logical_surface.hash()
+        context.services.video.set_palette(first, colors)
+        self.state.room_hash = context.services.video.surface.hash()
+
+    def _apply_room_intensity(
+        self, context: EngineContext, values: tuple[int, int, int, int, int],
+    ) -> None:
+        # ScummVM palette.cpp darkenPalette, classic v5 path: use the
+        # resource palette (not setPalColor overrides), divide by 255, cap 252.
+        base = self.state.room_ops.base_palette
+        if not base:
+            return  # No room/scene palette has been installed yet.
+        red, green, blue, first, last = values
+        colors = tuple(
+            (min(252, base[index][0] * red // 255),
+             min(252, base[index][1] * green // 255),
+             min(252, base[index][2] * blue // 255))
+            for index in range(first, last + 1)
+        )
+        self._set_current_room_palette(context, first, colors)
+
     def _op_room_ops(self, slot: ScriptSlot, context: EngineContext) -> bool:
         flags = self._u8(slot)
         subop = flags & 0x1F
@@ -3933,8 +3977,7 @@ class ScummV5Engine(Engine):
                 self._room_range(f"palette {name}", value)
                 for name, value in (("red", red), ("green", green), ("blue", blue))
             )
-            state.palette_overrides[index] = rgb  # type: ignore[assignment]
-            context.services.video.set_palette(index, (rgb,))
+            self._set_current_room_palette(context, index, (rgb,))  # type: ignore[arg-type]
         elif subop == 5:  # SO_ROOM_SHAKE_ON
             state.shake_enabled = True
         elif subop == 6:  # SO_ROOM_SHAKE_OFF
@@ -3958,6 +4001,7 @@ class ScummV5Engine(Engine):
             state.intensity = self._room_color_range(
                 "intensity", level, level, level, first, last
             )
+            self._apply_room_intensity(context, state.intensity)
         elif subop == 9:  # SO_ROOM_SAVEGAME
             save_flag = self._byte_for_flags(slot, flags, 0x80)
             self._byte_for_flags(slot, flags, 0x40)  # canonical slot is forced to 99
@@ -3977,6 +4021,7 @@ class ScummV5Engine(Engine):
             )
             if subop == 11:
                 state.rgb_intensity = result
+                self._apply_room_intensity(context, result)
             else:
                 state.shadow = result
         elif subop in (13, 14):  # SO_SAVE_STRING / SO_LOAD_STRING
@@ -4262,6 +4307,8 @@ class ScummV5Engine(Engine):
         # resource's authored matrix until that room executes createBoxMatrix.
         self._dynamic_box_routes = None
         self._pending_draw_boxes.clear()
+        if not preserve_local_scripts and not null_scene:
+            self.state.room_ops.palette_overrides.clear()
         if null_scene:
             self.state.room_objects.clear()
             self.state.object_draw_queue.clear()
@@ -4272,7 +4319,6 @@ class ScummV5Engine(Engine):
             self._room_exit = None
             self._room_record = None
             surface = context.services.video.surface
-            context.services.video.set_palette(0, ((0, 0, 0),) * 256)
             context.services.video.fill(0)
             self.state.room_hash = surface.hash()
             self._video = None
@@ -4282,6 +4328,9 @@ class ScummV5Engine(Engine):
         adapter = ScummV5RoomAdapter(context)
         adapter.render(key, room_data=raw)
         self._video = adapter
+        self.state.room_ops.base_palette = (
+            adapter.room.palette + ((0, 0, 0),) * (256 - len(adapter.room.palette))
+        )
         self._room_record = record
         if record is None:
             self._room_script_descriptors = {}
@@ -4403,6 +4452,9 @@ class ScummV5Engine(Engine):
                     str(index): list(value)
                     for index, value in sorted(room_ops.palette_overrides.items())
                 },
+                # Optional additive field: older schema-6 saves reconstruct
+                # their base from the current room resource when available.
+                "base_palette": [list(rgb) for rgb in room_ops.base_palette],
                 "save_load_request": list(room_ops.save_load_request),
                 "auxiliary_files": {
                     name: bytes(value).hex()
@@ -4792,6 +4844,15 @@ class ScummV5Engine(Engine):
             ):
                 raise SaveFormatError("SCUMM save roomOps palette override is invalid")
             palette_overrides[index] = rgb
+        base_raw = room_ops_raw.get("base_palette", [])
+        if not isinstance(base_raw, list) or len(base_raw) not in (0, 256):
+            raise SaveFormatError("SCUMM save roomOps base palette is invalid")
+        base_palette = []
+        for rgb in base_raw:
+            if (not isinstance(rgb, list) or len(rgb) != 3
+                    or any(not isinstance(v, int) or not 0 <= v <= 255 for v in rgb)):
+                raise SaveFormatError("SCUMM save roomOps base palette is invalid")
+            base_palette.append(tuple(rgb))
         if not isinstance(auxiliary_raw, dict) or len(auxiliary_raw) > 64:
             raise SaveFormatError("SCUMM save roomOps auxiliary files are invalid")
         auxiliary_files: dict[str, bytearray] = {}
@@ -4820,6 +4881,7 @@ class ScummV5Engine(Engine):
             transform=transform,
             cycle_delays=cycle_delays,
             palette_overrides=palette_overrides,
+            base_palette=tuple(base_palette),
             save_load_request=save_load_request,
             auxiliary_files=auxiliary_files,
         )
@@ -5418,8 +5480,10 @@ class ScummV5Engine(Engine):
             self.state.room_hash = context.services.video.surface.hash()
         self._presentation_dirty = False
         self._presentation_rebuild = False
+        if self.state.room_ops.base_palette:
+            context.services.video.set_palette(0, self.state.room_ops.base_palette)
         for index, rgb in self.state.room_ops.palette_overrides.items():
-            context.services.video.set_palette(index, (rgb,))
+            self._set_current_room_palette(context, index, (rgb,))
         if self._video is None:
             context.services.video.move_cursor(self.state.cursor_x, self.state.cursor_y)
         else:

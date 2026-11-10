@@ -798,7 +798,10 @@ class FateReplayTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "ambiguous"):
                 _native_directory_for_build(identity_path)
 
-    def test_dynamic_build_report_uses_identity_bound_custom_build_root(self) -> None:
+    def test_full_source_build_report_uses_its_own_root(self) -> None:
+        self.test_dynamic_build_report_uses_identity_bound_custom_build_root(full_source=True)
+
+    def test_dynamic_build_report_uses_identity_bound_custom_build_root(self, full_source=False) -> None:
         import hashlib
         import json
         import tempfile
@@ -821,7 +824,10 @@ class FateReplayTests(unittest.TestCase):
             identity_path.write_text(json.dumps({
                 "explicit_environment": {
                     "SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY": "1",
-                    "SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR": str(dynamic_root),
+                    ("SAME_SCUMM_WHOLE_SOURCE_BUILD_DIR" if full_source else
+                     "SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR"): str(dynamic_root),
+                    **({"SAME_SCUMM_WHOLE_SOURCE_MANIFEST": "/source/manifest.json"}
+                       if full_source else {}),
                 },
             }), encoding="utf-8")
 

@@ -88,6 +88,25 @@ class SnesCarrierTests(unittest.TestCase):
             ],
         })
 
+    def test_room_palette_owners_do_not_alias_save_or_pending_resources(self) -> None:
+        import copy
+        layout = load_carrier(ROOT, "sa1_bwram", save_enabled=True).layout
+        allocations = layout["protected_low"]["allocations"]
+        self.assertEqual([(r["offset"], r["bytes"]) for r in allocations.values()],
+                         [(0, 768), (768, 768), (1536, 32)])
+        for name, offset, size in (("room_palette_desired", 0, 768),
+                                  ("room_palette_state", 2048, 32),
+                                  ("room_palette_base", 0, 769)):
+            damaged = copy.deepcopy(layout)
+            damaged["protected_low"]["allocations"][name].update(offset=offset, bytes=size)
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                layout_regions(damaged)
+        damaged = copy.deepcopy(layout)
+        damaged["protected_low"]["allocations"]["unknown"] = {
+            "offset": 0, "bytes": 1, "owner": "overlap"}
+        with self.assertRaises(ValueError):
+            layout_regions(damaged)
+
     def test_generated_ordinary_carrier_emits_no_boot_bytes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

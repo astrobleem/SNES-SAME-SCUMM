@@ -251,10 +251,9 @@ def validate_build(args: argparse.Namespace) -> tuple[dict, dict, dict, bytes]:
     else:
         from actor_probe_program import ProbeConfig, build_probe
     probe_config = ProbeConfig(**audit["program"]["config"])
-    require((probe_config.room, probe_config.costume, probe_config.actor,
-             probe_config.boot_script, probe_config.stand_frame,
-             probe_config.animate_frame) == (4, 2, 1, 1, 3, 2),
-            "unsupported diagnostic scene or actor; only positions may vary")
+    probe_config.validate()
+    require((probe_config.room, probe_config.actor, probe_config.boot_script) == (4, 1, 1),
+            "unsupported diagnostic scene or actor")
     validate_animation_constants(args.listing.read_text(), probe_config.actor)
     _, expected_probe = build_probe(probe_config)
     require(audit["program"] == expected_probe,
@@ -1621,12 +1620,12 @@ def main() -> int:
                 })
                 return 0 if hit else 2
             stage1 = observer.wait_stage(1, max_frames=6000)
-            record1 = observer.capture_stage("01-standing", expected_frame=3,
+            record1 = observer.capture_stage("01-standing", expected_frame=audit["program"]["config"]["stand_frame"],
                                              expected_facing=180)
             observer.acknowledge(1)
 
             stage2 = observer.wait_stage(2, max_frames=1800)
-            record2 = observer.capture_stage("02-turned", expected_frame=3,
+            record2 = observer.capture_stage("02-turned", expected_frame=audit["program"]["config"]["stand_frame"],
                                              expected_facing=90)
             require(record2["pose"]["accepted_direction"]
                     != record1["pose"]["accepted_direction"],
@@ -1634,7 +1633,7 @@ def main() -> int:
             observer.acknowledge(2)
 
             observer.wait_stage(3, max_frames=1800)
-            anim1 = observer.capture_stage("03-animation-step-a", expected_frame=2)
+            anim1 = observer.capture_stage("03-animation-step-a", expected_frame=audit["program"]["config"]["animate_frame"])
             source_identity = {
                 **anim1["pose"],
                 "rom_sha256": final["rom_sha256"],
@@ -1646,7 +1645,7 @@ def main() -> int:
             while observer.logical_frames < end:
                 observer.advance(POLL_FRAMES)
                 state = observer.wait_presented_pose(max_frames=600,
-                                                     expected_frame=2)
+                                                     expected_frame=audit["program"]["config"]["animate_frame"])
                 key = (state["accepted_frame"], state["accepted_step"])
                 current_identity = {
                     **state,
@@ -1663,7 +1662,7 @@ def main() -> int:
             observer.acknowledge(3)
 
             observer.wait_stage(4, max_frames=1800)
-            moved = observer.capture_stage("04-moved-restored", expected_frame=3,
+            moved = observer.capture_stage("04-moved-restored", expected_frame=audit["program"]["config"]["stand_frame"],
                                            expected_facing=90)
             require(moved["pose"]["foot_screen"][0]
                     != record1["pose"]["foot_screen"][0],
