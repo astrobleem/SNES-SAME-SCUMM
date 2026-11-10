@@ -2945,6 +2945,7 @@ ScummV5_Movement_UpdateActor_Far__after_step:
     lda.l SAME_SCUMM_MOVE_TEMP
     sta.l SAME_SCUMM_ACTOR_FACINGS,x
 ScummV5_Movement_UpdateActor_Far__finish_no_turn:
+    jsr ScummV5_Movement_StartStand
     clc
     rts
 ScummV5_Movement_UpdateActor_Far__not_last:
@@ -3122,6 +3123,74 @@ ScummV5_Movement_UpdateActor_Far__route_error:
     lda #$FF
     sta.l SAME_SCUMM_PUT_ACTOR_DESTBOX,x
     clc
+    rts
+
+; Same-bank movement completion ABI: MOVE_ACTOR is the validated actor id.
+; Start its configured stand chore, retiring any direction-only request that
+; would otherwise retain the renderer's last walk frame. Preserve P/A/X/Y/DB
+; and all movement/C14 interpreter scratch; no cross-bank near-helper call.
+ScummV5_Movement_StartStand:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_STAND_FRAME,x
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    and #$0007
+    tax
+    sep #$20
+    .a8
+    lda #$01
+    cpx #$0000
+    beq ScummV5_Movement_StartStand__mask_ready
+ScummV5_Movement_StartStand__mask_loop:
+    asl
+    dex
+    bne ScummV5_Movement_StartStand__mask_loop
+ScummV5_Movement_StartStand__mask_ready:
+    .a8
+    .i16
+    eor #$FF
+    pha
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    and #$00FF
+    lsr
+    lsr
+    lsr
+    tax
+    sep #$20
+    .a8
+    pla
+    and.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
+    sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
+    .endif
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
+    plp
     rts
 
 ; Establish one canonical 16.16 leg and perform its first actor step.
