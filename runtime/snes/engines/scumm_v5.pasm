@@ -11186,8 +11186,7 @@ ScummV5_Op_ActorOps__costume:
     lda.l SAME_SCUMM_CONDITION
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_COSTUME,x
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
-    lda.l SAME_SCUMM_C14_ACTOR
-    tax
+    jsr ScummV5_C14_AnimationIndexX
     lda #$00
     sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
     .endif
@@ -11559,8 +11558,7 @@ ScummV5_Op_AnimateActor__store:
     lda.l SAME_SCUMM_FETCH_BYTE
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
-    lda.l SAME_SCUMM_C14_ACTOR
-    tax
+    jsr ScummV5_C14_AnimationIndexX
     lda #$01
     sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
     .endif
@@ -12552,6 +12550,21 @@ ScummV5_C14_BaseX:
     .a8
     rts
 
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+; BaseX leaves the actor-record offset in B. TAX with A8/X16 would carry
+; that high byte into the animation array index for actor IDs >= 4.
+ScummV5_C14_AnimationIndexX:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C14_ACTOR
+    and #$00FF
+    tax
+    sep #$20
+    .a8
+    rts
+.endif
+
 ScummV5_C14_StoreNameByte:
     sep #$20
     .a8
@@ -12589,8 +12602,7 @@ ScummV5_C14_DefaultActor:
     .a8
     jsr ScummV5_C14_BaseX
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
-    lda.l SAME_SCUMM_C14_ACTOR
-    tax
+    jsr ScummV5_C14_AnimationIndexX
     lda #$00
     sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
     jsr ScummV5_C14_BaseX

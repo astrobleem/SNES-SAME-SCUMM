@@ -3642,3 +3642,14 @@ drift remains adjudicated and unchanged.
   graphics diagnostic, not gameplay acceptance. Local 213 is NOT_VERIFIED.
 - Local tests: 1,196 with 12 skips; validate, pinned assembly, ROM/memory audits,
   and source checks pass. Hosted PR checks remain a separate publication gate.
+
+### Actor integration review — 2026-11-09
+
+Corrected retained-B contamination of the explicit-animation array index in
+three native actor paths. All actor IDs are covered by a focused source-model
+test; 1,197 host tests pass with 12 skips, validation and pinned assembly/ROM
+audit pass. Native regression initially stopped at its identity preflight:
+`make test` had regenerated the working checkout's carrier include. No
+emulator launched in that attempt. Build/validation sources are now isolated;
+do not bypass that guard or reuse the old ROM's evidence for this correction.
+The separate progression recovery worktree is untouched.

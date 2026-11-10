@@ -94,3 +94,18 @@ large-room/multi-actor restoration is not certified by this diagnostic.
 Local 213 remains NOT_VERIFIED. The progression recovery worktree is untouched.
 No selector redesign, new engine personality, or FATE-specific production
 branch was introduced by these corrections.
+
+## Integration review correction
+
+The explicit-animation flag writes now zero-extend the actor ID before
+indexing the 32-byte array. `C14_BaseX` leaves the high byte of its record
+address in B; an A8/X16 `TAX` could previously index outside this array for
+actor IDs 4 and above. Costume changes, explicit animation, and actor reset
+share the corrected helper. The regression covers all 32 actor IDs and
+nonzero adjacent-byte values. This is source-model coverage, not a claim of
+native visual acceptance for every actor.
+
+The corrected full actor configuration assembles and passes the ROM audit.
+The full host suite passes 1,197 tests (12 skips), and `make validate` passes.
+The prior five-frame native result above remains bound to its original ROM;
+new native evidence must use the corrected build identity.

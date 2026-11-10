@@ -19,6 +19,30 @@ from tools.validate_scumm_actor_visual_probe_nexen import (
 
 
 class ActorProbeIntegrationTests(unittest.TestCase):
+    def test_explicit_animation_writes_are_bounded_for_every_actor(self) -> None:
+        source = (Path(__file__).resolve().parents[1] /
+                  "runtime/snes/engines/scumm_v5.pasm").read_text()
+        helper = source.split("ScummV5_C14_AnimationIndexX:", 1)[1].split("    rts", 1)[0]
+        self.assertIn("rep #$30", helper)
+        self.assertIn("and #$00FF\n    tax", helper)
+        for marker in ("ScummV5_Op_ActorOps__costume:",
+                       "ScummV5_Op_AnimateActor__store:",
+                       "ScummV5_C14_DefaultActor:"):
+            write = source.split(marker, 1)[1].split(
+                "sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x", 1)[0]
+            self.assertIn("jsr ScummV5_C14_AnimationIndexX", write)
+        # C14_BaseX leaves the high byte of actor*64 in B. Adjacent actor
+        # state can also occupy the high byte of a word load of C14_ACTOR.
+        for actor in range(32):
+            for adjacent in (0, 1, 255):
+                a = (adjacent << 8) | actor
+                mask = int(helper.split("and #$", 1)[1].splitlines()[0], 16)
+                index = a & mask
+                guarded = bytearray([0xA5] * 34)
+                guarded[1 + index] = 1
+                self.assertEqual(index, actor)
+                self.assertEqual((guarded[0], guarded[-1]), (0xA5, 0xA5))
+
     def test_palette_indices_do_not_inherit_the_pixel_cursor_high_byte(self) -> None:
         source = (Path(__file__).resolve().parents[1] /
                   "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
