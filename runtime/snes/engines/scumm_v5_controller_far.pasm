@@ -4256,7 +4256,8 @@ ScummV5_Controller_Cursor_Data:
 ; Compose a bounded HUD prompt from the canonical runtime tables:
 ;   C17 verb record name + object-name bytes written by $54 setObjectName.
 ; Both strings remain SCUMM encoded; the text service owns decoding and
-; presentation. A missing name simply yields the names that are available.
+; presentation. This prompt requires an active verb name; a saved-away verb
+; must not be resurrected from the save bank for controller presentation.
 ScummV5_Controller_BuildHudText_Far:
     php
     phb
@@ -4477,7 +4478,7 @@ ScummV5_Controller_BuildHudText__unusable:
     sta.l SAME_VIDEO_TEXT_CONTROLLER_LENGTH
     sta.l SAME_VIDEO_TEXT_CONTROLLER_VALID
     sta.l SAME_SCUMM_TALK_RAW_LENGTH
-    lda #$01
+    lda #$02 ; unavailable text is not a busy publication
     sta.l SAME_SCUMM_TALK_VISUAL_STATUS
     plb
     plp

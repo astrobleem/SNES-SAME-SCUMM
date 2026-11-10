@@ -1,3 +1,20 @@
+# Current checkpoint — authentic room/walking accepted; text frontier isolated
+
+- Branch `scumm-fate-authentic-room`, draft PR #14. Actor PR #13 already merged.
+- Accepted: full2203-unit authentic startup into room4; real Indy/background;
+  normal controller walk to(161,133), correct stand3, zero source/INDEX8/VRAM/
+  CGRAM differences and no old-position residue.
+- Text code `c2452fd` has green hosted checks42773074434. Its native selection
+  control found no active verb3; source and a separate read-only capture prove
+  authored save-away into bank1. Do NOT inject/restore verbs for a HUD proof.
+- Room4 ENCD calls Global19(1), then(3). Normal GUI needs authored Global19(2).
+- Final correction makes missing verb text unavailable2, not retryable busy1.
+  It assembles; native evidence stays bound to the prior ROM (one immediate
+  and two checksum bytes differ). See AUTHENTIC_ROOM_INTEGRATION.md identities.
+- Native text remains NOT_VERIFIED. Full source font2 needs multibit colors,
+  9–10row glyph capacity and explicit resource/palette ownership.
+- No seven-action replay, room7 run, or recovery-worktree modification.
+
 # Active checkpoint — authentic room, controller walking, and stand completion
 
 PR #13 is merged through protected main at `99127067`. Active draft PR #14:

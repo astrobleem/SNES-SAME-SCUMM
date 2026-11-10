@@ -38,7 +38,40 @@ The new surface matches the source decoder, VRAM and CGRAM exactly. Equal
 stand/walk-frame animation restart timing remains unverified; this is not
 certification of every animation command.
 
-Text, verbs and inventory are not yet visibly usable in this build.
+The next integration connects the existing bounded text overlay to runtime verb
+and object names. Native visible text remains NOT_VERIFIED. The overlay is still
+80×8, one binary source charset, and palette-group zero; it is not the original
+verb grid, full dialogue layout, inventory display, or a general text renderer.
+
+## Bounded source-text integration and authored verb lifetime
+
+The controller builds a terminated prompt from C17 verb text and the active
+object-name cache, reserving the last byte of its 32-byte buffer. It temporarily
+uses the selected verb's charset and restores the script-owned C23 style on
+all exits. Accepted authored talk retires the pending controller text owner.
+Only a busy publication is retryable; unsupported styling remains visible as
+visual status 2 until new content requests a publication.
+
+Mode 1 uses the verb's authored highlight color as a SNES selected-verb prompt
+adaptation. Other modes retain its normal color. This does not reproduce the
+original verb grid or sentence-line styling. The current BG2 tilemap selects
+palette group zero, so this producer explicitly rejects color zero and colors
+above 15 instead of silently drawing their low nibble. It also rejects a
+charset different from the compiled font's logical identity. These are visual
+limitations, not fabricated SCUMM query results or semantic no-ops. Rejection
+leaves the previously published overlay intact; a general dialogue hide/replace
+policy remains incomplete.
+
+The isolated authentic build explicitly binds source charset 1 to logical
+charset 1. Existing build defaults remain unchanged. The source font is
+ROM-compiled in this configuration, not streamed; room, program and costume
+resources retain their checked external paths. No commercial font bytes are
+tracked in Git.
+
+The first text-enabled ROM (`51437bfa…`) reached room 4 with source-matched
+actor/room pixels in 322.547 seconds, but it is not text acceptance. Source
+inspection then identified the unrepresentable normal color and the retry
+issue before any object-selection test. A corrected image was used for the following test; emulator state never crossed ROM identities.
 
 ## Mapped-ROM interaction repair
 
@@ -470,3 +503,61 @@ coverage, not native text support. The actual external-source census gives
 charset1:110 glyphs, max13x16; charset2:108 glyphs, max39x10. Original byte
 identity and measurements are retained locally in
 `/tmp/astra-authentic-charset-source-audit.json`.
+
+## Selected-object text observation and source reconciliation
+
+Commit `c2452fd` assembled as ROM
+`db31b73657218b1efeff0fd7c17a31c772706320c608f7274cb18418bbabd404`, map
+`fcc62e04ee3b8e8e6842b2278247e72dc1ad91f7ae20f3f6a18e952075345720`,
+build identity `5698b1daeca97d926f4cb8e36943c470e4c4b30e4921db95015c56d606418a1a`.
+Its package remains `9f66adacf15836f2fdf1ea10485199e43f5b606deb49e26ba4b493aa12e622d0`.
+Original startup/room4/actor acceptance took 294.438 seconds, with zero
+INDEX8/VRAM and palette/CGRAM differences. The subsequent matching-checkpoint
+control used 17 cursor edges and one A edge, selecting object61/verb3/mode1.
+It submitted no object action. Error remained zero, but the text check failed
+at the first producer boundary: active C17 verb3 was absent, text length zero,
+and no new overlay generation appeared. The 57.393-second control stopped
+without an unchanged retry; this was not evidence of a rasterizer deadlock.
+
+A distinct 13.410-second read-only matching-checkpoint control captured the
+saved verb bank, without game input or gameplay-state writes. Bank1/verb3 still
+contains the original Open name, normal color178, highlight14 and charset1.
+The source explains the empty active record:
+
+- Room4 ENCD PC `$003C` starts Global19(1).
+- Global19 PC `$0117` saves verbs1–12 to bank1.
+- Room4 ENCD PC `$0042` starts Global19(3), disabling the interface.
+- Authored Global19(2) later restores bank1 at `$0041` or `$0058`, depending
+  on bit21; `$006C` begins enabling restored action verbs.
+
+The adapter must not resurrect a saved-away verb just to produce a caption.
+A raw boot-count byte of29 was captured, but its cold baseline was not; it does
+not prove29 engine boots. No lifecycle reset was inferred from that byte.
+The missing active name is now status2 (unavailable), not status1 (busy), so
+it does not rebuild an impossible prompt every frame. Instruction-model tests
+cover that distinction and all existing buffer/style bounds.
+
+This final status correction assembles as ROM
+`4b7673044fb1b85f2370c18282b222f172b0598a89289dc99b8b7844a3304bf5`, map
+`7f6c82f1b877f96c3d4f7974e549eaa0e28bf4f44638d19ee4ea18172c0bd2b5`,
+build identity `5117c2d81991930b1f4495695ecc65908f7f88b7ab4ad1d3ea181db2cc7fc692`.
+It has not been executed in Nexen. Against the preceding tested ROM, the only
+non-checksum byte difference is file offset304996, immediate status1→2;
+header checksum bytes32732 and32734 also change. Native observations remain
+bound to their actual preceding ROMs, not transferred to this image.
+
+The next authentic text capability is substantive: source charset2 is2bpp,
+height10; the object-name glyphs require9–10rows and retain distinct source
+slots0/1/2. The current cooker explicitly rejects it and the native overlay is
+80×8/binary/single-color. Source-slot colors, vertical capacity, charset-resource
+selection and palette ownership need implementation together. The captured
+C23 slot0 is charset0/color15; that alone does not establish active C7 charset2.
+No substitute font, invented verb label or synthetic story was used.
+
+Local evidence roots: `/tmp/astra-authentic-hud-bounded-scene-20261110`,
+`/tmp/astra-authentic-hud-selection-20261110`,
+`/tmp/astra-authentic-verb-lifetime-20261110`. Both hosted checks passed on
+`c2452fd`: [run42773074434](https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/42773074434).
+Hosted assembly is not Nexen execution. Visible text, a complete verb grid,
+inventory and dialogue remain unaccepted. The accepted advancement is the
+original room, actual Indy, normal cursor walking and correct final stand.

@@ -154,7 +154,7 @@ class HudTextTests(unittest.TestCase):
         self.assertEqual(m.get('SAME_VIDEO_TEXT_CONTROLLER_LENGTH',1),len(expected))
         self.assertEqual(m.get('SAME_SCUMM_TALK_RAW_LENGTH',1),len(expected))
         self.assertEqual(m.get('SAME_VIDEO_TEXT_CONTROLLER_VALID',1),int(verb_length!=0))
-        self.assertEqual(m.get('SAME_SCUMM_TALK_VISUAL_STATUS',1),int(verb_length==0))
+        self.assertEqual(m.get('SAME_SCUMM_TALK_VISUAL_STATUS',1),2*int(verb_length==0))
         # +32 length is allowed only its explicit reset/final length stores.
         length_address=m.buffer+32
         self.assertEqual([v for a,n,v in m.writes if a==length_address], [0,len(expected)])
@@ -201,7 +201,7 @@ class HudTextTests(unittest.TestCase):
                         self.assertEqual(m.get('SAME_SCUMM_TALK_VISUAL_STATUS',1),int(busy))
                     else:
                         self.assertEqual(m.service_styles,[])
-                        self.assertEqual(m.get('SAME_SCUMM_TALK_VISUAL_STATUS',1),1)
+                        self.assertEqual(m.get('SAME_SCUMM_TALK_VISUAL_STATUS',1),2)
 
     def test_high_selected_verb_style_uses_resolved_record_offset(self):
         m=HudMachine(6,5,show=True,verb_id=255)
