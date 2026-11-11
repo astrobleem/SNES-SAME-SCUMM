@@ -575,10 +575,19 @@ ScummV5_Camera_ServicePending__copy:
     sta.l SAME_SCUMM_VIEWPORT_STATE
 ScummV5_Camera_ServicePending__publish:
     .a8
-    ; Retain ownership and retry only queue publication on backpressure.
+    ; Transfer this owner's completed surface to the shared video service.
+    ; CanWrite refuses external staging owners, including ourselves. Release
+    ; only during this synchronous call (no engine producer runs inside it),
+    ; and reclaim installed ownership on refusal. NMI remains video-owned.
     ; Never recopy the stage after the backend reclaims its tile-shadow alias.
+    lda #$00
+    sta.l SAME_SCUMM_VIEWPORT_STATE
     jsl Same_VideoSurface_PushDirtyPresent_Far
     bcc ScummV5_Camera_ServicePending__published
+    sep #$20
+    .a8
+    lda #$03
+    sta.l SAME_SCUMM_VIEWPORT_STATE
     clc
     rtl
 ScummV5_Camera_ServicePending__published:
@@ -587,6 +596,10 @@ ScummV5_Camera_ServicePending__published:
     lda #$00
     sta.l SAME_SCUMM_VIEWPORT_STATE
     sta.l SAME_SCUMM_VIEWPORT_MODE
+    ; The logical camera can advance while strips load. Reconcile the latest
+    ; desired crop after this PRESENT commits; never acknowledge an old crop
+    ; as the newest request. The idle comparison clears an unchanged request.
+    lda #$01
     sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
     clc
     rtl

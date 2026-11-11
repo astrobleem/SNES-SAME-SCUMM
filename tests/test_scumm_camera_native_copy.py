@@ -142,7 +142,11 @@ class CameraTransactionMachine(StripMachine):
     def service(self,name,p,a):
         self.calls.append(name)
         if name=='Same_VideoSurface_PushDirtyPresent_Far':
-            return (p&~1)|int(self.queue_busy),a
+            from test_video_surface_publication import PublicationMachine
+            guard=PublicationMachine()
+            guard.put('SAME_SCUMM_VIEWPORT_STATE',self.get('SAME_SCUMM_VIEWPORT_STATE',1),1)
+            allowed=guard.can_write()
+            return (p&~1)|int(self.queue_busy or not allowed),a
         if name in ('Same_VideoSurface_InvalidateTileCache_Far',
                     'Same_VideoSurface_InvalidateActorUnderlay_Far',
                     'ScummV5_Camera_InstallGeometry_Far'):
@@ -180,7 +184,36 @@ class CameraTransactionTests(unittest.TestCase):
         self.assertEqual(m.calls,['Same_VideoSurface_PushDirtyPresent_Far'])
         self.assertEqual(m.ram[0x402000:0x40E000],bytes([19])*49152)
         self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_STATE',1),0)
-        self.assertEqual(m.get('SAME_VIDEO_SURFACE_PENDING_VISUAL',1),0)
+        self.assertEqual(m.get('SAME_VIDEO_SURFACE_PENDING_VISUAL',1),1)
+
+    def test_video_guard_requires_explicit_completed_owner_handoff(self):
+        m=CameraTransactionMachine();m.put('SAME_SCUMM_VIEWPORT_STATE',3,1)
+        m.put('SAME_SCUMM_VIEWPORT_MODE',1,1)
+        # Exercise the actual video CanWrite reader at the service boundary.
+        self.assertEqual(m.service('Same_VideoSurface_PushDirtyPresent_Far',0,0)[0]&1,1)
+        m.calls=[];failed,writes=m.consume()
+        self.assertFalse(failed);self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_STATE',1),0)
+        self.assertEqual(m.calls,['Same_VideoSurface_PushDirtyPresent_Far'])
+        self.assertEqual(m.get('SAME_VIDEO_SURFACE_PENDING_VISUAL',1),1)
+        self.assertFalse(any(0x402000<=a<0x41E000 for a in writes))
+
+    def test_completed_crop_does_not_acknowledge_a_newer_camera_request(self):
+        for installed,expected_request in ((208,0),(56,1)):
+            m=CameraTransactionMachine();m.put('SAME_SCUMM_VIEWPORT_STATE',3,1)
+            m.put('SAME_SCUMM_VIEWPORT_MODE',1,1)
+            m.put('SAME_VIDEO_SURFACE_SOURCE_X',installed)
+            m.put('SAME_VIDEO_SURFACE_PENDING_XSTART',176)
+            m.put('SAME_VIDEO_SURFACE_WIDTH',640);m.put('SAME_VIDEO_SURFACE_COPY_WIDTH',256)
+            m.put('SAME_MSU1_STATUS',3,1);m.put('SAME_SCUMM_MSU_CACHE_REQUEST_SLOT',255,1)
+            m.symbols.update(SAME_MSU1_STATE_READING=4,SCUMM_LIVE_ROOM_STAGE_PIXELS=4,SCUMM_MSU_ROOM_REQUESTED=1)
+            m.consume();self.assertEqual(m.get('SAME_VIDEO_SURFACE_PENDING_VISUAL',1),1)
+            prior=m.service
+            def service(name,p,a):
+                if name in ('Same_VideoSurface_CanWrite_Far','ScummV5_MsuProgram_ReconcileRead_Far'):return p&~1,a
+                return prior(name,p,a)
+            m.service=service;m.consume()
+            self.assertEqual(m.get('SAME_VIDEO_SURFACE_PENDING_VISUAL',1),expected_request)
+            self.assertEqual(m.get('SAME_SCUMM_MSU_ROOM_STATE',1),expected_request)
 
     def test_memory_audit_rejects_original_lifecycle_trace_alias(self):
         from unittest.mock import patch

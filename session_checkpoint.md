@@ -4062,3 +4062,15 @@ scratch. Focused tests pass and pinned assembly/ROM audit pass. The observer
 now separately requires visible palette contrast. A changed-image continuous
 session is running under600sec atport7423 with fresh source startup; no old
 savestate or seven-action replay. Full suite1,496run/12skipped passes; make validate and33-region audit pass.
+
+### Camera publication ownership correction
+
+037fd3d native ROMfe8d84eb... completed source pickup and genuinely readable
+inventory (276 contrast pixels, exact source/INDEX8/PPU). Its camera reached
+checked STATE3 but rejected its own staging lock in CanWrite. Stopped at504.797s;
+no emulator leak. Handoff now releases the completed owner synchronously and
+reclaims on backpressure; latest pending crop survives old-frame publication.
+Actual-source guard/transaction tests pass. New pinned ROM/audit pass; full
+suite1498run/12skips andmake validate pass. Bounded native session port7425 is at
+/tmp/astra-camera-publish-continuous-20261111,600sec supervisor and128-frame
+no-progress capture. Preserve separate recovery worktree. No seven-action replay.

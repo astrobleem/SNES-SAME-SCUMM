@@ -59,3 +59,27 @@ room-priority cases were added; validation and pinned ROM audit passed.
 Native scrolling and object-target agreement; a visible verb/inventory UI;
 a continuous original action changing persistent state; matching current-head
 hosted CI. The first camera image is not whole-game or milestone acceptance.
+
+## Completed-view publication ownership
+
+The037fd3d native session verified the original pickup and readable inventory
+then loaded all32 checked viewport strips. Camera STATE3 remained installed
+from frame8710, while the Mode3 backend was idle, unlocked and had no queued
+events. The camera publisher retained its external staging lock while calling
+PushDirtyPresent; the shared CanWrite preflight correctly rejected that lock.
+This was an owner handoff defect, not an MSU CRC failure or emulator timeout.
+The owned session was stopped at504.797seconds and all observations retained.
+
+The camera now releases its completed staging ownership only for the
+synchronous shared video publication call. Other engine producers cannot run
+inside that call; NMI retains normal video ownership. Refused publication
+reclaims STATE3 and retries without recopying the reclaimed tile-shadow alias.
+The regression executes the actual CanWrite guard at this boundary rather than
+a permissive queue stub, including refusal and successful retry.
+
+A completed old crop also no longer clears a newer pending camera position.
+After PRESENT, the normal idle comparison reconciles the latest desired crop:
+identical requests clear; newer requests retain input/resource gating and
+initiate their own checked read. Incoming-room lifecycle remains exclusive.
+This changes no logical source camera timing, source coordinates or buffers.
+Current-image native acceptance is recorded separately.
