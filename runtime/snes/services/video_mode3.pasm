@@ -1527,11 +1527,7 @@ Same_Mode3_QueueBatch__tile_queue:
 Same_Mode3_QueueBatch__finish:
     lda.l SAME_MODE3_CONTROL_RECORD_COUNT
     beq Same_Mode3_QueueBatch__no_batch
-    lda.l SAME_DMA_COMMITTED
-    clc
-    ; NMI may commit a just-published descriptor before this bookkeeping runs.
-    ; committed+pending is stable across that race; committed+record_count is not.
-    adc.l SAME_DMA_PENDING
+    jsl Same_Dma_GetFence_Far
     sta.l SAME_MODE3_CONTROL_EXPECTED_DMA
     lda.l SAME_MODE3_CONTROL_BATCH_COUNT
     inc

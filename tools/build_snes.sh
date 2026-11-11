@@ -75,6 +75,14 @@ if [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" == "1" ]]; then
         exit 1
     fi
 fi
+if [[ "${SAME_SNES_VIDEO_OVERLAY:-none}" == "bg2_index4" && "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
+    echo "bg2_index4 overlaps SC5LIVE active metadata/actor underlay at 41:F000..42:0000; use the surface text path" >&2
+    exit 1
+fi
+if [[ "${SAME_SNES_VIDEO_OVERLAY:-none}" == "surface_index8" && "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" != "1" ]]; then
+    echo "surface_index8 requires compiler-projected MSU room visuals with a reserved UI viewport" >&2
+    exit 1
+fi
 if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
     if [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" != "1" ||
           "${SAME_SNES_CARRIER:-lorom}" != "sa1_bwram" ||
@@ -1081,18 +1089,29 @@ else
         ROOM_GENERATOR_ARGS+=(--far-programs)
     fi
     if [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" == "1" ]]; then
+        if [[ "${SAME_SNES_VIDEO_OVERLAY:-none}" == "surface_index8" ]]; then
+            ROOM_GENERATOR_ARGS+=(--visual-reserved-bottom 32)
+        fi
         MSU_PROGRAM_STORAGE_DIR="${SAME_SCUMM_MSU1_PROGRAM_STORAGE_DIR:-$M23A_BUILD/msu-program-storage}"
         mkdir -p "$MSU_PROGRAM_STORAGE_DIR"
         ROOM_GENERATOR_ARGS+=(--msu1-program-storage-dir "$MSU_PROGRAM_STORAGE_DIR"
             --msu1-program-directory-include runtime/snes/generated/scumm_v5_msu_programs.inc.pasm
             --msu1-program-directory-bank 10
             --msu1-program-page-directory-bank 12
-            --reserved-bank 10 --reserved-bank 11 --reserved-bank 12)
+            --msu1-projection-directory-bank 19
+            --reserved-bank 10 --reserved-bank 11 --reserved-bank 12 --reserved-bank 19)
         if [[ "${SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE:-0}" == "1" ]]; then
+            if [[ "${SAME_SCUMM_ACTOR_PROBE_FONT_SAMPLE:-0}" == "1" ]]; then
+                ROOM_GENERATOR_ARGS+=(--actor-probe-font-sample)
+            fi
             SAME_SCUMM_ACTOR_PROBE_AUDIT="$MSU_PROGRAM_STORAGE_DIR/actor-probe-audit.json"
             export SAME_SCUMM_ACTOR_PROBE_AUDIT
             ROOM_GENERATOR_ARGS+=(--diagnostic-actor-probe
                 --actor-probe-audit "$SAME_SCUMM_ACTOR_PROBE_AUDIT")
+            if [[ -n "${SAME_SCUMM_ACTOR_PROBE_POSE:-}" ]]; then
+                IFS=, read -r PROBE_COSTUME PROBE_STAND PROBE_ANIMATE <<< "$SAME_SCUMM_ACTOR_PROBE_POSE"
+                ROOM_GENERATOR_ARGS+=(--actor-probe-pose "$PROBE_COSTUME" "$PROBE_STAND" "$PROBE_ANIMATE")
+            fi
             if [[ -n "${SAME_SCUMM_ACTOR_PROBE_POSITION:-}" ]]; then
                 IFS=, read -r PROBE_X PROBE_Y PROBE_MOVED_X <<< "$SAME_SCUMM_ACTOR_PROBE_POSITION"
                 ROOM_GENERATOR_ARGS+=(--actor-probe-position "$PROBE_X" "$PROBE_Y" "$PROBE_MOVED_X")
@@ -1337,7 +1356,8 @@ if [[ "$SAME_SNES_VIDEO_BACKEND" == "mode3_surface" && "$SAME_SNES_CARRIER" != "
     exit 1
 fi
 SAME_SNES_VIDEO_OVERLAY="${SAME_SNES_VIDEO_OVERLAY:-none}"
-if [[ "$SAME_SNES_VIDEO_OVERLAY" != "none" && "$SAME_SNES_VIDEO_OVERLAY" != "bg2_index4" ]]; then
+
+if [[ "$SAME_SNES_VIDEO_OVERLAY" != "none" && "$SAME_SNES_VIDEO_OVERLAY" != "bg2_index4" && "$SAME_SNES_VIDEO_OVERLAY" != "surface_index8" ]]; then
     echo "Unsupported SAME_SNES_VIDEO_OVERLAY: $SAME_SNES_VIDEO_OVERLAY" >&2
     exit 1
 fi
@@ -1374,7 +1394,14 @@ fi
     --overlay "$SAME_SNES_VIDEO_OVERLAY" --carrier "$SAME_SNES_CARRIER" \
     --backend "$SAME_SNES_VIDEO_BACKEND" --manifest "$VIDEO_OVERLAY_MANIFEST" \
     "${VIDEO_SURFACE_ARGS[@]}"
-if [[ "$SAME_SNES_VIDEO_OVERLAY" == "bg2_index4" ]]; then
+if [[ "$SAME_SNES_VIDEO_OVERLAY" == "surface_index8" ]]; then
+    "$PYTHON" tools/generate_snes_scumm_charset.py --native-v2 \
+        --archive "${SAME_FATE_ARCHIVE:?Set SAME_FATE_ARCHIVE}" \
+        --profile "${SAME_SNES_PROFILE:?Set SAME_SNES_PROFILE}" \
+        --output build/generated/scumm-v5-fonts.sc5fnt \
+        --include runtime/snes/generated/scumm_v5_font.inc.pasm \
+        --manifest "${SAME_SNES_OUTPUT%.sfc}.charset.json"
+elif [[ "$SAME_SNES_VIDEO_OVERLAY" == "bg2_index4" ]]; then
     if [[ "${SAME_SNES_ENGINE:-demo}" != "scumm_v5" ]]; then
         echo "bg2_index4 production subtitle overlay currently requires scumm_v5" >&2
         exit 1
@@ -1382,6 +1409,8 @@ if [[ "$SAME_SNES_VIDEO_OVERLAY" == "bg2_index4" ]]; then
     "$PYTHON" tools/generate_snes_scumm_charset.py \
         --archive "${SAME_FATE_ARCHIVE:?Set SAME_FATE_ARCHIVE to a user-supplied archive}" \
         --profile "${SAME_SNES_PROFILE:-examples/profiles/templates/fate_of_atlantis_demo.json}" \
+        --source-id "${SAME_SCUMM_FONT_SOURCE_ID:-1}" \
+        --logical-id "${SAME_SCUMM_FONT_LOGICAL_ID:-0}" \
         --output build/generated/scumm-v5-font0.sc5fnt \
         --include runtime/snes/generated/scumm_v5_font.inc.pasm \
         --manifest "${SAME_SNES_OUTPUT%.sfc}.charset.json"
@@ -1468,10 +1497,8 @@ echo "SNES layout map: $SAME_SNES_MAP"
 "$PYTHON" tools/report_snes_layout.py "$SAME_SNES_MAP"
 "$PYTHON" tools/finalize_snes_rom.py "$SAME_SNES_OUTPUT" \
     --carrier "$SAME_SNES_CARRIER" --manifest "$CARRIER_MANIFEST"
-ROM_AUDIT_ARGS=(--carrier "$SAME_SNES_CARRIER" --manifest "$CARRIER_MANIFEST")
-if [[ "$SAME_SNES_CARRIER" == "lorom" ]]; then
-    ROM_AUDIT_ARGS+=(--map "$SAME_SNES_MAP")
-fi
+# Both carriers emit Poppy banks into 32 KiB S-CPU ROM windows.
+ROM_AUDIT_ARGS=(--carrier "$SAME_SNES_CARRIER" --manifest "$CARRIER_MANIFEST" --map "$SAME_SNES_MAP")
 "$PYTHON" tools/audit_snes_rom.py "$SAME_SNES_OUTPUT" "${ROM_AUDIT_ARGS[@]}"
 sha256sum "$SAME_SNES_OUTPUT"
 "$PYTHON" tools/write_build_identity.py \

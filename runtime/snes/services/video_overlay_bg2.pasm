@@ -1173,10 +1173,7 @@ Same_Overlay_Bg2_Queue__tilemap:
 Same_Overlay_Bg2_Queue__armed:
     rep #$20
     .a16
-    lda.l SAME_OVERLAY_INFLIGHT_COUNT
-    and #$00FF
-    clc
-    adc.l SAME_DMA_COMMITTED
+    jsl Same_Dma_GetFence_Far
     sta.l SAME_OVERLAY_EXPECTED_DMA
     sep #$20
     .a8

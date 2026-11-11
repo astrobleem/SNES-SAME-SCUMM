@@ -281,6 +281,7 @@ SAME_DMA_DEFERRED_BUDGET      = $7E2242 ; u16 vblank-budget deferrals
 SAME_DMA_REJECTED             = $7E2244 ; u16 invalid/full requests
 SAME_DMA_FRAME_BYTES          = $7E2246 ; u16 bytes committed this NMI
 SAME_VIDEO_DISPLAY_SHADOW     = $7E2248 ; u8 last INIDISP value requested
+SAME_DMA_PUBLISHING           = $7E224E ; u8 main-thread queue/fence transaction; NMI defers
 SAME_DMA_QUEUE                = $7E2260 ; 8 descriptors * 8 bytes
 SAME_DMA_QUEUE_SLOTS          = $0008
 SAME_DMA_QUEUE_SLOT_SIZE      = $0008
@@ -1020,7 +1021,7 @@ SAME_SCUMM_CONTROLLER_TEXT_INDEX         = $7E5F9E ; u16 encoded HUD destination
 ; separate from the logical C23 talk stream because authored text may update
 ; that stream after a controller frame has staged a HUD prompt.
 SAME_VIDEO_TEXT_CONTROLLER_BUFFER        = $7E5FA4 ; 32 encoded bytes
-SAME_VIDEO_TEXT_CONTROLLER_LENGTH        = $7E5FC4 ; u8, includes terminator
+SAME_VIDEO_TEXT_CONTROLLER_LENGTH        = $7E5FC4 ; u8 printable bytes, excludes stored terminator
 SAME_VIDEO_TEXT_CONTROLLER_VALID         = $7E5FC5 ; u8 pending controller text
 SAME_SCUMM_OBJECT_NAME_OBJECT            = $7E5FA0 ; u16 $54 operand scratch
 SAME_SCUMM_OBJECT_NAME_INDEX             = $7E5FA2 ; u8 encoded-name cursor
@@ -1427,8 +1428,13 @@ SAME_SCUMM_TALK_STOP_COUNT                 = $7E7A2A
 SAME_SCUMM_TALK_COMPLETE_COUNT             = $7E7A2B
 SAME_SCUMM_TALK_STARTED_FRAME              = $7E7A2C ; u16
 SAME_SCUMM_TALK_COMPLETED_FRAME            = $7E7A2E ; u16
-SAME_SCUMM_TALK_RAW                        = $7E7A30 ; 32 encoded bytes
+.if SAME_VIDEO_OVERLAY_INDEXED
+SAME_SCUMM_TALK_RAW                        = $7FFB80 ; 255 retained encoded bytes
+SAME_SCUMM_TALK_MAX_RAW                    = $00FF
+.else
+SAME_SCUMM_TALK_RAW                        = $7E7A30 ; legacy 32-byte presentation
 SAME_SCUMM_TALK_MAX_RAW                    = $0020
+.endif
 SAME_SCUMM_TALK_EVENT_COUNT                = $7E7A50
 SAME_SCUMM_TALK_EVENTS                     = $7E7A51 ; 16 x 8-byte records
 SAME_SCUMM_TALK_EVENT_STRIDE               = $0008
@@ -2000,6 +2006,11 @@ SAME_SCUMM_PUT_ACTOR_BOX_CAPACITY         = $00FF
 SAME_SCUMM_PUT_ACTOR_BOX_STRIDE           = $0012 ; 8 x s16 coords + u16 scale
 SAME_SCUMM_PUT_ACTOR_BOXES                = $7FFB65 ; compatibility alias
 SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK        = $7FFB65 ; one fetched BOXD record
+; The geometry accessor uses only $7FFB65..$7FFB76 (one 18-byte record).
+; Reclaimed former BOXD-array tail has independent persistent text ownership.
+SAME_SCUMM_TEXT_STORAGE_START            = $7FFB80
+SAME_SCUMM_TEXT_PENDING_RAW              = $7FFC80 ; 256-byte immutable producer snapshot
+SAME_SCUMM_TEXT_STORAGE_END              = $7FFD80
 SAME_SCUMM_PUT_ACTOR_WALKBOX              = $7FFDA5 ; 32 x u8
 SAME_SCUMM_PUT_ACTOR_DESTBOX              = $7FFDC5 ; 32 x u8
 SAME_SCUMM_PUT_ACTOR_DEST_X               = $7FFDE5 ; 32 x s16; -1 cancels walk

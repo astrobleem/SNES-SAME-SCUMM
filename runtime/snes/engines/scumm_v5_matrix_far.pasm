@@ -2945,6 +2945,7 @@ ScummV5_Movement_UpdateActor_Far__after_step:
     lda.l SAME_SCUMM_MOVE_TEMP
     sta.l SAME_SCUMM_ACTOR_FACINGS,x
 ScummV5_Movement_UpdateActor_Far__finish_no_turn:
+    jsr ScummV5_Movement_StartStand
     clc
     rts
 ScummV5_Movement_UpdateActor_Far__not_last:
@@ -3122,6 +3123,74 @@ ScummV5_Movement_UpdateActor_Far__route_error:
     lda #$FF
     sta.l SAME_SCUMM_PUT_ACTOR_DESTBOX,x
     clc
+    rts
+
+; Same-bank movement completion ABI: MOVE_ACTOR is the validated actor id.
+; Start its configured stand chore, retiring any direction-only request that
+; would otherwise retain the renderer's last walk frame. Preserve P/A/X/Y/DB
+; and all movement/C14 interpreter scratch; no cross-bank near-helper call.
+ScummV5_Movement_StartStand:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    and #$00FF
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_STAND_FRAME,x
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    and #$0007
+    tax
+    sep #$20
+    .a8
+    lda #$01
+    cpx #$0000
+    beq ScummV5_Movement_StartStand__mask_ready
+ScummV5_Movement_StartStand__mask_loop:
+    asl
+    dex
+    bne ScummV5_Movement_StartStand__mask_loop
+ScummV5_Movement_StartStand__mask_ready:
+    .a8
+    .i16
+    eor #$FF
+    pha
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MOVE_ACTOR
+    and #$00FF
+    lsr
+    lsr
+    lsr
+    tax
+    sep #$20
+    .a8
+    pla
+    and.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
+    sta.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION,x
+    .endif
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
+    plp
     rts
 
 ; Establish one canonical 16.16 leg and perform its first actor step.
@@ -5799,9 +5868,13 @@ ScummV5_Talk_Begin_Far__length_nonzero:
     and #$80
     bne ScummV5_Talk_Begin_Far__length_valid
     lda.l SAME_SCUMM_C23_RAW_INDEX
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    bra ScummV5_Talk_Begin_Far__length_valid
+    .else
     cmp #(SAME_SCUMM_TALK_MAX_RAW + 1)
     bcc ScummV5_Talk_Begin_Far__length_valid
     jmp ScummV5_Talk_Begin_Far__error
+    .endif
 ScummV5_Talk_Begin_Far__length_valid:
     lda.l SAME_SCUMM_C23_RAW_INDEX
     sta.l SAME_SCUMM_TALK_RAW_LENGTH
@@ -5813,7 +5886,7 @@ ScummV5_Talk_Begin_Far__length_valid:
     tax
     sep #$20
     .a8
-    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && !SAME_VIDEO_OVERLAY_INDEXED
     lda.l SAME_SCUMM_TALK_RAW,x
     ; A headless fixture may decode a source string larger than the compact
     ; presentation buffer.  C23 has consumed the complete source stream, so
@@ -5852,7 +5925,22 @@ ScummV5_Talk_Begin_Far__actor_check:
     beq ScummV5_Talk_Begin_Far__actor_valid
     jmp ScummV5_Talk_Begin_Far__error
 ScummV5_Talk_Begin_Far__actor_valid:
+    .a8
+    pha
+    ; Retire prior ownership before computing the new segment. Stop clears
+    ; HAVE_MSG; doing this after scanning erased the replacement's wait state.
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    beq ScummV5_Talk_Begin_Far__previous_retired
+    lda #$01
+    sta.l SAME_SCUMM_TALK_KEEP_TEXT
+    jsr ScummV5_Talk_Stop_Far
+ScummV5_Talk_Begin_Far__previous_retired:
+    sep #$20
+    .a8
+    pla
     sta.l SAME_SCUMM_TALK_ACTOR
+    lda #$00
+    sta.l SAME_SCUMM_TALK_KEEP_TEXT
     ; Preserve exact instruction consumption for evidence and diagnostics.
     ; PC already names the byte following the encoded string terminator.
     rep #$20
@@ -5876,11 +5964,14 @@ ScummV5_Talk_Begin_Far__pc_ego:
     .a8
     lda #$02
 ScummV5_Talk_Begin_Far__pc_prefix_ready:
-    clc
-    adc.l SAME_SCUMM_TALK_RAW_LENGTH
     rep #$20
     .a16
     and #$00FF
+    sta.l SAME_SCUMM_PRODUCT
+    lda.l SAME_SCUMM_TALK_RAW_LENGTH
+    and #$00FF
+    clc
+    adc.l SAME_SCUMM_PRODUCT
     sta.l SAME_SCUMM_PRODUCT
     lda.l SAME_SCUMM_TALK_PC_AFTER
     sec
@@ -5944,7 +6035,7 @@ ScummV5_Talk_Begin_Far__truncated_ready:
     sta.l SAME_SCUMM_TALK_VISUAL_STATUS
     brl ScummV5_Talk_Begin_Far__message_ready
 ScummV5_Talk_Begin_Far__not_truncated:
-    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && !SAME_VIDEO_OVERLAY_INDEXED
     lda.l SAME_SCUMM_TALK_KEEP_TEXT
     bne ScummV5_Talk_Begin_Far__keep_text
     brl ScummV5_Talk_Begin_Far__scan_setup
@@ -6073,8 +6164,10 @@ ScummV5_Talk_Begin_Far__scan:
     beq ScummV5_Talk_Begin_Far__control_no_args
     inx
     inx
+    inx
     bra ScummV5_Talk_Begin_Far__scan
 ScummV5_Talk_Begin_Far__control_no_args:
+    inx
     bra ScummV5_Talk_Begin_Far__scan
 ScummV5_Talk_Begin_Far__wait_valid:
     inx
@@ -6108,18 +6201,33 @@ ScummV5_Talk_Begin_Far__scan_done_common:
     lda.l SAME_SCUMM_LOOP
     sep #$20
     .a8
-    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
     sta.l SAME_SCUMM_TALK_SEGMENT_GLYPHS
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    ; Rasterization consumes encoded bytes; timing counts only glyphs.
+    ; FF 03 belongs to the sequencer and is excluded from the display pass.
+    lda.l SAME_SCUMM_TALK_CURSOR
+    sec
+    sbc.l SAME_SCUMM_TALK_SEGMENT_START
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    lda.l SAME_SCUMM_TALK_HAVE_MSG
+    cmp #$FF
+    bne ScummV5_Talk_Begin_Far__scan_done_common_encoded
+    lda.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    dec
+    dec
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+ScummV5_Talk_Begin_Far__scan_done_common_encoded:
+    .a8
+    .else
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    .endif
 ScummV5_Talk_Begin_Far__message_ready:
     sep #$20
     .a8
-    lda.l SAME_SCUMM_TALK_ACTIVE
-    beq ScummV5_Talk_Begin_Far__no_previous
-    lda #$01
-    sta.l SAME_SCUMM_TALK_KEEP_TEXT
-    jsr ScummV5_Talk_Stop_Far
+    ; An accepted authored message owns TALK_RAW, including spontaneous talk
+    ; with no controller sentence dispatch to retire a previously pending HUD.
     lda #$00
-    sta.l SAME_SCUMM_TALK_KEEP_TEXT
+    sta.l SAME_VIDEO_TEXT_CONTROLLER_VALID
 ScummV5_Talk_Begin_Far__no_previous:
     rep #$30
     .a16
@@ -6258,7 +6366,8 @@ ScummV5_Talk_FrameBegin_Far:
     ; retry only the presentation publish at the normal frame boundary so
     ; visible dialogue cannot remain stuck on the old HUD prompt.
     lda.l SAME_SCUMM_TALK_VISUAL_STATUS
-    beq ScummV5_Talk_FrameBegin_Far__delay
+    cmp #$01
+    bne ScummV5_Talk_FrameBegin_Far__delay
     .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     rep #$20
     .a16
@@ -6267,8 +6376,29 @@ ScummV5_Talk_FrameBegin_Far:
     sep #$20
     .a8
     jsl Same_VideoText_ShowSegment_Far
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    ; Do not expire an owned message before its queued surface request has
+    ; been consumed. Unsupported (2) remains explicit and is not retried.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_TALK_VISUAL_STATUS
+    cmp #$01
+    bne ScummV5_Talk_FrameBegin_Far__delay
+    brl ScummV5_Talk_FrameBegin_Far__publish
+    .endif
     .endif
 ScummV5_Talk_FrameBegin_Far__delay:
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    ; Surface composition is not presentation. Start the visible lifetime
+    ; only after the normal backend acknowledges the matching generation.
+    rep #$20
+    .a16
+    lda.l SAME_OVERLAY_STATE
+    beq ScummV5_Talk_FrameBegin_Far__presented
+    brl ScummV5_Talk_FrameBegin_Far__publish16
+ScummV5_Talk_FrameBegin_Far__presented:
+    .a16
+    .endif
     rep #$20
     .a16
     lda.l SAME_SCUMM_TALK_DELAY
@@ -6488,6 +6618,7 @@ ScummV5_Talk_Continue_Far__control:
     beq ScummV5_Talk_Continue_Far__control_no_args
     inx
     inx
+    inx
     bra ScummV5_Talk_Continue_Far__scan
 ScummV5_Talk_Continue_Far__control_no_args:
     inx
@@ -6530,8 +6661,26 @@ ScummV5_Talk_Continue_Far__publish:
     lda.l SAME_SCUMM_LOOP
     sep #$20
     .a8
-    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
     sta.l SAME_SCUMM_TALK_SEGMENT_GLYPHS
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    ; Rasterization consumes encoded bytes; timing counts only glyphs.
+    ; FF 03 belongs to the sequencer and is excluded from the display pass.
+    lda.l SAME_SCUMM_TALK_CURSOR
+    sec
+    sbc.l SAME_SCUMM_TALK_SEGMENT_START
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    lda.l SAME_SCUMM_TALK_HAVE_MSG
+    cmp #$FF
+    bne ScummV5_Talk_Continue_Far__publish_encoded
+    lda.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    dec
+    dec
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+ScummV5_Talk_Continue_Far__publish_encoded:
+    .a8
+    .else
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    .endif
     lda.l SAME_SCUMM_C23_TEXT_TRUNCATED
     and #$80
     beq ScummV5_Talk_Continue_Far__publish_visual

@@ -7,15 +7,22 @@ import argparse
 import json
 from pathlib import Path
 import re
+import sys
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from same.snes_carrier import _validate_layout
+
 MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 
 # Intervals are half-open. Their endpoints are ownership boundaries declared
 # in memory.pasm; unrelated ownership overlap fails closed.
 REGIONS = (
+    ("retained_text_and_pending_snapshot", "SAME_SCUMM_TEXT_STORAGE_START",
+     "SAME_SCUMM_TEXT_STORAGE_END"),
     ("mode3_backend_scratch", "SAME_MODE3_WORK_OWNER_START",
      "SAME_MODE3_WORK_OWNER_END"),
     ("program_cache_page2", "SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_START",
@@ -129,7 +136,31 @@ def audit() -> dict[str, Any]:
             or [values["SAME_VIDEO_ACTOR_UNDERLAY_" + name]
                 for name in underlay_fields] != expected):
         raise ValueError("actor-underlay scratch must alias only nonconcurrent restore witnesses, never room readiness")
+    if (values["SAME_SCUMM_TEXT_STORAGE_START"] < values["SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK"] + values["SAME_SCUMM_PUT_ACTOR_BOX_STRIDE"]
+            or values["SAME_SCUMM_TEXT_STORAGE_END"] > values["SAME_SCUMM_PUT_ACTOR_WALKBOX"]):
+        raise ValueError("retained text overlaps active geometry or actor walkbox state")
     bwram = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json").read_text())
+    # Share the carrier's exact nested ownership contract; do not audit only
+    # the old 2-KiB parent reservation and overlook its palette residents.
+    _validate_layout(bwram)
+    low = bwram["protected_low"]
+    low_start = parse_address(low["address"])
+    save = bwram["save_reserved"]
+    save_start = parse_address(save["address"])
+    save_end = save_start + save["bytes"]
+    palette_owners = []
+    for name, item in low["allocations"].items():
+        start = low_start + item["offset"]
+        end = start + item["bytes"]
+        if start < save_end and save_start < end:
+            raise ValueError(f"protected-low palette owner overlaps save storage: {name}")
+        palette_owners.append({"name": name, "owner": item["owner"],
+                               "start": f"${start:06X}", "end_exclusive": f"${end:06X}",
+                               "bytes": item["bytes"], "disjoint_from_save": True})
+    ordered_palette = sorted(palette_owners, key=lambda item: item["start"])
+    for left, right in zip(ordered_palette, ordered_palette[1:]):
+        if left["end_exclusive"] > right["start"]:
+            raise ValueError("protected-low palette owners overlap")
     video = json.loads((ROOT / "runtime/snes/video_backends/mode3_surface_layout.json").read_text())
     fixture_address = parse_address(str(video["fixture"]["address"]))
     page2 = next(item for item in intervals if item["owner"] == "program_cache_page2")
@@ -192,9 +223,39 @@ def audit() -> dict[str, Any]:
         raise ValueError("actor-underlay scratch must end before persistent room readiness")
     if "SAME_VIDEO_DIAG_BASE                  = $7E5E90" not in video_surface_source:
         raise ValueError("actor-underlay scratch no longer meets the declared video diagnostic boundary")
-    if ("Same_VideoSurface_CaptureActorUnderlay_Far" not in video_surface_source
-            or "Same_VideoSurface_RestoreActorUnderlay_Far" not in video_surface_source):
-        raise ValueError("live actor underlay services are not present in the indexed-surface owner")
+    cursor_source = (ROOT / "runtime/snes/services/cursor_underlay.inc.pasm").read_text()
+    for api in ("CaptureCursorUnderlay", "RestoreCursorUnderlay", "MergeCursorDamage",
+                "InvalidateCursorUnderlay"):
+        if f"Same_VideoSurface_{api}_Far:" not in cursor_source:
+            raise ValueError(f"cursor underlay API missing: {api}")
+    if ('SAME_VIDEO_CURSOR_HEADER_SIZE = $0020' not in cursor_source
+            or 'SAME_VIDEO_CURSOR_PAYLOAD_SIZE = $0100' not in cursor_source
+            or '.include "cursor_underlay.inc.pasm"' not in video_surface_source):
+        raise ValueError("cursor underlay header/payload/include differs from ownership")
+    if any(symbol in cursor_source for symbol in ("SAME_SCUMM_CURSOR_PRESENTATION",
+                                                 "SAME_SCUMM_ACTOR_POSE_")):
+        raise ValueError("cursor service must not borrow engine/actor memory")
+    sparse_apis = ("RestoreActorUnderlay", "BeginActorUnderlay", "CaptureActorRun",
+                   "CommitActorUnderlay", "InvalidateActorUnderlay")
+    for api in sparse_apis:
+        if f"Same_VideoSurface_{api}_Far:" not in video_surface_source:
+            raise ValueError(f"sparse actor underlay API missing: {api}")
+    if "Same_VideoSurface_CaptureActorUnderlay_Far:" in video_surface_source:
+        raise ValueError("obsolete rectangle underlay must not coexist with sparse journal")
+    if ("SAME_VIDEO_ACTOR_UNDERLAY_MAGIC       = $A8" not in video_surface_source
+            or "SAME_VIDEO_ACTOR_UNDERLAY_HEADER_SIZE = $0010" not in video_surface_source):
+        raise ValueError("sparse actor journal version/header differs from the RAM contract")
+    restore = video_surface_source.split("Same_VideoSurface_RestoreActorUnderlay_Far:", 1)[1].split(
+        "Same_VideoSurface_BeginActorUnderlay_Far:", 1)[0]
+    if ("jsr Same_VideoSurface_Underlay_Validate" not in restore
+            or "sta.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x" not in restore
+            or restore.index("jsr Same_VideoSurface_Underlay_Validate")
+            > restore.index("sta.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x")):
+        raise ValueError("sparse underlay must validate the entire journal before pixel writes")
+    consumed = restore.split("Same_VideoSurface_Underlay_Restore__record:", 1)[1].split(
+        "Same_VideoSurface_Underlay_Restore__run:", 1)[0]
+    if "jsr Same_VideoSurface_Underlay_ClearMagic" not in consumed:
+        raise ValueError("successful sparse restore must consume the journal marker")
     if "SAME_VIDEO_SURFACE_STATE              = SAME_BWRAM_VIDEO_SURFACE_STATE" not in video_surface_source:
         raise ValueError("video surface state must use its generated BWRAM allocation")
     if "SAME_BWRAM_VIDEO_SURFACE_STATE" not in live_constants:
@@ -238,14 +299,18 @@ def audit() -> dict[str, Any]:
                              "save validator", "C4", "C19", "room lifecycle",
                              "three-page streamed-program cache", "Mode-3 live staging",
                              "exclusive actor/room SC5ACT pending scratch"],
+        "bwram_protected_low_owners": palette_owners,
+        "bwram_save_reserved": {"start": f"${save_start:06X}",
+                                "end_exclusive": f"${save_end:06X}",
+                                "bytes": save["bytes"]},
         "bwram_aliases": [{
             "owner": "live SC5LIVE actor underlay snapshot",
             "address_rule": "$41E800 + validated active SC5LIVE total_size",
             "maximum_bytes": int(active["bytes"]),
             "aliases": "unused tail of the same active metadata allocation",
             "lifetime": "displayed actor pose until the next redraw or checked room-surface publication",
-            "capacity_rule": "16-byte checked header + clipped pose bounds must fit before active allocation end",
-            "coherency": "valid marker is written last and invalidated on new checked background publication",
+            "capacity_rule": "used = 16 + sum(4 + run_count); bounded by active allocation tail; runs stay within one 256-pixel row",
+            "coherency": "capture all runs before drawing; A9 remains unpublished until Commit writes A8 last; Restore validates all records before writes and consumes magic; room publication invalidates",
         }],
         "wram_lifetime_aliases": [{
             "owner": "actor-underlay cursor during live SC5LIVE actor composition",

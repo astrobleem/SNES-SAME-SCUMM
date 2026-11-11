@@ -276,8 +276,16 @@ Same_Frame_Run__sp_ok_08:
     .a16
     .i16
 .endif
+.if SAME_VIDEO_OVERLAY_INDEXED == 0
 .include "../generated/video_overlay_frame.inc.pasm"
+.endif
     .include "../generated/video_backend_frame.inc.pasm"
+.if SAME_VIDEO_OVERLAY_INDEXED
+    ; Observe the backend completion/unlock before choosing the next surface
+    ; producer. A queued subtitle must not lose every writable turn to actor
+    ; composition immediately after COMPLETE -> IDLE.
+    jsl Same_VideoOverlay_Frame_Far
+.endif
     .if SAME_BUILD_SCUMM_ROOM_VISUAL && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl ScummV5_Visual_Frame_Far
     .endif

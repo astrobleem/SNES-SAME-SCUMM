@@ -14,11 +14,76 @@ from tools.generate_snes_cooked_rooms import apply_synthetic_actor_probe
 from tools.validate_scumm_actor_visual_probe_nexen import (
     decode_pose_observation, direction_index_for_facing, pose_is_presented,
     same_room_costume_source, actor_bounds_on_surface,
-    read_surface_packets_pending, validate_animation_constants,
+    read_surface_packets_pending, validate_animation_constants, validate_projection_rom_operands,
 )
 
 
 class ActorProbeIntegrationTests(unittest.TestCase):
+    def test_backend_progress_preserves_stalled_and_advancing_evidence(self):
+        from tools.validate_scumm_actor_visual_probe_nexen import decode_backend_progress
+        raw = bytearray(64)
+        for offset, value in ((0x22, 7), (0x38, 896), (0x3A, 256),
+                              (0x2A, 432), (0x2C, 457), (0x1C, 2)):
+            raw[offset:offset+2] = value.to_bytes(2, "little")
+        result = decode_backend_progress(bytes(raw))
+        self.assertEqual(result["mode3_scan_tile"], 896)
+        self.assertEqual(result["mode3_candidate_count"], 7)
+        self.assertEqual(result["mode3_rejected_present"], 2)
+        self.assertEqual(bytes(result["mode3_control_bytes"]), raw)
+        self.assertNotIn("deadlock", result)
+        with self.assertRaisesRegex(RuntimeError, "truncated"):
+            decode_backend_progress(bytes(raw[:-1]))
+
+    def test_probe_advance_accounts_actual_progress_and_never_retries_timeout(self):
+        import time
+        from unittest.mock import Mock
+        from tools.validate_scumm_actor_visual_probe_nexen import ProbeObserver
+
+        class Session:
+            def __init__(self, timeout):
+                self.frame = 0
+                self.calls = 0
+                self.timeout = timeout
+            def get_state(self):
+                return {'frameCount': self.frame}
+            def run_frames(self, count):
+                self.calls += 1
+                self.frame += count - int(self.timeout)
+                return {'framesAdvanced': count-int(self.timeout), 'timedOut': self.timeout}
+
+        for timeout in (False, True):
+            observer = object.__new__(ProbeObserver)
+            observer.deadline = time.monotonic()+10
+            observer.logical_frames = 0
+            observer.frame_step = 4
+            observer.session = Session(timeout)
+            observer.last_state = {}
+            observer.read_scene = Mock(return_value={'captured': True})
+            observer._persist_progress_sample = Mock()
+            if timeout:
+                with self.assertRaisesRegex(RuntimeError, 'timed out'):
+                    observer.advance(4)
+                self.assertEqual(observer.logical_frames, 0)
+            else:
+                self.assertEqual(observer.advance(4), {'captured': True})
+                self.assertEqual(observer.logical_frames, 4)
+            self.assertEqual(observer.session.calls, 1)
+            observer._persist_progress_sample.assert_called_once_with({'captured': True})
+
+
+    def test_projection_header_bank_is_verified_in_actual_rom_bytes(self) -> None:
+        listing = ("; ScummV5_ActorPose_Compose__header_in_range = $9000 (Label)\n"
+                   "; ScummV5_ActorPose_Compose__geometry_check_10 = $9040 (Label)\n"
+                   "; ScummV5_MsuVisualProjectionData = $8200 (Label)\n")
+        rom = bytearray(10 * 32768)
+        start = 9 * 32768 + 0x1000
+        for offset in (0, 8, 16, 24):
+            rom[start + offset:start + offset + 4] = bytes((0xBF, 0, 0x82, 19))
+        validate_projection_rom_operands(bytes(rom), listing, 19)
+        rom[start + 3] = 0  # historical label+constant bank loss
+        with self.assertRaisesRegex(RuntimeError, "lost their ROM bank"):
+            validate_projection_rom_operands(bytes(rom), listing, 19)
+
     def test_wrong_assembled_actor_mask_is_rejected_before_native_launch(self) -> None:
         listing = ("; SCUMM_V5_ACTOR_ANIMATION_BYTE = $0000 (Constant)\n"
                    "; SCUMM_V5_ACTOR_ANIMATION_MASK = $0002 (Constant)\n")
@@ -116,11 +181,9 @@ class ActorProbeIntegrationTests(unittest.TestCase):
         surface = (Path(__file__).resolve().parents[1] /
                    "runtime/snes/services/video_surface.pasm").read_text()
         exits = (
-            ("CaptureActorUnderlay__copy_done", 0),
-            ("CaptureActorUnderlay__invalid", 1),
-            ("RestoreActorUnderlay__success", 0),
-            ("RestoreActorUnderlay__invalid", 1),
-            ("InvalidateActorUnderlay__done", None),
+            ("Underlay_Success", 0),
+            ("Underlay_Failure", 1),
+            ("Underlay_Invalidate__done", None),
         )
         # Execute the width-sensitive stack operations from the actual source
         # epilogues against a byte stack, including the caller's JSL frame.
@@ -166,74 +229,43 @@ class ActorProbeIntegrationTests(unittest.TestCase):
     def test_live_actor_damage_restores_checked_room_underlay_not_empty_rom_directory(self) -> None:
         root = Path(__file__).resolve().parents[1]
         surface = (root / "runtime/snes/services/video_surface.pasm").read_text()
-        controller = (root / "runtime/snes/engines/scumm_v5_controller_far.pasm").read_text()
         live = (root / "runtime/snes/engines/scumm_v5_msu_live_room.pasm").read_text()
         restore = surface.split("Same_VideoSurface_RestoreRect__height_ok:", 1)[1].split(
             "; LoadRowTablePointer uses byte loads", 1
         )[0]
         self.assertIn("Same_VideoSurface_RestoreActorUnderlay_Far", restore)
         self.assertIn("SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER", restore)
-        self.assertIn("Same_VideoSurface_CaptureActorUnderlay_Far", controller)
-        self.assertLess(
-            controller.index("Same_VideoSurface_CaptureActorUnderlay_Far"),
-            controller.index("Same_VideoSurface_BlitCheckedOpaqueRun_Far"),
-        )
-        self.assertIn("SAME_VIDEO_ACTOR_UNDERLAY_HEADER_SIZE", surface)
-        self.assertIn("SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE+1", surface)
-        self.assertIn("SAME_VIDEO_ACTOR_UNDERLAY_MAGIC", surface)
-        self.assertIn("sta SAME_SCUMM_LIVE_ROOM_STAGING_OFFSET,y", surface)
+        for entry in ("RestoreActorUnderlay", "BeginActorUnderlay", "CaptureActorRun",
+                      "CommitActorUnderlay", "InvalidateActorUnderlay"):
+            self.assertIn("Same_VideoSurface_" + entry + "_Far:", surface)
+        self.assertNotIn("Same_VideoSurface_CaptureActorUnderlay_Far:", surface)
         self.assertIn("Same_VideoSurface_InvalidateActorUnderlay_Far", live)
-        self.assertIn("SAME_VIDEO_SURFACE_ROOM_GENERATION", surface)
-        self.assertIn("SAME_SCUMM_ACTOR_POSE_RENDER_LEFT", surface)
-        self.assertIn("SCUMM_ERR_RESOURCE", surface)
+        sparse = surface.split("Same_VideoSurface_RestoreActorUnderlay_Far:", 1)[1].split(
+            "Same_VideoSurface_BeginActorUnderlay_Far:", 1)[0]
+        self.assertLess(sparse.index("jsr Same_VideoSurface_Underlay_Validate"),
+                        sparse.index("sta.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x"))
+        self.assertIn("jsr Same_VideoSurface_Underlay_ClearMagic", sparse.split(
+            "Same_VideoSurface_Underlay_Restore__record:", 1)[1].split(
+            "Same_VideoSurface_Underlay_Restore__run:", 1)[0])
 
     def test_underlay_offsets_keep_the_full_16_bit_live_record_length(self) -> None:
         root = Path(__file__).resolve().parents[1]
         surface = (root / "runtime/snes/services/video_surface.pasm").read_text()
-        for label, end_label in (
-                ("Same_VideoSurface_CaptureActorUnderlay__room_valid:",
-                 "Same_VideoSurface_CaptureActorUnderlay__record_length_ok:"),
-                ("Same_VideoSurface_RestoreActorUnderlay_Far:",
-                 "Same_VideoSurface_RestoreActorUnderlay__record_length_ok:"),
-                ("Same_VideoSurface_InvalidateActorUnderlay_Far:",
-                 "Same_VideoSurface_InvalidateActorUnderlay__done:")):
-            with self.subTest(active_length_source=label):
-                section = surface.split(label, 1)[1].split(end_label, 1)[0]
-                self.assertIn("lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$30", section)
-                self.assertNotIn("lda.l SAME_SCUMM_LIVE_ROOM_CONTROL+$3E", section)
-        for label, end_label, length_operand in (
-                ("Same_VideoSurface_RestoreActorUnderlay__header_in_range:",
-                 "Same_VideoSurface_RestoreActorUnderlay__magic_ok:",
-                 "lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH"),
-                ("Same_VideoSurface_RestoreActorUnderlay__stale:",
-                 "Same_VideoSurface_RestoreActorUnderlay__empty:",
-                 "lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH"),
-                ("Same_VideoSurface_InvalidateActorUnderlay_Far:",
-                 "Same_VideoSurface_InvalidateActorUnderlay__done:",
-                 "lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$30")):
-            with self.subTest(label=label):
-                section = surface.split(label, 1)[1].split(end_label, 1)[0]
-                positions = []
-                start = 0
-                while True:
-                    try:
-                        position = section.index(length_operand, start)
-                    except ValueError:
-                        break
-                    positions.append(position)
-                    start = position + len(length_operand)
-                self.assertTrue(positions)
-                for length_load in positions:
-                    width16 = section.rfind(".a16", 0, length_load)
-                    width8 = section.rfind(".a8", 0, length_load)
-                    self.assertGreater(width16, width8)
-                if label == "Same_VideoSurface_InvalidateActorUnderlay_Far:":
-                    self.assertEqual(len(positions), 2)
-                    self.assertIn("clc\n    adc #SAME_VIDEO_ACTOR_UNDERLAY_HEADER_SIZE",
-                                  section[positions[0]:positions[0] + 128])
-                    self.assertIn("tay", section[positions[1]:positions[1] + 128])
-                else:
-                    self.assertIn("tay", section[positions[-1]:positions[-1] + 128])
+        locate = surface.split("Same_VideoSurface_Underlay_Locate:", 1)[1].split(
+            "Same_VideoSurface_Underlay_Locate__bad:", 1)[0]
+        self.assertIn(".a16", locate)
+        self.assertIn("lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$30", locate)
+        self.assertIn("sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH", locate)
+        self.assertIn("SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE-$0010+1", locate)
+        self.assertNotIn("SAME_SCUMM_LIVE_ROOM_CONTROL+$3E", locate)
+        # Actual wide-offset execution and sentinels are covered by the sparse
+        # service instruction tests, including a header beyond byte 255.
+        for entry in ("RestoreActorUnderlay", "BeginActorUnderlay", "CaptureActorRun",
+                      "CommitActorUnderlay", "InvalidateActorUnderlay"):
+            prologue = surface.split("Same_VideoSurface_" + entry + "_Far:", 1)[1].split(
+                "jsr Same_VideoSurface_Underlay_Locate", 1)[0]
+            self.assertIn("rep #$30", prologue)
+            self.assertIn(".a16", prologue)
 
     def test_underlay_scratch_is_a_lifetime_alias_not_an_independent_wram_gap(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -249,18 +281,14 @@ class ActorProbeIntegrationTests(unittest.TestCase):
                 self.assertFalse(start <= values[key] < end)
         self.assertLessEqual(end, values["SAME_SCUMM_CONTROLLER_ROOM_READY"])
 
-    def test_pose_bounds_underlay_is_bounded_by_the_exact_live_record_tail(self) -> None:
-        active_capacity = 6144
-        header = 16
-        record_size = 1354  # generic synthetic layout fixture, not runtime selection
-        pose_width, pose_height = 37, 53
-        required = record_size + header + pose_width * pose_height
-        self.assertLessEqual(required, active_capacity)
-        self.assertEqual(active_capacity - required, 2813)
-        self.assertLessEqual(active_capacity - header - pose_width * pose_height,
-                             active_capacity)
-        too_large = active_capacity - header - pose_width * pose_height + 1
-        self.assertGreater(too_large + header + pose_width * pose_height, active_capacity)
+    def test_sparse_underlay_is_bounded_by_the_exact_live_record_tail(self) -> None:
+        # Worst-case measured cooked journal is 1248 bytes; capacity is based
+        # on encoded runs, never on the 23084-byte source bounding rectangle.
+        active_capacity, record_size, used = 6144, 1354, 1248
+        self.assertLessEqual(record_size + used, active_capacity)
+        self.assertGreater(record_size + 16 + 23084, active_capacity)
+        self.assertEqual(active_capacity - record_size, 4790)
+        self.assertGreater(record_size + 4791, active_capacity)
 
     def test_live_surface_fifo_ignores_stale_slots(self) -> None:
         class MemorySession:
@@ -338,6 +366,11 @@ class ActorProbeIntegrationTests(unittest.TestCase):
         # This is reserved state and has no native production writer.
         pose[0x63] = 0
         self.assertEqual(actor_bounds_on_surface(pose), (151, 96, 170, 136))
+        projection = dict(source_width=320, source_height=200,
+                          content_width=256, content_height=160, offset_x=0, offset_y=32)
+        self.assertEqual(actor_bounds_on_surface(pose, projection), (121, 109, 136, 141))
+        with self.assertRaisesRegex(RuntimeError, "invalid compiled actor projection"):
+            actor_bounds_on_surface(pose, projection | {"content_width": 257})
 
         pose[0x6C:0x6E] = (3).to_bytes(2, "little", signed=True)
         pose[0x6E:0x70] = (5).to_bytes(2, "little", signed=True)
@@ -440,7 +473,10 @@ class ActorProbeIntegrationTests(unittest.TestCase):
     def test_edge_probe_preserves_directory_and_page_integrity(self) -> None:
         self.test_overlay_feeds_directory_bodies_pages_and_package_consistently((20, 40, 80))
 
-    def test_overlay_feeds_directory_bodies_pages_and_package_consistently(self, position=(160, 136, 184)) -> None:
+    def test_displaced_pose_probe_preserves_directory_and_page_integrity(self) -> None:
+        self.test_overlay_feeds_directory_bodies_pages_and_package_consistently(pose=(26, 6, 6))
+
+    def test_overlay_feeds_directory_bodies_pages_and_package_consistently(self, position=(160, 136, 184), pose=(2, 3, 2)) -> None:
         rows = []
         programs = []
         for kind, room, number, length in (
@@ -475,7 +511,7 @@ class ActorProbeIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             audit_path = root / "actor-probe-audit.json"
-            updated, audit = apply_synthetic_actor_probe(directory, programs, audit_path, position)
+            updated, audit = apply_synthetic_actor_probe(directory, programs, audit_path, position, pose)
             body_map = {p["unit_identity"]: p["program"] for p in programs}
             page_map = {p["unit_identity"]: {
                 "instruction_spans": p["instruction_spans"],
@@ -484,7 +520,8 @@ class ActorProbeIntegrationTests(unittest.TestCase):
             storage = build_program_storage(updated.document, body_map, root / "storage",
                                             page_metadata=page_map)
 
-            driver, _ = build_probe(ProbeConfig(room=4, costume=2, boot_script=1,
+            driver, _ = build_probe(ProbeConfig(room=4, costume=pose[0], boot_script=1,
+                                               stand_frame=pose[1], animate_frame=pose[2],
                                                x=position[0], y=position[1], moved_x=position[2]))
             boot_identity = "GlobalProgram(1)"
             boot = next(p for p in programs if p["unit_identity"] == boot_identity)

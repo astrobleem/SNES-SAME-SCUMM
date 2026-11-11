@@ -79,6 +79,10 @@ ScummV5_Visual_Frame_Far:
     jsl Same_VideoSurface_ServiceEvents_Far
     jsl Same_VideoSurface_ServicePending_Far
     jsl Same_VideoSurface_ServiceEvents_Far
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    ; Prepare colors without taking the writable surface away from actors.
+    jsl ScummV5_Palette_Prepare_Far
+    .endif
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
       ; Do not start a costume transfer or mutate the indexed surface while
       ; the room's first presentation is pending, or while the video backend
@@ -88,9 +92,19 @@ ScummV5_Visual_Frame_Far:
       .a8
       lda.l SAME_VIDEO_SURFACE_PENDING_VISUAL
       bne ScummV5_Visual_Frame__skip_actor
+      ; Storage advances after the script scheduler. A code page can therefore
+      ; finish during this frame while REQUEST_SLOT still owns READ_OK. Retire
+      ; that completed request through its cache owner before admitting an
+      ; actor read. Otherwise continuously paging scripts start another read
+      ; at every next engine phase and starve costume loading indefinitely.
+      ; ReconcileRead preserves the validated page's completion/waiter pin;
+      ; it does not resume scripts or release a live executable window.
+      jsl ScummV5_MsuProgram_ReconcileRead_Far
+      bcs ScummV5_Visual_Frame__skip_actor
       jsl Same_VideoSurface_CanWrite_Far
       bcs ScummV5_Visual_Frame__skip_actor
       jsl ScummV5_Controller_RenderActor_Far
+      jsl ScummV5_Cursor_Frame_Far
     .elseif SAME_BUILD_SCUMM_CONTROLLER_FIXTURE && (SAME_SCUMM_CONTROLLER_BEHAVIOR_MASK & $04)
       ; Semantic actor composition runs after the movement pass.  This later
       ; visual phase only services pending surface work and retries, rather
@@ -135,5 +149,30 @@ ScummV5_Visual_Frame__prewalk_actor:
     .endif
 ScummV5_Visual_Frame__skip_actor:
     jsl Same_VideoSurface_ServiceEvents_Far
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; Never let a palette-only publication expose an incomplete compositor.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    bne ScummV5_Visual_Frame__palette_deferred
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CURSOR_COMPOSING
+    bne ScummV5_Visual_Frame__palette_deferred
+      .endif
+    ; Coalesce palette intent with an accepted scene PRESENT when possible.
+    jsl ScummV5_Palette_Flush_Far
+ScummV5_Visual_Frame__palette_deferred:
+    .endif
+    jsl Same_VideoSurface_ServiceEvents_Far
     plp
     rtl
+
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+.include "scumm_v5_palette_far.pasm"
+.endif
+
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+.include "scumm_v5_cursor_far.pasm"
+.endif

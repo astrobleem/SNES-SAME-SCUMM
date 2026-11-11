@@ -1,4 +1,259 @@
+# Milestone B — first readable authentic object interaction VERIFIED
+
+Runtime commit df8fd88c6f2cdfdcc47612eeeec119119e6ae112. Normal authored startup
+and three source-owned X skips reach room10; normal LEFT/A/Y/A selects Look at
+taxi and submits original object140/verb9 once. The visible source-font response
+is "It's a taxi." Room10 RUNNING/error0, Ego(82,59), zero guest writes. Caption,
+response and a later normal walk to(96,60)/standing3 have zero full source
+INDEX8/PPU differences. All native controls finished within their watchdogs.
+No further native run is needed for this bounded acceptance.
+
+Evidence: /tmp/astra-milestone-b-final-20261111/acceptance.json links the raw
+journals, offline source comparisons and exact ROM/map/package/build hashes.
+ROM bb12cd2092668a44330b31d3365a9714cc6f4f550773aad1e041cf880a3d8d0e.
+All356 runtime/src/tools files match the isolated assembled source; the
+original build identity retains its temporary Git identity, not a fabricated
+claim that this documentation commit was executed.
+
+1,420 local tests run (1,408 pass,12 skip); make validate, pinned assembly,
+ROM and27-region memory audits pass. Both hosted jobs green on df8fd88:
+https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/42972298471 .
+Current normal-walk input-to-standing presentation:192frames; semantic arrival
+observed within20. Different room/distance from old274 baseline, not controlled
+A/B. Action input-to-readable-response513frames. Latency still needs work.
+
+See docs/scumm-toolchain/MULTIBIT_TEXT_INTEGRATION.md for final acceptance.
+Keep PR14 draft for review; no automatic merge. Remaining limits include
+compact caption-only UI, whole-room aspect fit, single unscaled actor, general
+text pagination, audio and portable saves. Whole-game NOT_READY. Do not restart
+the seven-action route or touch the separate progression recovery worktree.
+
+## Historical checkpoint (superseded)
+
+# Active Milestone B — exact DMA wait defect corrected, native follow-up running
+
+Do not stop at this intermediate correction. Principal object interaction is
+still NOT_VERIFIED; no object action was submitted in the failed scene capture.
+The private room10 continuation stopped at generation78 with no active DMA
+slots, pending1, committed341 and expected342. A read-only64-frame comparison
+confirmed unchanged queue state. This is a kernel producer/NMI lost-update,
+not a guessed interpreter deadlock. Evidence:
+`/tmp/astra-dma-wait-boundary-20261110/observations/action.json`.
+
+The additive fix owns one byte `$7E224E` inside the existing kernel region
+while publishing a descriptor and updating pending; NMI defers only the DMA
+queue. A kernel fence snapshots committed+pending under the same ownership.
+Both Mode3 and legacyBG2 use it. Source-instruction interleaving tests cover
+all publication boundaries and reproduce the unfixed phantom count.
+Pinned assembly/ROM audit pass in `/tmp/astra-text-assembly-build.hust83ai`.
+The new ROM cannot restore older-ROM checkpoints. Its bounded authored startup
+control is `/tmp/astra-dma-fixed-authored-interface-20261110` (no seven-action
+replay, only the established source-owned intro skip edges).
+
+Observer correction retains immutable queued INDEX8/palette and compares the
+exact subsequently committed generation before any following DMA. An actual
+original room10 subtitle has zero font/INDEX8/VRAM/CGRAM differences on prior
+ROM b578503d; its full scene has18 missing cursor pixels because text restored
+the cursor before publication. Do not claim that frame proves visible cursor.
+Current scene acceptance additionally requires actual composed-cursor journal.
+A during talk is absorbed but does not currently acknowledge the original
+line. Use authored expiry, not injected state or a fictitious passing A ack.
+
+Recovery worktree untouched. Full suite and new native correction follow-up
+are in progress; user-visible readable object action remains the objective.
+
+---
+
+# Active Milestone B — authored interface reached; provider handoff correction
+
+HEAD 2df00dd remains published; current additive source changes reconcile code
+completion before actor admission and retain actor ownership through checked
+chunk consumption. Source-instruction tests exercise the actual cache completion
+and both admission guards. Pinned assembly/ROM audit pass for private ROM
+b578503d90ac1e48c5e63166f4eafe8fb160c2d758520a0d1e3cb6cc038f5d31
+in `/tmp/astra-text-assembly-build.iajjeuae`; native validation is in progress.
+
+Original source startup restores active verbs through three normal X edges:
+room4 Local206, room4 Local221, room1 Local200. Observed rooms are
+0 -> 68 -> 0 -> 4 -> 1 -> 10. This is not the old seven-action replay.
+`/tmp/astra-authored-interface-20261110` preserves that exact-ROM evidence.
+The scene still lacked an actor: read-only captures show repeated completed
+code reads monopolizing provider ownership, not an interpreter deadlock.
+No object-action input was sent by the failed scene-fence diagnostic.
+
+Authentic costume1 is now included through the existing cooker alongside2/26;
+all2203 ProgramUnits remain present. Reference source for the intended next
+normal controller action is room10 object140 verb9, the original literal taxi
+response. Isolated host oracle lives at `/tmp/astra-taxi-host-oracle.json`.
+Do not inject gameplay state or force saved-away verbs. The bounded private
+controls retain every failed boundary and use matching ROM/package states.
+
+Continue toward the actual readable object action; no final milestone claim.
+Recovery worktree untouched. Latest successful source-font proof and earlier
+native results retain their own identities below.
+
+---
+
+# Active Milestone B — subtitle verified; actor request ownership repaired
+
+Continue toward original object/verb interaction. Commit 725fdb5 hosted CI
+42960047911 is green; 1407 local tests /12 skips and validation pass for the
+subsequent actor guard correction. No seven-action replay or recovery edits.
+
+An original X skip from Local221 exposed an actor admission defect: completed
+room request length1880 was overwritten with actor length550 before install.
+Provider READY/READ_OK now pass room/code/scratch guards before descriptor writes.
+Corrected native room1 transition/display succeeds error0, then authored code
+requests close-up room74. This is not settled gameplay. ROM dd57a0ee... in
+`/tmp/astra-text-assembly-build.1fmt6vqw`; source `19goyim6`.
+Exact checkpoint: `/tmp/astra-authored-room1-owner-control2-20261110/observations/room1-published.state`.
+Never restore old-ROM states into this ROM.
+
+Source intro keeps verbs saved/disabled. Follow only established original
+cutscene skip ownership to reach its authored interactive state; never force
+C17 flags. Source room10 requires actor costume1, not yet in the current selected
+actor resource set (2,26). Include the actual source costume through the existing
+cooker if that scene is needed. Full2203-unit code/room package remains intact.
+
+Original room4 subtitles now have exact source/pixel/PPU proof, including an
+image with Indy visible. They do not certify an object action. See
+MULTIBIT_TEXT_INTEGRATION.md and private evidence paths below.
+
+---
+
+# Active Milestone B — original authored subtitle now pixel-verified
+
+Continue toward a normal original object/verb action; no seven-action replay.
+Original room4 subtitle reaches the PPU with exact source-font/INDEX8/VRAM/CGRAM
+comparison (all differences zero). Read-only matching-ROM checkpoint diagnostic
+`/tmp/astra-authentic-dialogue-direct-20261110` completed in 25.060 seconds.
+ROM e47a904ed8c2c6e1540d359ee3f62ab1339f346a0da88a811889e89cc9285084.
+This is authored dialogue, not yet object-interaction acceptance. The broad
+scene observer was stopped intentionally; its RPC-heavy observations are not
+evidence of engine deadlock. Use the saved exact-ROM checkpoint, not startup.
+
+New fixes retain 255 encoded message bytes in bounded WRAM, retire the prior
+message before scanning the replacement, discard superseded queued text, and
+service text after backend completion before actor composition. Voice cues are
+preserved but audio realization remains explicitly unavailable. 1,406 tests
+ran (12 skipped), make validate passes with 27 ownership regions. The latest
+16-bit diagnostic PC arithmetic correction is source-tested but not in the
+accepted subtitle ROM; do not transfer identities.
+
+A bounded checkpoint continuation is inspecting original Local221's authored
+skip route to room1, only if its actual override owner/PC agrees with source.
+No saved-away verbs are enabled by the observer. Recovery worktree untouched.
+
+---
+
+# Active Milestone B — source-font native rasterization passes; interaction pending
+
+Continue autonomously toward authentic readable object interaction. Do not stop
+at this intermediate font gate or replay the seven actions. Preserve recovery.
+
+Native source-font sample passes exact source/INDEX8/VRAM/CGRAM/screenshot text
+comparison: `/tmp/astra-font-native-text-fence-20261110`. Synthetic data-only
+script, authentic source font/room/costume; no gameplay acceptance claim.
+`docs/scumm-toolchain/MULTIBIT_TEXT_INTEGRATION.md` records exact identities and
+scope. Full suite 1,401 tests (12 skipped), validation passes. Current authentic
+font build: `/tmp/astra-authentic-cursor-build.98b75wab`; cold prefix diagnostic
+`/tmp/astra-authentic-text-room4-20261110` is in progress, bounded to 600 seconds.
+
+Source room4 ENCD deliberately saves/disables verbs. Local221 contains an
+original beginOverride route to room1; generic SNES X invokes C19 skip. Inspect
+actual active override before using normal input. Never inject/enable verbs.
+The recovery worktree and old ROM-bound checkpoints remain untouched.
+
+# Current checkpoint — authentic room/walking accepted; text frontier isolated
+
+- Branch `scumm-fate-authentic-room`, draft PR #14. Actor PR #13 already merged.
+- Accepted: full2203-unit authentic startup into room4; real Indy/background;
+  normal controller walk to(161,133), correct stand3, zero source/INDEX8/VRAM/
+  CGRAM differences and no old-position residue.
+- Text code `c2452fd` has green hosted checks42773074434. Its native selection
+  control found no active verb3; source and a separate read-only capture prove
+  authored save-away into bank1. Do NOT inject/restore verbs for a HUD proof.
+- Room4 ENCD calls Global19(1), then(3). Normal GUI needs authored Global19(2).
+- Final correction makes missing verb text unavailable2, not retryable busy1.
+  It assembles; native evidence stays bound to the prior ROM (one immediate
+  and two checksum bytes differ). See AUTHENTIC_ROOM_INTEGRATION.md identities.
+- Native text remains NOT_VERIFIED. Full source font2 needs multibit colors,
+  9–10row glyph capacity and explicit resource/palette ownership.
+- No seven-action replay, room7 run, or recovery-worktree modification.
+
+# Active checkpoint — authentic room, controller walking, and stand completion
+
+PR #13 is merged through protected main at `99127067`. Active draft PR #14:
+`scumm-fate-authentic-room`. Baseline tag and the separate progression recovery
+worktree remain untouched.
+
+The full 2,203-ProgramUnit package runs original startup into room 4, displaying
+Indy and a normal controller cursor on the authentic background. A matching-ROM
+checkpoint and ordinary controller input now move Indy from (117,138) to the
+source walkbox-adjusted (161,133), box 2; movement flags clear, SCUMM error stays
+zero. Source INDEX8, VRAM, CGRAM and old-position restoration comparisons are
+exact. This is original-source walking, not the synthetic costume driver, and
+not complete gameplay. No seven-action route or room-7 repetition occurred.
+
+Evidence: `/tmp/astra-authentic-room4-walk-committed-20261110`, 81.837 seconds,
+normal owned-process cleanup. ROM `50b4812fe6cf357702b40bcffa63ec8de961f9f8a009c6b95a17dc388ba35b32`.
+The observer now reads the committed display key while the next costume fetch
+is pending, retaining generation, queue, ownership, room and retry checks.
+Earlier timeouts are preserved and are not deadlock evidence.
+
+The controller failure involved both a widened byte object count and a helper
+linked beyond a 32 KiB ROM window. `6c7e074` fixes the count; `86ae336` removes
+unreachable static geometry code from MSU mode and requires SA-1 map auditing.
+Bank 7 shrank 39,560→29,374 bytes; invalid JSL `$01:1950` became `$07:F186`.
+All ProgramUnits/package bytes remain present.
+
+Walking exposed a separate omission: native final-leg completion did not start
+the stand chore. `d2f0a3c` fixes this generically for all actors; source-instruction
+and host tests pass. New ROM `41a9f510a4a9475f43110be46cb26a171877e8857aba55d7745a8e95c02ed807`
+assembled with pinned Poppy and passes ROM/map/WRAM audits. Its fresh room-4
+checkpoint and normal-input stand-after-walk native control pass (319.766s and
+70.801s respectively), with exact source/INDEX8/VRAM/CGRAM equality. The final
+stand is frame3/step0, MOVING0 and actor1 explicit bit cleared. Never restore the
+old ROM's state into it. `472cd9f` adds a committed-frame filter so a pending
+stand request or old displayed walk cannot count as a stand acceptance.
+
+Local suite: 1,374 tests, 12 skipped; make validate passes. Committed-frame filtering is included. Hosted CI on `96668b6` is green;
+new-head runs are separate evidence. No hosted Nexen claim.
+
+Next player-facing gap is text/verbs/inventory presentation. Source charset
+1 is binary up to13×16; charset2 uses2-bit slots up to39×10. The current native
+Font0/80×8 single-ink overlay cannot represent these generally. Host decoding
+preserves1/2/4-bit slots, while binary-only consumers still reject multibit.
+Native text integration needs a bounded extension of the existing overlay,
+not fake glyphs. Scaling, multiple actors, masks, full audio and portable save
+restoration remain incomplete. Whole-game status: NOT_READY.
+
+
+---
+
 # SAME / SCUMM v5 session checkpoint
+
+## Authentic-room integration checkpoint (2026-11-10)
+
+- PR #13 merged normally into protected main at `99127067`; main hosted CI run
+  `42749057867` passed. Baseline tag and progression recovery worktree unchanged.
+- Active branch `scumm-fate-authentic-room`, draft PR #14. Sparse actor restoration
+  and ordered room-palette integration are committed; no automatic merge planned.
+- Five native frames of the larger original source costume match the host decoder,
+  indexed surface, VRAM and CGRAM exactly; zero old-position residue. This uses a
+  synthetic graphics driver, not original gameplay. Exact identities and snapshot
+  boundaries: `docs/scumm-toolchain/AUTHENTIC_ROOM_INTEGRATION.md`.
+- Combined original startup diagnostic reached room 4/error zero, but actor1 was
+  still room0/invisible at the captured boundaries. No actor image was accepted.
+  Single run ended after 241.784 seconds; no unchanged retry or seven-action replay.
+- Host projection oracle now follows the same center-sampling grid as SC5VIS.
+  Native projection is in progress; logical actor scale remains separate.
+- Local full suite: 1,251 tests, 12 skipped; make validate passes. Hosted checks on
+  PR #14 are independent and were pending when this checkpoint was written.
+- Local native evidence: `/tmp/astra-sparse-costume26-proof-20261110` and
+  `/tmp/astra-authentic-room-entry-directoryfix-20261110`. No commercial artifacts
+  are committed. Room3 Local213 remains conditional and NOT_VERIFIED.
+
 
 ## Refresh-clear diagnosis and fix (2026-09-09)
 

@@ -1313,7 +1313,7 @@ class ScummV5RoomAdapter:
         destination_x = max(0, (target.width - width) // 2)
         destination_y = max(0, (target.height - height) // 2)
         video.fill(0)
-        video.set_palette(0, self.room.palette)
+        video.set_palette(0, self.logical_surface.palette)
         video.blit_surface(
             self.logical_surface,
             source_rect=Rect(source_x, source_y, width, height),
@@ -1339,7 +1339,7 @@ class ScummV5RoomAdapter:
             surface = IndexedSurface(target.width, target.height)
             self.composition_surface = surface
         surface.fill(0)
-        surface.set_palette(0, self.room.palette)
+        surface.set_palette(0, self.logical_surface.palette)
         surface.blit_surface(
             self.logical_surface,
             source_rect=Rect(source_x, source_y, width, height),
@@ -1382,7 +1382,7 @@ class ScummV5RoomAdapter:
         assert self.room is not None and self.composition_surface is not None
         video = self.context.services.video
         video.fill(0)
-        video.set_palette(0, self.room.palette)
+        video.set_palette(0, self.composition_surface.palette)
         video.blit_surface(self.composition_surface)
 
     def draw_box(self, left: int, top: int, right: int, bottom: int, color: int) -> bool:

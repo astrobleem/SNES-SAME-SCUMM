@@ -64,6 +64,11 @@ ScummV5_Engine_Boot:
     sta.l SAME_SCUMM_FIXTURE_ACTIVE
     sta.l SAME_SCUMM_PROGRAM_SELECT
     sta.l SAME_SCUMM_RETURN_MODE
+    .if SAME_BUILD_SCUMM_CONTROLLER
+    ; No room is installed at engine boot. Uninitialized WRAM must not arm
+    ; controller/actor presentation before the normal room-install callback.
+    sta.l SAME_SCUMM_CONTROLLER_ROOM_READY
+    .endif
     .if SAME_BUILD_SCUMM_M19
     sta.l SAME_SCUMM_C1_HOLD_AFTER
     .endif
@@ -5231,6 +5236,9 @@ ScummV5_Op_RoomOps__error_ok_9:
     sta.l SAME_SCUMM_C10_PALETTE_RGB+1,x
     lda.l SAME_SCUMM_C10_PARAM2
     sta.l SAME_SCUMM_C10_PALETTE_RGB+2,x
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    jsl ScummV5_Palette_SetColor_Far
+    .endif
     jmp ScummV5_Op_RoomOps__done
 
 ScummV5_Op_RoomOps__shake_on:
@@ -5350,13 +5358,15 @@ ScummV5_Op_RoomOps__error_ok_19:
     sta.l SAME_SCUMM_C10_INTENSITY+4
     lda.l SAME_SCUMM_C10_INTENSITY+3
     cmp.l SAME_SCUMM_C10_INTENSITY+4
-    bcs ScummV5_Op_RoomOps__done_bcc_skip_1
-    jmp ScummV5_Op_RoomOps__done
-ScummV5_Op_RoomOps__done_bcc_skip_1:
-    bne ScummV5_Op_RoomOps__done_beq_skip_1
-    jmp ScummV5_Op_RoomOps__done
-ScummV5_Op_RoomOps__done_beq_skip_1:
+    bcc ScummV5_Op_RoomOps__intensity_valid
+    beq ScummV5_Op_RoomOps__intensity_valid
     jmp ScummV5_Op_RoomOps__invalid
+ScummV5_Op_RoomOps__intensity_valid:
+    .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    jsl ScummV5_Palette_Intensity_Far
+    .endif
+    jmp ScummV5_Op_RoomOps__done
 
 ScummV5_Op_RoomOps__savegame:
     sep #$20
@@ -5548,6 +5558,9 @@ ScummV5_Op_RoomOps__store_rgb:
     sta.l SAME_SCUMM_C10_RGB_INTENSITY+3
     lda.l SAME_SCUMM_FETCH_BYTE
     sta.l SAME_SCUMM_C10_RGB_INTENSITY+4
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    jsl ScummV5_Palette_RgbIntensity_Far
+    .endif
     jmp ScummV5_Op_RoomOps__done
 
 ScummV5_Op_RoomOps__save_string:
@@ -18149,6 +18162,11 @@ ScummV5_Op_CursorCommand__image_first_ok:
 ScummV5_Op_CursorCommand__image_second_ok:
     .a8
     sta.l SAME_SCUMM_C7_CURSOR_CHAR
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; Built-in cursor presentation does not yet implement glyph/hotspot
+    ; redefinition. Reject explicitly instead of displaying a false default.
+    jmp ScummV5_Op_CursorCommand__error
+    .endif
     jmp ScummV5_Op_CursorCommand__done
 ScummV5_Op_CursorCommand__hotspot:
     sep #$20
@@ -18174,6 +18192,11 @@ ScummV5_Op_CursorCommand__hotspot_second_ok:
 ScummV5_Op_CursorCommand__hotspot_third_ok:
     .a8
     sta.l SAME_SCUMM_C7_HOTSPOT_Y
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; Built-in cursor presentation does not yet implement glyph/hotspot
+    ; redefinition. Reject explicitly instead of displaying a false default.
+    jmp ScummV5_Op_CursorCommand__error
+    .endif
     jmp ScummV5_Op_CursorCommand__done
 ScummV5_Op_CursorCommand__cursor_id:
     sep #$20
@@ -18196,6 +18219,10 @@ ScummV5_Op_CursorCommand__charset_id:
 ScummV5_Op_CursorCommand__charset_id_ok:
     .a8
     sta.l SAME_SCUMM_C7_CHARSET_ID
+    ; v5 initCharset updates default print slots 0/1. C23 working/message
+    ; state and slots 2/3 retain their existing ownership and styles.
+    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_CHARSET
+    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_SLOT_STRIDE+SAME_SCUMM_C23_P_CHARSET
     jmp ScummV5_Op_CursorCommand__done
 ScummV5_Op_CursorCommand__colors:
     sep #$20

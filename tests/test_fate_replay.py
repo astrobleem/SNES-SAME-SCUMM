@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import re
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -9,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from fate_replay import (  # noqa: E402
+    SAME_SCUMM_PC,
+    SAME_SCUMM_C1_HOLD_AFTER,
     ControllerInputLease,
     activation_observation,
     advance_bounded,
@@ -671,6 +674,20 @@ class FateReplayTests(unittest.TestCase):
             baseline[3], _activation_identity_by_slot(slots)[3],
         )
 
+    def test_snapshot_vm_pc_uses_interpreter_symbol_not_debug_hold(self) -> None:
+        source = (ROOT / 'runtime/snes/kernel/memory.pasm').read_text()
+        for symbol, address in (('SAME_SCUMM_PC', SAME_SCUMM_PC),
+                                ('SAME_SCUMM_C1_HOLD_AFTER', SAME_SCUMM_C1_HOLD_AFTER)):
+            match = re.search(r'^' + symbol + r'\s*=\s*\$([0-9A-Fa-f]+)', source, re.M)
+            self.assertIsNotNone(match)
+            self.assertEqual(address, int(match.group(1), 16))
+        session = FakeRoom4Session()
+        session.values[SAME_SCUMM_PC] = 13625
+        session.values[SAME_SCUMM_C1_HOLD_AFTER] = 42496
+        state = room4_controller_snapshot(session)
+        self.assertEqual(state['vm_pc'], 13625)
+        self.assertEqual(state['c1_hold_after'], 42496)
+
     def test_room4_cursor_world_coordinates_follow_native_camera_transform(self) -> None:
         session = FakeRoom4Session(cursor=(-31, 140), camera=(148, 98))
         state = room4_controller_snapshot(session)
@@ -740,6 +757,52 @@ class FateReplayTests(unittest.TestCase):
         self.assertNotIn("program_cache", observed)
         self.assertNotIn("live_room_header", observed)
 
+    def test_checkpoint_identity_missing_empty_and_complete_preserves_capture(self) -> None:
+        import hashlib
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'scene.state'
+            for contents in (None, b'', b'synthetic checkpoint payload'):
+                with self.subTest(contents=contents):
+                    if contents is not None:
+                        path.write_bytes(contents)
+                    report = {'result': 'ACTOR_SCENE_CAPTURED_NOT_OBJECT_GAMEPLAY_ACCEPTANCE',
+                              'scene_checkpoint': {'path': str(path),
+                                                   'identity_status': 'PENDING_SESSION_EXIT'}}
+                    result = report['result']
+                    cold_startup_module._finalize_scene_checkpoint(report)
+                    evidence = report['scene_checkpoint']
+                    self.assertEqual(report['result'], result)
+                    self.assertEqual(evidence['restoration_status'], 'NOT_VERIFIED')
+                    if contents:
+                        self.assertEqual(evidence['sha256'], hashlib.sha256(contents).hexdigest())
+                        self.assertEqual(evidence['size_bytes'], len(contents))
+                        self.assertEqual(evidence['identity_status'], 'HASHED_AFTER_SESSION_EXIT')
+                    else:
+                        self.assertNotIn('sha256', evidence)
+                        self.assertEqual(evidence['identity_status'], 'UNAVAILABLE')
+                        self.assertTrue(evidence['identity_reason'])
+
+    def test_checkpoint_finalization_is_in_owned_session_outer_finally(self) -> None:
+        import ast
+        tree = ast.parse(Path(cold_startup_module.__file__).read_text())
+        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
+        owner = next(n for n in main.body if isinstance(n, ast.Try) and any(
+            isinstance(child, ast.With) and any(
+                isinstance(item.context_expr, ast.Name) and item.context_expr.id == 'owned_session'
+                for item in child.items) for child in n.body))
+        calls = [n for statement in owner.finalbody for n in ast.walk(statement)
+                 if isinstance(n, ast.Call)]
+        self.assertTrue(any(isinstance(n.func, ast.Name) and
+                            n.func.id == '_finalize_scene_checkpoint' for n in calls))
+        self.assertTrue(any(isinstance(n.func, ast.Attribute) and
+                            n.func.attr == 'write_text' for n in calls))
+        capture = next(n for n in ast.walk(owner) if isinstance(n, ast.FunctionDef)
+                       and n.name == 'capture_authentic_actor')
+        self.assertFalse(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                             and n.func.attr == 'is_file' for n in ast.walk(capture)))
+
     def test_dynamic_build_report_is_resolved_from_its_isolated_output_root(self) -> None:
         import hashlib
         import json
@@ -798,7 +861,10 @@ class FateReplayTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "ambiguous"):
                 _native_directory_for_build(identity_path)
 
-    def test_dynamic_build_report_uses_identity_bound_custom_build_root(self) -> None:
+    def test_full_source_build_report_uses_its_own_root(self) -> None:
+        self.test_dynamic_build_report_uses_identity_bound_custom_build_root(full_source=True)
+
+    def test_dynamic_build_report_uses_identity_bound_custom_build_root(self, full_source=False) -> None:
         import hashlib
         import json
         import tempfile
@@ -821,7 +887,10 @@ class FateReplayTests(unittest.TestCase):
             identity_path.write_text(json.dumps({
                 "explicit_environment": {
                     "SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY": "1",
-                    "SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR": str(dynamic_root),
+                    ("SAME_SCUMM_WHOLE_SOURCE_BUILD_DIR" if full_source else
+                     "SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR"): str(dynamic_root),
+                    **({"SAME_SCUMM_WHOLE_SOURCE_MANIFEST": "/source/manifest.json"}
+                       if full_source else {}),
                 },
             }), encoding="utf-8")
 

@@ -2253,6 +2253,7 @@ ScummV5_LiveRoom_PublishVisual_Far__pixels:
     lda #$40
     sta.l SAME_VIDEO_SURFACE_PALETTE_SOURCE+$02
     jsl Same_VideoSurface_InstallPalette_Far
+    jsl ScummV5_Palette_InstallRoom_Far
     rep #$20
     .a16
     lda #$0100
@@ -2530,7 +2531,11 @@ ScummV5_LiveRoom_LoadNames_Far__store_length:
     tax
     sep #$20
     .a8
+    ; SC5LIVE stores payload length without NUL; the shared name cache uses
+    ; encoded length including its logical terminator, like ROM and SetName.
+    ; A full32-byte payload has length33; bounded consumers read only32 bytes.
     lda.l SCUMM_LIVE_ROOM_WIDTH
+    inc
     sta.l SAME_SCUMM_OBJECT_NAME_LENGTH,x
 ScummV5_LiveRoom_LoadNames_Far__next:
     rep #$20

@@ -640,9 +640,13 @@ ScummV5_M24RB_FarCodeEnd:
 .include "generated/carrier_code.inc.pasm"
 .include "generated/video_backend_code.inc.pasm"
 .include "generated/video_overlay_code.inc.pasm"
-.if SAME_VIDEO_OVERLAY_BG2
+.if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
 .include "generated/scumm_v5_font.inc.pasm"
+.if SAME_VIDEO_OVERLAY_BG2
 .include "services/video_overlay_surface.pasm"
+.else
+.include "services/video_overlay_indexed.inc.pasm"
+.endif
 .endif
 .if SAME_BUILD_SCUMM_ROOM_VISUAL
 .include "generated/scumm_v5_room_visuals.inc.pasm"

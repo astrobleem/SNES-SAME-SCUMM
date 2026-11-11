@@ -17,7 +17,7 @@ from same.snes_carrier import load_carrier
 
 
 def map_capacity_errors(map_text: str, *, bank_capacity: int = 0x8000) -> list[str]:
-    """Reject Poppy segments that cannot fit in a LoROM bank window."""
+    """Reject overflow of the 32 KiB ROM windows emitted by both carriers."""
     row = re.compile(
         r"^;\s*(\d+)\s+\$([0-9A-Fa-f]+)\s+\$([0-9A-Fa-f]+)\s+(\d+)\s+(\d+)\s*$",
         re.MULTILINE,
@@ -44,7 +44,7 @@ def main() -> int:
     parser.add_argument("--carrier", choices=("lorom", "sa1_bwram"), default="lorom")
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--map", type=Path,
-                        help="Poppy map to audit for LoROM bank-window overflow")
+                        help="Poppy map to audit for 32 KiB ROM-window overflow (both carriers)")
     args = parser.parse_args()
     try:
         raw = args.rom.read_bytes()

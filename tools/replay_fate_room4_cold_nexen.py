@@ -24,6 +24,7 @@ DEFAULT_NEXEN = Path(
 ACTIVE_DYNAMIC_RESIDENCY = False
 ACTIVE_MSU_PROGRAMS = False
 ACTIVE_LIVE_ROOM_RESOURCES = False
+ACTIVE_INDEXED_TEXT = False
 LIVE_ROOM_CONTROL_ADDRESS = 0x401400
 ACTIVE_PROGRAM_DIRECTORY: dict[int, dict[str, Any]] = {}
 RESIDENCY_EVENTS: list[dict[str, Any]] = []
@@ -33,6 +34,33 @@ RESIDENCY_PINNED_PEAK = 0
 RESIDENCY_OBSERVER_READY = False
 RESIDENCY_PREINIT_UNKNOWN_ROWS = 0
 RESIDENCY_POSTINIT_UNKNOWN_ROWS: list[dict[str, int]] = []
+
+
+def _finalize_scene_checkpoint(report: dict[str, Any]) -> None:
+    """Record file identity only after the owned session has exited.
+
+    A save request is asynchronous. Missing/empty files are checkpoint evidence
+    limitations, not failures of the independently completed scene capture.
+    """
+    checkpoint = report.get("scene_checkpoint")
+    if checkpoint is None:
+        return
+    checkpoint.pop("sha256", None)
+    checkpoint.pop("size_bytes", None)
+    checkpoint.pop("identity_reason", None)
+    checkpoint["identity_status"] = "UNAVAILABLE"
+    checkpoint["restoration_status"] = "NOT_VERIFIED"
+    try:
+        data = Path(checkpoint["path"]).read_bytes()
+    except OSError as exc:
+        checkpoint["identity_reason"] = f"{type(exc).__name__}: {exc}"
+        return
+    checkpoint["size_bytes"] = len(data)
+    if not data:
+        checkpoint["identity_reason"] = "checkpoint file is empty after session exit"
+        return
+    checkpoint["sha256"] = hashlib.sha256(data).hexdigest()
+    checkpoint["identity_status"] = "HASHED_AFTER_SESSION_EXIT"
 
 
 def _selector_pool_index(selector: int) -> int:
@@ -225,7 +253,8 @@ def _snapshot(session: Any, *, include_live_room: bool = False) -> dict[str, Any
     c19_slot_depth = session.read_memory("snesMemory", 0x7FD363, 25)
     talk_raw_length = session.read_u8(0x7E7A28)
     talk_raw = session.read_memory(
-        "snesMemory", 0x7E7A30, min(talk_raw_length, 32)
+        "snesMemory", 0x7FFB80 if ACTIVE_INDEXED_TEXT else 0x7E7A30,
+        min(talk_raw_length, 255 if ACTIVE_INDEXED_TEXT else 32)
     )
     bit69_byte = session.read_u8(0x7E2BA0 + (69 >> 3))
     bit35_byte = session.read_u8(0x7E2BA0 + (35 >> 3))
@@ -932,7 +961,9 @@ def _native_directory_for_build(identity_path: Path) -> dict[str, Any]:
         # build_snes.sh deliberately isolates dynamic-residency artifacts from
         # the legacy/static M23A build root. Follow that build-owned location;
         # never glob for a report or consume stale compiler output.
-        configured_root = explicit_environment.get("SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR")
+        configured_root = (explicit_environment.get("SAME_SCUMM_WHOLE_SOURCE_BUILD_DIR")
+                           if explicit_environment.get("SAME_SCUMM_WHOLE_SOURCE_MANIFEST")
+                           else explicit_environment.get("SAME_SCUMM_DYNAMIC_FATE_BUILD_DIR"))
         if configured_root:
             root = Path(str(configured_root))
             if not root.is_absolute():
@@ -1781,7 +1812,8 @@ def _talk_bytes(state: dict[str, Any]) -> bytes:
 
 
 def _finish_room4_intro(session: Any, *, max_frames: int,
-                        rom: Path, symbol_banks: dict[str, int]) -> dict[str, Any]:
+                        rom: Path, symbol_banks: dict[str, int],
+                        progress_callback: Any | None = None) -> dict[str, Any]:
     """Follow the bounded authored room-4 intro to its replay checkpoint."""
     from fate_replay import (
         advance_bounded, room4_message_ready,
@@ -1795,8 +1827,12 @@ def _finish_room4_intro(session: Any, *, max_frames: int,
     acknowledgements: list[dict[str, Any]] = []
     acked: set[int] = set()
     previous_generation: int | None = None
+    previous_progress_frame = -120
     while int(session.get_state()["frameCount"]) - start_frame < max_frames:
         state = _snapshot(session)
+        if progress_callback is not None and state["frame"] - previous_progress_frame >= 60:
+            progress_callback(state)
+            previous_progress_frame = state["frame"]
         if state["error"]:
             raise RuntimeError(f"SCUMM error during room-4 intro dialogue: {state!r}")
         if state["room"] != 4:
@@ -1842,9 +1878,12 @@ def _finish_room4_intro(session: Any, *, max_frames: int,
                 "result": "intro completed; cursor reached the authored room-world checkpoint",
             }
         remaining = max_frames - (state["frame"] - start_frame)
-        step = min(1 if (state["talk_active"] and
-                         (state["talk_have_msg"] == 0xFF or state["talk_delay"] <= 1))
-                   else 4, remaining)
+        # HAVE_MSG=$FF marks a segment with a continuation, not readiness for
+        # input. Polling every frame for its entire visible lifetime adds
+        # thousands of unrelated RPC reads. Only the imminent timer boundary
+        # needs the single-frame observation; no controller edge is skipped.
+        step = min(1 if (state["talk_active"] and state["talk_delay"] <= 1)
+                   else 16, remaining)
         advanced = advance_bounded(session, step)
         if advanced["frames_advanced"] != step:
             raise RuntimeError(f"room-4 intro frame advancement drifted: {advanced!r}")
@@ -1855,9 +1894,57 @@ def _finish_room4_intro(session: Any, *, max_frames: int,
     )
 
 
-def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _authentic_cursor_base(rom: Path, identity: dict[str, Any]) -> int | None:
+    """Resolve cursor observation memory only from this ROM's sealed inputs."""
+    listing_path = rom.with_suffix(".lst")
+    listing_record = identity.get("native_symbols", {}).get("listing", {})
+    listing = _read_identity_bound_generated_input(listing_path, listing_record.get("sha256", ""))
+    if "ScummV5_Cursor_Draw_Far" not in listing:
+        return None
+    if hashlib.sha256(rom.read_bytes()).hexdigest() != identity.get("rom", {}).get("sha256"):
+        raise RuntimeError("cursor observer ROM differs from build identity")
+    inputs_path = rom.with_suffix(".poppy-inputs.json")
+    rows = [row for row in identity.get("generated_inputs", [])
+            if Path(row.get("path", "")).name == inputs_path.name]
+    if len(rows) != 1:
+        raise RuntimeError("cursor observer requires one identity-bound Poppy input manifest")
+    sealed = _generated_input_identity(identity, rows[0]["path"])
+    inputs = json.loads(_read_identity_bound_generated_input(inputs_path, sealed["sha256"]))
+    source = Path(identity["git"]["worktree"])
+    texts = {}
+    for relative in ("runtime/snes/kernel/memory.pasm",
+                     "runtime/snes/generated/carrier_constants.inc.pasm"):
+        matches = [row for row in inputs.get("inputs", [])
+                   if row.get("kind") == "ASSEMBLY_INCLUDE" and row.get("path") == relative]
+        if len(matches) != 1:
+            raise RuntimeError(f"cursor observer assembly contract missing: {relative}")
+        texts[relative] = _read_identity_bound_generated_input(source / relative, matches[0]["sha256"])
+    carrier = texts["runtime/snes/generated/carrier_constants.inc.pasm"]
+    matches = re.findall(r"^\s*SAME_SCUMM_CURSOR_PRESENTATION_BASE\s*=\s*\$([0-9A-Fa-f]+)\b",
+                         carrier, re.MULTILINE)
+    if len(matches) != 1 or int(matches[0], 16) != 0x400740:
+        raise RuntimeError("cursor observer requires the matching $400740 engine owner")
+    return int(matches[0], 16)
+
+
+def arm_startup_trace(session: Any, *, enabled: bool) -> dict[str, Any]:
+    # Nexen's first trace_log call ENABLES continuous instruction logging.
+    # Graphics capture does not need it; do not impose that CPU overhead.
+    if not enabled:
+        return {"enabled": False, "reason": "graphics-only observer; no instruction trace requested"}
+    trace = session.trace_log(count=1, cpu_type="Snes")
+    return {"enabled": True, "requested_rows": 1,
+            "initial_rows": len(trace.get("rows", [])) if isinstance(trace, dict) else None}
+
+
+def _cold_wait_room4(session: Any, max_frames: int, *,
+                     require_interactive: bool = True, trace_enabled: bool = True,
+                     frame_step: int = 16,
+                     progress_callback: Any | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     from fate_replay import advance_bounded
 
+    if type(frame_step) is not int or not 1 <= frame_step <= 16:
+        raise ValueError("cold-start frame_step must be an integer in 1..16")
     transitions: list[dict[str, Any]] = []
     progress: list[dict[str, Any]] = []
     last_room: int | None = None
@@ -1888,15 +1975,15 @@ def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], lis
         mode = session.read_u8(0x7E5FE0)
         if (
             room == 4 and phase == 0 and error == 0 and lifecycle == 2
-            and ready == 1 and talk_active == 0 and mode == 0
+            and ready == 1 and (not require_interactive or (talk_active == 0 and mode == 0))
         ):
             return _snapshot(session), transitions
         # Startup has no controller actions while it waits for the authored
         # boot lifecycle to install the target room, so a wider polling slice
         # cannot skip an input edge or transition. The state is monotonic here:
         # once room 4 is settled it remains the accepted checkpoint.
-        # The room and error words above are sampled every sixty frames. The
-        # full resolver/slot census is much more expensive over Nexen's RPC
+        # Room/error words are sampled each slice. The full resolver/slot
+        # census is much more expensive over Nexen's RPC
         # interface, so inspect it periodically and at the accepted endpoint
         # without changing a single emulated frame or controller submission.
         if elapsed % 60 == 0:
@@ -1919,6 +2006,7 @@ def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], lis
                 "phase": phase,
                 "error": error,
                 "lifecycle": lifecycle,
+                "active_c4": [dict(slot) for slot in state.get("slots", [])],
                 "global74_status": global74.get("status"),
                 "global74_pc": global74.get("saved_pc"),
                 "global74_delay": global74.get("delay"),
@@ -1960,9 +2048,9 @@ def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], lis
             # change emulated timing or input.
             if room == 68 and phase == 1:
                 sample["cpu"] = session.get_cpu_state("Snes")
-                sample["trace_tail"] = session.trace_log(
+                sample["trace_tail"] = (session.trace_log(
                     count=1000, cpu_type="Snes"
-                )
+                ) if trace_enabled else {"status": "NOT_CAPTURED", "reason": "graphics-only observer"})
                 sample["m24rb_state"] = session.read_memory(
                     "snesMemory", 0x7FFA30, 0x10
                 ).hex()
@@ -2007,13 +2095,27 @@ def _cold_wait_room4(session: Any, max_frames: int) -> tuple[dict[str, Any], lis
                     sample["active_cache_slot"] = session.read_u8(0x7E2F5B)
                 sample["active_program_select"] = session.read_u8(0x7E2362)
             progress.append(sample)
+            if progress_callback is not None:
+                progress_callback({"sample": sample, "transitions": transitions})
         # Keep debugger-assisted/native-frame batches below the emulator's
         # wall-clock timeout even while room scripts and checked IO are busy.
-        advanced = advance_bounded(session, min(16, max_frames - elapsed))
+        try:
+            advanced = advance_bounded(session, min(frame_step, max_frames - elapsed))
+        except Exception as exc:
+            if progress_callback is not None:
+                failure = {"error": str(exc), "transitions": transitions}
+                for name, read in (("cpu", lambda: session.get_cpu_state("Snes")),
+                                   ("state", lambda: _snapshot(session))):
+                    try:
+                        failure[name] = read()
+                    except Exception as capture_error:
+                        failure[name] = {"status": "NOT_CAPTURED", "error": str(capture_error)}
+                progress_callback(failure)
+            raise
         elapsed += int(advanced["frames_advanced"])
     last = _snapshot(session)
     cpu = session.get_cpu_state("Snes")
-    trace = session.trace_log(count=128, cpu_type="Snes")
+    trace = session.trace_log(count=128, cpu_type="Snes") if trace_enabled else {"status": "NOT_CAPTURED"}
     raise TimeoutError(
         f"cold authentic startup did not reach room4 readiness within {max_frames} "
         f"frames; transitions={transitions!r}; progress={progress!r}; "
@@ -2900,6 +3002,17 @@ def _room_entry_failure_summary(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def authentic_full_source_configuration(explicit: dict[str, str]) -> bool:
+    """Original cold bootstrap; the older selected-profile switch is not required."""
+    return (bool(explicit.get("SAME_SCUMM_WHOLE_SOURCE_MANIFEST"))
+            and explicit.get("SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY") == "1"
+            and explicit.get("SAME_BUILD_SCUMM_MSU1_PROGRAMS") == "1"
+            and explicit.get("SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES") == "1"
+            and explicit.get("SAME_SCUMM_DYNAMIC_BOOT_SCRIPT") == "1"
+            and explicit.get("SAME_SCUMM_DYNAMIC_BOOT_ARGUMENT") == "0"
+            and explicit.get("SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE", "0") == "0")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rom", type=Path, required=True)
@@ -2913,6 +3026,11 @@ def main() -> int:
     parser.add_argument("--nexen-boot-wait", type=float, default=10.0)
     parser.add_argument("--socket-timeout", type=float, default=300.0)
     parser.add_argument("--startup-frames", type=int, default=1600)
+    capture_mode = parser.add_mutually_exclusive_group()
+    capture_mode.add_argument("--capture-room4-playable-scene", action="store_true",
+                        help="use existing intro controller acknowledgements, capture scene, stop before object actions")
+    capture_mode.add_argument("--capture-room4-actor-entry", action="store_true",
+                        help="capture authentic startup actor presentation and stop before controller actions")
     parser.add_argument(
         "--break-on-cpu-address", type=lambda value: int(value, 0),
         help=("diagnostic only: stop at a CPU bus address during cold startup, "
@@ -2982,12 +3100,22 @@ def main() -> int:
     global LIVE_ROOM_CONTROL_ADDRESS
     global RESIDENCY_PINNED_PEAK
     global RESIDENCY_OBSERVER_READY, RESIDENCY_PREINIT_UNKNOWN_ROWS
+    global ACTIVE_INDEXED_TEXT
+    ACTIVE_INDEXED_TEXT = build_identity.get("explicit_environment", {}).get("SAME_SNES_VIDEO_OVERLAY") == "surface_index8"
     ACTIVE_DYNAMIC_RESIDENCY = (
         build_identity.get("explicit_environment", {}).get(
             "SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY"
         ) == "1"
     )
     explicit_environment = build_identity.get("explicit_environment", {})
+    if args.capture_room4_actor_entry or args.capture_room4_playable_scene:
+        if (explicit_environment.get("SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER") != "1"
+                or explicit_environment.get("SAME_SCUMM_DIAGNOSTIC_ACTOR_PROBE", "0") != "0"
+                or build_identity.get("diagnostics", {}).get("actor_probe")):
+            parser.error("authentic actor entry requires original scripts and the live actor renderer")
+        if any((args.continue_trapdoor_use, args.continue_room5_rope,
+                args.continue_room6_books, args.continue_room7_book, args.continue_room7_cats)):
+            parser.error("actor entry capture cannot continue the gameplay replay")
     ACTIVE_MSU_PROGRAMS = (
         explicit_environment.get("SAME_BUILD_SCUMM_MSU1_PROGRAMS") == "1"
     )
@@ -3021,12 +3149,14 @@ def main() -> int:
     RESIDENCY_POSTINIT_UNKNOWN_ROWS.clear()
     if ACTIVE_DYNAMIC_RESIDENCY:
         explicit = explicit_environment
-        if (explicit.get("SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT") != "1"
+        full_source = authentic_full_source_configuration(explicit)
+        if ((explicit.get("SAME_BUILD_SCUMM_DYNAMIC_FATE_EXPERIMENT") != "1"
+                and not full_source)
                 or explicit.get("SAME_FATE_PROFILE") != (
                     "examples/profiles/templates/fate_of_atlantis_dos_cd.json"
                 )):
             parser.error(
-                "dynamic replay requires the explicit canonical DOS-CD FATE experiment build"
+                "dynamic replay requires the canonical selected or original full-source build"
             )
         directory = _native_directory_for_build(identity_path)
         ACTIVE_PROGRAM_DIRECTORY = directory["by_id"]
@@ -3098,6 +3228,7 @@ def main() -> int:
         symbols["ScummV5_Resident_Reset_Far"] = 9
     report: dict[str, Any] = {
         "result": "running",
+        "observer_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "evidence_class": "fresh-power-on Nexen cold startup plus normal controller input",
         "rom": str(rom),
         "rom_sha256": rom_sha,
@@ -3278,12 +3409,9 @@ def main() -> int:
             # Arm it before the bounded startup so a later stalled-room
             # sample contains instructions from the actual SCUMM frame, not
             # merely an empty-ring status response.
-            trace_arm = session.trace_log(count=1, cpu_type="Snes")
-            report["startup_trace_arm"] = {
-                "requested_rows": 1,
-                "initial_rows": len(trace_arm.get("rows", []))
-                if isinstance(trace_arm, dict) else None,
-            }
+            graphics_only = args.capture_room4_actor_entry or args.capture_room4_playable_scene
+            report["startup_trace_arm"] = arm_startup_trace(session, enabled=not graphics_only)
+            args.output.write_text(json.dumps(report, indent=2) + "\n")
             if args.break_on_cpu_address is not None:
                 if not 0 <= args.break_on_cpu_address <= 0xFFFFFF:
                     parser.error("--break-on-cpu-address must be a 24-bit CPU address")
@@ -3357,13 +3485,85 @@ def main() -> int:
                     return 0
                 finally:
                     session.remove_hook(fault_hook)
-            ready, transitions = _cold_wait_room4(session, args.startup_frames)
+            def preserve_startup_progress(observation: dict[str, Any]) -> None:
+                report["startup_last_observation"] = observation
+                if "sample" in observation:
+                    report.setdefault("startup_progress", []).append(observation["sample"])
+                args.output.write_text(json.dumps(report, indent=2) + "\n")
+
+            ready, transitions = _cold_wait_room4(
+                session, args.startup_frames,
+                require_interactive=not args.capture_room4_actor_entry,
+                trace_enabled=not graphics_only,
+                frame_step=4 if graphics_only else 16,
+                progress_callback=preserve_startup_progress if graphics_only else None)
             report["room_transitions"] = transitions
             report["room4_ready"] = ready
             report["room4_ready_source_probe"] = _room4_source_probe(
                 session, variable_base=variable_layout["base"],
                 variable_count=variable_layout["count"],
             )
+            def capture_authentic_actor(evidence_class: str) -> int:
+                import time
+                import zlib
+                from validate_scumm_actor_visual_probe_nexen import ProbeObserver, capture_surface
+                storage_root = Path(explicit_environment["SAME_SCUMM_MSU1_PROGRAM_STORAGE_DIR"])
+                if not storage_root.is_absolute():
+                    storage_root = ROOT / storage_root
+                storage = json.loads((storage_root / "program-storage.json").read_text())
+                if "ScummV5_ActorPose_ProjectSpan_Far" in rom.with_suffix(".lst").read_text():
+                    from validate_scumm_actor_visual_probe_nexen import validate_projection_rom_operands
+                    validate_projection_rom_operands(rom.read_bytes(), rom.with_suffix(".lst").read_text(),
+                                                     storage["projection_directory_bank"])
+                package = rom.with_suffix(".msu")
+                package_bytes = package.read_bytes()
+                if hashlib.sha256(package_bytes).hexdigest() != storage["package_sha256"]:
+                    raise RuntimeError("authentic actor package identity differs")
+                visual = next(row for row in storage["visual_records"] if row["room"] == 4)
+                offset, length = visual["pixel_package_offset"], visual["pixel_length"]
+                backdrop = package_bytes[offset:offset + length]
+                if len(backdrop) != 256 * 224 or zlib.crc32(backdrop) & 0xffffffff != int(visual["pixel_crc32"], 16):
+                    raise RuntimeError("authentic room backdrop length/CRC differs")
+                report.update({"evidence_class": evidence_class,
+                               "object_actions_submitted": 0,
+                               "package_sha256": storage["package_sha256"],
+                               "gameplay_interaction_verified": False})
+                args.output.write_text(json.dumps(report, indent=2) + "\n")
+                capture_dir = args.output.parent / "actor-entry"
+                capture_dir.mkdir(exist_ok=False)
+                projection = (visual.get("projection")
+                              if "ScummV5_ActorPose_ProjectSpan_Far" in rom.with_suffix(".lst").read_text()
+                              else None)
+                observer = ProbeObserver(session, capture_dir, backdrop,
+                                         deadline=time.monotonic() + 120,
+                                         projection=projection,
+                                         cursor_base=_authentic_cursor_base(rom, build_identity),
+                                         evidence_kind=evidence_class, frame_step=4)
+                state = observer.wait_presented_pose(max_frames=1200)
+                capture = capture_surface(session, capture_dir, "authentic-room4-entry", backdrop,
+                                          projection=projection, cursor_base=observer.cursor_base)
+                report["actor_entry"] = {"state": state, "capture": capture}
+                if capture["ppu_indexed_differences"] or capture["cgram_difference_bytes"]:
+                    raise RuntimeError("authentic entry PPU differs from indexed presentation")
+                if capture["actor_bound_difference_pixels"] < 40:
+                    raise RuntimeError("authentic entry actor is not visibly distinguishable")
+                checkpoint = capture_dir / "authentic-scene.state"
+                report["scene_checkpoint"] = {
+                    "path": str(checkpoint), "rom_sha256": rom_sha,
+                    "package_sha256": storage["package_sha256"],
+                    "save_result": session.save_state(checkpoint),
+                    "restoration_status": "NOT_VERIFIED",
+                    "identity_status": "PENDING_SESSION_EXIT",
+                }
+                report["result"] = "ACTOR_SCENE_CAPTURED_NOT_OBJECT_GAMEPLAY_ACCEPTANCE"
+                if pcm_capture_path is not None:
+                    report["pcm_capture_stop"] = session.stop_audio()
+                args.output.write_text(json.dumps(report, indent=2) + "\n")
+                return 0
+
+            if args.capture_room4_actor_entry:
+                report["controller_actions_submitted"] = 0
+                return capture_authentic_actor("authentic cold startup, read-only actor entry capture")
             # A streamed room becomes drawable before its ENCD continuation
             # necessarily finishes the nested authentic global setup. Keep
             # advancing the ordinary scheduler (with no injected input) until
@@ -3548,8 +3748,42 @@ def main() -> int:
                 session,
             )
             cutscene_state_before_intro = room4_controller_snapshot(session)
+            def preserve_intro_text(state: dict[str, Any]) -> None:
+                # Durable read-only evidence at the failing text boundary,
+                # independent of completing the subsequent gameplay observer.
+                raw = session.read_memory("snesMemory", 0x400780, 128)
+                sample = {"frame": state["frame"], "talk_active": state["talk_active"],
+                          "talk_generation": state["talk_generation"], "talk_delay": state["talk_delay"],
+                          "text_state": raw.hex(), "text_status": session.read_u8(0x7E7AC7),
+                          "retained_text": session.read_memory("snesMemory", 0x7FFB80, 255).hex(),
+                          "pending_text": session.read_memory("snesMemory", 0x7FFC80, 256).hex(),
+                          "backend_committed": _u16(session, 0x401010)}
+                report.setdefault("intro_text_observations", []).append(sample)
+                if (int.from_bytes(raw[0:2], "little") == 0
+                        and raw[2:4] == raw[4:6] and raw[4:6] != b"\0\0"
+                        and int.from_bytes(raw[0x68:0x6a], "little") != 0
+                        and state["talk_active"]):
+                    label = f"authentic-text-{state['talk_generation']}"
+                    image = args.output.parent / (label + ".ppu.png")
+                    if not image.exists():
+                        import base64
+                        image.write_bytes(base64.b64decode(session.take_screenshot(format="base64")["base64"]))
+                        for suffix, memory, address, length in (("indexed.bin", "snesMemory", 0x402000, 57344),
+                                ("vram.bin", "snesVideoRam", 0, 65536), ("cgram.bin", "snesCgRam", 0, 512)):
+                            (args.output.parent / (label + "." + suffix)).write_bytes(session.read_memory(memory, address, length))
+                        sample["capture"] = str(image)
+                args.output.write_text(json.dumps(report, indent=2) + "\n")
+
+            if args.capture_room4_playable_scene:
+                checkpoint = args.output.parent / "before-intro-text.state"
+                report["before_intro_checkpoint"] = {
+                    "rom_sha256": rom_sha, "build_identity_sha256": report["build_identity_sha256"],
+                    "path": str(checkpoint), "save_result": session.save_state(checkpoint),
+                    "restoration_status": "NOT_VERIFIED"}
+                args.output.write_text(json.dumps(report, indent=2) + "\n")
             report["room4_intro"] = _finish_room4_intro(
-                session, max_frames=2400, rom=rom, symbol_banks=symbols
+                session, max_frames=2400, rom=rom, symbol_banks=symbols,
+                progress_callback=preserve_intro_text if args.capture_room4_playable_scene else None,
             )
             report["room4_intro_source_probe"] = _room4_source_probe(
                 session, variable_base=variable_layout["base"],
@@ -3572,6 +3806,11 @@ def main() -> int:
                 },
                 "result_detail": report["room4_intro"]["result"],
             }
+            if args.capture_room4_playable_scene:
+                # Reuse the authored intro/acknowledgement path above, but never
+                # enter any of the seven object-action replay steps below.
+                report["intro_controller_inputs"] = "recorded in cutscene/intro observations"
+                return capture_authentic_actor("authentic scene after normal intro controller acknowledgements")
             action_baseline_slots: list[dict[str, Any]] = []
 
             def remember_submission_baseline(
@@ -4414,6 +4653,11 @@ def main() -> int:
             }
         args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         raise
+    finally:
+        # Runs after owned_session.__exit__, including capture's inner return.
+        if "scene_checkpoint" in report:
+            _finalize_scene_checkpoint(report)
+            args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"FATE room4 cold replay: {report['result']} ({rom_sha})")
     print(args.output)

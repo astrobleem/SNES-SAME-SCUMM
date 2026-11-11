@@ -4,7 +4,39 @@
   "bwram_bytes": 131072,
   "protected_low": {
     "address": "40:0000",
-    "bytes": 2048
+    "bytes": 2048,
+    "allocations": {
+      "room_palette_base": {
+        "offset": 0,
+        "bytes": 768,
+        "owner": "SCUMM immutable installed room palette"
+      },
+      "room_palette_desired": {
+        "offset": 768,
+        "bytes": 768,
+        "owner": "SCUMM ordered palette intent"
+      },
+      "room_palette_state": {
+        "offset": 1536,
+        "bytes": 32,
+        "owner": "SCUMM palette publication state"
+      },
+      "cursor_underlay": {
+        "offset": 1568,
+        "bytes": 288,
+        "owner": "video_surface independent cursor underlay"
+      },
+      "cursor_presentation": {
+        "offset": 1856,
+        "bytes": 64,
+        "owner": "SCUMM cursor presentation state"
+      },
+      "text_presentation": {
+        "offset": 1920,
+        "bytes": 128,
+        "owner": "video surface bounded text producer and presentation fence"
+      }
+    }
   },
   "save_reserved": {
     "address": "40:0800",

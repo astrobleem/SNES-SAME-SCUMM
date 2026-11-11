@@ -291,6 +291,8 @@ class RoomOpsState:
     transform: tuple[int, int, int, int] = (0, 0, 0, 0)
     cycle_delays: list[int] = field(default_factory=lambda: [0] * 16)
     palette_overrides: dict[int, tuple[int, int, int]] = field(default_factory=dict)
+    # Immutable resource palette survives resource-less room zero.
+    base_palette: tuple[tuple[int, int, int], ...] = ()
     save_load_request: tuple[int, int] = (0, 0)
     auxiliary_files: dict[str, bytearray] = field(default_factory=dict)
 
@@ -904,6 +906,9 @@ class ScummV5Engine(Engine):
                 str(scene_key),
                 cursor_key=None if cursor_key is None else str(cursor_key),
             )
+            self.state.room_ops.base_palette = (
+                self._video.scene.palette + ((0, 0, 0),) * (256 - len(self._video.scene.palette))
+            )
             self._video.move_cursor(self.state.cursor_x, self.state.cursor_y)
         else:
             self._video = None
@@ -1083,6 +1088,10 @@ class ScummV5Engine(Engine):
                 self._video.project_composition()
             else:
                 self._video.project()
+            if isinstance(self._video, ScummV5VideoAdapter):
+                # Synthetic scene projection also starts from its source palette.
+                for index, rgb in self.state.room_ops.palette_overrides.items():
+                    self._set_current_room_palette(context, index, (rgb,))
             self.state.room_hash = context.services.video.surface.hash()
         self._presentation_dirty = False
         self._presentation_rebuild = False
@@ -1749,25 +1758,46 @@ class ScummV5Engine(Engine):
         message: PrintMessageState,
         target: IndexedSurface,
     ) -> None:
-        key = self._resource_key("charset", message.style.charset)
-        if not context.services.resources.contains(key):
-            # Some retail DCHR directories leave entry zero empty while the
-            # VM's default charset number still denotes the first font.
-            fallback = self._resource_key("charset", message.style.charset + 1)
-            if not context.services.resources.contains(fallback):
-                raise ResourceError(
-                    f"SCUMM print charset {message.style.charset} has no resource binding"
-                )
-            key = fallback
-        font = ScummV5Charset(context.services.resource_read(key), key=key)
-        glyphs = [
-            token.code
-            for token in decode_scumm_v5_text(message.raw)
-            if isinstance(token, ScummTextGlyph)
-        ]
-        advances = [font.glyph(code) for code in glyphs]
-        text_width = sum(4 if glyph is None else glyph.advance for glyph in advances)
-        pen_x = message.style.x - text_width // 2 if message.style.center else message.style.x
+        # Resolve exact source identities and all glyphs before drawing. A
+        # missing charset/glyph is an explicit resource failure, never an
+        # adjacent-font substitution or invented four-pixel character.
+        def read_font(charset: int) -> ScummV5Charset:
+            key = self._resource_key("charset", charset)
+            return ScummV5Charset(context.services.resource_read(key), key=key,
+                                  allow_multibit=True)
+
+        font = read_font(message.style.charset)
+        ink = message.style.color
+        lines = [[]]
+        heights = [font.line_height]
+        for token in decode_scumm_v5_text(message.raw):
+            if isinstance(token, ScummTextGlyph):
+                glyph = font.glyph(token.code)
+                if glyph is None:
+                    # Classic prepareDraw/getCharWidth define a zero offset
+                    # as absent: no pixels and zero advance, not substitution.
+                    continue
+                lines[-1].append((glyph, font.slot_colors, ink))
+                heights[-1] = max(heights[-1], font.line_height)
+            elif token.code == 1:
+                lines.append([])
+                heights.append(font.line_height)
+            elif token.code in (8, 10):
+                # Spoken-text break hint / retained talkie cue words have no
+                # raster pixels. Speech realization is a separate audio gap;
+                # the original cue remains in TalkState.raw, never fabricated.
+                continue
+            elif token.code in (12, 14):
+                value = int.from_bytes(bytes(token.arguments), 'little')
+                if value > 255:
+                    raise ResourceError("SCUMM text color/charset is outside u8")
+                if token.code == 12:
+                    ink = value
+                else:
+                    font = read_font(value)
+                    heights[-1] = max(heights[-1], font.line_height)
+            else:
+                raise ResourceError(f"SCUMM text presentation control {token.code} is unsupported")
         logical_width = context.profile.video.logical_width or context.profile.video.width
         logical_height = context.profile.video.logical_height or context.profile.video.height
         physical = context.services.video.surface
@@ -1775,23 +1805,25 @@ class ScummV5Engine(Engine):
         source_y = max(0, (logical_height - physical.height) // 2)
         destination_x = max(0, (physical.width - logical_width) // 2)
         destination_y = max(0, (physical.height - logical_height) // 2)
-        for glyph in advances:
-            if glyph is None:
-                pen_x += 4
-                continue
-            for glyph_y in range(glyph.height):
-                logical_y = message.style.y + glyph.y_offset + glyph_y
-                physical_y = destination_y + logical_y - source_y
-                if not 0 <= physical_y < physical.height:
-                    continue
-                for glyph_x in range(glyph.width):
-                    if not glyph.pixels[glyph_y * glyph.width + glyph_x]:
+        pen_y = message.style.y
+        for line, height in zip(lines, heights):
+            width = sum(g.advance for g, _, _ in line)
+            pen_x = message.style.x - width // 2 if message.style.center else message.style.x
+            for glyph, colors, color in line:
+                for glyph_y in range(glyph.height):
+                    physical_y = destination_y + pen_y + glyph.y_offset + glyph_y - source_y
+                    if not 0 <= physical_y < physical.height:
                         continue
-                    logical_x = pen_x + glyph.x_offset + glyph_x
-                    physical_x = destination_x + logical_x - source_x
-                    if logical_x <= message.style.right and 0 <= physical_x < physical.width:
-                        target.set_pixel(physical_x, physical_y, message.style.color)
-            pen_x += glyph.advance
+                    for glyph_x in range(glyph.width):
+                        slot = glyph.pixels[glyph_y * glyph.width + glyph_x]
+                        if not slot:
+                            continue
+                        logical_x = pen_x + glyph.x_offset + glyph_x
+                        physical_x = destination_x + logical_x - source_x
+                        if logical_x <= message.style.right and 0 <= physical_x < physical.width:
+                            target.set_pixel(physical_x, physical_y, color if slot == 1 else colors[slot])
+                pen_x += glyph.advance
+            pen_y += height
 
     @staticmethod
     def _talk_glyph_count(raw: bytearray) -> int:
@@ -1842,13 +1874,16 @@ class ScummV5Engine(Engine):
             arguments = control_argument_count(control)
             if index + arguments > len(raw):
                 raise EngineExecutionError("SCUMM actor-talk control arguments are truncated")
-            if control != 3:
+            if control == 3:
+                segment.append(0)
+                return segment, index, False
+            if control not in (1, 8, 10, 12, 14):
                 raise EngineExecutionError(
                     f"SCUMM actor-talk control {control} is unsupported"
                 )
+            segment.extend((0xFF, control))
+            segment.extend(raw[index:index + arguments])
             index += arguments
-            segment.append(0)
-            return segment, index, False
         raise EngineExecutionError("SCUMM actor-talk message has no terminator")
 
     def _record_talk_event(self, kind: str, actor: int, animation: int) -> None:
@@ -1881,7 +1916,7 @@ class ScummV5Engine(Engine):
         # Validate and compute everything before replacing current ownership.
         self._talk_glyph_count(raw)
         segment, cursor, final = self._talk_segment(raw, 0)
-        glyph_count = len(segment) - 1
+        glyph_count = self._talk_glyph_count(segment)
         char_increment = self.state.variables[_VAR_CHARINC]
         if char_increment < 0:
             raise EngineExecutionError("SCUMM VAR_CHARINC must not be negative")
@@ -1912,7 +1947,7 @@ class ScummV5Engine(Engine):
     def _continue_actor_talk(self) -> None:
         talk = self.state.talk
         segment, cursor, final = self._talk_segment(talk.raw, talk.cursor)
-        glyph_count = len(segment) - 1
+        glyph_count = self._talk_glyph_count(segment)
         delay = _TALK_BASE_DELAY + glyph_count * self.state.variables[_VAR_CHARINC]
         if delay > 0x7FFF:
             raise EngineExecutionError("SCUMM actor-talk delay exceeds s16")
@@ -3110,6 +3145,10 @@ class ScummV5Engine(Engine):
             self.state.cursor_id = self._byte_for_flags(slot, flags, 0x80)
         elif subop == 13:
             self.state.charset_id = self._byte_for_flags(slot, flags, 0x80)
+            # v5 initCharset changes the two default text styles, not an
+            # already-owned message's copied style or the debug/system slots.
+            for default in self.state.print_slots[:2]:
+                default.charset = self.state.charset_id
         elif subop == 14:
             colors: list[int] = []
             while True:
@@ -3901,6 +3940,41 @@ class ScummV5Engine(Engine):
             )
         return values
 
+    def _set_current_room_palette(
+        self, context: EngineContext, first: int,
+        colors: tuple[tuple[int, int, int], ...],
+    ) -> None:
+        # This existing serialized map is the effective palette delta, in
+        # execution order, including direct colors and intensity results. The
+        # decoded room/scene palette remains immutable and is never darkened.
+        for index, color in enumerate(colors, first):
+            self.state.room_ops.palette_overrides[index] = color
+        if self._video is not None:
+            for surface in (self._video.logical_surface, self._video.composition_surface):
+                if surface is not None:
+                    surface.set_palette(first, colors)
+            if self._video.logical_surface is not None:
+                self._video.logical_sha256 = self._video.logical_surface.hash()
+        context.services.video.set_palette(first, colors)
+        self.state.room_hash = context.services.video.surface.hash()
+
+    def _apply_room_intensity(
+        self, context: EngineContext, values: tuple[int, int, int, int, int],
+    ) -> None:
+        # ScummVM palette.cpp darkenPalette, classic v5 path: use the
+        # resource palette (not setPalColor overrides), divide by 255, cap 252.
+        base = self.state.room_ops.base_palette
+        if not base:
+            return  # No room/scene palette has been installed yet.
+        red, green, blue, first, last = values
+        colors = tuple(
+            (min(252, base[index][0] * red // 255),
+             min(252, base[index][1] * green // 255),
+             min(252, base[index][2] * blue // 255))
+            for index in range(first, last + 1)
+        )
+        self._set_current_room_palette(context, first, colors)
+
     def _op_room_ops(self, slot: ScriptSlot, context: EngineContext) -> bool:
         flags = self._u8(slot)
         subop = flags & 0x1F
@@ -3933,8 +4007,7 @@ class ScummV5Engine(Engine):
                 self._room_range(f"palette {name}", value)
                 for name, value in (("red", red), ("green", green), ("blue", blue))
             )
-            state.palette_overrides[index] = rgb  # type: ignore[assignment]
-            context.services.video.set_palette(index, (rgb,))
+            self._set_current_room_palette(context, index, (rgb,))  # type: ignore[arg-type]
         elif subop == 5:  # SO_ROOM_SHAKE_ON
             state.shake_enabled = True
         elif subop == 6:  # SO_ROOM_SHAKE_OFF
@@ -3958,6 +4031,7 @@ class ScummV5Engine(Engine):
             state.intensity = self._room_color_range(
                 "intensity", level, level, level, first, last
             )
+            self._apply_room_intensity(context, state.intensity)
         elif subop == 9:  # SO_ROOM_SAVEGAME
             save_flag = self._byte_for_flags(slot, flags, 0x80)
             self._byte_for_flags(slot, flags, 0x40)  # canonical slot is forced to 99
@@ -3977,6 +4051,7 @@ class ScummV5Engine(Engine):
             )
             if subop == 11:
                 state.rgb_intensity = result
+                self._apply_room_intensity(context, result)
             else:
                 state.shadow = result
         elif subop in (13, 14):  # SO_SAVE_STRING / SO_LOAD_STRING
@@ -4262,6 +4337,8 @@ class ScummV5Engine(Engine):
         # resource's authored matrix until that room executes createBoxMatrix.
         self._dynamic_box_routes = None
         self._pending_draw_boxes.clear()
+        if not preserve_local_scripts and not null_scene:
+            self.state.room_ops.palette_overrides.clear()
         if null_scene:
             self.state.room_objects.clear()
             self.state.object_draw_queue.clear()
@@ -4272,7 +4349,6 @@ class ScummV5Engine(Engine):
             self._room_exit = None
             self._room_record = None
             surface = context.services.video.surface
-            context.services.video.set_palette(0, ((0, 0, 0),) * 256)
             context.services.video.fill(0)
             self.state.room_hash = surface.hash()
             self._video = None
@@ -4282,6 +4358,9 @@ class ScummV5Engine(Engine):
         adapter = ScummV5RoomAdapter(context)
         adapter.render(key, room_data=raw)
         self._video = adapter
+        self.state.room_ops.base_palette = (
+            adapter.room.palette + ((0, 0, 0),) * (256 - len(adapter.room.palette))
+        )
         self._room_record = record
         if record is None:
             self._room_script_descriptors = {}
@@ -4403,6 +4482,9 @@ class ScummV5Engine(Engine):
                     str(index): list(value)
                     for index, value in sorted(room_ops.palette_overrides.items())
                 },
+                # Optional additive field: older schema-6 saves reconstruct
+                # their base from the current room resource when available.
+                "base_palette": [list(rgb) for rgb in room_ops.base_palette],
                 "save_load_request": list(room_ops.save_load_request),
                 "auxiliary_files": {
                     name: bytes(value).hex()
@@ -4792,6 +4874,15 @@ class ScummV5Engine(Engine):
             ):
                 raise SaveFormatError("SCUMM save roomOps palette override is invalid")
             palette_overrides[index] = rgb
+        base_raw = room_ops_raw.get("base_palette", [])
+        if not isinstance(base_raw, list) or len(base_raw) not in (0, 256):
+            raise SaveFormatError("SCUMM save roomOps base palette is invalid")
+        base_palette = []
+        for rgb in base_raw:
+            if (not isinstance(rgb, list) or len(rgb) != 3
+                    or any(not isinstance(v, int) or not 0 <= v <= 255 for v in rgb)):
+                raise SaveFormatError("SCUMM save roomOps base palette is invalid")
+            base_palette.append(tuple(rgb))
         if not isinstance(auxiliary_raw, dict) or len(auxiliary_raw) > 64:
             raise SaveFormatError("SCUMM save roomOps auxiliary files are invalid")
         auxiliary_files: dict[str, bytearray] = {}
@@ -4820,6 +4911,7 @@ class ScummV5Engine(Engine):
             transform=transform,
             cycle_delays=cycle_delays,
             palette_overrides=palette_overrides,
+            base_palette=tuple(base_palette),
             save_load_request=save_load_request,
             auxiliary_files=auxiliary_files,
         )
@@ -5418,8 +5510,10 @@ class ScummV5Engine(Engine):
             self.state.room_hash = context.services.video.surface.hash()
         self._presentation_dirty = False
         self._presentation_rebuild = False
+        if self.state.room_ops.base_palette:
+            context.services.video.set_palette(0, self.state.room_ops.base_palette)
         for index, rgb in self.state.room_ops.palette_overrides.items():
-            context.services.video.set_palette(index, (rgb,))
+            self._set_current_room_palette(context, index, (rgb,))
         if self._video is None:
             context.services.video.move_cursor(self.state.cursor_x, self.state.cursor_y)
         else:

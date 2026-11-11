@@ -50,12 +50,36 @@ Same_VideoOverlay_ShowTalkSegment_Far:
     bcc Same_VideoOverlay_ShowTalkSegment__available
     sep #$20
     .a8
-    lda.l SAME_SCUMM_TALK_VISUAL_STATUS
-    inc
+    lda #$01                     ; busy: retry without changing the overlay
     sta.l SAME_SCUMM_TALK_VISUAL_STATUS
     plp
     rtl
 Same_VideoOverlay_ShowTalkSegment__available:
+    ; SC5FNT v1 byte 7 is the logical charset id. Keep the ROM label plain:
+    ; label arithmetic in long operands can lose its bank in the assembler.
+    ; Reject before replacing raw input, scratch, descriptor or pixel backing.
+    rep #$10
+    .i16
+    ldx #$0007
+    sep #$20
+    .a8
+    lda.l ScummV5_Font0_Record,x
+    cmp.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_CHARSET
+    bne Same_VideoOverlay_ShowTalkSegment__unsupported
+    ; Current BG2 BuildTilemap emits palette group zero only. Admit its
+    ; opaque local colors 1..15; zero is transparent, and higher indices
+    ; cannot preserve their authored color here. No palette remap/fallback.
+    lda.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_COLOR
+    beq Same_VideoOverlay_ShowTalkSegment__unsupported
+    cmp #$10
+    bcc Same_VideoOverlay_ShowTalkSegment__font_available
+Same_VideoOverlay_ShowTalkSegment__unsupported:
+    .a8
+    lda #$02                     ; unsupported charset/color, visual only
+    sta.l SAME_SCUMM_TALK_VISUAL_STATUS
+    plp
+    rtl
+Same_VideoOverlay_ShowTalkSegment__font_available:
     ; Controller-owned HUD text has its own pending source.  Copy it into the
     ; established raster input only after the overlay is writable, so a C23
     ; producer cannot replace the prompt between controller composition and

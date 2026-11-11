@@ -1081,6 +1081,23 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(host.engine.state.talk.raw, bytearray(raw))
         self.assertEqual(host.engine.state.talk.events[0].kind, "start")
 
+    def test_retained_speech_metadata_does_not_become_glyphs_or_replace_wait_state(self):
+        font = (ROOT / "examples/resources/scumm_v5/s3_font.char").read_bytes()
+        cue = b"\xff\x0a\x01\0" * 4
+        raw = cue + b"A" * 90 + b"\xff\x03B\0"
+        host = self._host(bytes((0x14, 1, 0x0F, 65, 0, 0)),
+                          resources={"charset.0": font})
+        host.engine.state.actors[1] = ActorState(room=0, visible=True)
+        host.tick()
+        host.engine.state.variables[37] = 4
+        visible = host.engine._begin_actor_talk(1, bytearray(raw))
+        self.assertEqual(host.engine.state.talk.have_msg, 255)
+        self.assertEqual(host.engine.state.talk.raw, raw)
+        self.assertEqual(visible, cue + b"A" * 90 + b"\0")
+        self.assertEqual(host.engine._talk_glyph_count(visible), 90)
+        self.assertEqual(host.engine.state.talk.delay, 60 + 90 * 4)
+        self.assertEqual([e.kind for e in host.engine.state.talk.events], ["start", "stop", "start"])
+
     def test_load_room_with_ego_places_ego_before_yielded_entry_resumes(self) -> None:
         entry = bytes((
             0x9A, 15, 0, 38, 0,  # preserve VAR_WALKTO_OBJ for assertion
@@ -1426,6 +1443,25 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertNotIn(76, result_state["bits"])
         self.assertEqual(result_state["scripts"][0]["pc"], 10)
 
+    def test_init_charset_updates_only_default_talk_and_string_styles(self) -> None:
+        for command in (bytes.fromhex("2c 0d 07"),
+                        bytes.fromhex("1a 1e 00 07 00 2c 8d 1e 00")):
+            host = self._host(command + b"\x80\x00")
+            state = host.engine.state
+            before = [replace(style, charset=10+i, color=30+i)
+                      for i, style in enumerate(state.print_slots)]
+            state.print_slots = [replace(style) for style in before]
+            owned = PrintMessageState(1, 0, replace(before[0]), bytearray(b"A\0"))
+            host.tick()
+            self.assertEqual(state.charset_id, 7)
+            for i, style in enumerate(state.print_slots):
+                self.assertEqual(style, replace(before[i], charset=7) if i < 2 else before[i])
+            self.assertEqual(owned.style, before[0])
+            host.save(0)
+            state.print_slots[0].charset = 99
+            host.load(0)
+            self.assertEqual(host.engine.state.print_slots[0].charset, 7)
+
     def test_c7_cursor_command_and_bit_variables_are_exact_and_saved(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/c7_cursor_bits.scrp").read_bytes()
         host = self._host(script)
@@ -1560,11 +1596,17 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(room["shadow"], [50, 60, 70, 3, 9])
         self.assertEqual(room["transform"], [6, 2, 10, 12])
         self.assertEqual(room["cycle_delays"][2], 107)
-        self.assertEqual(room["palette_overrides"], {"7": [10, 20, 30]})
+        # Intensity operations overwrite current colors from the immutable
+        # room palette; the existing serialized delta retains both ranges.
+        expected_palette = {"2": [5, 4, 10], "3": [8, 6, 15],
+                            "4": [10, 8, 20], "5": [13, 10, 25],
+                            "6": [16, 12, 31], "7": [19, 15, 36],
+                            "8": [21, 17, 41], "9": [31, 22, 49]}
+        self.assertEqual(room["palette_overrides"], expected_palette)
         self.assertEqual(room["save_load_request"], [1, 99])
         self.assertEqual(room["auxiliary_files"], {"aux": [65, 66, 67, 0]})
         self.assertEqual(state["strings"]["5"]["raw"], [65, 66, 67, 0])
-        self.assertEqual(host.services.video.surface.palette[7], (10, 20, 30))
+        self.assertEqual(host.services.video.surface.palette[7], (19, 15, 36))
 
         saved = host.save(0)
         host.engine.state.room_ops.palette_overrides.clear()
@@ -1574,7 +1616,7 @@ class ScummV5EngineTests(unittest.TestCase):
         restored = host.engine.inspect_state()["room_ops"]
         self.assertTrue(restored["shake"])
         self.assertEqual(restored["auxiliary_files"], {"aux": [65, 66, 67, 0]})
-        self.assertEqual(host.services.video.surface.palette[7], (10, 20, 30))
+        self.assertEqual(host.services.video.surface.palette[7], (19, 15, 36))
         self.assertEqual(saved.schema, 6)
 
         assert host.context is not None

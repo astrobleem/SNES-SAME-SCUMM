@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
+SAME_SCUMM_PC = 0x7E2300
+SAME_SCUMM_C1_HOLD_AFTER = 0x7E2364
+
+
 ROOM4_OPEN_TRAPDOOR_PRECONDITION = {
     "room": 4,
     "phase": 0,
@@ -98,7 +102,8 @@ def room4_controller_snapshot(session: Any) -> dict[str, int]:
             "c14_pc": _read_u16(session, 0x7E5F05),
             "c14_opcode": session.read_u8(0x7E5F07),
         },
-        "vm_pc": _read_u16(session, 0x7E2364),
+        "vm_pc": _read_u16(session, SAME_SCUMM_PC),
+        "c1_hold_after": _read_u16(session, SAME_SCUMM_C1_HOLD_AFTER),
         "program_select": session.read_u8(0x7E2362),
         "current_slot": session.read_u8(0x7E2A88),
         "c13": [session.read_u8(address) for address in
@@ -197,7 +202,7 @@ def _execution_frontier_snapshot(session: Any) -> dict[str, Any]:
             "room_owner": session.read_u8(0x7FF2E7 + slot),
         })
     return {
-        "vm_pc": _read_u16(session, 0x7E2300),
+        "vm_pc": _read_u16(session, SAME_SCUMM_PC),
         "program_select": session.read_u8(0x7E2362),
         "current_slot": session.read_u8(0x7E2A88),
         "movement": _movement_runtime_snapshot(session),

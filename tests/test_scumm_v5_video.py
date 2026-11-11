@@ -17,8 +17,10 @@ from same.video import Rect
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "examples/profiles/scumm_v5_s3_conformance.json"
 RESOURCE_ROOT = ROOT / "examples/resources/scumm_v5"
-LOGICAL_HASH = "6d4451b55770536cde22b8b01338d5dbda06cdf0d6198d1d1066d86faf53b086"
-PHYSICAL_HASH = "54ddea1f2a877e6a88fad3ea2a94987688e29705e78e8fb21fd1fb9f29e2afaf"
+# The fixture has no space glyph: classic zero-offset glyphs advance zero,
+# rather than the former fabricated four-pixel gap. Other scene pixels agree.
+LOGICAL_HASH = "c9a3c4d55680137297801f8cafef5dd6424f2a64abdf6ac19976d5c4f1d1b667"
+PHYSICAL_HASH = "adead953e999687ff948c01bbd7555664043c8e2c9db82e12ddc623861b1dcd4"
 
 
 def host_with(capabilities: EngineCapability) -> EngineHost:

@@ -314,6 +314,8 @@ def apply_synthetic_actor_probe(
     programs: list[dict[str, object]],
     audit_path: Path,
     position: tuple[int, int, int] = (160, 136, 184),
+    pose: tuple[int, int, int] = (2, 3, 2),
+    font_sample: bool = False,
 ) -> tuple[NativeProgramDirectory, dict[str, object]]:
     """Apply the explicit data-only actor driver before directory/package output."""
     if __package__:
@@ -336,8 +338,8 @@ def apply_synthetic_actor_probe(
     }
     proof_document, proof_bodies, proof_pages, audit = apply_actor_probe(
         native_directory.document, bodies, pages,
-        ProbeConfig(room=4, costume=2, boot_script=1,
-                    x=position[0], y=position[1], moved_x=position[2]),
+        ProbeConfig(room=4, costume=pose[0], boot_script=1,
+                    stand_frame=pose[1], animate_frame=pose[2], x=position[0], y=position[1], moved_x=position[2], font_sample=font_sample),
         diagnostic_authorized=True,
     )
     updated_directory = NativeProgramDirectory(proof_document)
@@ -533,10 +535,14 @@ def main() -> int:
     )
     parser.add_argument("--msu1-program-directory-include", type=Path)
     parser.add_argument("--msu1-program-directory-bank", type=int, default=10)
+    parser.add_argument("--msu1-projection-directory-bank", type=int, default=19,
+                        help="reserved LoROM bank for room projection lookup tables")
     parser.add_argument(
         "--msu1-program-page-directory-bank", type=int,
         help="ROM bank for compiler-proven bytecode page index/CRC records",
     )
+    parser.add_argument("--actor-probe-font-sample", action="store_true")
+    parser.add_argument("--visual-reserved-bottom", type=int, default=0)
     parser.add_argument("--msu1-program-cache-bytes", type=lambda value: int(value, 0), default=0x0800)
     parser.add_argument(
         "--diagnostic-actor-probe", action="store_true",
@@ -546,6 +552,9 @@ def main() -> int:
     parser.add_argument("--actor-probe-position", type=int, nargs=3,
                         default=(160, 136, 184), metavar=("X", "Y", "MOVED_X"),
                         help="synthetic actor driver coordinates, including edge controls")
+    parser.add_argument("--actor-probe-pose", type=int, nargs=3,
+                        default=(2, 3, 2), metavar=("COSTUME", "STAND", "ANIMATE"),
+                        help="source costume/frame selection for the synthetic driver")
     parser.add_argument("--actor-probe-audit", type=Path,
                         help="write the diagnostic body-replacement ledger")
     parser.add_argument(
@@ -591,8 +600,12 @@ def main() -> int:
         parser.error("the actor probe requires live MSU ProgramUnit storage")
     if args.diagnostic_actor_probe and args.actor_probe_audit is None:
         parser.error("--diagnostic-actor-probe requires --actor-probe-audit")
+    if tuple(args.actor_probe_pose) != (2, 3, 2) and not args.diagnostic_actor_probe:
+        parser.error("--actor-probe-pose requires --diagnostic-actor-probe")
     if tuple(args.actor_probe_position) != (160, 136, 184) and not args.diagnostic_actor_probe:
         parser.error("--actor-probe-position requires --diagnostic-actor-probe")
+    if args.actor_probe_font_sample and not args.diagnostic_actor_probe:
+        parser.error("--actor-probe-font-sample requires --diagnostic-actor-probe")
     if args.actor_probe_audit and not args.diagnostic_actor_probe:
         parser.error("--actor-probe-audit requires --diagnostic-actor-probe")
     if args.msu1_include_source_room_records and not args.msu1_live_room_resources:
@@ -1700,7 +1713,7 @@ def main() -> int:
             raise RuntimeError("synthetic actor probe requires the canonical native directory")
         native_directory, actor_probe_report = apply_synthetic_actor_probe(
             native_directory, programs, args.actor_probe_audit,
-            tuple(args.actor_probe_position),
+            tuple(args.actor_probe_position), tuple(args.actor_probe_pose), args.actor_probe_font_sample,
         )
         actor_probe_audit_path = args.actor_probe_audit.resolve()
 
@@ -1802,7 +1815,9 @@ def main() -> int:
                 diagnostic_live_route_validation_resources
             ),
             room_visual_resources=room_visual_resources,
+            visual_reserved_bottom=args.visual_reserved_bottom,
             rom_bank=args.msu1_program_directory_bank,
+            projection_directory_bank=args.msu1_projection_directory_bank,
             page_directory_bank=(
                 args.msu1_program_directory_bank + 2
                 if args.msu1_program_page_directory_bank is None
@@ -1845,6 +1860,8 @@ def main() -> int:
         hold_after_started_global_program = int(match["id"])
 
     reserved_banks = set(args.reserved_bank)
+    if args.msu1_program_storage_dir is not None:
+        reserved_banks.add(args.msu1_projection_directory_bank)
 
     def cpu_rom_address(bank: int) -> str:
         visible_bank = cpu_visible_rom_bank(bank, sa1_aliases=args.sa1_rom_bank_aliases)
@@ -2451,7 +2468,7 @@ def main() -> int:
         "ScummV5_PutActor_LoadGeometry_Far:",
         ".if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES",
         "    jml ScummV5_LiveRoom_LoadGeometry_Far",
-        ".endif",
+        ".else",
         "; Input X=u16 box index; output A width=8, X width=16; carry clear",
         "; on success and set on missing record/box. Callers must restore M",
         "; themselves after consuming the carry result.",
@@ -2478,7 +2495,7 @@ def main() -> int:
             "    sep #$20", "    .a8", "    sec", "    rtl",
             f"ScummV5_PutActor_LoadGeometry__next_{index}:", "    .a8",
         ))
-    data_lines.extend(("    sec", "    rtl"))
+    data_lines.extend(("    sec", "    rtl", ".endif"))
     # Read-only profile-generated queries used by the semantic sentence and
     # movement closures.  All dispatch is selected by active record; no title,
     # room number, object number, verb, or route is embedded in engine code.
@@ -2943,12 +2960,13 @@ def main() -> int:
         "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_SETSTATE_LOCAL_COUNT", "    bne ScummV5_Generic_Object_HitTest_Far__have_records",
         "    brl ScummV5_Generic_Object_HitTest_Far__miss",
         "ScummV5_Generic_Object_HitTest_Far__have_records:",
-        "    rep #$20", "    .a16", "    lda #$0000", "    sep #$20", "    .a8",
-        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_COUNT", "    rep #$20", "    .a16",
-        "    ldx #$0000", "    ldy #$0000",
+        "    rep #$20", "    .a16", "    ldx #$0000", "    ldy #$0000",
         "ScummV5_Generic_Object_HitTest_Far__loop:", "    rep #$30", "    .a16", "    .i16",
-        "    rep #$30", "    .a16", "    .i16",
-        "    tya", "    cmp.l SAME_SCUMM_SETSTATE_LOCAL_COUNT",
+        # LOCAL_COUNT is u8; its neighbor is DIRTY_COUNT, not a high byte.
+        # Rectangle checks reuse LIMIT, so rebuild the widened bound each pass.
+        "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_SETSTATE_LOCAL_COUNT",
+        "    rep #$20", "    .a16", "    and #$00FF", "    sta.l SAME_SCUMM_INTERACTION_LIMIT",
+        "    tya", "    cmp.l SAME_SCUMM_INTERACTION_LIMIT",
         "    bcs ScummV5_Generic_Object_HitTest_Far__miss",
         "    lda.l SAME_SCUMM_INTERACTION_X", "    cmp.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+2,x",
         "    bcc ScummV5_Generic_Object_HitTest_Far__next",
@@ -2964,7 +2982,7 @@ def main() -> int:
         "    bcs ScummV5_Generic_Object_HitTest_Far__next",
         "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS,x", "    sta.l SAME_SCUMM_INTERACTION_OBJECT",
         "    tya", "    sta.l SAME_SCUMM_INTERACTION_INDEX",
-        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+10,x", "    sep #$20", "    .a8",
+        "    sep #$20", "    .a8", "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+10,x",
         "    sta.l SAME_SCUMM_INTERACTION_FLAGS", "    sec", "    rtl",
         "ScummV5_Generic_Object_HitTest_Far__next:",
         "    rep #$30", "    .a16", "    .i16",
@@ -2997,8 +3015,8 @@ def main() -> int:
         "    lda.l SAME_SCUMM_CONTROLLER_OBJECT",
         "    sta.l SAME_SCUMM_INTERACTION_OBJECT",
         "    tya", "    sta.l SAME_SCUMM_INTERACTION_INDEX",
-        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+10,x",
-        "    sep #$20", "    .a8", "    sta.l SAME_SCUMM_INTERACTION_FLAGS",
+        "    sep #$20", "    .a8",
+        "    lda.l SAME_SCUMM_SETSTATE_LOCAL_RECORDS+10,x", "    sta.l SAME_SCUMM_INTERACTION_FLAGS",
         "    sec", "    rtl",
         "ScummV5_Generic_Object_ValidateSelected_Far__miss:",
         "    rep #$30", "    .a16", "    .i16",

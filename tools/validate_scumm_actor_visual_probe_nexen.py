@@ -99,6 +99,20 @@ def read_u16(raw: bytes, offset: int = 0) -> int:
     return raw[offset] | raw[offset + 1] << 8
 
 
+def decode_backend_progress(raw: bytes) -> dict:
+    """Retain conversion progress without inferring a deadlock from a timeout."""
+    require(len(raw) == 0x40, "Mode-3 control observation is truncated")
+    offsets = {
+        "candidate_count": 0x22, "scan_tile": 0x38, "scan_palette": 0x3A,
+        "converted_count": 0x2A, "unchanged_count": 0x2C,
+        "rejected_present": 0x1C, "rejected_dirty": 0x1E,
+        "rejected_palette": 0x20,
+    }
+    return {"mode3_control_bytes": list(raw), **{
+        "mode3_" + name: read_u16(raw, offset) for name, offset in offsets.items()
+    }}
+
+
 def decode_pose_observation(raw: bytes) -> dict:
     """Decode the phase-local actor pose fields used by visual evidence.
 
@@ -144,6 +158,7 @@ def pose_is_presented(raw: bytes, *, render_valid: int,
                       backend_state: int, surface_locked: int,
                       pending_visual: int, presented_room: int, room: int,
                       surface_packets_pending: bool,
+                      composition_active: int = 0,
                       expected_frame: int | None = None,
                       expected_facing: int | None = None,
                       expected_x: int | None = None) -> bool:
@@ -156,7 +171,7 @@ def pose_is_presented(raw: bytes, *, render_valid: int,
     requires the Mode-3 backend to have committed the exact surface generation
     and to be idle, unlocked, and free of queued surface packets.
     """
-    if len(raw) < 0x7F or raw[1] not in (0, 2) or raw[0x6B] != 1:
+    if composition_active or len(raw) < 0x7F or raw[1] not in (0, 2) or raw[0x6B] != 1:
         return False
     if (not render_valid or next_generation == 0
             or backend_pending_generation != next_generation
@@ -181,6 +196,264 @@ def pose_is_presented(raw: bytes, *, render_valid: int,
     if expected_x is not None and read_u16(raw, 0x6C) != expected_x:
         return False
     return True
+
+
+def read_committed_pose(session, *, cursor_base: int) -> dict:
+    """Read persistent render fields, never the next request's pose/scratch.
+
+    Caller must keep the emulator paused. RENDER_X/Y are source-room actor
+    positions BEFORE elevation; no persistent committed elevation/bounds exist.
+    Room installation invalidates RENDER_VALID, so the installed surface epoch
+    binds a valid render key to its room. RENDER_ROOM has no publication writer.
+    """
+    require(isinstance(cursor_base, int) and cursor_base > 0,
+            "committed capture requires the matching carrier cursor_base")
+    def signed(address):
+        value = session.read_u16(address)
+        return value - 65536 if value & 0x8000 else value
+    return {
+        "pose_contract": "committed-render-key",
+        "error": session.read_u8(ERROR), "lifecycle": session.read_u8(LIFECYCLE),
+        "room": session.read_u8(ROOM),
+        "surface_room": session.read_u8(SURFACE_STATE),
+        "surface_presented_room": session.read_u8(SURFACE_PRESENTED_ROOM),
+        "surface_room_generation": session.read_u16(SURFACE_ROOM_GENERATION),
+        "surface_pending_visual": session.read_u8(SURFACE_PENDING_VISUAL),
+        "actor_render_valid": session.read_u8(ACTOR_RENDER_VALID),
+        "actor_render_retry": session.read_u8(0x7E5E24),
+        "actor_position_source_room": [signed(0x7E5E10), signed(0x7E5E12)],
+        "actor_render_facing": session.read_u16(ACTOR_RENDER_FACING),
+        "costume_id": session.read_u8(0x7E5E50),
+        "actor_render_visible": session.read_u8(0x7E5E51),
+        "actor_render_pose_frame": session.read_u8(ACTOR_STATE + 0x15),
+        "actor_render_pose_step": session.read_u8(ACTOR_STATE + 0x16),
+        "actor_render_generation": session.read_u16(ACTOR_STATE + 0x7D),
+        "surface_next_generation": session.read_u16(SURFACE_NEXT_GENERATION),
+        "backend_pending_generation": session.read_u16(MODE3_PENDING_GENERATION),
+        "backend_committed_generation": session.read_u16(MODE3_COMMITTED_GENERATION),
+        "backend_pending_generation_hi": session.read_u16(MODE3_PENDING_GENERATION_HI),
+        "backend_committed_generation_hi": session.read_u16(MODE3_COMMITTED_GENERATION_HI),
+        "mode3_state": session.read_u8(MODE3_CONTROL_STATE),
+        "mode3_surface_locked": session.read_u8(MODE3_SURFACE_LOCKED),
+        "mode3_pending_count": session.read_u16(MODE3_PENDING_COUNT),
+        "mode3_inflight_count": session.read_u16(MODE3_INFLIGHT_COUNT),
+        "event_count": session.read_u16(EVENT_COUNT),
+        "surface_packets_pending": read_surface_packets_pending(session),
+        "composition_active": session.read_u16(cursor_base + 56),
+    }
+
+
+def committed_pose_is_presented(state: dict, *, expected_room: int | None = None,
+                                 expected_x: int | None = None,
+                                 expected_y: int | None = None,
+                                 expected_frame: int | None = None) -> bool:
+    """Fence a committed actor while a different pose may be fetching."""
+    generation = state["surface_next_generation"]
+    return bool(
+        state["error"] == 0 and state["lifecycle"] == 2
+        and state["actor_render_valid"] == 1 and state["actor_render_visible"] == 1
+        and state["actor_render_generation"] != 0 and not state["actor_render_retry"]
+        and not state["composition_active"] and generation != 0
+        and generation == state["backend_pending_generation"] == state["backend_committed_generation"]
+        and state["backend_pending_generation_hi"] == state["backend_committed_generation_hi"] == 0
+        and state["mode3_state"] == 1 and state["mode3_surface_locked"] == 0
+        and state["mode3_pending_count"] == state["mode3_inflight_count"] == 0
+        and state["event_count"] == 0 and not state["surface_packets_pending"]
+        and state["surface_pending_visual"] == 0
+        and state["room"] == state["surface_room"] == state["surface_presented_room"]
+        and (expected_room is None or state["room"] == expected_room)
+        and (expected_x is None or state["actor_position_source_room"][0] == expected_x)
+        and (expected_y is None or state["actor_position_source_room"][1] == expected_y)
+        and (expected_frame is None or state["actor_render_pose_frame"] == expected_frame)
+    )
+
+
+def capture_committed_surface(session, directory: Path, label: str, *,
+                              cursor_base: int, projection: dict | None = None,
+                              source_foot: tuple[int, int] | None = None,
+                              expected_room: int | None = None,
+                              expected_x: int | None = None,
+                              expected_y: int | None = None,
+                              expected_frame: int | None = None) -> dict:
+    """Capture a paused committed surface without consulting pending pose data.
+
+    Bounds are omitted. Optional source_foot must be supplied from independently
+    established committed elevation; it is never inferred from live actor state.
+    Without it, report pre-elevation position only, not an invented drawn foot.
+    """
+    require(bool(label) and Path(label).name == label and label not in ('.', '..'),
+            "capture label must be a single filename component")
+    state = read_committed_pose(session, cursor_base=cursor_base)
+    require(committed_pose_is_presented(state, expected_room=expected_room,
+                                       expected_x=expected_x, expected_y=expected_y,
+                                       expected_frame=expected_frame),
+            f"committed actor presentation fence is not satisfied: {state}")
+    pixels = session.read_memory("snesMemory", SURFACE, 256 * 224)
+    palette = session.read_memory("snesMemory", PALETTE, 768)
+    vram = session.read_memory("snesVideoRam", 0, 0x10000)
+    cgram = session.read_memory("snesCgRam", 0, 0x200)
+    require(tuple(map(len, (pixels, palette, vram, cgram))) == (57344, 768, 65536, 512),
+            "incomplete committed surface capture")
+    cursor = session.read_memory("snesMemory", cursor_base, 64)
+    require(len(cursor) == 64, "incomplete cursor capture")
+    screenshot = session.take_screenshot(format="base64").get("base64")
+    require(isinstance(screenshot, str) and bool(screenshot),
+            "Nexen returned no actual PPU screenshot")
+    screenshot_bytes = base64.b64decode(screenshot, validate=True)
+    ppu_state = session.get_ppu_state()
+    # No execution/advance is permitted between these observations.
+    after = read_committed_pose(session, cursor_base=cursor_base)
+    require(after == state, "committed key/fence changed during capture")
+    pose = dict(state, room_projection=projection,
+                accepted_frame=state["actor_render_pose_frame"],
+                accepted_step=state["actor_render_pose_step"],
+                accepted_direction=direction_index_for_facing(state["actor_render_facing"]))
+    pose["builtin_cursor"] = {
+        "valid": read_u16(cursor, 0), "logical_x": read_u16(cursor, 2),
+        "logical_y": read_u16(cursor, 4), "id": read_u16(cursor, 6),
+        "color": read_u16(cursor, 8), "visible": read_u16(cursor, 10),
+        "room_generation": read_u16(cursor, 12), "pending": read_u16(cursor, 14),
+        "composing": read_u16(cursor, 56),
+        "left": int.from_bytes(cursor[16:18], 'little', signed=True),
+        "top": int.from_bytes(cursor[18:20], 'little', signed=True),
+    }
+    if source_foot is not None:
+        require(len(source_foot) == 2 and all(type(v) is int and -32768 <= v <= 32767 for v in source_foot),
+                "source_foot must be two signed source-room coordinates")
+        require(source_foot[0] == state["actor_position_source_room"][0],
+                "source foot X differs from committed actor X")
+        pose.update(foot_screen=list(source_foot), foot_coordinate_space="source_room",
+                    foot_evidence="caller-provided committed foot; elevation not persisted natively")
+    ppu_pixels = decode_bundle_indexed(SnesIndexedSurfaceBundle(
+        vram[:0xE000], vram[0xE000:0xE800], cgram))
+    expected_cgram = encode_cgram(tuple(tuple(palette[i:i+3]) for i in range(0, 768, 3)))
+    record = {
+        "label": label, "pose": pose,
+        "presentation_fence": "committed-render-key-paused-state",
+        "indexed_surface_sha256": hashlib.sha256(pixels).hexdigest(),
+        "ppu_indexed_differences": sum(a != b for a,b in zip(ppu_pixels, pixels)),
+        "cgram_difference_bytes": sum(a != b for a,b in zip(cgram, expected_cgram)),
+    }
+    directory.mkdir(parents=True, exist_ok=True)
+    for suffix, data in (("indexed.bin", pixels), ("palette-rgb.bin", palette),
+                         ("vram.bin", vram), ("cgram.bin", cgram)):
+        (directory / f"{label}.{suffix}").write_bytes(data)
+    rgb = b"".join(palette[index*3:index*3+3] for index in pixels)
+    (directory / f"{label}.surface.ppm").write_bytes(b"P6\n256 224\n255\n" + rgb)
+    (directory / f"{label}.ppu.png").write_bytes(screenshot_bytes)
+    (directory / f"{label}.ppu-state.json").write_text(
+        json.dumps(ppu_state, indent=2, sort_keys=True) + "\n")
+    (directory / f"{label}.committed.json").write_text(json.dumps(record, indent=2) + "\n")
+    return record
+
+
+def indexed_text_request_is_composed(text: bytes, raw: bytes, pose: dict,
+                                     expected: bytes, *, after_generation: int) -> bool:
+    """Reject pending/new raw text paired with a previous surface generation.
+
+    This is an association gate, not pixel evidence. The caller still compares
+    the retained surface and actual PPU against an independent font oracle.
+    after_generation is captured before the requested content was published.
+    """
+    if len(text) < 0x6C:
+        return False
+    word = lambda offset: int.from_bytes(text[offset:offset+2], 'little')
+    phase, generation, committed = word(0), word(2), word(4)
+    delta = (generation - after_generation) & 0xFFFF
+    if phase not in (0, 1) or not 0 < delta < 0x8000 or not word(0x68):
+        return False
+    if word(0x64) != pose['room'] or word(0x66) != pose['surface_room_generation']:
+        return False
+    pending = pose['backend_pending_generation']
+    if phase == 1 and generation != pending:
+        return False
+    if phase == 0 and (committed != generation or (pending-generation)&0xFFFF >= 0x8000):
+        return False
+    length = word(0x24)
+    return length == len(expected) and len(raw) >= length and raw[:length] == expected
+
+
+def snapshot_locked_generation(session, *, cursor_base: int) -> dict:
+    """Retain the immutable input of one accepted PRESENT, without advancing.
+
+    Animated producers can queue the next frame immediately after completion.
+    Such scenes need not have a globally idle observation frame. This snapshot
+    is evidence of queued pixels only until its exact generation is committed.
+    """
+    require(session.get_state()['isPaused'], 'surface snapshot requires pause')
+    state = read_committed_pose(session, cursor_base=cursor_base)
+    require(state['error'] == 0 and state['lifecycle'] == 2
+            and state['mode3_surface_locked'] == 1
+            and state['mode3_state'] in (2, 3, 4)
+            and state['backend_pending_generation'] == state['surface_next_generation'] > 0
+            and state['backend_pending_generation_hi'] == 0
+            and not state['composition_active'] and not state['actor_render_retry']
+            and not state['event_count'] and not state['surface_packets_pending'],
+            'surface is not a complete immutable queued generation')
+    result = {'state': state, 'frame': session.get_state()['frameCount']}
+    for key, address, size in (('indexed', SURFACE, 57344), ('palette', PALETTE, 768),
+                               ('cursor', cursor_base, 64)):
+        result[key] = session.read_memory('snesMemory', address, size)
+        require(len(result[key]) == size, 'incomplete queued surface read')
+    require(read_committed_pose(session, cursor_base=cursor_base) == state,
+            'surface generation changed during paused snapshot')
+    return result
+
+
+def queued_generation_is_presented(snapshot: dict, current: dict) -> bool:
+    """Require exact commit and exclude any subsequent DMA to VRAM/CGRAM."""
+    old = snapshot['state']
+    generation = old['backend_pending_generation']
+    if not (generation > 0 and old['mode3_surface_locked'] == 1
+            and old['mode3_state'] in (2, 3, 4)
+            and current['error'] == 0 and current['lifecycle'] == 2
+            and current['room'] == old['room']
+            and current['surface_room_generation'] == old['surface_room_generation']
+            and current['backend_committed_generation'] == generation
+            and current['backend_committed_generation_hi'] == 0
+            and current['backend_pending_generation_hi'] == 0
+            and current['mode3_inflight_count'] == 0):
+        return False
+    if current['backend_pending_generation'] == generation:
+        return current['mode3_state'] == 1 and current['mode3_surface_locked'] == 0
+    # CONVERTING precedes QueueBatch: a newer surface can change CPU shadow
+    # buffers, but cannot yet have submitted DMA to the actual PPU memories.
+    return (current['backend_pending_generation'] > generation
+            and current['mode3_state'] == 2 and current['mode3_surface_locked'] == 1)
+
+
+def capture_presented_generation(session, snapshot: dict, directory: Path,
+                                 label: str, *, cursor_base: int) -> dict:
+    """Compare a retained locked INDEX8 image to its actual committed PPU."""
+    require(label and Path(label).name == label and label not in ('.', '..'),
+            'capture label must be a filename component')
+    require(session.get_state()['isPaused'], 'presentation capture requires pause')
+    state = read_committed_pose(session, cursor_base=cursor_base)
+    require(queued_generation_is_presented(snapshot, state),
+            'queued generation is not exclusively resident in the PPU')
+    vram = session.read_memory('snesVideoRam', 0, 65536)
+    cgram = session.read_memory('snesCgRam', 0, 512)
+    require(len(vram) == 65536 and len(cgram) == 512, 'incomplete PPU capture')
+    screenshot = base64.b64decode(session.take_screenshot(format='base64')['base64'], validate=True)
+    require(bool(screenshot), 'Nexen returned no actual PPU screenshot')
+    require(read_committed_pose(session, cursor_base=cursor_base) == state,
+            'presentation generation changed during paused capture')
+    pixels, palette = snapshot['indexed'], snapshot['palette']
+    ppu = decode_bundle_indexed(SnesIndexedSurfaceBundle(vram[:0xE000], vram[0xE000:0xE800], cgram))
+    colors = encode_cgram(tuple(tuple(palette[i:i+3]) for i in range(0,768,3)))
+    record = dict(label=label, queued_pose=snapshot['state'], presented_state=state,
+                  queued_frame=snapshot['frame'], presented_frame=session.get_state()['frameCount'],
+                  presentation_fence='immutable-queued-surface-exact-commit-before-next-DMA',
+                  indexed_surface_sha256=hashlib.sha256(pixels).hexdigest(),
+                  ppu_indexed_differences=sum(a != b for a,b in zip(pixels, ppu)),
+                  cgram_difference_bytes=sum(a != b for a,b in zip(colors, cgram)))
+    directory.mkdir(parents=True, exist_ok=True)
+    for suffix, data in (('indexed.bin', pixels), ('palette-rgb.bin', palette),
+                         ('cursor.bin', snapshot['cursor']), ('vram.bin', vram),
+                         ('cgram.bin', cgram), ('ppu.png', screenshot)):
+        (directory/f'{label}.{suffix}').write_bytes(data)
+    (directory/f'{label}.presented.json').write_text(json.dumps(record, indent=2)+'\n')
+    return record
 
 
 def eq_symbol(source: str, name: str) -> int:
@@ -210,6 +483,32 @@ def validate_animation_constants(listing: str, actor: int) -> None:
                           listing, re.MULTILINE)
         require(found is not None and int(found.group(1), 16) == expected,
                 f"assembled {name} differs from diagnostic actor {actor}")
+
+
+def validate_projection_rom_operands(rom: bytes, listing: str, projection_bank: int) -> None:
+    """Pinned Poppy must retain the bank on every geometry header read.
+
+    Label+constant long operands can lose their ROM bank in this compiler.
+    The controller uses four indexed plain-label loads instead. Check their
+    actual bytes, not only assembly source or successful process exit.
+    """
+    def address(label: str) -> int:
+        found = re.search(rf"^;\s*{re.escape(label)}\s*=\s*\$([0-9a-fA-F]+)\s+\(Label\)",
+                          listing, re.MULTILINE)
+        require(found is not None, f"projection operand audit lacks {label}")
+        return int(found.group(1), 16)
+    require(type(projection_bank) is int and 0 <= projection_bank < 0x40,
+            "projection operand audit requires low mapped LoROM bank")
+    start = address("ScummV5_ActorPose_Compose__header_in_range")
+    end = address("ScummV5_ActorPose_Compose__geometry_check_10")
+    data = address("ScummV5_MsuVisualProjectionData")
+    require(0x8000 <= start < end <= 0xFFFF and 0x8000 <= data <= 0xFFFF,
+            "projection operand audit has invalid bank-local addresses")
+    # The established controller personality is linked in bank 9.
+    code = rom[9 * 0x8000 + start - 0x8000:9 * 0x8000 + end - 0x8000]
+    expected = bytes((0xBF, data & 255, data >> 8, projection_bank))
+    require(code.count(expected) == 4,
+            "assembled projection header reads lost their ROM bank or differ from the four-load ABI")
 
 
 def validate_build(args: argparse.Namespace) -> tuple[dict, dict, dict, bytes]:
@@ -251,10 +550,9 @@ def validate_build(args: argparse.Namespace) -> tuple[dict, dict, dict, bytes]:
     else:
         from actor_probe_program import ProbeConfig, build_probe
     probe_config = ProbeConfig(**audit["program"]["config"])
-    require((probe_config.room, probe_config.costume, probe_config.actor,
-             probe_config.boot_script, probe_config.stand_frame,
-             probe_config.animate_frame) == (4, 2, 1, 1, 3, 2),
-            "unsupported diagnostic scene or actor; only positions may vary")
+    probe_config.validate()
+    require((probe_config.room, probe_config.actor, probe_config.boot_script) == (4, 1, 1),
+            "unsupported diagnostic scene or actor")
     validate_animation_constants(args.listing.read_text(), probe_config.actor)
     _, expected_probe = build_probe(probe_config)
     require(audit["program"] == expected_probe,
@@ -304,6 +602,9 @@ def validate_build(args: argparse.Namespace) -> tuple[dict, dict, dict, bytes]:
     require(len(matches) == 1 and int(matches[0]["program_unit_id"]) == 0,
             "ROM-bound full directory does not resolve boot script 1 to canonical ID 0")
     storage = json.loads(args.storage.read_text())
+    if "ScummV5_ActorPose_ProjectSpan_Far" in args.listing.read_text():
+        validate_projection_rom_operands(args.rom.read_bytes(), args.listing.read_text(),
+                                         storage["projection_directory_bank"])
     require(storage.get("package_sha256") == package_hash,
             "package does not match the compiler storage directory")
     visual = [row for row in storage.get("visual_records", [])
@@ -341,7 +642,7 @@ def read_surface_packets_pending(session) -> bool:
     return False
 
 
-def actor_bounds_on_surface(raw: bytes) -> tuple[int, int, int, int]:
+def actor_bounds_on_surface(raw: bytes, projection: dict | None = None) -> tuple[int, int, int, int]:
     """Project the checked pose's signed half-open bounds around its foot.
 
     The old POSE_RENDER_BOUNDS_VALID bytes are reserved and have no runtime
@@ -359,6 +660,19 @@ def actor_bounds_on_surface(raw: bytes) -> tuple[int, int, int, int]:
     require(left <= right and top <= bottom,
             f"invalid signed costume bounds: {(left, top, right, bottom)}")
     foot_x, foot_y = signed_word(0x6C), signed_word(0x6E)
+    if projection is not None:
+        sw, sh = int(projection["source_width"]), int(projection["source_height"])
+        cw, ch = int(projection["content_width"]), int(projection["content_height"])
+        ox, oy = int(projection["offset_x"]), int(projection["offset_y"])
+        require(0 < sw <= 65535 and 0 < sh <= 65535
+                and 0 < cw <= 256 and 0 < ch <= 224
+                and 0 <= ox <= 256 - cw and 0 <= oy <= 224 - ch,
+                "invalid compiled actor projection geometry")
+        xs = [ox + x for x in range(cw)
+              if foot_x + left <= (2 * x + 1) * sw // (2 * cw) < foot_x + right]
+        ys = [oy + y for y in range(ch)
+              if foot_y + top <= (2 * y + 1) * sh // (2 * ch) < foot_y + bottom]
+        return (min(xs), min(ys), max(xs) + 1, max(ys) + 1) if xs and ys else (0, 0, 0, 0)
     bounds = (max(0, foot_x + left), max(0, foot_y + top),
               min(256, foot_x + right), min(224, foot_y + bottom))
     require(bounds[0] <= bounds[2] and bounds[1] <= bounds[3],
@@ -367,7 +681,8 @@ def actor_bounds_on_surface(raw: bytes) -> tuple[int, int, int, int]:
 
 
 def capture_surface(session, directory: Path, label: str,
-                    backdrop: bytes) -> dict:
+                    backdrop: bytes, *, projection: dict | None = None,
+                    cursor_base: int | None = None) -> dict:
     pixels = session.read_memory("snesMemory", SURFACE, 256 * 224)
     palette = session.read_memory("snesMemory", PALETTE, 768)
     require(len(pixels) == len(backdrop), "incomplete indexed surface read")
@@ -403,7 +718,7 @@ def capture_surface(session, directory: Path, label: str,
         bounds = None
     state = session.read_memory("snesMemory", ACTOR_STATE, 128)
     pose = decode_pose_observation(state)
-    actor_bounds = actor_bounds_on_surface(state)
+    actor_bounds = actor_bounds_on_surface(state, projection)
     require(actor_bounds[0] < actor_bounds[2]
             and actor_bounds[1] < actor_bounds[3],
             f"the diagnostic pose has no visible clipped bounds: {actor_bounds}")
@@ -453,7 +768,20 @@ def capture_surface(session, directory: Path, label: str,
             for offset in (0x4B, 0x4D, 0x4F, 0x51)],
         "actor_bounds_screen_from_pose": list(actor_bounds),
         "foot_screen": [read_u16(state, 0x6C), read_u16(state, 0x6E)],
+        "foot_coordinate_space": "source_room" if projection is not None else "surface",
+        "room_projection": projection,
     }
+    if cursor_base is not None:
+        cursor = session.read_memory("snesMemory", cursor_base, 64)
+        present["builtin_cursor"] = {
+            "valid": read_u16(cursor, 0), "logical_x": read_u16(cursor, 2),
+            "logical_y": read_u16(cursor, 4), "id": read_u16(cursor, 6),
+            "color": read_u16(cursor, 8), "visible": read_u16(cursor, 10),
+            "room_generation": read_u16(cursor, 12), "pending": read_u16(cursor, 14),
+            "composing": read_u16(cursor, 56),
+            "left": int.from_bytes(cursor[16:18], 'little', signed=True),
+            "top": int.from_bytes(cursor[18:20], 'little', signed=True),
+        }
     actual_visible_pixels = sum(1 for i in changed
                                 if actor_bounds[0] <= i % 256 < actor_bounds[2]
                                 and actor_bounds[1] <= i // 256 < actor_bounds[3])
@@ -471,10 +799,19 @@ def capture_surface(session, directory: Path, label: str,
 
 
 class ProbeObserver:
-    def __init__(self, session, output: Path, backdrop: bytes, *, deadline: float):
+    def __init__(self, session, output: Path, backdrop: bytes, *, deadline: float,
+                 projection: dict | None = None, cursor_base: int | None = None,
+                 evidence_kind: str = "SYNTHETIC_GRAPHICS_DIAGNOSTIC",
+                 frame_step: int = POLL_FRAMES):
         self.session = session
         self.output = output
         self.backdrop = backdrop
+        self.projection = projection
+        self.cursor_base = cursor_base
+        self.evidence_kind = evidence_kind
+        if not 1 <= frame_step <= POLL_FRAMES:
+            raise ValueError("observer frame_step must be 1..30")
+        self.frame_step = frame_step
         self.deadline = deadline
         self.logical_frames = 0
         self.last_state = {}
@@ -489,6 +826,15 @@ class ProbeObserver:
         numbers = self.session.read_memory("snesMemory", C4_NUMBER, 25)
         selectors = self.session.read_memory("snesMemory", C4_PROGRAM, 25)
         resident = self.session.read_memory("snesMemory", RESIDENT_IDS, 178 * 2)
+        saved_pcs = self.session.read_memory("snesMemory", 0x7E23E4, 50)
+        active_slots = []
+        for i, (status, number, selector) in enumerate(zip(statuses, numbers, selectors)):
+            if not status:
+                continue
+            index = selector_index(selector)
+            active_slots.append(dict(slot=i, status=status, script_number=number,
+                                     selector=selector, saved_pc=read_u16(saved_pcs, i*2),
+                                     program_unit_id=read_u16(resident, index*2)))
         activation = None
         for slot, (status, number, selector) in enumerate(zip(statuses, numbers, selectors)):
             if not status or number != 1:
@@ -516,7 +862,9 @@ class ProbeObserver:
         actor_pose = self.session.read_memory("snesMemory", ACTOR_STATE, 0x80)
         pose_fields = decode_pose_observation(actor_pose)
         provider = self.session.read_memory("snesMemory", 0x7E2F00, 0x80)
+        backend = self.session.read_memory("snesMemory", MODE3_BACKEND, 0x40)
         state = {
+            **decode_backend_progress(backend),
             "logical_frame": self.logical_frames,
             "room": room,
             "error": error,
@@ -560,6 +908,7 @@ class ProbeObserver:
             "mode3_inflight_count": self.session.read_u16(MODE3_INFLIGHT_COUNT),
             "event_count": self.session.read_u16(EVENT_COUNT),
             "surface_packets_pending": read_surface_packets_pending(self.session),
+            "composition_active": self.session.read_u16(self.cursor_base + 56) if self.cursor_base is not None else 0,
             "actor_witness_generation": self.session.read_u16(0x7E5E68),
             "actor_witness_valid": self.session.read_u8(0x7E5E6A),
             "scumm_pc": self.session.read_u16(0x7E2300),
@@ -567,6 +916,10 @@ class ProbeObserver:
             "program_select": self.session.read_u8(0x7E2362),
             "c4_current_slot": self.session.read_u8(0x7E2A88),
             "c4_active_count": self.session.read_u8(0x7E2A8A),
+            "active_slots": active_slots,
+            "c19_depth": self.session.read_u8(0x7FD348),
+            "c19_overrides": self.session.read_memory("snesMemory", 0x7FD354, 15).hex(),
+            "talk_active": self.session.read_u8(0x7E7A20),
             "c4_statuses": list(statuses),
             "c4_numbers": list(numbers),
             "c4_selectors": list(selectors),
@@ -601,8 +954,21 @@ class ProbeObserver:
         if self.logical_frames + count > MAX_LOGICAL_FRAMES:
             count = MAX_LOGICAL_FRAMES - self.logical_frames
         require(count > 0, f"logical-frame budget exhausted; last={self.last_state}")
-        self.session.run_frames(count)
-        self.logical_frames += count
+        from fate_replay import advance_bounded
+        try:
+            remaining = count
+            while remaining:
+                if time.monotonic() >= self.deadline:
+                    raise TimeoutError("observer wall-clock deadline")
+                actual = advance_bounded(self.session, min(remaining, self.frame_step))
+                self.logical_frames += actual["frames_advanced"]
+                remaining -= actual["frames_advanced"]
+        except Exception:
+            # Preserve the observed boundary; never turn partial progress into
+            # the requested frame count or automatically retry a failed call.
+            self.last_state = self.read_scene()
+            self._persist_progress_sample(self.last_state)
+            raise
         state = self.read_scene()
         self._persist_progress_sample(state)
         return state
@@ -612,6 +978,11 @@ class ProbeObserver:
         provider = state["provider_bytes"]
         sample = {
             "logical_frame": state["logical_frame"],
+            "active_slots": state.get("active_slots", []),
+            "c19_depth": state.get("c19_depth"),
+            "c19_overrides": state.get("c19_overrides"),
+            "talk_active": state.get("talk_active"),
+            "composition_active": state.get("composition_active"),
             "room": state["room"],
             "error": state["error"],
             "lifecycle": state["lifecycle"],
@@ -644,10 +1015,21 @@ class ProbeObserver:
             "actor_render_pose_step": pose[0x16],
             "actor_render_generation": read_u16(pose, 0x7D),
         }
+        for key in (
+            "backend_pending_generation", "backend_committed_generation",
+            "backend_pending_generation_hi", "backend_committed_generation_hi",
+            "mode3_state", "mode3_surface_locked", "mode3_last_status",
+            "mode3_pending_count", "mode3_inflight_count", "mode3_candidate_count",
+            "mode3_scan_tile", "mode3_scan_palette", "mode3_converted_count",
+            "mode3_unchanged_count", "mode3_rejected_present", "mode3_rejected_dirty",
+            "mode3_rejected_palette", "event_count", "surface_packets_pending",
+            "surface_pending_visual", "surface_presented_room",
+        ):
+            sample[key] = state[key]
         self.progress.append(sample)
         path = self.output / "actor-progress.json"
         temp = path.with_suffix(".json.tmp")
-        temp.write_text(json.dumps({"kind": "SYNTHETIC_GRAPHICS_DIAGNOSTIC",
+        temp.write_text(json.dumps({"kind": self.evidence_kind,
                                     "samples": self.progress}, indent=2) + "\n")
         temp.replace(path)
 
@@ -742,12 +1124,52 @@ class ProbeObserver:
         (self.output / "first-error-boundary.json").write_text(
             json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
 
+    def wait_committed_pose(self, *, max_frames: int = 1800,
+                            expected_room: int | None = None,
+                            expected_x: int | None = None,
+                            expected_y: int | None = None,
+                            expected_frame: int | None = None) -> dict:
+        """Wait for the committed actor, independently of the next pose request."""
+        require(type(max_frames) is int and max_frames >= 0, "invalid committed wait budget")
+        end = self.logical_frames + max_frames
+        while True:
+            state = read_committed_pose(self.session, cursor_base=self.cursor_base)
+            require(state["error"] == 0, f"SCUMM error before committed presentation: {state}")
+            if committed_pose_is_presented(state, expected_room=expected_room,
+                                            expected_x=expected_x, expected_y=expected_y,
+                                            expected_frame=expected_frame):
+                return dict(state, logical_frame=self.logical_frames)
+            if self.logical_frames >= end:
+                break
+            # Continuous animation may expose only a single committed boundary.
+            self.advance(1)
+        self.capture_timeout_boundary()
+        raise TimeoutError(f"no committed actor presentation: {state}")
+
+    def capture_committed_stage(self, label: str, *, max_frames: int = 1800,
+                                expected_room: int | None = None,
+                                expected_x: int | None = None,
+                                expected_y: int | None = None,
+                                expected_frame: int | None = None,
+                                source_foot: tuple[int, int] | None = None) -> dict:
+        state = self.wait_committed_pose(max_frames=max_frames, expected_room=expected_room,
+                                         expected_x=expected_x, expected_y=expected_y,
+                                         expected_frame=expected_frame)
+        record = capture_committed_surface(
+            self.session, self.output, label, cursor_base=self.cursor_base,
+            projection=self.projection, source_foot=source_foot,
+            expected_room=expected_room, expected_x=expected_x, expected_y=expected_y,
+            expected_frame=expected_frame)
+        record["vm"] = state
+        self.captures.append(record)
+        return record
+
     def wait_presented_pose(self, *, max_frames: int = 1800,
                             expected_frame: int | None = None,
                             expected_facing: int | None = None,
                             expected_x: int | None = None) -> dict:
         end = self.logical_frames + max_frames
-        while self.logical_frames < end:
+        while True:
             state = self.read_scene()
             require(state["error"] == 0, f"SCUMM error before pose presentation: {state}")
             next_generation = state["surface_next_generation"]
@@ -770,59 +1192,25 @@ class ProbeObserver:
                 presented_room=state["surface_presented_room"],
                 room=state["room"],
                 surface_packets_pending=state["surface_packets_pending"],
+                composition_active=state.get("composition_active", 0),
                 expected_frame=expected_frame,
                 expected_facing=expected_facing,
                 expected_x=expected_x,
             )
             if state["room"] == 4 and state["lifecycle"] == 2 and is_ready:
-                # Require the same committed generation and render key across
-                # one completed logical frame before taking indexed/PPU output.
-                stable_key = (
-                    next_generation, state["actor_render_generation"],
-                    state["actor_render_pose_frame"],
-                    state["actor_render_pose_step"], state["actor_render_facing"],
-                    read_u16(pose, 0x6C), read_u16(pose, 0x6E),
-                )
-                state = self.advance(1)
-                pose = self.session.read_memory("snesMemory", ACTOR_STATE, 128)
-                stable = pose_is_presented(
-                    pose,
-                    render_valid=state["actor_render_valid"],
-                    render_frame=state["actor_render_pose_frame"],
-                    render_step=state["actor_render_pose_step"],
-                    render_generation=state["actor_render_generation"],
-                    render_facing=state["actor_render_facing"],
-                    next_generation=state["surface_next_generation"],
-                    backend_pending_generation=state["backend_pending_generation"],
-                    backend_committed_generation=state["backend_committed_generation"],
-                    backend_pending_generation_hi=state["backend_pending_generation_hi"],
-                    backend_committed_generation_hi=state["backend_committed_generation_hi"],
-                    backend_state=state["mode3_state"],
-                    surface_locked=state["mode3_surface_locked"],
-                    pending_visual=state["surface_pending_visual"],
-                    presented_room=state["surface_presented_room"],
-                    room=state["room"],
-                    surface_packets_pending=state["surface_packets_pending"],
-                    expected_frame=expected_frame,
-                    expected_facing=expected_facing,
-                    expected_x=expected_x,
-                )
-                current_key = (
-                    state["surface_next_generation"], state["actor_render_generation"],
-                    state["actor_render_pose_frame"], state["actor_render_pose_step"],
-                    state["actor_render_facing"], read_u16(pose, 0x6C),
-                    read_u16(pose, 0x6E),
-                )
-                if not stable or current_key != stable_key:
-                    continue
+                # The paused state already satisfies the production commit fence.
+                # Advancing here can start a new composition and discard this one.
                 state["pose_generation"] = read_u16(pose, 7)
                 state.update(decode_pose_observation(pose))
                 state["direction"] = pose[4]
                 state["room_epoch"] = read_u16(pose, 0x29)
                 state["pose_validation_generation"] = read_u16(pose, 0x2B)
                 state["render_bounds_valid_reserved"] = pose[0x63]
-                state["presentation_fence"] = "mode3-committed-stable-one-frame"
+                state["presentation_fence"] = "mode3-committed-paused-state"
                 return state
+            # Inspect the exact terminal boundary before declaring a timeout.
+            if self.logical_frames >= end:
+                break
             self.advance(min(10, end - self.logical_frames))
         self.capture_timeout_boundary()
         raise TimeoutError(f"no composed actor pose reached the PPU: {self.last_state}")
@@ -833,7 +1221,8 @@ class ProbeObserver:
         state = self.wait_presented_pose(expected_frame=expected_frame,
                                          expected_facing=expected_facing,
                                          expected_x=expected_x)
-        record = capture_surface(self.session, self.output, label, self.backdrop)
+        record = capture_surface(self.session, self.output, label, self.backdrop,
+                                 projection=self.projection, cursor_base=self.cursor_base)
         record["vm"] = state
         require(record["pose"]["actor_composed"] == 1
                 and record["pose"]["actor_pose_state"] in (0, 2)
@@ -1465,8 +1854,17 @@ def main() -> int:
                 })
                 return 0 if events else 2
             session.set_input(0, 1)
+            projection = (source_records["visual"].get("projection")
+                          if "ScummV5_ActorPose_ProjectSpan_Far" in args.listing.read_text()
+                          else None)
+            cursor_base = None
+            if "ScummV5_Cursor_Draw_Far" in args.listing.read_text():
+                carrier = (args.build_source / "runtime/snes/generated/carrier_constants.inc.pasm").read_text()
+                cursor_base = eq_symbol(carrier, "SAME_SCUMM_CURSOR_PRESENTATION_BASE")
+                require(cursor_base == 0x400740, "unexpected cursor owner in matching assembly")
             observer = ProbeObserver(session, args.output, backdrop,
-                                     deadline=started + INTERNAL_DEADLINE_SECONDS)
+                                     deadline=started + INTERNAL_DEADLINE_SECONDS,
+                                     projection=projection, cursor_base=cursor_base)
             if args.room_commit_trace_probe:
                 trace = None
                 while observer.logical_frames < 2400:
@@ -1621,12 +2019,12 @@ def main() -> int:
                 })
                 return 0 if hit else 2
             stage1 = observer.wait_stage(1, max_frames=6000)
-            record1 = observer.capture_stage("01-standing", expected_frame=3,
+            record1 = observer.capture_stage("01-standing", expected_frame=audit["program"]["config"]["stand_frame"],
                                              expected_facing=180)
             observer.acknowledge(1)
 
             stage2 = observer.wait_stage(2, max_frames=1800)
-            record2 = observer.capture_stage("02-turned", expected_frame=3,
+            record2 = observer.capture_stage("02-turned", expected_frame=audit["program"]["config"]["stand_frame"],
                                              expected_facing=90)
             require(record2["pose"]["accepted_direction"]
                     != record1["pose"]["accepted_direction"],
@@ -1634,7 +2032,7 @@ def main() -> int:
             observer.acknowledge(2)
 
             observer.wait_stage(3, max_frames=1800)
-            anim1 = observer.capture_stage("03-animation-step-a", expected_frame=2)
+            anim1 = observer.capture_stage("03-animation-step-a", expected_frame=audit["program"]["config"]["animate_frame"])
             source_identity = {
                 **anim1["pose"],
                 "rom_sha256": final["rom_sha256"],
@@ -1646,7 +2044,7 @@ def main() -> int:
             while observer.logical_frames < end:
                 observer.advance(POLL_FRAMES)
                 state = observer.wait_presented_pose(max_frames=600,
-                                                     expected_frame=2)
+                                                     expected_frame=audit["program"]["config"]["animate_frame"])
                 key = (state["accepted_frame"], state["accepted_step"])
                 current_identity = {
                     **state,
@@ -1663,7 +2061,7 @@ def main() -> int:
             observer.acknowledge(3)
 
             observer.wait_stage(4, max_frames=1800)
-            moved = observer.capture_stage("04-moved-restored", expected_frame=3,
+            moved = observer.capture_stage("04-moved-restored", expected_frame=audit["program"]["config"]["stand_frame"],
                                            expected_facing=90)
             require(moved["pose"]["foot_screen"][0]
                     != record1["pose"]["foot_screen"][0],

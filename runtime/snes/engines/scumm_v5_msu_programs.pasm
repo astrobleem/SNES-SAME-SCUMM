@@ -210,6 +210,8 @@ ScummV5_MsuProgram_Reset_Far__pending:
     lda #$00
     sta.l SCUMM_LIVE_ROOM_VALID
     sta.l SCUMM_LIVE_ROOM_ACTIVE_VISUAL_VALID
+    sta.l SAME_SCUMM_ROOM_PALETTE_STATE
+    sta.l SAME_SCUMM_ROOM_PALETTE_STATE+$01
     sta.l SCUMM_LIVE_ROOM_OLD_BUNDLE_RELEASED
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$20
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1F
@@ -1586,6 +1588,17 @@ ScummV5_MsuProgram_EnsureSelected_Far__find_slot:
     ; a transfer is in flight, even when another activation is also waiting.
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; READ_OK is still owned by the actor until its checked chunk has been
+    ; consumed. A code miss must not replace that request's identity. Cached
+    ; code hits remain executable; this guard applies only to a new transfer.
+    lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR
+    bne ScummV5_MsuProgram_EnsureSelected_Far__actor_released
+    jmp ScummV5_MsuProgram_EnsureSelected_Far__pending
+ScummV5_MsuProgram_EnsureSelected_Far__actor_released:
+    .a8
+    .endif
     lda.l SAME_MSU1_STATUS
     cmp #SAME_MSU1_STATE_READING
     bne ScummV5_MsuProgram_EnsureSelected_Far__read_idle
