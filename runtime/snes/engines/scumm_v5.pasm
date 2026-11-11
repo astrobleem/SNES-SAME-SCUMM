@@ -5946,10 +5946,9 @@ ScummV5_Op_ResourceRoutines__invalid:
     jsr ScummV5_SetError
     jmp ScummV5_Op__error
 
-; v5 wait sub-op family.  The authored transition uses forCamera ($03).
-; Camera completion is owned by the presentation service, so consuming the
-; sub-op and yielding preserves the scheduler boundary without inventing a
-; second camera state machine in the SCUMM core.
+; v5 wait sub-op family. A pending condition rewinds the complete
+; instruction before yielding. Camera waits compare source eight-pixel
+; strips, independently of the asynchronous target presentation generation.
 ScummV5_Op_Wait:
     jsr ScummV5_FetchByte
     bcc ScummV5_Op_Wait__operand_ok
@@ -5997,7 +5996,10 @@ ScummV5_Op_Wait__actor_test:
     sep #$20
     .a8
     lda.l SAME_SCUMM_C31_MOVING,x
-    beq ScummV5_Op_Wait__done
+    bne ScummV5_Op_Wait__actor_waiting
+    jmp ScummV5_Op_Wait__done
+ScummV5_Op_Wait__actor_waiting:
+    .a8
     rep #$20
     .a16
     lda.l SAME_SCUMM_C17_SUBOP
@@ -6032,21 +6034,37 @@ ScummV5_Op_Wait__yield:
     sta.l SAME_SCUMM_STATUS
     jmp ScummV5_Engine_Frame__complete_success
 ScummV5_Op_Wait__message:
-    ; Headless mode removes only presentation ownership.  Logical message
-    ; lifetime remains owned by the talk service, so the authored wait must
-    ; observe the same active/complete state as production.
-    lda.l SAME_SCUMM_TALK_ACTIVE
-    bne ScummV5_Op_Wait__yield_simple
-    bra ScummV5_Op_Wait__done
-ScummV5_Op_Wait__camera:
-    ; Camera destination convergence is represented by the generic camera
-    ; service; its wait is a scheduler yield until the next presentation pass.
-ScummV5_Op_Wait__yield_simple:
+    ; Logical message lifetime is independent of visible/headless rendering.
     sep #$20
     .a8
-    lda #SCUMM_VM_YIELDED
-    sta.l SAME_SCUMM_STATUS
-    jmp ScummV5_Engine_Frame__complete_success
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    bne ScummV5_Op_Wait__rewind_simple
+    jmp ScummV5_Op_Wait__done
+ScummV5_Op_Wait__camera:
+    rep #$20
+    .a16
+    ; Camera service clamps both coordinates to the nonnegative room range.
+    lda.l SAME_SCUMM_CAMERA_CURRENT_X
+    and #$FFF8
+    pha
+    lda.l SAME_SCUMM_CAMERA_DEST_X
+    and #$FFF8
+    cmp 1,s
+    beq ScummV5_Op_Wait__camera_arrived
+    pla
+    bra ScummV5_Op_Wait__rewind_simple
+ScummV5_Op_Wait__camera_arrived:
+    .a16
+    pla
+    jmp ScummV5_Op_Wait__done
+ScummV5_Op_Wait__rewind_simple:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sec
+    sbc #$0002 ; AE + subcommand; resume must recheck the predicate
+    sta.l SAME_SCUMM_PC
+    jmp ScummV5_Op_Wait__yield
 ScummV5_Op_Wait__done:
     jmp ScummV5_Engine_Frame__next
 

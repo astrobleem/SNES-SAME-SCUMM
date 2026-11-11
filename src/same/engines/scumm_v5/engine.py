@@ -715,6 +715,8 @@ class ScummV5Engine(Engine):
             self._handlers[opcode] = self._op_get_verb_entrypoint
         for opcode in (0x10, 0x90):
             self._handlers[opcode] = self._op_get_object_owner
+        for opcode in (0x31, 0xB1):
+            self._handlers[opcode] = self._op_get_inventory_count
         for opcode in (0x3D, 0x7D, 0xBD, 0xFD):
             self._handlers[opcode] = self._op_find_inventory
         for opcode in (0x34, 0x74, 0xB4, 0xF4):
@@ -1996,11 +1998,19 @@ class ScummV5Engine(Engine):
                 slot.yielded = True
                 return True
             return False
-        if operation != 2:
+        if operation == 3:
+            # v5 waits for horizontal eight-pixel camera strips, not for a
+            # platform's asynchronous presentation queue. C++ division in the
+            # source VM truncates toward zero (including negative test states).
+            waiting = (int(self.state.camera_x / 8)
+                       != int(self.state.camera_destination_x / 8))
+        elif operation == 2:
+            waiting = bool(self.state.variables[_VAR_HAVE_MSG])
+        else:
             raise EngineExecutionError(
                 f"SCUMM wait sub-op {operation} is not implemented"
             )
-        if self.state.variables[_VAR_HAVE_MSG]:
+        if waiting:
             slot.pc = instruction
             slot.yielded = True
             return True
@@ -3481,6 +3491,15 @@ class ScummV5Engine(Engine):
                 f"SCUMM object {object_id} is outside owner table 0..{len(self._object_owners) - 1}"
             )
         self._write_var(slot, result, self._object_owners[object_id])
+        return False
+
+    def _op_get_inventory_count(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Count source-global object owners, including objects outside the room."""
+        del context
+        result = self._result_var(slot)
+        owner = self._var_or_direct_byte(slot, 0x80) & 0xFF
+        count = sum(value == owner for value in self._object_owners[:self._num_global_objects])
+        self._write_var(slot, result, count)
         return False
 
     def _op_find_inventory(self, slot: ScriptSlot, context: EngineContext) -> bool:

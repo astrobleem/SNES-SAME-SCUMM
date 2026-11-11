@@ -3975,3 +3975,26 @@ A changed-code walking measurement is in progress. Camera crop, complete
 verbs/inventory and persistent original-game interaction are NOT complete.
 Do not stop at this performance checkpoint or claim Milestone C acceptance.
 No full seven-action replay is authorized/needed for this work.
+
+## Milestone C controller integration — 2026-11-11 (NOT COMPLETE)
+
+Camera viewport source/PPU proof and the original two-line C17 verb menu are
+captured privately. Held cursor repeat now follows elapsed NMI frames with a
+bounded step. Host inventory-count dispatch and source-strip camera/message
+waits have focused tests. A real A8/X16 lifecycle child-index defect was fixed
+and published as 004e76c/0f88c64; CI run 43010704305 passed on 0f88c64.
+
+Current UI/wait integration is being checkpointed for review. It has not yet
+accepted the persistent newspaper action or scrolling camera. Original room
+10 local 210 owns a real palette fade and introductory dialogue; do not treat
+visible enabled verb records as proof that its cutscene has finished. The
+source introduction rendered at generation 44 with zero indexed/PPU errors.
+A captured A edge exposed missing forwarding from dialogue ownership to talk
+acknowledgement. That generic handoff now has instruction tests; current-ROM
+native validation is in progress with a private 600-second supervisor.
+
+Existing private evidence is preserved under
+`/home/chad/SAME-private-evidence/milestone-c-20261111/ui-integration`.
+The separate progression recovery worktree remains untouched. No seven-action
+route, no state injection, no whole-game readiness claim. Continue the actual
+Milestone C gates; a passing host suite or this checkpoint is not completion.

@@ -35,9 +35,13 @@ def execute_latch_block(source, memory, *, controller=True):
         elif line == 'inc':
             a = (a + 1) & ((1 << bits)-1)
         elif line.startswith('sta.l '):
-            assert bits == 8, 'readiness initialization must not overwrite its neighbor'
-            memory[line[6:]] = a & 255
-            writes.append((line[6:], a & 255))
+            name = line[6:]
+            word_fields = {'SAME_SCUMM_PLAY_UI_HELD',
+                           'SAME_SCUMM_PLAY_UI_MOTION', 'SAME_SCUMM_PLAY_UI_FRAME'}
+            expected_bits = 16 if name in word_fields else 8
+            assert bits == expected_bits, 'initialization must respect each field width'
+            memory[name] = a & ((1 << bits) - 1)
+            writes.append((name, memory[name]))
         else:
             raise AssertionError(f'unexpected instruction in latch block: {line}')
     return writes

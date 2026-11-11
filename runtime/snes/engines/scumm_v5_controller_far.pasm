@@ -53,6 +53,15 @@ ScummV5_Controller_ResetInteractionOnRoomInstall_Far:
     .a8
     lda #$00
     sta.l SAME_INPUT_TALK_OWNED_VALID
+    sta.l SAME_SCUMM_PLAY_UI_MODE
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_PLAY_UI_HELD
+    sta.l SAME_SCUMM_PLAY_UI_MOTION
+    sta.l SAME_SCUMM_PLAY_UI_FRAME
+    sep #$20
+    .a8
     sta.l SAME_SCUMM_CONTROLLER_ROOM_READY
     sta.l SAME_SCUMM_CONTROLLER_MODE
     sta.l SAME_SCUMM_CONTROLLER_VERB
@@ -164,6 +173,13 @@ ScummV5_Controller_Frame__room68_request:
     jmp ScummV5_Controller_Frame__done
 ScummV5_Controller_Frame__generic_ready:
     sep #$20
+    .a8
+    ; A dialogue-owned A edge advances one segment through the talk service.
+    ; Retain the consumed token so it cannot also become a scene action.
+    jsl ScummV5_Controller_AcknowledgeTalk_Far
+    bcc ScummV5_Controller_Frame__talk_ack_done
+    jmp ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__talk_ack_done:
     .a8
     ; Input_Poll tags every edge sampled while dialogue is active. Keep the
     ; token while talk remains active; after Talk_Stop, consume and drop the
@@ -321,14 +337,19 @@ ScummV5_Controller_Frame__mode_ready:
     bne ScummV5_Controller_Frame__input_ready
     jmp ScummV5_Controller_Frame__action_pending
 ScummV5_Controller_Frame__input_ready:
+    jsl ScummV5_Controller_MenuFrame_Far
+    bcc ScummV5_Controller_Frame__scene_input
+    jmp ScummV5_Controller_Frame__hud
+ScummV5_Controller_Frame__scene_input:
+    jsl ScummV5_Controller_CursorMotion_Far
     rep #$20
     .a16
-    lda.l SAME_INPUT_PRESSED
+    lda.l SAME_SCUMM_PLAY_UI_MOTION
     and #$0100
     beq ScummV5_Controller_Frame__right_done
     lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
     clc
-    adc #$0002
+    adc.l SAME_SCUMM_PLAY_UI_STEP
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_X
     sep #$20
     .a8
@@ -342,12 +363,12 @@ ScummV5_Controller_Frame__input_ready:
 ScummV5_Controller_Frame__right_done:
     rep #$20
     .a16
-    lda.l SAME_INPUT_PRESSED
+    lda.l SAME_SCUMM_PLAY_UI_MOTION
     and #$0200
     beq ScummV5_Controller_Frame__left_done
     lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
     sec
-    sbc #$0002
+    sbc.l SAME_SCUMM_PLAY_UI_STEP
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_X
     sep #$20
     .a8
@@ -361,12 +382,12 @@ ScummV5_Controller_Frame__right_done:
 ScummV5_Controller_Frame__left_done:
     rep #$20
     .a16
-    lda.l SAME_INPUT_PRESSED
+    lda.l SAME_SCUMM_PLAY_UI_MOTION
     and #$0800
     beq ScummV5_Controller_Frame__up_done
     lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
     sec
-    sbc #$0002
+    sbc.l SAME_SCUMM_PLAY_UI_STEP
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_Y
     sep #$20
     .a8
@@ -380,12 +401,12 @@ ScummV5_Controller_Frame__left_done:
 ScummV5_Controller_Frame__up_done:
     rep #$20
     .a16
-    lda.l SAME_INPUT_PRESSED
+    lda.l SAME_SCUMM_PLAY_UI_MOTION
     and #$0400
     beq ScummV5_Controller_Frame__down_done
     lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
     clc
-    adc #$0002
+    adc.l SAME_SCUMM_PLAY_UI_STEP
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_Y
     sep #$20
     .a8
@@ -397,6 +418,7 @@ ScummV5_Controller_Frame__up_done:
     rep #$20
     .a16
 ScummV5_Controller_Frame__down_done:
+    jsl ScummV5_Controller_ClampCursor_Far
     rep #$20
     .a16
     sep #$20
@@ -646,6 +668,16 @@ ScummV5_Controller_Frame__hit_ok:
     sta.l SAME_SCUMM_VERB_OBJECT
     lda #$0000
     sta.l SAME_SCUMM_SENTENCE_API_OBJECT2
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CONTROLLER_MODE
+    cmp #$05
+    bne ScummV5_Controller_Frame__object_default_verb
+    lda.l SAME_SCUMM_CONTROLLER_VERB
+    sta.l SAME_SCUMM_VERB_RESULT
+    jmp ScummV5_Controller_Frame__verb_ok
+ScummV5_Controller_Frame__object_default_verb:
+    .a8
     jsl ScummV5_Generic_Verb_First_Far
     bcs ScummV5_Controller_Frame__verb_ok
     sep #$20
@@ -4329,6 +4361,14 @@ ScummV5_Controller_BuildHudText_Far:
     jmp ScummV5_Controller_BuildHudText__unusable
 ScummV5_Controller_BuildHudText__initialized:
     .a8
+    lda.l SAME_SCUMM_PLAY_UI_MODE
+    beq ScummV5_Controller_BuildHudText__scene
+    jsl ScummV5_Controller_MenuText_Far
+    plb
+    plp
+    rtl
+ScummV5_Controller_BuildHudText__scene:
+    .a8
     rep #$30
     .a16
     .i16
@@ -4808,3 +4848,184 @@ ScummV5_Controller_LegacyPrompt0: .byte $00
 ScummV5_Controller_LegacyPrompt1: .byte $00
 ScummV5_Controller_LegacyPrompt2: .byte $00
 ScummV5_Controller_LegacyPrompt3: .byte $00
+
+; Normal held-D-pad repeat, isolated from action/acknowledgement edge ownership.
+; Caller has already established room/dialogue/input eligibility. A16 result
+; is also stored for the four existing direction handlers. No game state is
+; written. Edge steps are two pixels; holds catch up by at most eight pixels
+; using the NMI frame clock when composition delays the next controller turn.
+ScummV5_Controller_CursorMotion_Far:
+    rep #$20
+    .a16
+    lda.l SAME_INPUT_PRESSED
+    and #$0F00
+    bne ScummV5_Controller_CursorMotion__emit
+    lda.l SAME_INPUT_HELD
+    and #$0F00
+    bne ScummV5_Controller_CursorMotion__held
+    sta.l SAME_SCUMM_PLAY_UI_HELD
+    sta.l SAME_SCUMM_PLAY_UI_MOTION
+    rtl
+ScummV5_Controller_CursorMotion__held:
+    .a16
+    cmp.l SAME_SCUMM_PLAY_UI_HELD
+    bne ScummV5_Controller_CursorMotion__emit
+    pha
+    lda.l SAME_FRAME_COUNTER
+    sec
+    sbc.l SAME_SCUMM_PLAY_UI_FRAME
+    cmp #$0002
+    bcs ScummV5_Controller_CursorMotion__repeat
+    pla
+    lda #$0000
+    sta.l SAME_SCUMM_PLAY_UI_MOTION
+    rtl
+ScummV5_Controller_CursorMotion__repeat:
+    .a16
+    ; One pixel per elapsed video frame, capped after stalls. Preserve even
+    ; positions and never replay an action button or accumulate a long jump.
+    and #$FFFE
+    cmp #$0008
+    bcc ScummV5_Controller_CursorMotion__step_ready
+    lda #$0008
+ScummV5_Controller_CursorMotion__step_ready:
+    .a16
+    sta.l SAME_SCUMM_PLAY_UI_STEP
+    pla
+    bra ScummV5_Controller_CursorMotion__publish
+ScummV5_Controller_CursorMotion__emit:
+    .a16
+    pha
+    lda #$0002
+    sta.l SAME_SCUMM_PLAY_UI_STEP
+    pla
+ScummV5_Controller_CursorMotion__publish:
+    .a16
+    sta.l SAME_SCUMM_PLAY_UI_HELD
+    sta.l SAME_SCUMM_PLAY_UI_MOTION
+    pha
+    lda.l SAME_FRAME_COUNTER
+    sta.l SAME_SCUMM_PLAY_UI_FRAME
+    pla
+    rtl
+
+; Keep the logical cursor inside the currently installed scene viewport.
+; Hit testing still adds the canonical SCUMM camera origin exactly once.
+ScummV5_Controller_ClampCursor_Far:
+    rep #$20
+    .a16
+    lda #$0000
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SCUMM_MSU1_CAMERA_VIEWPORT
+    lda.l SAME_VIDEO_SURFACE_SOURCE_X
+    sec
+    sbc.l SAME_SCUMM_CAMERA_VSCREEN_XSTART
+      .endif
+    .endif
+    sta.l SAME_SCUMM_PLAY_UI_TEMP
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    bpl ScummV5_Controller_ClampCursor__x_positive
+    lda.l SAME_SCUMM_PLAY_UI_TEMP
+ScummV5_Controller_ClampCursor__x_positive:
+    .a16
+    cmp.l SAME_SCUMM_PLAY_UI_TEMP
+    bcs ScummV5_Controller_ClampCursor__x_lower_ok
+    lda.l SAME_SCUMM_PLAY_UI_TEMP
+ScummV5_Controller_ClampCursor__x_lower_ok:
+    .a16
+    pha
+    lda #$0140
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SCUMM_MSU1_CAMERA_VIEWPORT
+    lda.l SAME_VIDEO_SURFACE_COPY_WIDTH
+      .endif
+    .endif
+    clc
+    adc.l SAME_SCUMM_PLAY_UI_TEMP
+    dec
+    sta.l SAME_SCUMM_PLAY_UI_TEMP
+    pla
+    cmp.l SAME_SCUMM_PLAY_UI_TEMP
+    bcc ScummV5_Controller_ClampCursor__x_done
+    lda.l SAME_SCUMM_PLAY_UI_TEMP
+ScummV5_Controller_ClampCursor__x_done:
+    .a16
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    lda #$0000
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SCUMM_MSU1_CAMERA_VIEWPORT
+    lda.l SAME_VIDEO_SURFACE_SOURCE_Y
+    sec
+    sbc.l SAME_SCUMM_CAMERA_CURRENT_Y
+    clc
+    adc #$0064
+      .endif
+    .endif
+    sta.l SAME_SCUMM_PLAY_UI_TEMP
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    bpl ScummV5_Controller_ClampCursor__y_positive
+    lda.l SAME_SCUMM_PLAY_UI_TEMP
+ScummV5_Controller_ClampCursor__y_positive:
+    .a16
+    cmp.l SAME_SCUMM_PLAY_UI_TEMP
+    bcs ScummV5_Controller_ClampCursor__y_lower_ok
+    lda.l SAME_SCUMM_PLAY_UI_TEMP
+ScummV5_Controller_ClampCursor__y_lower_ok:
+    .a16
+    pha
+    lda #$00C8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SCUMM_MSU1_CAMERA_VIEWPORT
+    lda.l SAME_VIDEO_SURFACE_COPY_HEIGHT
+      .endif
+    .endif
+    clc
+    adc.l SAME_SCUMM_PLAY_UI_TEMP
+    dec
+    sta.l SAME_SCUMM_PLAY_UI_TEMP
+    pla
+    cmp.l SAME_SCUMM_PLAY_UI_TEMP
+    bcc ScummV5_Controller_ClampCursor__y_done
+    lda.l SAME_SCUMM_PLAY_UI_TEMP
+ScummV5_Controller_ClampCursor__y_done:
+    .a16
+    sta.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    rtl
+
+.include "scumm_v5_controller_menu.inc.pasm"
+
+; Input_Poll assigns token value 1 to a fresh dialogue-owned edge. Value 2
+; retains ownership after acknowledgement until the existing gate consumes
+; it. This also prevents a repeated controller pass from skipping a second
+; FF03 segment with the same physical press. A8, indexes unchanged, C=acked.
+ScummV5_Controller_AcknowledgeTalk_Far:
+    sep #$20
+    .a8
+    lda.l SAME_INPUT_TALK_OWNED_VALID
+    cmp #$01
+    bne ScummV5_Controller_AcknowledgeTalk__none
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    beq ScummV5_Controller_AcknowledgeTalk__none
+    rep #$20
+    .a16
+    lda.l SAME_INPUT_EDGE_SEQUENCE
+    cmp.l SAME_INPUT_TALK_OWNED_SEQUENCE
+    bne ScummV5_Controller_AcknowledgeTalk__none16
+    lda.l SAME_INPUT_PRESSED
+    and #$0080
+    beq ScummV5_Controller_AcknowledgeTalk__none16
+    lda #$0000
+    sta.l SAME_SCUMM_TALK_DELAY
+    sep #$20
+    .a8
+    lda #$02
+    sta.l SAME_INPUT_TALK_OWNED_VALID
+    jsl ScummV5_Talk_FrameEnd_Far
+    sec
+    rtl
+ScummV5_Controller_AcknowledgeTalk__none16:
+    sep #$20
+    .a8
+ScummV5_Controller_AcknowledgeTalk__none:
+    clc
+    rtl

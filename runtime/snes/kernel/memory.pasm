@@ -1124,6 +1124,20 @@ SAME_SCUMM_VIEWPORT_TEMP = $7E8FE4
 SAME_SCUMM_VIEWPORT_ROOM = $7E8FE6
 SAME_SCUMM_VIEWPORT_MODE = $7E8FE7
 
+ ; Controller adaptation occupies the remaining 24 padding bytes before names.
+SAME_SCUMM_PLAY_UI_BASE = $7E8FE8
+SAME_SCUMM_PLAY_UI_END = $7E9000
+SAME_SCUMM_PLAY_UI_MOTION = $7E8FE8 ; u16 this controller turn's directional mask
+SAME_SCUMM_PLAY_UI_HELD = $7E8FEA ; u16 previous held directional mask
+SAME_SCUMM_PLAY_UI_FRAME = $7E8FEC ; u16 logical frame of last cursor step
+SAME_SCUMM_PLAY_UI_MODE = $7E8FEE ; u8 0 scene,1 verbs,2 inventory
+SAME_SCUMM_PLAY_UI_SELECTION = $7E8FF0 ; u16 current menu identity
+SAME_SCUMM_PLAY_UI_STEP = $7E8FF2 ; u16 bounded cursor displacement for this turn
+SAME_SCUMM_PLAY_UI_OFFSET = $7E8FF4 ; u16 bounded presentation cursor
+SAME_SCUMM_PLAY_UI_COUNT = $7E8FF6 ; u16 bounded scan count
+SAME_SCUMM_PLAY_UI_SAVED_MODE = $7E8FF8 ; u8 scene controller mode
+SAME_SCUMM_PLAY_UI_TEMP = $7E8FFA ; u16 transient menu scratch
+
 ; Generic checked actor-pose request/scratch state occupies the audited final
 ; 128-byte Mode-3 work allocation. Pixel bytes use the ROOM-PENDING buffer,
 ; never a ProgramUnit cache page.
