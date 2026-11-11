@@ -1775,9 +1775,59 @@ MODE3_R_DAMAGE_X = SAME_BWRAM_VIDEO_SURFACE_STATE+$34
 MODE3_R_DAMAGE_Y = SAME_BWRAM_VIDEO_SURFACE_STATE+$36
 MODE3_R_DAMAGE_W = SAME_BWRAM_VIDEO_SURFACE_STATE+$38
 MODE3_R_DAMAGE_H = SAME_BWRAM_VIDEO_SURFACE_STATE+$3A
+; A validated restoration rectangle can be encoded once, after composition,
+; if none of its scene pixels leave the circular INDEX8 viewport. HUD pixels
+; never move. Edge-evicted pixels still require immediate planar preservation.
+; Caller owns an idle surface; A16/I16. C clear means defer safely.
+Same_Mode3_Retained_DamageStaysVisible:
+    .a16
+    .i16
+    lda.l MODE3_R_DAMAGE_W
+    beq Same_Mode3_Retained_DamageStaysVisible__yes
+    lda.l MODE3_R_DAMAGE_H
+    beq Same_Mode3_Retained_DamageStaysVisible__yes
+    lda.l MODE3_R_DAMAGE_Y
+    cmp #$00C0
+    bcs Same_Mode3_Retained_DamageStaysVisible__yes
+    lda.l MODE3_R_DAMAGE_X
+    sec
+    sbc.l MODE3_R_DELTA
+    cmp #$0100
+    bcs Same_Mode3_Retained_DamageStaysVisible__no
+    clc
+    adc.l MODE3_R_DAMAGE_W
+    cmp #$0101
+    bcs Same_Mode3_Retained_DamageStaysVisible__no
+Same_Mode3_Retained_DamageStaysVisible__yes:
+    clc
+    rts
+Same_Mode3_Retained_DamageStaysVisible__no:
+    sec
+    rts
+
 Same_Mode3_Retained_FlushDamage_Far:
     php
+    cld
     rep #$30
+    .a16
+    .i16
+    jsr Same_Mode3_Retained_DamageStaysVisible
+    bcs Same_Mode3_Retained_FlushDamage__evicted
+    ; Mark old physical slots under CURRENT, before advancing the ring.
+    ; Their final composition is encoded through the new origin once.
+    lda.l MODE3_R_NEXT
+    pha
+    lda.l MODE3_R_CURRENT
+    sta.l MODE3_R_NEXT
+    jsl Same_Mode3_Retained_MarkDamage_Far
+    rep #$30
+    .a16
+    .i16
+    pla
+    sta.l MODE3_R_NEXT
+    plp
+    rtl
+Same_Mode3_Retained_FlushDamage__evicted:
     .a16
     .i16
     lda.l MODE3_R_NEXT

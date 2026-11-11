@@ -166,6 +166,7 @@ def generate(
         hooks = {
             "boot": "; Legacy video boot hook intentionally emits no bytes.\n",
             "frame": "; Legacy video frame hook intentionally emits no bytes.\n",
+            "slice": "; Legacy video slice hook intentionally emits no bytes.\n",
             "reset": "; Legacy video reset hook intentionally emits no bytes.\n",
             "service": "; Legacy video service hook intentionally emits no bytes.\n",
             "commit": "; Legacy video commit hook intentionally emits no bytes.\n",
@@ -174,7 +175,8 @@ def generate(
     else:
         hooks = {
             "boot": "    jsl Same_Mode3_Boot_Realize_Far\n",
-            "frame": "    jsl Same_Mode3_Frame_Far\n",
+            "frame": "    jsl Same_Mode3_Step_Far\n",
+            "slice": "    jsl Same_Mode3_Step_Far\n",
             "reset": "    jsl Same_Mode3_Reset_Far\n",
             "service": "    jsl Same_Mode3_Handle_Far\n    plp\n    rts\n",
             "commit": (

@@ -1901,6 +1901,10 @@ Same_VideoSurface_ComposeRetainedScroll__capacity:
 Same_VideoSurface_ComposeRetainedScroll__cursor_saved:
     .a16
     jsl Same_Mode3_Retained_FlushDamage_Far
+    ; Cursor restoration has been preserved/marked. Only actor restoration
+    ; may contribute to the second preservation pass; do not encode the
+    ; same cursor rectangle twice when the actor is retained unchanged.
+    jsr Same_VideoSurface_Underlay_ZeroDamage
     ; A fully visible world-anchored pose already occupies the correct
     ; physical ring pixels. Rebase only its restoration journal; no pixel
     ; copy, tile invalidation, or actor DMA is necessary for camera motion.

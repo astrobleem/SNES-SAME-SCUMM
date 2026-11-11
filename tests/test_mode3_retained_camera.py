@@ -165,3 +165,36 @@ class RetainedIndexRingTests(unittest.TestCase):
         mapper=source.split('Same_Mode3_MapSurfaceX_Far:',1)[1].split('; Extension of',1)[0]
         self.assertIn('cmp #$C000',mapper)
         self.assertIn('adc.l MODE3_R_INDEX_ORIGIN',mapper)
+
+class RestorationPreservationTests(unittest.TestCase):
+    def test_native_predicate_defers_only_pixels_retained_after_ring_motion(self):
+        from test_scumm_camera_native_copy import StripMachine
+        m=StripMachine()
+        m.symbols.update(MODE3_R_DAMAGE_X=0x401074,MODE3_R_DAMAGE_Y=0x401076,
+                         MODE3_R_DAMAGE_W=0x401078,MODE3_R_DAMAGE_H=0x40107A,
+                         MODE3_R_DELTA=0x401090)
+        source=(Path(__file__).resolve().parents[1]/
+                'runtime/snes/services/video_mode3_retained.inc.pasm').read_text()
+        source=source.split('Same_Mode3_Retained_DamageStaysVisible:',1)[1].split(
+            'Same_Mode3_Retained_FlushDamage_Far:',1)[0]
+        m.code=[];m.labels={}
+        for line in source.splitlines():
+            line=line.split(';')[0].strip()
+            if not line or line.startswith('.'):continue
+            if line.endswith(':'):m.labels[line[:-1]]=len(m.code)
+            else:m.code.append(line)
+        # Independently enumerate actual restored pixels, including mixed
+        # scene/HUD rows and partially visible edge tiles at all alignments.
+        for delta in (-8,-7,-1,0,1,7,8):
+            m.put('MODE3_R_DELTA',delta)
+            for x in range(256):
+                for width in {0,1,min(16,256-x),256-x}:
+                    for y,height in ((0,1),(188,16),(192,16),(223,1),(0,0)):
+                        for k,v in [('X',x),('Y',y),('W',width),('H',height)]:
+                            m.put('MODE3_R_DAMAGE_'+k,v)
+                        failed,writes=m.consume()
+                        safe=all(0<=xx-(delta if yy<192 else 0)<256
+                                 for yy in range(y,y+height)
+                                 for xx in range(x,x+width))
+                        self.assertEqual(not failed,safe,(delta,x,width,y,height))
+                        self.assertEqual(writes,[])

@@ -53,7 +53,7 @@ class SnesVideoBackendTests(unittest.TestCase):
                 output_dir=output,
                 manifest_path=output / "manifest.json",
             )
-            for name in ("boot", "frame", "reset", "service", "commit", "code"):
+            for name in ("boot", "frame", "slice", "reset", "service", "commit", "code"):
                 text = (output / f"video_backend_{name}.inc.pasm").read_text()
                 self.assertNotIn("jsr ", text)
                 self.assertNotIn("jsl ", text)
@@ -75,11 +75,17 @@ class SnesVideoBackendTests(unittest.TestCase):
             self.assertEqual(len((output / "video_backend_mode3_tilemap.bin").read_bytes()), 2048)
             self.assertEqual(result["carrier"], "sa1_bwram")
             frame = (output / "video_backend_frame.inc.pasm").read_text()
-            self.assertIn("jsl Same_Mode3_Frame_Far", frame)
-            native = (ROOT / "runtime/snes/services/video_mode3.pasm").read_text()
-            hook = native.split("Same_Mode3_Frame_Far:", 1)[1].split("Same_Mode3_Step:", 1)[0]
-            self.assertEqual(hook.count("jsl Same_Mode3_Step_Far"), 4)
-            self.assertNotIn("bra ", hook)  # bounded, never a busy wait
+            self.assertEqual(frame.count("jsl Same_Mode3_Step_Far"), 1)
+            sliced = (output / "video_backend_slice.inc.pasm").read_text()
+            self.assertEqual(sliced.count("jsl Same_Mode3_Step_Far"), 1)
+            kernel = (ROOT / "runtime/snes/kernel/frame.pasm").read_text()
+            self.assertEqual(kernel.count('jsr Same_Video_Slice'), 3)
+            self.assertEqual(kernel.count('include "../generated/video_backend_frame.inc.pasm"'), 1)
+            slices = [m.start() for m in __import__('re').finditer('jsr Same_Video_Slice', kernel)]
+            self.assertLess(slices[0], kernel.index('    jsr Same_Engine_Frame'))
+            self.assertGreater(slices[1], kernel.index('    jsr Same_Storage_Process'))
+            self.assertGreater(slices[2], kernel.index('    jsl ScummV5_Controller_Frame_Far'))
+            self.assertNotIn("bra ", frame+sliced)  # same bounded budget, no spin
 
 
     def test_surface_dirty_wire_and_clipping(self) -> None:

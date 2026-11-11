@@ -536,3 +536,50 @@ a changed actor draws the cursor within its own publication. Ordinary cursor
 updates resume through the existing path after the pan. This removes a
 redundant transaction without raising conversion or DMA budgets. Tests verify
 pending/composing cursor ownership is drained before actor work.
+
+### Passing retained gameplay checkpoint and remaining cost
+
+Commit1529a2c's native inputs match ROM
+`07711a05005a3aa247968787cfa79270a780edc1c5af7f5f8cbaa0b022e4bece`.
+One continuous cold session passed original newspaper pickup, readable inventory,
+normal walking, forward retained scrolling and continued control, with error0
+and complete source/INDEX8/VRAM/CGRAM equality. The matching-ROM reverse control
+also passed; it is explicitly separate from the continuous recording.
+Forward evidence is preserved privately under
+`/home/chad/SAME-private-evidence/milestone-c-retained-20261111/forward`.
+Its supervised duration was520.861seconds, with normal cleanup. No proprietary
+capture, ROM or package is committed.
+
+This is **not yet a satisfactory responsiveness result**. Input-to-final-capture
+was1564frames versus1908 in the previous full-reconstruction recording. Ordinary
+strips typically uploaded1728bytes in3DMA batches instead of57344bytes, but
+observed commits were still approximately48frames apart. The full-screen
+conversion defect is removed; the remaining sequential transaction overhead
+must not be described as smooth scrolling.
+
+The reverse control's read-only hooks measured median427005Nexen cycleCount
+units (10emulated frames) inside foreground preservation/composition, versus
+53604units/1frame for edge filling. Logical kernel frames had median3emulated
+frames.425checked-read turns and317conversion turns were independently observed;
+these overlapping measurements are not summed as a device-throughput claim.
+
+A second correction preserves restored foreground pixels in-place when their
+entire rectangle remains visible after ring motion. It marks the old physical
+tiles and encodes their final composition once. Evicted pixels still receive
+immediate planar preservation. Cursor damage is cleared before the independent
+actor preservation pass, removing duplicate conversion of the same rectangle.
+Actual-source predicate tests enumerate all x positions, edge widths, both
+scroll directions and mixed scene/HUD rows. The changed backend passed132native
+steps, both wraps, refusal/abort, stale-generation rejection and cold replacement,
+with every INDEX8/VRAM/PPU pixel compared.
+
+The same four bounded backend slices are now interleaved with existing kernel
+phases rather than called adjacently. Storage/engine execution gives NMI an
+opportunity to finish an immutable DMA batch before its next completion poll.
+Conversion remains4tiles per slice,4slices per logical frame; DMA remains2048B
+and8descriptors. Legacy slices emit no work. There is no timer, scheduler,
+interpreter, memory-allocation or transfer-budget change. Poppy rejects repeated
+includes, so the generated slice is included once in the neutral video-service
+wrapper. The changed schedule passed six native forward/reverse full-pixel
+steps and the refusal/stale/cold-replacement controls. Its authentic current-ROM
+measurement is still pending and is not inferred from those fixture results.

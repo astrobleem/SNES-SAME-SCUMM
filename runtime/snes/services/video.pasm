@@ -277,3 +277,9 @@ ScummV5_Visual_ResourceReady_Far:
     rtl
 .endif
 .endif
+
+; One bounded target-selected slice. The kernel calls this at three phase
+; boundaries; its normal frame hook supplies the fourth. Legacy is a no-op.
+Same_Video_Slice:
+.include "../generated/video_backend_slice.inc.pasm"
+    rts

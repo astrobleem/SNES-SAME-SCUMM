@@ -113,6 +113,11 @@ Same_Frame_Run__sp_ok_02:
     .a16
     .i16
 .endif
+    ; The selected backend gets the same four bounded slices per logical
+    ; frame, interleaved with existing work. NMI can complete a queued DMA
+    ; while storage/engine phases execute, rather than four adjacent polls
+    ; all observing the same uncompleted batch. Legacy slices emit no code.
+    jsr Same_Video_Slice
     jsr Same_Engine_Frame
 .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
     php ; Preserve the engine's carry/error result while recording return.
@@ -134,6 +139,7 @@ Same_Frame_Run__sp_ok_02:
 .if SAME_BUILD_MSU1_STORAGE
     jsr Same_Storage_Process
 .endif
+    jsr Same_Video_Slice
 .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
     php
     rep #$20
@@ -213,6 +219,7 @@ Same_Frame_Run__sp_ok_05:
     .i16
 .endif
     .endif
+    jsr Same_Video_Slice
     .if SAME_BUILD_SCUMM_M23A
     ; Talk expiration and FF 03 continuation are a normal once-per-logical-
     ; frame lifecycle phase, independent of which scheduler slot yielded.

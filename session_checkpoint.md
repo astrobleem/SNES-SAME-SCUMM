@@ -4187,3 +4187,21 @@ Integrated authentic run is currently in progress, not yet accepted:
 `/tmp/astra-retained-actor-authentic-20261111`, ROM build`lwnjmox2`, source
 `q4g9ri5t`.58non-generated runtime inputs match current source. Preserve
 its checkpoints and observe first failing boundary; no unchanged retry.
+
+## Retained camera: passing functional checkpoint, further latency correction
+
+1529a2c is published; hosted run43081698605passed. Continuous authentic original
+pickup/inventory/forward camera/control passes at ROM07711a05..., followed by a
+separate matching-ROM reverse full-pixel pass. Forward1564frames vs1908baseline
+still fails the requested responsiveness quality. Do not call MilestoneCdone.
+Evidence preserved privately under milestone-c-retained-20261111/forward.
+
+New bounded changes defer in-view restoration conversion and distribute the
+same4video slices across kernel phases. Synthetic132-step/edge/stale/refusal/
+cold-replacement proof passes; six-step proof also passes with interleaving.
+Local1533tests run,12skips,makevalidate/memoryaudit/pinnedassemblies pass.
+Authentic run in progress: /tmp/astra-retained-sliced-authentic-20261111,
+ROM /tmp/astra-camera-link-build.ax4wsre4/fate-authentic-room.sfc.
+It measures this specific correction, with a600-second supervisor and no guest
+state writes. Preserve its first failing boundary; no unchanged retry. Separate
+progression recovery worktree and unrelated Nexen PID104488 remain untouched.
