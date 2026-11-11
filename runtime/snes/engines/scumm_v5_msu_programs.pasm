@@ -91,6 +91,45 @@ ScummV5_MsuProgram_EnsureSelectedForActivation_Far:
 ScummV5_MsuProgram_EnsureSelectedForActivation_Far__done:
     jml ScummV5_MsuProgram_EnsureSelected_Far
 
+; C4 has already checked stopped/error/freeze/didexec ownership. A delayed
+; slot consumes exactly one scheduler tick without acquiring executable data.
+; No PC, selector, cache identity, pin or provider state changes. C=1 means
+; serviced; C=0 takes the ordinary checked-page path. Returns A8/X8.
+ScummV5_MsuProgram_ServiceDelay_Far:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    and #$00FF
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    and #$00FF
+    cmp #SCUMM_VM_DELAYED
+    bne ScummV5_MsuProgram_ServiceDelay__runnable
+    txa
+    asl
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_DELAY,x
+    beq ScummV5_MsuProgram_ServiceDelay__runnable
+    dec
+    sta.l SAME_SCUMM_C4_SLOT_DELAY,x
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    and #$00FF
+    tax
+    sep #$30
+    .a8
+    .i8
+    lda #$01
+    sta.l SAME_SCUMM_C4_SLOT_DIDEXEC,x
+    sec
+    rtl
+ScummV5_MsuProgram_ServiceDelay__runnable:
+    sep #$30
+    .a8
+    .i8
+    clc
+    rtl
+
 ScummV5_MsuProgram_Reset_Far:
     php
     rep #$30
@@ -246,7 +285,9 @@ ScummV5_MsuProgram_Reset_Far__failed:
     rtl
 
 ; Carry set only after the provider has authenticated the package prefix and
-; reached READY/READ_OK. Initialization and body transfer are frame-driven.
+; reached READY/READ_OK/READING. An authenticated in-flight request blocks only
+; its resource waiter; already verified code and actor movement remain runnable.
+; Room installation above this gate retains its separate transactional barrier.
 ScummV5_MsuProgram_FrameReady_Far:
     ; The SAME provider has one serialized checked-read cursor. Reconcile a
     ; completed executable page before the room state machine can start its
@@ -577,6 +618,8 @@ ScummV5_MsuProgram_FrameReady_Far__provider:
     cmp #SAME_MSU1_STATE_READY
     beq ScummV5_MsuProgram_FrameReady_Far__ready
     cmp #SAME_MSU1_STATE_READ_OK
+    beq ScummV5_MsuProgram_FrameReady_Far__ready
+    cmp #SAME_MSU1_STATE_READING
     beq ScummV5_MsuProgram_FrameReady_Far__ready
     cmp #SAME_MSU1_STATE_ERROR
     beq ScummV5_MsuProgram_FrameReady_Far__failed

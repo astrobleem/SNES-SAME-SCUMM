@@ -813,52 +813,30 @@ Same_Msu1_ReadStep__done:
     plp
     rts
 
-; Reflected CRC-32 / IEEE, one input byte at a time; CRC is finalized only once
-; the entire checked request has arrived.
+; Reflected CRC-32 / IEEE. The byte table is exactly the eight reflected
+; EDB88320 steps of the former bit loop; initial/final XOR, checked range,
+; request completion and transfer budget are unchanged. Keep X for the caller.
+; Long addressing does not depend on DB. Entry/return A8/X16 (ReadStep).
 Same_Msu1_CrcByte:
-    sep #$20
-    .a8
+    rep #$30
+    .a16
+    .i16
+    phx
     lda.l SAME_MSU1_BYTE_SCRATCH
     eor.l SAME_MSU1_CRC_STATE
+    and #$00FF
+    asl
+    tax
+    lda.l SAME_MSU1_CRC_STATE+1
+    eor.l Same_Msu1_CrcTableLow,x
     sta.l SAME_MSU1_CRC_STATE
-    lda #$08
-    sta.l SAME_MSU1_CRC_BITS
-Same_Msu1_CrcByte__bit:
+    lda.l SAME_MSU1_CRC_STATE+3
+    and #$00FF
+    eor.l Same_Msu1_CrcTableHigh,x
+    sta.l SAME_MSU1_CRC_STATE+2
+    plx
+    sep #$20
     .a8
-    lda.l SAME_MSU1_CRC_STATE
-    and #$01
-    sta.l SAME_MSU1_CRC_LSB
-    lda.l SAME_MSU1_CRC_STATE+3
-    lsr
-    sta.l SAME_MSU1_CRC_STATE+3
-    lda.l SAME_MSU1_CRC_STATE+2
-    ror
-    sta.l SAME_MSU1_CRC_STATE+2
-    lda.l SAME_MSU1_CRC_STATE+1
-    ror
-    sta.l SAME_MSU1_CRC_STATE+1
-    lda.l SAME_MSU1_CRC_STATE
-    ror
-    sta.l SAME_MSU1_CRC_STATE
-    lda.l SAME_MSU1_CRC_LSB
-    beq Same_Msu1_CrcByte__no_poly
-    lda.l SAME_MSU1_CRC_STATE
-    eor #$20
-    sta.l SAME_MSU1_CRC_STATE
-    lda.l SAME_MSU1_CRC_STATE+1
-    eor #$83
-    sta.l SAME_MSU1_CRC_STATE+1
-    lda.l SAME_MSU1_CRC_STATE+2
-    eor #$B8
-    sta.l SAME_MSU1_CRC_STATE+2
-    lda.l SAME_MSU1_CRC_STATE+3
-    eor #$ED
-    sta.l SAME_MSU1_CRC_STATE+3
-Same_Msu1_CrcByte__no_poly:
-    lda.l SAME_MSU1_CRC_BITS
-    dec
-    sta.l SAME_MSU1_CRC_BITS
-    bne Same_Msu1_CrcByte__bit
     rts
 
 Same_Msu1_CheckCrc:

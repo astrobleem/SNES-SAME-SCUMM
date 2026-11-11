@@ -3692,6 +3692,16 @@ ScummV5_C4_Scheduler_Frame__freeze_trace_done:
 ScummV5_C4_Scheduler_Frame__eligible:
     .a8
     .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; Sleeping activations need no executable bytes. Advance their existing
+    ; delay before page admission, just as the ROM interpreter does. An I/O
+    ; miss must not lengthen an authored timer or evict a runnable page merely
+    ; to discover that this activation cannot execute an instruction yet.
+    jsl ScummV5_MsuProgram_ServiceDelay_Far
+    bcc ScummV5_C4_Scheduler_Frame__delay_runnable
+    jmp ScummV5_C4_Scheduler_Frame__advance
+ScummV5_C4_Scheduler_Frame__delay_runnable:
+    .a8
+    .i8
     ; A parent whose nested StartScript child could not fetch its first body
     ; remains parked until that exact child selector has run or failed.
     lda.l SAME_SCUMM_C4_SCHED_SLOT

@@ -101,3 +101,31 @@ frontier remains explicit; the new owner-count handler mirrors the existing
 native representation and does not certify inventory resource retention or
 ordered queries. Correct acquisition ordering and cross-room inventory names
 remain necessary for broader gameplay.
+
+### Measured scheduler/storage bottlenecks
+
+A read-only 128-video-frame profile restored the identity-matched incomplete
+newspaper action (`aac4aa15153c494985839739596a70f23d802a1252fd0f93a55ac9d3307ec589`).
+Native execution hooks recorded frame/cycle timestamps at kernel phase entry.
+Fourteen storage turns occupied 58 video frames; one turn spanned seven frames.
+Mode-3 work occupied 23 frames and visual composition 17. Only five movement
+phases occurred: the engine-wide provider gate also blocked movement while
+any unrelated checked read was in flight. This is CPU work and scheduling
+coupling, not raw MSU device throughput. The 10.309-second supervised profile
+made no controller or guest-state writes.
+
+The correction keeps package initialization and room transactions gated,
+while an authenticated read blocks its existing per-resource waiter instead
+of every activation. Checked READY-page and generation dispatch remain
+mandatory. Sleeping C4 slots decrement their timers after freeze/didexec
+checks, before executable-page admission. They do not fetch bytes just to
+consume a delay tick.
+
+The SAME provider now evaluates the identical reflected IEEE CRC using a
+1,024-byte immutable table in its existing package-directory bank. The
+request CRC range, initial/final XOR, capacity checks, transfer quantum and
+error policy are unchanged. Independent zlib comparisons cover all input
+bytes with randomized CRC seeds, adjacent scratch contamination, and requests
+crossing service quanta. These are host instruction-runner checks. Revised
+full-image native timing and persistent-action acceptance remain separate
+measurements, not inferred from the optimization or successful assembly.

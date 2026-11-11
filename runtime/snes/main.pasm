@@ -674,4 +674,5 @@ ScummV5_M24RB_FarCodeEnd:
 .bank 11
 .org $8000
 .include "generated/msu1_package.inc.pasm"
+.include "services/storage_msu1_crc_table.inc.pasm"
 .endif
