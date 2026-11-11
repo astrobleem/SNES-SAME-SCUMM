@@ -2230,6 +2230,7 @@ class ScummV5Engine(Engine):
         del context
         requested = self._var_or_direct_word(slot, 0x80)
         self.state.camera_mode = 0
+        self.state.camera_moving_to_actor = False
         self.state.camera_destination_x = requested
         self.state.camera_update_pending = True
         return False
@@ -2275,16 +2276,37 @@ class ScummV5Engine(Engine):
         state.camera_x &= 0xFFF8
         minimum = state.room_ops.scroll_min_x
         maximum = state.room_ops.scroll_max_x
-        # Phase 6F implements the canonical normal path. Existing follow intent
-        # remains stored but does not acquire new actor-follow/panning behavior.
+        # SCUMM v5 follows in logical 8-pixel strips. The target viewport
+        # crop never changes these source coordinates or the 10/30 triggers.
+        actor = None
+        if state.camera_mode == 1:
+            if state.camera_follow_actor is None or not 0 <= state.camera_follow_actor < _MAX_ACTORS:
+                raise EngineExecutionError("SCUMM camera has no valid followed actor")
+            actor = self._actor(state.camera_follow_actor)
+            strip = int(actor.position[0] / 8) - state.screen_start_strip
+            if strip < 10 or strip > 30:
+                if state.variables[26]:
+                    if strip > 35:
+                        state.camera_destination_x = actor.position[0] + 80
+                    elif strip < 5:
+                        state.camera_destination_x = actor.position[0] - 80
+                else:
+                    state.camera_moving_to_actor = True
+        if state.camera_moving_to_actor and actor is not None:
+            state.camera_destination_x = actor.position[0]
         state.camera_destination_x = min(maximum, max(minimum, state.camera_destination_x))
-        if state.camera_mode == 0:
-            if state.variables[26]:
-                state.camera_x = state.camera_destination_x
-            elif state.camera_x < state.camera_destination_x:
+        if state.variables[26]:
+            state.camera_x = state.camera_destination_x
+        else:
+            if state.camera_x < state.camera_destination_x:
                 state.camera_x += 8
-            elif state.camera_x > state.camera_destination_x:
+            # These are sequential comparisons in v5, not an if/elif. A
+            # destination inside the same strip must not oscillate forever.
+            if state.camera_x > state.camera_destination_x:
                 state.camera_x -= 8
+        if (state.camera_moving_to_actor and actor is not None
+                and int(state.camera_x / 8) == int(actor.position[0] / 8)):
+            state.camera_moving_to_actor = False
         half = logical_width // 2
         state.camera_x = min(
             max(half, state.room_ops.room_width - half),

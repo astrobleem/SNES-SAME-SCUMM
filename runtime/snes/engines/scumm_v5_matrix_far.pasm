@@ -2003,10 +2003,6 @@ ScummV5_GetDist_FarEntry__second_resolved:
     sta.l SAME_SCUMM_GET_DIST_TYPE2
     rep #$20
     .a16
-    lda.l SAME_SCUMM_GET_DIST_ADJUSTED
-    and #$00FF
-    cmp #$0002
-    beq ScummV5_GetDist_FarEntry__second_position_ready
     lda.l SAME_SCUMM_GET_DIST_X2_RAW
     sta.l SAME_SCUMM_GET_DIST_X2
     lda.l SAME_SCUMM_GET_DIST_Y2_RAW
@@ -2023,14 +2019,9 @@ ScummV5_GetDist_FarEntry__second_position_ready:
     lda.l SAME_SCUMM_GET_DIST_OPERAND2
     cmp #$000D
     bcc ScummV5_GetDist_FarEntry__distance
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_GET_DIST_ADJUSTED
-    cmp #$02
-    bne ScummV5_GetDist_FarEntry__runtime_projection
-    lda #$01
-    sta.l SAME_SCUMM_GET_DIST_ADJUSTED
-    bra ScummV5_GetDist_FarEntry__distance
+    ; The cooker projection predates matrixOps and actor ignoreBoxes changes.
+    ; Like walkActorToObject, project the raw point against current room flags.
+    ; Never reuse immutable object-walk projection for a live distance query.
 ScummV5_GetDist_FarEntry__runtime_projection:
     rep #$20
     .a16
@@ -2237,20 +2228,6 @@ ScummV5_GetDist_Resolve_Far__room_object:
     .a8
     lda #$14
     sta.l SAME_SCUMM_GET_DIST_STAGE
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_MOVE_POSITION_AXIS
-    beq ScummV5_GetDist_Resolve_Far__room_object_type
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_PUT_ACTOR_RESULT_X
-    sta.l SAME_SCUMM_GET_DIST_X2
-    lda.l SAME_SCUMM_PUT_ACTOR_RESULT_Y
-    sta.l SAME_SCUMM_GET_DIST_Y2
-    sep #$20
-    .a8
-    lda #$02
-    sta.l SAME_SCUMM_GET_DIST_ADJUSTED
 ScummV5_GetDist_Resolve_Far__room_object_type:
     sep #$20
     .a8

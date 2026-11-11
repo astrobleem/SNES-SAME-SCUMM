@@ -25,6 +25,7 @@ ScummV5_Op_PanCameraTo_Far__ready:
     .a8
     lda #$00
     sta.l SAME_SCUMM_C15_CAMERA_MODE
+    sta.l SAME_SCUMM_C15_MOVING_TO_ACTOR
     lda #$01
     sta.l SAME_SCUMM_CAMERA_UPDATE_PENDING
     jml ScummV5_Engine_Frame__next
@@ -266,13 +267,19 @@ ScummV5_Camera_ResetState_Far__clear:
     rtl
 
 ScummV5_Camera_Update_Far:
-    rep #$20
+    rep #$30
     .a16
+    .i16
     lda.l SAME_SCUMM_CAMERA_CURRENT_X
     sta.l SAME_SCUMM_LHS
     and #$FFF8
     sta.l SAME_SCUMM_CAMERA_CURRENT_X
+    jsl ScummV5_Camera_FollowTarget_Far
     lda.l SAME_SCUMM_CAMERA_DEST_X
+    bpl ScummV5_Camera_Update_Far__dest_nonnegative
+    lda.l SAME_SCUMM_C10_SCROLL_MIN
+ScummV5_Camera_Update_Far__dest_nonnegative:
+    .a16
     cmp.l SAME_SCUMM_C10_SCROLL_MIN
     bcs ScummV5_Camera_Update_Far__dest_min_ok
     lda.l SAME_SCUMM_C10_SCROLL_MIN
@@ -284,12 +291,6 @@ ScummV5_Camera_Update_Far__dest_min_ok:
 ScummV5_Camera_Update_Far__dest_max_ok:
     .a16
     sta.l SAME_SCUMM_CAMERA_DEST_X
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_C15_CAMERA_MODE
-    bne ScummV5_Camera_Update_Far__camera_moved
-    rep #$20
-    .a16
     .if SAME_BUILD_SCUMM_M23B
     lda.l SAME_SCUMM_M23B_VARIABLES+(26 * 2)
     .else
@@ -308,7 +309,9 @@ ScummV5_Camera_Update_Far__step:
     clc
     adc #$0008
     sta.l SAME_SCUMM_CAMERA_CURRENT_X
-    bra ScummV5_Camera_Update_Far__camera_moved16
+    cmp.l SAME_SCUMM_CAMERA_DEST_X
+    beq ScummV5_Camera_Update_Far__camera_moved16
+    bcc ScummV5_Camera_Update_Far__camera_moved16
 ScummV5_Camera_Update_Far__step_left:
     .a16
     sec
@@ -319,6 +322,7 @@ ScummV5_Camera_Update_Far__camera_moved:
     .a16
 ScummV5_Camera_Update_Far__camera_moved16:
     .a16
+    jsl ScummV5_Camera_FollowArrival_Far
     lda.l SAME_SCUMM_CAMERA_CURRENT_X
     cmp #$00A0
     bcs ScummV5_Camera_Update_Far__room_min_ok
@@ -379,4 +383,138 @@ ScummV5_Camera_Update_Far__finish:
     lda #$00
     sta.l SAME_SCUMM_CAMERA_UPDATE_PENDING
     clc
+    rtl
+
+; SCUMM v5 logical strip triggers (10/30), independent of the target's crop.
+; Caller owns LHS (previous camera X). OPERAND is transient followed-actor X.
+ScummV5_Camera_FollowTarget_Far:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C15_CAMERA_MODE
+    and #$00FF
+    cmp #$0001
+    beq ScummV5_Camera_FollowTarget__actor
+    rtl
+ScummV5_Camera_FollowTarget__actor:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C15_CAMERA_FOLLOWS
+    and #$00FF
+    cmp #$0020
+    bcc ScummV5_Camera_FollowTarget__valid
+    ; Invalid intent is never used as an array index.
+    sep #$20
+    .a8
+    lda #SCUMM_ERR_CAMERA_FOLLOW
+    jsl ScummV5_Camera_FarCall_SetError
+    rep #$30
+    .a16
+    .i16
+    rtl
+ScummV5_Camera_FollowTarget__valid:
+    .a16
+    .i16
+    asl
+    asl
+    tax
+    lda.l SAME_SCUMM_C31_POSITIONS,x
+    sta.l SAME_SCUMM_OPERAND
+    bpl ScummV5_Camera_FollowTarget__positive
+    ; Negative source X always lies left of a nonnegative room viewport.
+    lda #$FFFF
+    bra ScummV5_Camera_FollowTarget__strip
+ScummV5_Camera_FollowTarget__positive:
+    .a16
+    .i16
+    lsr
+    lsr
+    lsr
+    sec
+    sbc.l SAME_SCUMM_CAMERA_SCREEN_START_STRIP
+ScummV5_Camera_FollowTarget__strip:
+    .a16
+    .i16
+    sta.l SAME_SCUMM_PRODUCT
+    bmi ScummV5_Camera_FollowTarget__outside
+    cmp #$000A
+    bcc ScummV5_Camera_FollowTarget__outside
+    cmp #$001F
+    bcc ScummV5_Camera_FollowTarget__moving
+ScummV5_Camera_FollowTarget__outside:
+    .a16
+    .i16
+.if SAME_BUILD_SCUMM_M23B
+    lda.l SAME_SCUMM_M23B_VARIABLES+(26 * 2)
+.else
+    lda #$0000
+.endif
+    beq ScummV5_Camera_FollowTarget__start
+    lda.l SAME_SCUMM_PRODUCT
+    bmi ScummV5_Camera_FollowTarget__snap_left
+    cmp #$0005
+    bcc ScummV5_Camera_FollowTarget__snap_left
+    cmp #$0024
+    bcc ScummV5_Camera_FollowTarget__moving
+    lda.l SAME_SCUMM_OPERAND
+    clc
+    adc #$0050
+    sta.l SAME_SCUMM_CAMERA_DEST_X
+    bra ScummV5_Camera_FollowTarget__moving
+ScummV5_Camera_FollowTarget__snap_left:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_OPERAND
+    sec
+    sbc #$0050
+    sta.l SAME_SCUMM_CAMERA_DEST_X
+    bra ScummV5_Camera_FollowTarget__moving
+ScummV5_Camera_FollowTarget__start:
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_C15_MOVING_TO_ACTOR
+    rep #$20
+    .a16
+ScummV5_Camera_FollowTarget__moving:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C15_MOVING_TO_ACTOR
+    and #$00FF
+    beq ScummV5_Camera_FollowTarget__done
+    lda.l SAME_SCUMM_OPERAND
+    sta.l SAME_SCUMM_CAMERA_DEST_X
+ScummV5_Camera_FollowTarget__done:
+    .a16
+    .i16
+    rtl
+
+ScummV5_Camera_FollowArrival_Far:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C15_MOVING_TO_ACTOR
+    and #$00FF
+    beq ScummV5_Camera_FollowArrival__done
+    lda.l SAME_SCUMM_C15_CAMERA_FOLLOWS
+    and #$00FF
+    cmp #$0020
+    bcs ScummV5_Camera_FollowArrival__done
+    asl
+    asl
+    tax
+    lda.l SAME_SCUMM_C31_POSITIONS,x
+    and #$FFF8
+    sta.l SAME_SCUMM_OPERAND
+    lda.l SAME_SCUMM_CAMERA_CURRENT_X
+    and #$FFF8
+    cmp.l SAME_SCUMM_OPERAND
+    bne ScummV5_Camera_FollowArrival__done
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C15_MOVING_TO_ACTOR
+    rep #$20
+    .a16
+ScummV5_Camera_FollowArrival__done:
     rtl

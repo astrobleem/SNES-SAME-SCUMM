@@ -98,6 +98,23 @@ class CommittedPoseObserverTests(unittest.TestCase):
         self.assertTrue(probe.indexed_text_request_is_composed(
             text,raw,pose,raw,after_generation=234))
 
+    def test_settled_text_is_only_a_pixel_comparison_candidate(self):
+        pose = probe.read_committed_pose(Session(), cursor_base=CURSOR)
+        text = bytearray(128); raw = b'Original fixture text'
+        for offset, value in ((0,0),(2,61),(4,61),(0x24,len(raw)),
+                              (0x38,1),(0x64,4),(0x66,2),(0x68,1)):
+            text[offset:offset+2] = value.to_bytes(2, 'little')
+        check = lambda: probe.indexed_text_committed_candidate(
+            text, raw, pose, raw, after_generation=60)
+        self.assertTrue(check()) # later actor/cursor generation is fully committed
+        # This is deliberately NOT the immutable queued-caption association.
+        self.assertFalse(probe.indexed_text_request_is_composed(
+            text, raw, pose, raw, after_generation=60))
+        for offset, value in ((0,2),(4,60),(0x38,0),(0x66,3),(0x68,0)):
+            old = bytes(text[offset:offset+2]); text[offset:offset+2] = value.to_bytes(2, 'little')
+            self.assertFalse(check()); text[offset:offset+2] = old
+        pose['mode3_inflight_count'] = 1; self.assertFalse(check())
+
     def test_immutable_generation_survives_new_cursor_composition(self):
         s = Session()
         s.put(probe.MODE3_COMMITTED_GENERATION,64)

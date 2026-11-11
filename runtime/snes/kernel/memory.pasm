@@ -573,9 +573,14 @@ SAME_SCUMM_C14_A_HIT_BOTTOM         = $1D ; s16
 SAME_SCUMM_C14_A_PRESENT            = $1F
 SAME_SCUMM_C14_A_PALETTE            = $20
 
-SAME_SCUMM_C29_X                    = $7F5F0A ; s16 query point
-SAME_SCUMM_C29_Y                    = $7F5F0C ; s16 query point
-SAME_SCUMM_C29_ACTOR                = $7F5F0E ; u8 scan/result actor
+; Actor hit-test scratch fits the alignment gap after 32 name-size bytes.
+; It must never alias persistent C15 camera intent while queries execute.
+SAME_SCUMM_C14_NAME_SIZES_END        = $7F3EE0
+SAME_SCUMM_C29_SCRATCH_BASE          = $7F3EE0
+SAME_SCUMM_C29_X                     = $7F3EE0 ; s16 query point
+SAME_SCUMM_C29_Y                     = $7F3EE2 ; s16 query point
+SAME_SCUMM_C29_ACTOR                 = $7F3EE4 ; u8 scan/result actor
+SAME_SCUMM_C29_SCRATCH_END           = $7F3EE5
 
 ; C15 camera-follow intent remains separate from actor configuration. Future
 ; movement/render slices may consume the selected actor without coupling the

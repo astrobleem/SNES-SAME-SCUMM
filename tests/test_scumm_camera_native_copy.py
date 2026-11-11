@@ -61,6 +61,8 @@ class StripMachine(ServiceMachine):
             elif op in ('cmp','cmp.l'):
                 delta=(a&mask)-v;p=(p&~0x83)|int(delta>=0)|(2 if delta==0 else 0)|(128 if delta&(1<<(bits-1)) else 0)
             elif op=='asl':result=(a&mask)<<1
+            elif op=='lsr':
+                p=(p&~1)|(a&1);result=(a&mask)>>1
             elif op in ('eor','eor.l'):result=(a&mask)^v
             elif op=='and':result=(a&mask)&v
             elif op=='inc':result=(a&mask)+1
@@ -82,8 +84,8 @@ class StripMachine(ServiceMachine):
             elif op=='jsl':
                 if arg in self.labels:returns.append(pc);pc=self.labels[arg]
                 else:p,a=self.service(arg,p,a);written.extend(self.service_writes);self.service_writes=[]
-            elif op in ('beq','bne','bcc','bcs','bpl','bra','jmp'):
-                take={'beq':bool(p&2),'bne':not p&2,'bcc':not p&1,'bcs':bool(p&1),'bpl':not p&128,'bra':True,'jmp':True}[op]
+            elif op in ('beq','bne','bcc','bcs','bpl','bmi','bra','jmp'):
+                take={'beq':bool(p&2),'bne':not p&2,'bcc':not p&1,'bcs':bool(p&1),'bpl':not p&128,'bmi':bool(p&128),'bra':True,'jmp':True}[op]
                 if take:pc=self.labels[arg]
             elif op in ('rtl','rts'):
                 if returns:pc=returns.pop();continue

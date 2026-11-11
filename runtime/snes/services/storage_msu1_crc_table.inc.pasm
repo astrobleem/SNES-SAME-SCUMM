@@ -68,4 +68,3 @@ Same_Msu1_CrcTableHigh:
     .word $AED1, $D9D6, $40DF, $37D8, $A9BC, $DEBB, $47B2, $30B5
     .word $BDBD, $CABA, $53B3, $24B4, $BAD0, $CDD7, $54DE, $23D9
     .word $B366, $C461, $5D68, $2A6F, $B40B, $C30C, $5A05, $2D02
-

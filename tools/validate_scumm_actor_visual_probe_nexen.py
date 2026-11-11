@@ -374,6 +374,30 @@ def indexed_text_request_is_composed(text: bytes, raw: bytes, pose: dict,
     return length == len(expected) and len(raw) >= length and raw[:length] == expected
 
 
+def indexed_text_committed_candidate(text: bytes, raw: bytes, pose: dict,
+                                     expected: bytes, *, after_generation: int) -> bool:
+    """Candidate for independent pixel validation after the queue fence passed.
+
+    This does NOT associate idle pending bytes with a completed caption: a
+    producer may be preparing replacement bytes. Accept only after separately
+    rasterizing the expected source text and comparing INDEX8 and actual PPU.
+    The actor/surface must also satisfy committed_pose_is_presented(). This
+    avoids requiring the observer to catch an earlier transient locked phase.
+    """
+    if len(text) < 0x6C or not committed_pose_is_presented(pose):
+        return False
+    word = lambda offset: int.from_bytes(text[offset:offset+2], 'little')
+    delta = (word(2) - after_generation) & 0xFFFF
+    if word(0) != 0 or word(2) != word(4) or not 0 < delta < 0x8000:
+        return False
+    if not word(0x38) or not word(0x68):
+        return False
+    if word(0x64) != pose['room'] or word(0x66) != pose['surface_room_generation']:
+        return False
+    length = word(0x24)
+    return length == len(expected) and len(raw) >= length and raw[:length] == expected
+
+
 def snapshot_locked_generation(session, *, cursor_base: int) -> dict:
     """Retain the immutable input of one accepted PRESENT, without advancing.
 

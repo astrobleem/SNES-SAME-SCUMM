@@ -3998,3 +3998,15 @@ Existing private evidence is preserved under
 The separate progression recovery worktree remains untouched. No seven-action
 route, no state injection, no whole-game readiness claim. Continue the actual
 Milestone C gates; a passing host suite or this checkpoint is not completion.
+
+### Milestone C live query correction — 2026-11-11
+
+CRC/scheduler corrections are committed at a3eb72b. The subsequent original
+pickup attempt (ROM70954700...) reached the authored “can't reach” branch.
+It is not a deadlock or persistent-action pass. Captured immutable object
+projection and live walking target differed; native getDist was using the
+former despite matrixOps. Current correction uses the existing live geometry
+path. C29 hit-test scratch also overlapped C15 camera follow state; ownership
+is repaired and audited. Camera follow now has host/native-source tests.
+A changed-ROM bounded continuous native test is in progress; no old savestate
+is transplanted into it. Separate progression recovery is untouched.

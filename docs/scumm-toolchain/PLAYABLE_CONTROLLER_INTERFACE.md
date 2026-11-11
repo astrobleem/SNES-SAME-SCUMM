@@ -129,3 +129,35 @@ bytes with randomized CRC seeds, adjacent scratch contamination, and requests
 crossing service quanta. These are host instruction-runner checks. Revised
 full-image native timing and persistent-action acceptance remain separate
 measurements, not inferred from the optimization or successful assembly.
+
+### Live camera and distance contracts
+
+The source v5 camera's 10/30 strip triggers now update follow destinations,
+respect fast-camera intent, and finish at the actor's logical strip. Normal
+panning uses the source's two sequential comparisons, avoiding oscillation at
+an unaligned destination. The SNES crop does not change world coordinates.
+An adjacent concrete ownership defect was found: C29 actor-hit-test X/Y
+scratch overlapped persistent C15 follow/mode/moving flags. Five scratch bytes
+now occupy the declared alignment gap after actor-name lengths ($7F3EE0-E4).
+The 33-region audit covers both owners and rejects the original alias.
+Host/native-source instruction comparisons cover follow thresholds, moving
+actors, fast-camera mode, room clamps, and unaligned arrival. Native scrolling
+presentation remains an independent acceptance gate.
+
+A continuous native original newspaper attempt reached its walking endpoint
+but printed the authored refusal. Its captured SC5LIVE raw point and immutable
+projection differed from the live walking endpoint. Walking already honors
+matrixOps changes; native getDist incorrectly trusted the cooker's old
+projection, even before testing ignoreBoxes or operand ordering. The query now
+projects raw coordinates using current flags only for actor-to-object queries,
+matching the host and existing walker. Synthetic tests hide a raised box via
+matrixOps and require arrival and reachability to agree, while reverse and
+ignoreBoxes queries remain raw. No original script or resource is changed.
+This fixes the demonstrated contract; persistent-gameplay acceptance still
+requires a current-ROM run.
+
+A settled text observation may now nominate an idle, generation-acknowledged
+frame for capture. This is only a candidate: independent source rasterization
+and full INDEX8/VRAM/CGRAM comparisons must pass before acceptance. It does
+not reinterpret overwritten pending text or an incremented counter as visible
+text. The older queued-generation observer remains unchanged.
