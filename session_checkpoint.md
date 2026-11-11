@@ -4074,3 +4074,16 @@ Actual-source guard/transaction tests pass. New pinned ROM/audit pass; full
 suite1498run/12skips andmake validate pass. Bounded native session port7425 is at
 /tmp/astra-camera-publish-continuous-20261111,600sec supervisor and128-frame
 no-progress capture. Preserve separate recovery worktree. No seven-action replay.
+
+### Functional playable checkpoint preserved; latency still open
+
+fa11ae2 is pushed and hosted CI43032628646 passed. Native ROM034b6836...
+completed cold original pickup→readable inventory→B close→walk→source camera
+pan in one continuous session,551.275sec,zero errors/source/INDEX8/PPU mismatch.
+Separate matching-state post-scroll object selection passed44.888sec. All262
+files retained privately underplayable-camera-checkpoint. See
+docs/scumm-toolchain/PLAYABLE_NATIVE_CHECKPOINT.md. Do not call the1908-frame
+camera responsive: two checked crops and two full publications dominate.
+Next bounded performance correction should coalesce obsolete checked camera
+crops without changing logical source timing or adding caches/renderers.
+No story replay is needed to test that contract; preserve accepted evidence.
