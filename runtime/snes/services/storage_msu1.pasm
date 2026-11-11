@@ -714,91 +714,96 @@ Same_Msu1_ReadBegin__fail:
     sec
     rts
 
+; Keep the bounded quantum and destination cursor in registers. The request
+; counters are committed once at the service boundary, including partial busy
+; failure. CRC and data-ready checking still cover every transferred byte.
+; No caller or other provider client runs inside this synchronous quantum.
 Same_Msu1_ReadStep:
     php
     rep #$30
     .a16
     .i16
+    lda.l SAME_MSU1_REMAINING+2
+    bne Same_Msu1_ReadStep__full_quantum
+    lda.l SAME_MSU1_REMAINING
+    cmp #SAME_MSU1_STEP_BUDGET
+    bcc Same_Msu1_ReadStep__quantum_ready
+Same_Msu1_ReadStep__full_quantum:
+    .a16
     lda #SAME_MSU1_STEP_BUDGET
+Same_Msu1_ReadStep__quantum_ready:
+    .a16
     sta.l SAME_MSU1_STEP_REMAINING
+    tax
+    lda.l SAME_MSU1_DEST_INDEX
+    tay
+    cpx #$0000
+    beq Same_Msu1_ReadStep__commit_counts
 Same_Msu1_ReadStep__next:
     sep #$20
     .a8
-    lda.l SAME_MSU1_REMAINING
-    ora.l SAME_MSU1_REMAINING+1
-    ora.l SAME_MSU1_REMAINING+2
-    ora.l SAME_MSU1_REMAINING+3
-    bne Same_Msu1_ReadStep__has_data
-    jml Same_Msu1_ReadStep__complete
-Same_Msu1_ReadStep__has_data:
     jsr Same_Msu1_WaitDataReady
-    bcc Same_Msu1_ReadStep__data_ready
-    jml Same_Msu1_ReadStep__done
-Same_Msu1_ReadStep__data_ready:
+    bcs Same_Msu1_ReadStep__commit_counts
     lda MSU1_DATA
     sta.l SAME_MSU1_BYTE_SCRATCH
-    jsr Same_Msu1_CrcByte
-    rep #$20
-    .a16
-    lda.l SAME_MSU1_DEST_INDEX
-    tay
-    sep #$20
-    .a8
+    jsr Same_Msu1_CrcByte ; preserves X/Y, returns A8/X16
     lda.l SAME_MSU1_BYTE_SCRATCH
     sta [SAME_MSU1_DP_DEST],y
-    rep #$20
-    .a16
     iny
-    tya
-    sta.l SAME_MSU1_DEST_INDEX
-    sep #$20
-    .a8
     lda.l SAME_MSU1_FLAGS
     and #SAME_MSU1_FLAG_RING
-    beq Same_Msu1_ReadStep__advance_source
+    beq Same_Msu1_ReadStep__byte_done
     rep #$20
     .a16
-    lda.l SAME_MSU1_DEST_INDEX
+    tya
     cmp.l SAME_MSU1_DEST_CAPACITY
-    bcc Same_Msu1_ReadStep__advance_source16
-    lda #$0000
+    bcc Same_Msu1_ReadStep__byte_done
+    ldy #$0000
+Same_Msu1_ReadStep__byte_done:
+    .i16
+    dex
+    bne Same_Msu1_ReadStep__next
+Same_Msu1_ReadStep__commit_counts:
+    rep #$30
+    .a16
+    .i16
+    txa
+    pha ; quantum bytes not consumed, including a failed busy poll
+    lda.l SAME_MSU1_STEP_REMAINING
+    sec
+    sbc 1,s
+    plx
+    pha ; consumed bytes, independently of destination ring wrap
+    tya
     sta.l SAME_MSU1_DEST_INDEX
-Same_Msu1_ReadStep__advance_source16:
+    lda.l SAME_MSU1_REMAINING
+    sec
+    sbc 1,s
+    sta.l SAME_MSU1_REMAINING
+    lda.l SAME_MSU1_REMAINING+2
+    sbc #$0000
+    sta.l SAME_MSU1_REMAINING+2
+    lda.l SAME_MSU1_BYTES_READ
+    clc
+    adc 1,s
+    sta.l SAME_MSU1_BYTES_READ
+    lda.l SAME_MSU1_BYTES_READ+2
+    adc #$0000
+    sta.l SAME_MSU1_BYTES_READ+2
+    pla
+    txa
+    sta.l SAME_MSU1_STEP_REMAINING
     sep #$20
     .a8
-Same_Msu1_ReadStep__advance_source:
-    .a8
-    sec
-    lda.l SAME_MSU1_REMAINING
-    sbc #$01
-    sta.l SAME_MSU1_REMAINING
-    lda.l SAME_MSU1_REMAINING+1
-    sbc #$00
-    sta.l SAME_MSU1_REMAINING+1
-    lda.l SAME_MSU1_REMAINING+2
-    sbc #$00
-    sta.l SAME_MSU1_REMAINING+2
-    lda.l SAME_MSU1_REMAINING+3
-    sbc #$00
-    sta.l SAME_MSU1_REMAINING+3
+    lda.l SAME_MSU1_STATUS
+    cmp #SAME_MSU1_STATE_READING
+    bne Same_Msu1_ReadStep__done ; retain explicit provider failure
     rep #$20
     .a16
-    lda.l SAME_MSU1_BYTES_READ
-    inc
-    sta.l SAME_MSU1_BYTES_READ
-    bne Same_Msu1_ReadStep__count_done
-    lda.l SAME_MSU1_BYTES_READ+2
-    inc
-    sta.l SAME_MSU1_BYTES_READ+2
-Same_Msu1_ReadStep__count_done:
-    lda.l SAME_MSU1_STEP_REMAINING
-    dec
-    sta.l SAME_MSU1_STEP_REMAINING
-    beq Same_Msu1_ReadStep__budget_done
-    jml Same_Msu1_ReadStep__next
-Same_Msu1_ReadStep__budget_done:
-    bra Same_Msu1_ReadStep__done
-Same_Msu1_ReadStep__complete:
+    lda.l SAME_MSU1_REMAINING
+    ora.l SAME_MSU1_REMAINING+2
+    bne Same_Msu1_ReadStep__done
+    sep #$20
     .a8
     jsr Same_Msu1_CheckCrc
     bcs Same_Msu1_ReadStep__done

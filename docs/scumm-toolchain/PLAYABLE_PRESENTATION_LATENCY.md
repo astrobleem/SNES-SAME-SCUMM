@@ -204,3 +204,83 @@ still queues normally. No buffers, source timing, or video budgets changed.
 Local full suite:1,494 tests run,12 skipped. `make validate`,33-region memory
 audit, pinned Poppy assembly and ROM audit pass. Native current-image evidence
 is recorded separately; these host/build checks alone do not certify latency.
+
+## Bounded checked-transfer counter batching (2026-11-11)
+
+The existing provider still polls data readiness and CRCs each transferred
+byte. X holds the bounded remaining quantum and Y the destination cursor;
+32-bit request/cumulative counters are committed once at the service boundary.
+A partial busy failure commits only consumed bytes and retains ERROR. Ring
+wrap does not affect the consumed count. READ_OK still requires the complete
+request CRC, now checked immediately when the final quantum finishes rather
+than on a following empty service call. No quantum, memory allocation, package
+format, cache lifetime, or script timing contract was expanded.
+
+The existing copyright-free Winston client, same package and18 read oracles,
+was independently assembled with the old and new loop using pinned Poppy.
+Both passed all18 cases, all6 checked visual resources, ring guards and500
+track2 loop-check frames. This includes >64KiB ring reads and32-bit seeks
+past16MiB, expected range rejects, CRC/sample comparisons and serialized A/B/A
+requests. PCM service ran concurrently; this test did not record audio samples
+and is not new gapless-audio evidence.
+
+| Native observation | Before | After |
+|---|---:|---:|
+| Final emulated frame |2656|2144|
+| Total checked data bytes |257508|257508|
+| Median ReadStep cycle-counter interval |80927|46770|
+| Retained paired entry/exit intervals |1024|1017|
+
+The median sampled call cost fell42.2%, whole-fixture frame count19.3%.
+Intervals use Nexen's reported cycle counter and include interrupt effects;
+retained hooks are a bounded sample, not every request. Whole-fixture frames
+include script/audio/presentation work and must not be labeled raw MSU speed.
+Both builds retain the64-byte quantum. Host instruction tests separately
+exercise64/256-byte quanta, exact/partial/empty lengths,32-bit borrow/carry,
+ring capacity1/17/1024, partial busy failures and CRC rejection.
+
+Native identities:
+
+before:
+- rom_sha256: `b382460405daf758f4205cd7a9d991d5273e5d68d2188f31e0dbdffcd97365bd`
+- map_sha256: `19ebce589bc453ae77f1c425589242303f22ce68ecd6c6f0b327f9195d8f6190`
+- package_sha256: `94c05cddcd1ad704b8cad9961e86bf12c275201a1aa880af0b0b39b75d4cfd6e`
+- build_identity_sha256: `aae9430911cd37a485fd778a6d33fc4997da7e6e592488ff9166b09892fd7127`
+
+after:
+- rom_sha256: `909438b04b8874ce6ebc209f0f9e474039b37515fef335168d4d0281f6300015`
+- map_sha256: `5c35b0bb1c74a3cad387868529474e22c76447f42c50ce167ac56500bb82f6f9`
+- package_sha256: `94c05cddcd1ad704b8cad9961e86bf12c275201a1aa880af0b0b39b75d4cfd6e`
+- build_identity_sha256: `1f15bb4f9069ba6074fc4a58e8a778b9232fd3f031f676a01edcca82c4a17c67`
+
+authentic 256-byte boot:
+- rom_sha256: `88a3cfe48964a49283d78ea0f03c30607a81a8515dce30828a57d0c7e80c8781`
+- map_sha256: `70180c9aa409f9a666853805896401f2eeb01aca5800d75f4f13ba0cf225a7d0`
+- package_sha256: `70564585c15538ed04b7f614b5b4d929a07eedf7a8545b510ff0ed66e9ad29d0`
+- build_identity_sha256: `5d867b218f0a04fa5d32767f20884c2f21e4eae230791735bd46fc085972caad`
+
+The256-byte production personality booted the unchanged2203-unit authentic
+package and published room68 at frame672, error0, in a16.972second supervised
+run with no controller inputs or guest writes. Canonical bindings include
+GlobalProgram(1), and the actual installed SC5LIVE header matches room68.
+This is a storage/boot regression, not another interaction or visual proof.
+The first observer attempt incorrectly read the version word as the room ID;
+its failure is preserved separately. The correcting observer uses the actual
+SC5LIVE HEADER contract; no engine/resource bytes changed between those runs.
+
+Clean provider-only builds exposed an independent missing empty include:
+Poppy opens disabled include paths before evaluating feature guards. The build
+now owns the empty SCUMM directory for provider-only configurations too, while
+preserving enabled generated directories. Fresh/stale-output tests and both
+independent native builds cover this correction.
+
+The separate large-live-room harness attempt is NOT native acceptance: its
+assembly-only CI flags omitted a boot activation; adding the documented boot
+flag exposes the legacy synthetic generated bank0 layout overflow ($FFC9, or
+$FFEB with controller, versus header$FFC0). No feature was disabled to fit.
+This diagnostic configuration remains an explicit limitation. The current
+authentic full-directory configuration and provider-only control both link
+and execute; no result is transferred between their ROM identities.
+
+These changes reduce transfer CPU overhead. They do not remove the measured
+full-viewport conversion/publication cost or certify responsive scrolling.

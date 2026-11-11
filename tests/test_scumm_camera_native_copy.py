@@ -52,6 +52,9 @@ class StripMachine(ServiceMachine):
             elif op=='sep':p|=v
             elif op in ('lda','lda.l'):result=v
             elif op=='sta.l':self.put(addr,a&mask,bits//8);written.extend(range(addr,addr+bits//8))
+            elif op=='sta' and arg.startswith('['):
+                pointer=self.get(value(arg[1:arg.index(']')]),3)
+                addr=pointer+y;self.put(addr,a&mask,bits//8);written.extend(range(addr,addr+bits//8))
             elif op=='clc':p&=~1
             elif op=='sec':p|=1
             elif op in ('adc','adc.l'):
@@ -65,18 +68,22 @@ class StripMachine(ServiceMachine):
                 p=(p&~1)|(a&1);result=(a&mask)>>1
             elif op in ('eor','eor.l'):result=(a&mask)^v
             elif op=='and':result=(a&mask)&v
+            elif op=='ora.l':result=(a&mask)|v
             elif op=='inc':result=(a&mask)+1
             elif op=='dec':result=(a&mask)-1
             elif op=='xba':result=((a&255)<<8)|(a>>8)
             elif op=='ldx':x=v
+            elif op=='ldy':y=v
             elif op=='cpx':
                 delta=x-v;p=(p&~0x83)|int(delta>=0)|(2 if delta==0 else 0)|(128 if delta&32768 else 0)
             elif op=='txa':result=x
+            elif op=='tya':result=y
             elif op=='tax':x=a&65535
             elif op=='tay':y=a&65535
             elif op=='tyx':x=y
             elif op=='inx':x=(x+1)&65535
             elif op=='iny':y=(y+1)&65535
+            elif op=='dex':x=(x-1)&65535;p=(p&~0x82)|(2 if x==0 else 0)|(128 if x&32768 else 0)
             elif op=='php':stack.append((p,8))
             elif op=='plp':p,width=stack.pop();assert width==8
             elif op=='pha':stack.append((a,bits))
@@ -85,7 +92,7 @@ class StripMachine(ServiceMachine):
             elif op=='ply':y,width=stack.pop();assert width==16
             elif op=='phx':stack.append((x,16))
             elif op=='plx':x,width=stack.pop();assert width==16
-            elif op=='jsl':
+            elif op in ('jsl','jsr'):
                 if arg in self.labels:returns.append(pc);pc=self.labels[arg]
                 else:p,a=self.service(arg,p,a);written.extend(self.service_writes);self.service_writes=[]
             elif op in ('beq','bne','bcc','bcs','bpl','bmi','bra','jmp'):
