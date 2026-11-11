@@ -27,7 +27,7 @@ class LifecycleChildWidthTests(unittest.TestCase):
         m=self.machine(0)
         for high in range(256):
             with self.subTest(high=high):
-                m.code[1]=f'lda #${high<<8:04X}' 
+                m.code[1]=f'lda #${high<<8:04X}'
                 m.put('SAME_SCUMM_MSU_PENDING_CHILD_SLOT',2,1)
                 m.put('SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM',0xF7,1)
                 m.put(m.symbols['SAME_SCUMM_C4_SLOT_PROGRAM']+1,0xF7,1)
