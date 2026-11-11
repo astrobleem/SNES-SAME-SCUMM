@@ -543,6 +543,7 @@ def main() -> int:
     )
     parser.add_argument("--actor-probe-font-sample", action="store_true")
     parser.add_argument("--visual-reserved-bottom", type=int, default=0)
+    parser.add_argument("--visual-projection", choices=("aspect-fit", "camera-viewport"), default="aspect-fit")
     parser.add_argument("--msu1-program-cache-bytes", type=lambda value: int(value, 0), default=0x0800)
     parser.add_argument(
         "--diagnostic-actor-probe", action="store_true",
@@ -1816,6 +1817,7 @@ def main() -> int:
             ),
             room_visual_resources=room_visual_resources,
             visual_reserved_bottom=args.visual_reserved_bottom,
+            visual_projection=args.visual_projection,
             rom_bank=args.msu1_program_directory_bank,
             projection_directory_bank=args.msu1_projection_directory_bank,
             page_directory_bank=(

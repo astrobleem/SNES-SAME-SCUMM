@@ -205,6 +205,9 @@ ScummV5_MsuProgram_Reset_Far__pending:
     lda #SCUMM_MSU_ROOM_IDLE
     sta.l SAME_SCUMM_MSU_ROOM_STATE
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$00
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    sta.l SAME_SCUMM_VIEWPORT_MODE
     lda #SCUMM_LIVE_ROOM_STAGE_COOKED
     sta.l SCUMM_LIVE_ROOM_STAGE
     lda #$00
@@ -630,6 +633,8 @@ ScummV5_MsuRoom_Request_Far:
     lda #$00
     sta.l SCUMM_LIVE_ROOM_OLD_BUNDLE_RELEASED
     sta.l SCUMM_LIVE_ROOM_CHUNK_MODE
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    sta.l SAME_SCUMM_VIEWPORT_MODE
     rep #$20
     .a16
     ; SEP/LDA #0 cleared only A.low. B may still contain an unrelated
@@ -664,6 +669,16 @@ ScummV5_MsuRoom_Request_Far__coalesced:
 ScummV5_MsuRoom_Service_Far:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SCUMM_MSU1_CAMERA_VIEWPORT
+    jsl ScummV5_Camera_YieldToRoom_Far
+    bcc ScummV5_MsuRoom_Service_Far__camera_drained
+    clc
+    rtl
+ScummV5_MsuRoom_Service_Far__camera_drained:
+    .a8
+      .endif
+    .endif
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     lda #$A0
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1D

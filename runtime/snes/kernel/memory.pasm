@@ -1097,6 +1097,33 @@ SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_W  = $7E5E64 ; u16
 SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_H  = $7E5E66 ; u16
 SAME_SCUMM_CONTROLLER_WITNESS_PRESENT   = $7E5E68 ; u16 generation
 SAME_SCUMM_CONTROLLER_WITNESS_VALID     = $7E5E6A ; u8
+
+; Camera transaction owns 40 bytes of the former resolver/name-cache padding.
+; Resolver ends at $7E8FC0; encoded names start at $7E9000. This allocation
+; is independent of controller diagnostics and their lifecycle trace ring.
+SAME_SCUMM_VIEWPORT_STATE_BASE = $7E8FC0
+SAME_SCUMM_VIEWPORT_STATE_END = $7E8FE8
+SAME_SCUMM_VIEWPORT_STATE = $7E8FC0
+SAME_SCUMM_VIEWPORT_STRIP = $7E8FC2
+SAME_SCUMM_VIEWPORT_FIRST = $7E8FC4
+SAME_SCUMM_VIEWPORT_LAST = $7E8FC6
+SAME_SCUMM_VIEWPORT_SOURCE_X = $7E8FC8
+SAME_SCUMM_VIEWPORT_SOURCE_Y = $7E8FCA
+SAME_SCUMM_VIEWPORT_DEST_X = $7E8FCC
+SAME_SCUMM_VIEWPORT_DEST_Y = $7E8FCE
+SAME_SCUMM_VIEWPORT_WIDTH = $7E8FD0
+SAME_SCUMM_VIEWPORT_HEIGHT = $7E8FD2
+SAME_SCUMM_VIEWPORT_ROOM_WIDTH = $7E8FD4
+SAME_SCUMM_VIEWPORT_ROOM_HEIGHT = $7E8FD6
+SAME_SCUMM_VIEWPORT_PITCH = $7E8FD8
+SAME_SCUMM_VIEWPORT_DIRECTORY = $7E8FDA
+SAME_SCUMM_VIEWPORT_CRC_BASE = $7E8FDC
+SAME_SCUMM_VIEWPORT_STRIP_BYTES = $7E8FDE
+SAME_SCUMM_VIEWPORT_OFFSET = $7E8FE0
+SAME_SCUMM_VIEWPORT_TEMP = $7E8FE4
+SAME_SCUMM_VIEWPORT_ROOM = $7E8FE6
+SAME_SCUMM_VIEWPORT_MODE = $7E8FE7
+
 ; Generic checked actor-pose request/scratch state occupies the audited final
 ; 128-byte Mode-3 work allocation. Pixel bytes use the ROOM-PENDING buffer,
 ; never a ProgramUnit cache page.
@@ -1318,8 +1345,8 @@ SAME_SCUMM_OBJECT_OWNERS                  = $7E8000 ; 2048 u8 mutable owner tabl
 SAME_SCUMM_OBJECT_NAME_LENGTH             = $7E8800 ; 1024 u8 bounded lengths
 .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
 ; Explicit ownership boundary: the always-live name-length cache ends at
-; $7E8C00; resolver state owns $7E8C00-$7E8FBF; $7E8FC0-$7E8FFF is reserved
-; padding; encoded names begin at $7E9000. Controller/input, C4, C19, room
+; $7E8C00; resolver state owns $7E8C00-$7E8FBF; $7E8FC0-$7E8FE7 owns camera transaction state; the remaining
+; $7E8FE8-$7E8FFF is padding; encoded names begin at $7E9000. Controller/input, C4, C19, room
 ; lifecycle, and save-validation ranges are independently declared and checked
 ; by tools/audit_scumm_residency_wram.py.
 SAME_SCUMM_RESIDENT_WRAM_BASE              = $7E8C00

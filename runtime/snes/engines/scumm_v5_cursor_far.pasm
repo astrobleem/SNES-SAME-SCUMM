@@ -482,6 +482,34 @@ ScummV5_Cursor_Project_Far:
     pha
     phx
     phy
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    ; Cursor is logical virtual-screen space; projection uses the currently
+    ; installed viewport, while object hit testing keeps original world space.
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    clc
+    adc.l SAME_SCUMM_CAMERA_VSCREEN_XSTART
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sta.l SAME_SCUMM_CURSOR_LEFT
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    clc
+    adc.l SAME_SCUMM_CAMERA_CURRENT_Y
+    sec
+    sbc #$0064
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sta.l SAME_SCUMM_CURSOR_TOP
+    ply
+    plx
+    pla
+    plp
+    clc
+    rtl
+    .endif
     lda.l SAME_VIDEO_SURFACE_ROOM
     and #$00FF
     asl

@@ -1,3 +1,13 @@
+## Active Milestone C — camera checkpoint, not completion
+
+The optional source-resolution camera reached an authentic room-10 settled
+frame with exact original source/INDEX8/PPU pixels. See
+`docs/scumm-toolchain/CAMERA_VIEWPORT_INTEGRATION.md` for identities and limits.
+The first failed run exposed a lifecycle-trace/camera-state overlap; corrected
+allocation is independently audited. No replay of the seven-action route.
+Camera scrolling, visible verb/inventory navigation and persistent interaction
+remain active work. Existing source recovery worktree remains untouched.
+
 # Active Milestone C — presentation backlog corrected; camera/UI remain pending
 
 Published successor draft PR15 targets preserved completed-B PR14. Last hosted

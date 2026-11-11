@@ -10,7 +10,7 @@ import struct
 import re
 import unittest
 
-from test_scumm_v5_actor_damage_boundaries import ControllerMachine
+from test_scumm_v5_actor_damage_boundaries import ControllerMachine, camera_source
 from same.engines.scumm_v5.cursor import MASKS, HOTSPOTS, COLORS
 from tools.validate_scumm_actor_visual_probe_nexen import pose_is_presented
 
@@ -20,14 +20,14 @@ D = 'SAME_VIDEO_SURFACE_DAMAGE_'
 
 
 class CursorMachine(ControllerMachine):
-    def __init__(self, source_size=(320, 200)):
-        super().__init__([], source_size=source_size)
+    def __init__(self, source_size=(320, 200), camera=False):
+        super().__init__([], source_size=source_size, camera=camera)
         cursor = (ROOT / 'runtime/snes/engines/scumm_v5_cursor_far.pasm').read_text()
         controller = (ROOT / 'runtime/snes/engines/scumm_v5_controller_far.pasm').read_text()
         helper = controller.split('ScummV5_ActorPose_ProjectSpan_Far:', 1)[1]
         helper = helper.split('; The provider has one global cursor.', 1)[0]
         self.code, self.labels = [], {}
-        for raw in (cursor + '\nScummV5_ActorPose_ProjectSpan_Far:\n' + helper).splitlines():
+        for raw in camera_source(cursor + '\nScummV5_ActorPose_ProjectSpan_Far:\n' + helper,camera).splitlines():
             line = raw.split(';', 1)[0].strip()
             if not line or line.startswith('.') or ' = ' in line:
                 continue
@@ -563,3 +563,23 @@ class NativeCursorTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CameraCursorTests(unittest.TestCase):
+    def test_world_hit_point_and_visible_cursor_share_camera_origin(self):
+        for origin in (0,40,320):
+            for x,y in ((0,0),(40,60),(287,143),(319,199)):
+                vm=CursorMachine((640,144),camera=True)
+                vm.mem.update(SAME_SCUMM_CONTROLLER_CURSOR_X=x,
+                              SAME_SCUMM_CONTROLLER_CURSOR_Y=y,
+                              SAME_SCUMM_CAMERA_VSCREEN_XSTART=origin,
+                              SAME_SCUMM_CAMERA_CURRENT_Y=100,
+                              SAME_VIDEO_SURFACE_SOURCE_X=origin+32,
+                              SAME_VIDEO_SURFACE_SOURCE_Y=0,
+                              SAME_VIDEO_SURFACE_DEST_X=0,
+                              SAME_VIDEO_SURFACE_DEST_Y=24)
+                want=bytearray(vm.original);left=x-32-HOTSPOTS[0][0];top=y+24-HOTSPOTS[0][1]
+                for i,covered in enumerate(MASKS[0]):
+                    dx,dy=left+i%16,top+i//16
+                    if covered and 0<=dx<256 and 0<=dy<224:want[dy*256+dx]=COLORS[0]
+                vm.entry('Draw');self.assertFalse(vm.c);self.assertEqual(vm.surface,want)

@@ -10,12 +10,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import struct
+import zlib
 
 from ...errors import ResourceError
 
 
 MAGIC = b"SC5VIS\0\0"
 VERSION = 1
+STRIP_VERSION = 2
+STRIP_WIDTH = 8
 PIXEL_FORMAT_INDEX8 = 1
 PALETTE_FORMAT_RGB8 = 1
 HEADER = struct.Struct("<8sHHHHHHHHHIIII32s32s32s32s32s32s32s")
@@ -108,7 +111,7 @@ def decode_room_visual(data: bytes, *, expected_room: int | None = None) -> Cook
         archive_hash, index_hash, data_hash, room_hash,
         palette_hash, pixel_hash, record_hash,
     ) = values
-    if magic != MAGIC or version != VERSION or header_size != HEADER.size:
+    if magic != MAGIC or version not in (VERSION, STRIP_VERSION) or header_size != HEADER.size:
         raise ResourceError("room visual magic, schema, or header size differs")
     if pixel_format != PIXEL_FORMAT_INDEX8 or palette_format != PALETTE_FORMAT_RGB8:
         raise ResourceError("room visual format is unsupported")
@@ -116,19 +119,35 @@ def decode_room_visual(data: bytes, *, expected_room: int | None = None) -> Cook
         raise ResourceError("room visual room identity differs")
     if width <= 0 or height <= 0 or pitch < width or palette_count != 256:
         raise ResourceError("room visual dimensions, pitch, or palette count differ")
-    expected_rows = height * ROW.size
+    row_count = height if version == VERSION else (pitch + STRIP_WIDTH - 1) // STRIP_WIDTH
+    expected_rows = row_count * ROW.size
     if palette_offset != HEADER.size or row_directory_offset != palette_offset + 768:
         raise ResourceError("room visual palette or row-directory offset differs")
     if pixel_offset != row_directory_offset + expected_rows:
         raise ResourceError("room visual pixel offset differs")
-    if pixel_length != pitch * height or pixel_offset + pixel_length != len(data):
+    expected_length = pitch * height if version == VERSION else row_count * STRIP_WIDTH * height
+    if pixel_length != expected_length or pixel_offset + pixel_length != len(data):
         raise ResourceError("room visual pixel bounds differ")
-    for y in range(height):
-        offset, length = ROW.unpack_from(data, row_directory_offset + y * ROW.size)
-        if offset != pixel_offset + y * pitch or length < width or offset + length > len(data):
+    for index in range(row_count):
+        offset, length = ROW.unpack_from(data, row_directory_offset + index * ROW.size)
+        stride = pitch if version == VERSION else STRIP_WIDTH * height
+        valid_length = (width <= length and offset + length <= len(data)
+                        if version == VERSION else length == stride)
+        if offset != pixel_offset + index * stride or not valid_length:
             raise ResourceError("room visual row directory is malformed")
     palette = bytes(data[palette_offset:row_directory_offset])
     pixels = bytes(data[pixel_offset:])
+    if version == STRIP_VERSION:
+        logical = bytearray(pitch * height)
+        for strip in range(row_count):
+            width_here = min(STRIP_WIDTH, pitch - strip * STRIP_WIDTH)
+            for y in range(height):
+                start = (strip * height + y) * STRIP_WIDTH
+                if any(pixels[start + width_here:start + STRIP_WIDTH]):
+                    raise ResourceError("room visual strip padding is not canonical zero")
+                dest = y * pitch + strip * STRIP_WIDTH
+                logical[dest:dest + width_here] = pixels[start:start + width_here]
+        pixels = bytes(logical)
     if _sha(palette) != palette_hash or _sha(pixels) != pixel_hash:
         raise ResourceError("room visual decoded payload identity differs")
     mutable = bytearray(data)
@@ -217,3 +236,70 @@ def project_room_visual(
         "sampling": "nearest_neighbor_aspect_fit",
         "border_palette_index": 0,
     }
+
+
+def encode_camera_room_visual(data: bytes) -> tuple[bytes, list[dict[str, int | str]]]:
+    """SC5VIS v2: the same logical image in independently checked 8px strips.
+
+    SAMEPKG and the source codecs are unchanged. v1 remains readable. No crop,
+    resize, palette conversion, or duplicate full-image payload is stored.
+    The existing header pixel hash identifies reconstructed logical rows;
+    the record hash covers the physical directory, strips and canonical padding.
+    Runtime per-strip CRCs additionally permit bounded checked reads.
+    """
+    visual = decode_room_visual(data)
+    if STRIP_WIDTH * visual.height > 3132:
+        raise ResourceError("camera strip exceeds native pending scratch capacity")
+    count = (visual.pitch + STRIP_WIDTH - 1) // STRIP_WIDTH
+    palette_offset = HEADER.size
+    directory_offset = palette_offset + 768
+    pixel_offset = directory_offset + count * ROW.size
+    payload = bytearray()
+    descriptors = []
+    for strip in range(count):
+        body = bytearray()
+        x = strip * STRIP_WIDTH
+        width_here = min(STRIP_WIDTH, visual.pitch - x)
+        for y in range(visual.height):
+            body.extend(visual.pixels[y * visual.pitch + x:y * visual.pitch + x + width_here])
+            body.extend(bytes(STRIP_WIDTH - width_here))
+        descriptors.append(dict(index=strip, x=x, width=width_here,
+                                offset=pixel_offset + len(payload), length=len(body),
+                                crc32=f"{zlib.crc32(body) & 0xffffffff:08x}",
+                                sha256=_sha(body).hex()))
+        payload.extend(body)
+    header = HEADER.pack(
+        MAGIC, STRIP_VERSION, HEADER.size, PIXEL_FORMAT_INDEX8, PALETTE_FORMAT_RGB8,
+        visual.room, visual.width, visual.height, visual.pitch, 256,
+        palette_offset, directory_offset, pixel_offset, len(payload),
+        *(bytes.fromhex(h) for h in (visual.archive_sha256, visual.index_sha256,
+                                    visual.data_sha256, visual.room_sha256)),
+        _sha(visual.palette), _sha(visual.pixels), bytes(32),
+    )
+    result = bytearray(header + visual.palette + b"".join(
+        ROW.pack(d["offset"], d["length"]) for d in descriptors) + payload)
+    result[HEADER.size - 32:HEADER.size] = _sha(result)
+    return bytes(result), descriptors
+
+
+def camera_viewport(visual: CookedRoomVisual, *, xstart: int, ycenter: int = 100,
+                    width: int = 256, height: int = 224, reserved_bottom: int = 32
+                    ) -> tuple[bytes, dict[str, int]]:
+    """Host oracle for the existing 320px SCUMM camera on a bounded display.
+
+    World coordinates and pixels are not scaled. Short rooms are centered in
+    the scene area; the bottom interface is separate. Clamp only at room edges.
+    """
+    if not 0 < width <= 320 or not 0 <= reserved_bottom < height <= 224:
+        raise ResourceError("invalid camera viewport")
+    cw, ch = min(width, visual.width), min(height - reserved_bottom, visual.height)
+    sx = max(0, min(visual.width - cw, xstart + (320 - width) // 2))
+    sy = max(0, min(visual.height - ch, ycenter - ch // 2))
+    dx, dy = (width - cw) // 2, (height - reserved_bottom - ch) // 2
+    pixels = bytearray(width * height)
+    for y in range(ch):
+        start = (sy + y) * visual.pitch + sx
+        dest = (dy + y) * width + dx
+        pixels[dest:dest + cw] = visual.pixels[start:start + cw]
+    return bytes(pixels), dict(source_x=sx, source_y=sy, dest_x=dx, dest_y=dy,
+                              copy_width=cw, copy_height=ch)

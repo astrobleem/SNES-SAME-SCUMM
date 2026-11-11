@@ -1092,6 +1092,7 @@ else
         if [[ "${SAME_SNES_VIDEO_OVERLAY:-none}" == "surface_index8" ]]; then
             ROOM_GENERATOR_ARGS+=(--visual-reserved-bottom 32)
         fi
+        ROOM_GENERATOR_ARGS+=(--visual-projection "${SAME_SCUMM_VISUAL_PROJECTION:-aspect-fit}")
         MSU_PROGRAM_STORAGE_DIR="${SAME_SCUMM_MSU1_PROGRAM_STORAGE_DIR:-$M23A_BUILD/msu-program-storage}"
         mkdir -p "$MSU_PROGRAM_STORAGE_DIR"
         ROOM_GENERATOR_ARGS+=(--msu1-program-storage-dir "$MSU_PROGRAM_STORAGE_DIR"

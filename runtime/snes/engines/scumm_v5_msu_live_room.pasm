@@ -510,6 +510,9 @@ ScummV5_MsuLiveRoom_Start_Far__visual_room_ok:
     bne ScummV5_MsuLiveRoom_Start_Far__pixels_row
     jmp ScummV5_MsuLiveRoom_Start_Far__palette_row
 ScummV5_MsuLiveRoom_Start_Far__pixels_row:
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    jml ScummV5_Camera_StartStrip_Far
+    .endif
     ; Pixel descriptor fields at byte offsets 0,4,6.
     lda.l ScummV5_MsuVisualRecords,x
     sta.l SAME_MSU1_REQUEST_OFFSET
@@ -612,6 +615,7 @@ ScummV5_MsuLiveRoom_Start_Far__palette_row:
     lda.l ScummV5_MsuVisualRecords,x
     sta.l SAME_MSU1_EXPECTED_CRC+3
     inx
+.if !SCUMM_MSU1_CAMERA_VIEWPORT
     lda.l ScummV5_MsuVisualRecords,x
     cmp #$00
     ; X now addresses the width word (row+20); the first byte is 00 for 256.
@@ -654,6 +658,7 @@ ScummV5_MsuLiveRoom_Start_Far__pitch_low_ok:
     jmp ScummV5_MsuLiveRoom_Start_Far__invalid
 ScummV5_MsuLiveRoom_Start_Far__pitch_high_ok:
     .a8
+.endif
     rep #$20
     .a16
     lda.l SAME_MSU1_REQUEST_LENGTH
@@ -950,6 +955,29 @@ ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__palette:
     rtl
 ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__pixels:
     .a8
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    jsl ScummV5_Camera_ConsumeStrip_Far
+    bcs ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__camera_failed
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_VIEWPORT_STATE
+    cmp #$02
+    beq ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__camera_complete
+    clc
+    rtl
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__camera_failed:
+    jml ScummV5_MsuRoom_Service_Far__fail
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__camera_complete:
+    .a8
+    lda.l SAME_SCUMM_VIEWPORT_MODE
+    beq ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__initial_camera
+    lda #SCUMM_MSU_ROOM_VALIDATED
+    sta.l SAME_SCUMM_MSU_ROOM_STATE
+    sec
+    rtl
+ScummV5_MsuLiveRoom_ValidateCompletedRead_Far__initial_camera:
+    .a8
+    .endif
     lda #SCUMM_LIVE_ROOM_STAGE_COMMIT_READY
     sta.l SCUMM_LIVE_ROOM_STAGE
     lda #$01
@@ -2223,7 +2251,24 @@ ScummV5_LiveRoom_PublishVisual_Far:
     lda.l SCUMM_LIVE_ROOM_VALID
     and #$00FF
     cmp #$0001
-    bne ScummV5_LiveRoom_PublishVisual_Far__bad
+    beq ScummV5_LiveRoom_PublishVisual_Far__valid
+    jmp ScummV5_LiveRoom_PublishVisual_Far__bad
+ScummV5_LiveRoom_PublishVisual_Far__valid:
+    .a16
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_VIEWPORT_STATE
+    cmp #$02
+    beq ScummV5_LiveRoom_PublishVisual_Far__camera_ready
+    jmp ScummV5_LiveRoom_PublishVisual_Far__bad
+ScummV5_LiveRoom_PublishVisual_Far__camera_ready:
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    rep #$20
+    .a16
+    .endif
     ldx #$0000
 ScummV5_LiveRoom_PublishVisual_Far__pixels:
     .a16
@@ -2271,6 +2316,9 @@ ScummV5_LiveRoom_PublishVisual_Far__pixels:
     sta.l SAME_VIDEO_SURFACE_COPY_WIDTH
     lda #$00E0
     sta.l SAME_VIDEO_SURFACE_COPY_HEIGHT
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    jsl ScummV5_Camera_InstallGeometry_Far
+    .endif
     sep #$20
     .a8
     ; This is the active-surface lifetime, distinct from VALID for the current
@@ -3867,3 +3915,7 @@ ScummV5_LiveRoom_VerbEnumerate_Far__miss:
 
 ScummV5_LiveRoom_Magic:
     .byte $53,$43,$35,$4C,$49,$56,$45,$00
+
+.if SCUMM_MSU1_CAMERA_VIEWPORT
+.include "scumm_v5_camera_stream.inc.pasm"
+.endif

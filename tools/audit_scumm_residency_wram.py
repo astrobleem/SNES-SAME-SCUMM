@@ -21,6 +21,8 @@ MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 # Intervals are half-open. Their endpoints are ownership boundaries declared
 # in memory.pasm; unrelated ownership overlap fails closed.
 REGIONS = (
+    ("camera_transaction", "SAME_SCUMM_VIEWPORT_STATE_BASE",
+     "SAME_SCUMM_VIEWPORT_STATE_END"),
     ("retained_text_and_pending_snapshot", "SAME_SCUMM_TEXT_STORAGE_START",
      "SAME_SCUMM_TEXT_STORAGE_END"),
     ("mode3_backend_scratch", "SAME_MODE3_WORK_OWNER_START",
@@ -136,6 +138,12 @@ def audit() -> dict[str, Any]:
             or [values["SAME_VIDEO_ACTOR_UNDERLAY_" + name]
                 for name in underlay_fields] != expected):
         raise ValueError("actor-underlay scratch must alias only nonconcurrent restore witnesses, never room readiness")
+    if not (values["SAME_SCUMM_VIEWPORT_STATE_BASE"] == values["SAME_SCUMM_RESIDENT_WRAM_END"]
+            and values["SAME_SCUMM_VIEWPORT_STATE_END"] == 0x7E8FE8
+            and values["SAME_SCUMM_VIEWPORT_STATE"] == values["SAME_SCUMM_VIEWPORT_STATE_BASE"]
+            and values["SAME_SCUMM_VIEWPORT_STATE_END"] <= values["SAME_SCUMM_OBJECT_NAMES"]
+            and values["SAME_SCUMM_VIEWPORT_MODE"] + 1 == values["SAME_SCUMM_VIEWPORT_STATE_END"]):
+        raise ValueError("camera transaction must retain its separate 40-byte resolver/name padding allocation")
     if (values["SAME_SCUMM_TEXT_STORAGE_START"] < values["SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK"] + values["SAME_SCUMM_PUT_ACTOR_BOX_STRIDE"]
             or values["SAME_SCUMM_TEXT_STORAGE_END"] > values["SAME_SCUMM_PUT_ACTOR_WALKBOX"]):
         raise ValueError("retained text overlaps active geometry or actor walkbox state")

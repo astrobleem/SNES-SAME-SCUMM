@@ -266,6 +266,15 @@ ScummV5_Controller_Frame__queue_ok:
 ScummV5_Controller_Frame__ready:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SCUMM_MSU1_CAMERA_VIEWPORT
+    lda.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+    beq ScummV5_Controller_Frame__camera_ready
+    jmp ScummV5_Controller_Frame__done
+ScummV5_Controller_Frame__camera_ready:
+    .a8
+      .endif
+    .endif
     lda #$06
     sta.l SAME_SCUMM_CONTROLLER_DIAG
 
@@ -278,6 +287,12 @@ ScummV5_Controller_Frame__ready:
     lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
     bne ScummV5_Controller_Frame__mode_ready16
     lda.l SAME_SCUMM_C31_POSITIONS+4
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SCUMM_MSU1_CAMERA_VIEWPORT
+    sec
+    sbc.l SAME_SCUMM_CAMERA_VSCREEN_XSTART
+      .endif
+    .endif
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_X
     lda.l SAME_SCUMM_C31_POSITIONS+6
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_Y
@@ -3114,6 +3129,10 @@ ScummV5_ActorPose_Compose__scale_ok:
     .a16
     ; FOOT_SCREEN scratch now holds SOURCE coordinates until sampling.
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    .endif
     sta.l SAME_SCUMM_ACTOR_FOOT_SCREEN_X
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
     sec
@@ -3122,6 +3141,10 @@ ScummV5_ActorPose_Compose__scale_ok:
     jml ScummV5_ActorPose_Compose__invalid
 ScummV5_ActorPose_Compose__foot_no_overflow:
     .a16
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    .endif
     sta.l SAME_SCUMM_ACTOR_FOOT_SCREEN_Y
     ; Bind geometry to the installed surface, not the next scene request.
     ; The ticket room generation was checked above. Generated tables are ROM,
@@ -3145,6 +3168,9 @@ ScummV5_ActorPose_Compose__header_no_wrap:
     .a16
     cmp #SCUMM_MSU1_PROJECTION_RECORD_BYTES
     bcc ScummV5_ActorPose_Compose__header_in_range
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    beq ScummV5_ActorPose_Compose__header_in_range
+    .endif
     jml ScummV5_ActorPose_Compose__invalid
 ScummV5_ActorPose_Compose__header_in_range:
     .a16
@@ -3182,6 +3208,7 @@ ScummV5_ActorPose_Compose__geometry_check_4:
     inx
     inx
     lda.l ScummV5_MsuVisualProjectionData,x
+.if !SCUMM_MSU1_CAMERA_VIEWPORT
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_X
     bvc ScummV5_ActorPose_Compose__geometry_check_5
@@ -3194,6 +3221,7 @@ ScummV5_ActorPose_Compose__geometry_check_5:
     jml ScummV5_ActorPose_Compose__invalid
 ScummV5_ActorPose_Compose__geometry_check_6:
     .a16
+.endif
     sta 11,s
     clc
     adc 7,s
@@ -3204,6 +3232,7 @@ ScummV5_ActorPose_Compose__geometry_check_7:
     inx
     inx
     lda.l ScummV5_MsuVisualProjectionData,x
+.if !SCUMM_MSU1_CAMERA_VIEWPORT
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_Y
     bvc ScummV5_ActorPose_Compose__geometry_check_8
@@ -3216,6 +3245,7 @@ ScummV5_ActorPose_Compose__geometry_check_8:
     jml ScummV5_ActorPose_Compose__invalid
 ScummV5_ActorPose_Compose__geometry_check_9:
     .a16
+.endif
     sta 13,s
     clc
     adc 9,s
@@ -3223,6 +3253,13 @@ ScummV5_ActorPose_Compose__geometry_check_9:
     jml ScummV5_ActorPose_Compose__invalid
 ScummV5_ActorPose_Compose__geometry_check_10:
     .a16
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    ; Identity sampling has no ROM sample array. Only the six-word geometry
+    ; header is stored; the same span compositor uses direct source offsets.
+    lda #$0000
+    sta 5,s
+    jmp ScummV5_ActorPose_Compose__geometry_ready
+    .else
     lda 7,s
     asl
     clc
@@ -3245,6 +3282,7 @@ ScummV5_ActorPose_Compose__geometry_check_12:
     beq ScummV5_ActorPose_Compose__geometry_ready
 ScummV5_ActorPose_Compose__bad_geometry:
     jml ScummV5_ActorPose_Compose__invalid
+.endif
 ScummV5_ActorPose_Compose__geometry_ready:
     .a16
     ; Validate every span before touching the surface. A malformed descriptor
@@ -3541,7 +3579,11 @@ ScummV5_ActorPose_Compose__project_run_body:
     clc
     adc 3,s
     tax
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    lda 23,s
+    .else
     lda.l ScummV5_MsuVisualProjectionData,x
+    .endif
     sec
     sbc.l SAME_SCUMM_ACTOR_SPAN_RAW_X
     clc
@@ -3559,7 +3601,11 @@ ScummV5_ActorPose_Compose__extend_run:
     clc
     adc 3,s
     tax
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    lda 25,s
+    .else
     lda.l ScummV5_MsuVisualProjectionData,x
+    .endif
     sec
     sbc.l SAME_SCUMM_ACTOR_SPAN_RAW_X
     clc
@@ -3727,6 +3773,17 @@ ScummV5_ActorPose_Compose__invalid:
 ; X=byte offset relative to ProjectionData, Y=count. Returns A in [0,count],
 ; preserves X/Y/P/DB. All search scratch is stack-local; no DP/service alias.
 ScummV5_ActorPose_ProjectSpan_Far:
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    ; A is a nonnegative source coordinate; Y is the output bound. Retain
+    ; the lower-bound result contract for an implicit identity sample grid.
+    phy
+    cmp 1,s
+    bcc ScummV5_ActorPose_ProjectSpan__identity_done
+    tya
+ScummV5_ActorPose_ProjectSpan__identity_done:
+    ply
+    rtl
+    .endif
     php
     cld
     rep #$30

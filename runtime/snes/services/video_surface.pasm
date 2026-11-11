@@ -184,6 +184,15 @@ Same_VideoSurface_CanWrite_Far:
     php
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SCUMM_MSU1_CAMERA_VIEWPORT
+    lda.l SAME_SCUMM_VIEWPORT_STATE
+    beq Same_VideoSurface_CanWrite__external_idle
+    jmp Same_VideoSurface_CanWrite__no
+Same_VideoSurface_CanWrite__external_idle:
+    .a8
+      .endif
+    .endif
     lda.l SAME_MODE3_CONTROL_STATE
     cmp #SAME_MODE3_STATE_IDLE
     beq Same_VideoSurface_CanWrite__idle
@@ -2644,6 +2653,12 @@ Same_VideoSurface_ServicePending__room_ok:
     beq Same_VideoSurface_ServicePending__generation_ok
     brl Same_VideoSurface_ServicePending__stale16
 Same_VideoSurface_ServicePending__generation_ok:
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SCUMM_MSU1_CAMERA_VIEWPORT
+    jsl ScummV5_Camera_ServicePending_Far
+    rts
+      .endif
+    .endif
     jsl Same_VideoSurface_CanWrite_Far
     bcs Same_VideoSurface_ServicePending__defer
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES

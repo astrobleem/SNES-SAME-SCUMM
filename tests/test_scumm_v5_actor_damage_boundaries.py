@@ -10,13 +10,31 @@ M = 'SAME_SCUMM_ACTOR_'
 D = 'SAME_VIDEO_SURFACE_DAMAGE_'
 
 
+def camera_source(source, enabled=False):
+    """Select the same explicit camera build branch as Poppy, never both."""
+    active=[True];result=[]
+    for raw in source.splitlines():
+        line=raw.split(';',1)[0].strip()
+        if line.startswith('.if '):
+            condition=line[4:].strip()
+            if condition not in ('SCUMM_MSU1_CAMERA_VIEWPORT','!SCUMM_MSU1_CAMERA_VIEWPORT'):
+                raise AssertionError('unmodeled build condition '+condition)
+            yes=enabled if not condition.startswith('!') else not enabled
+            active.append(active[-1] and yes)
+        elif line=='.else':active[-1]=active[-2] and not active[-1]
+        elif line=='.endif':active.pop()
+        elif active[-1]:result.append(raw)
+    assert len(active)==1
+    return '\n'.join(result)
+
+
 class ControllerMachine:
     def __init__(self, spans, foot=(50, 130), bounds=(-300, -200, 300, 200),
                  fail_capture=0, writable=True, visible=True, fail_draw=0, fail_commit=False,
-                 source_size=(256, 224), target_size=(256, 224)):
+                 source_size=(256, 224), target_size=(256, 224), camera=False):
         source = SOURCE.read_text()
         source = source[source.index(P + '_Far:'):]
-        source = source[:source.index('; The provider has one global cursor.')]
+        source = camera_source(source[:source.index('; The provider has one global cursor.')],camera)
         self.code, self.labels = [], {}
         for raw in source.splitlines():
             line = raw.split(';', 1)[0].strip()
@@ -28,7 +46,8 @@ class ControllerMachine:
                 self.code.append(line)
         self.offsets, self.geometry = _projection_directory([dict(
             room=4, width=target_size[0], height=target_size[1], pitch=target_size[0],
-            projection=dict(source_width=source_size[0], source_height=source_size[1]))])
+            projection=dict(source_width=source_size[0], source_height=source_size[1],
+                            **({'sampling':'camera_viewport','reserved_bottom':32} if camera else {})))])
         self.source_size, self.target_size = source_size, target_size
         self.call_returns = []
         self.instructions = 0
