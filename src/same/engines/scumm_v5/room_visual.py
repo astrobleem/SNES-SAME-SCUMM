@@ -147,6 +147,7 @@ def project_room_visual(
     *,
     target_width: int,
     target_height: int,
+    reserved_bottom: int = 0,
 ) -> tuple[bytes, dict[str, int | str]]:
     """Project an indexed source room onto a bounded target surface.
 
@@ -160,15 +161,19 @@ def project_room_visual(
     if target_width <= 0 or target_height <= 0:
         raise ResourceError("room visual target dimensions must be positive")
 
+    if type(reserved_bottom) is not int or not 0 <= reserved_bottom < target_height:
+        raise ResourceError("reserved text viewport is outside target surface")
+    viewport_height = target_height - reserved_bottom
+
     # Compare rational scale factors without floating-point rounding.
-    if target_width * visual.height <= target_height * visual.width:
+    if target_width * visual.height <= viewport_height * visual.width:
         content_width = target_width
         content_height = max(1, visual.height * target_width // visual.width)
     else:
-        content_height = target_height
-        content_width = max(1, visual.width * target_height // visual.height)
+        content_height = viewport_height
+        content_width = max(1, visual.width * viewport_height // visual.height)
     offset_x = (target_width - content_width) // 2
-    offset_y = (target_height - content_height) // 2
+    offset_y = (viewport_height - content_height) // 2
 
     pixels = bytearray(target_width * target_height)
     for out_y in range(content_height):
@@ -198,6 +203,7 @@ def project_room_visual(
         room_sha256=visual.room_sha256,
     )
     return projected, {
+        **({"reserved_bottom": reserved_bottom} if reserved_bottom else {}),
         "source_width": visual.width,
         "source_height": visual.height,
         "source_pitch": visual.pitch,

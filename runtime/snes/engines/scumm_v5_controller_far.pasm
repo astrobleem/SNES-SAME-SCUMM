@@ -3513,7 +3513,7 @@ ScummV5_ActorPose_Compose__project_row_body:
     jml ScummV5_ActorPose_Compose__next_row
 ScummV5_ActorPose_Compose__target_y_positive:
     .a16
-    cmp #$00E0
+    cmp #SAME_VIDEO_SCENE_BOTTOM
     bcc ScummV5_ActorPose_Compose__target_y_visible
     jml ScummV5_ActorPose_Compose__next_row
 ScummV5_ActorPose_Compose__target_y_visible:
@@ -4276,6 +4276,13 @@ ScummV5_Controller_BuildHudText_Far:
     sep #$20
     .a8
     sta.l SAME_VIDEO_TEXT_CONTROLLER_LENGTH
+    ; C17 storage is lazy-initialized. Never interpret unowned BW-RAM as a
+    ; visible verb, and never resurrect a saved/disabled verb in the HUD.
+    lda.l SAME_SCUMM_C17_INITIALIZED
+    bne ScummV5_Controller_BuildHudText__initialized
+    jmp ScummV5_Controller_BuildHudText__unusable
+ScummV5_Controller_BuildHudText__initialized:
+    .a8
     rep #$30
     .a16
     .i16
@@ -4298,6 +4305,16 @@ ScummV5_Controller_BuildHudText_Far:
     lda.l SAME_SCUMM_C17_RECORD_OFFSET
     tax
     sep #$20
+    .a8
+    lda.l SAME_SCUMM_C17_VERBS+SAME_SCUMM_C17_V_PRESENT,x
+    beq ScummV5_Controller_BuildHudText__inactive
+    lda.l SAME_SCUMM_C17_VERBS+SAME_SCUMM_C17_V_MODE,x
+    cmp #$01
+    beq ScummV5_Controller_BuildHudText__active
+ScummV5_Controller_BuildHudText__inactive:
+    .a8
+    jmp ScummV5_Controller_BuildHudText__unusable
+ScummV5_Controller_BuildHudText__active:
     .a8
     lda.l SAME_SCUMM_C17_VERBS+SAME_SCUMM_C17_V_NAME_LENGTH,x
     bne ScummV5_Controller_BuildHudText__verb_present

@@ -30,6 +30,11 @@
         "offset": 1856,
         "bytes": 64,
         "owner": "SCUMM cursor presentation state"
+      },
+      "text_presentation": {
+        "offset": 1920,
+        "bytes": 128,
+        "owner": "video surface bounded text producer and presentation fence"
       }
     }
   },

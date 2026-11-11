@@ -93,7 +93,7 @@ class SnesCarrierTests(unittest.TestCase):
         layout = load_carrier(ROOT, "sa1_bwram", save_enabled=True).layout
         allocations = layout["protected_low"]["allocations"]
         self.assertEqual([(r["offset"], r["bytes"]) for r in allocations.values()],
-                         [(0, 768), (768, 768), (1536, 32), (1568, 288), (1856, 64)])
+                         [(0, 768), (768, 768), (1536, 32), (1568, 288), (1856, 64), (1920, 128)])
         for name, offset, size in (("room_palette_desired", 0, 768),
                                   ("room_palette_state", 2048, 32),
                                   ("room_palette_base", 0, 769)):

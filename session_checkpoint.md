@@ -1,13 +1,20 @@
-# Milestone B in progress — native text not yet connected
+# Active Milestone B — source-font native rasterization passes; interaction pending
 
-Starting checkpoint57fd60b. Added opt-in SC5FNTv2 cooking/validation and a bounded
-glyph oracle preserving1/2/4bpp slots, signed advances and opaque colorzero.
-Default V1 output/native consumers remain unchanged. Detailed contract and exact
-native palette constraint: docs/scumm-toolchain/MULTIBIT_TEXT_INTEGRATION.md.
-No new native run, text acceptance or object-action result is claimed.
-Private original font records: /home/chad/same-private-evidence/milestone-b-fonts.
-Next implementation is existing overlay/indexed-surface composition and lifetime,
-not force-enabling saved verbs. Preserve the recovery worktree and old evidence.
+Continue autonomously toward authentic readable object interaction. Do not stop
+at this intermediate font gate or replay the seven actions. Preserve recovery.
+
+Native source-font sample passes exact source/INDEX8/VRAM/CGRAM/screenshot text
+comparison: `/tmp/astra-font-native-text-fence-20261110`. Synthetic data-only
+script, authentic source font/room/costume; no gameplay acceptance claim.
+`docs/scumm-toolchain/MULTIBIT_TEXT_INTEGRATION.md` records exact identities and
+scope. Full suite 1,401 tests (12 skipped), validation passes. Current authentic
+font build: `/tmp/astra-authentic-cursor-build.98b75wab`; cold prefix diagnostic
+`/tmp/astra-authentic-text-room4-20261110` is in progress, bounded to 600 seconds.
+
+Source room4 ENCD deliberately saves/disables verbs. Local221 contains an
+original beginOverride route to room1; generic SNES X invokes C19 skip. Inspect
+actual active override before using normal input. Never inject/enable verbs.
+The recovery worktree and old ROM-bound checkpoints remain untouched.
 
 # Current checkpoint — authentic room/walking accepted; text frontier isolated
 

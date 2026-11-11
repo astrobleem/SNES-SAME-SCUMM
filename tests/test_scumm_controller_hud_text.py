@@ -43,6 +43,9 @@ class HudMachine:
         self.object_bytes=bytes(97+i%26 for i in range(32))
         for base,data in ((self.verb,self.verb_bytes),(self.obj,self.object_bytes)):
             for i,value in enumerate(data):self.mem[base+i]=value
+        self.put('SAME_SCUMM_C17_INITIALIZED',1,1)
+        self.put(self.verb-32+self.symbols['SAME_SCUMM_C17_V_PRESENT'],1,1)
+        self.put(self.verb-32+self.symbols['SAME_SCUMM_C17_V_MODE'],1,1)
         self.put(self.verb-8,verb_length,1)
         self.put(self.verb-32+self.symbols['SAME_SCUMM_C17_V_COLOR'], 6, 1)
         self.put(self.verb-32+self.symbols['SAME_SCUMM_C17_V_CHARSET'], 3, 1)
@@ -112,6 +115,9 @@ class HudMachine:
                 if op=='tay':y=v
                 else:x=v
             elif op=='tya':result=y
+            elif op=='txa':result=x
+            elif op=='ldx':x=value
+            elif op=='ldy':y=value
             elif op=='inx':x=(x+1)&((1<<iw)-1)
             elif op=='iny':y=(y+1)&((1<<iw)-1)
             elif op in ('cmp','cpy'):
@@ -241,6 +247,21 @@ class HudTextTests(unittest.TestCase):
             m.run()
             self.assertEqual(m.get('SAME_SCUMM_CONTROLLER_HUD_DIRTY',1),int(status==1))
             self.assertEqual(m.get('SAME_SCUMM_TALK_VISUAL_STATUS',1),status)
+
+    def test_uninitialized_absent_hidden_and_dim_verbs_never_read_names(self):
+        for field, value in (('SAME_SCUMM_C17_INITIALIZED', 0),
+                             ('SAME_SCUMM_C17_V_PRESENT', 0),
+                             ('SAME_SCUMM_C17_V_MODE', 0),
+                             ('SAME_SCUMM_C17_V_MODE', 2)):
+            with self.subTest(field=field, value=value):
+                m = HudMachine(6, 5, show=True)
+                address = (m.symbols[field] if field.endswith('INITIALIZED')
+                           else m.verb - 32 + m.symbols[field])
+                m.put(address, value, 1)
+                m.run()
+                self.assertEqual(m.service_styles, [])
+                self.assertEqual(m.get('SAME_VIDEO_TEXT_CONTROLLER_VALID', 1), 0)
+                self.assertFalse(any(m.verb <= a < m.verb + 64 for a, n in m.reads))
 
     def test_short_branch_reach(self):
         m=HudMachine(1,1,show=True)

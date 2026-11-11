@@ -1758,25 +1758,41 @@ class ScummV5Engine(Engine):
         message: PrintMessageState,
         target: IndexedSurface,
     ) -> None:
-        key = self._resource_key("charset", message.style.charset)
-        if not context.services.resources.contains(key):
-            # Some retail DCHR directories leave entry zero empty while the
-            # VM's default charset number still denotes the first font.
-            fallback = self._resource_key("charset", message.style.charset + 1)
-            if not context.services.resources.contains(fallback):
-                raise ResourceError(
-                    f"SCUMM print charset {message.style.charset} has no resource binding"
-                )
-            key = fallback
-        font = ScummV5Charset(context.services.resource_read(key), key=key)
-        glyphs = [
-            token.code
-            for token in decode_scumm_v5_text(message.raw)
-            if isinstance(token, ScummTextGlyph)
-        ]
-        advances = [font.glyph(code) for code in glyphs]
-        text_width = sum(4 if glyph is None else glyph.advance for glyph in advances)
-        pen_x = message.style.x - text_width // 2 if message.style.center else message.style.x
+        # Resolve exact source identities and all glyphs before drawing. A
+        # missing charset/glyph is an explicit resource failure, never an
+        # adjacent-font substitution or invented four-pixel character.
+        def read_font(charset: int) -> ScummV5Charset:
+            key = self._resource_key("charset", charset)
+            return ScummV5Charset(context.services.resource_read(key), key=key,
+                                  allow_multibit=True)
+
+        font = read_font(message.style.charset)
+        ink = message.style.color
+        lines = [[]]
+        heights = [font.line_height]
+        for token in decode_scumm_v5_text(message.raw):
+            if isinstance(token, ScummTextGlyph):
+                glyph = font.glyph(token.code)
+                if glyph is None:
+                    # Classic prepareDraw/getCharWidth define a zero offset
+                    # as absent: no pixels and zero advance, not substitution.
+                    continue
+                lines[-1].append((glyph, font.slot_colors, ink))
+                heights[-1] = max(heights[-1], font.line_height)
+            elif token.code == 1:
+                lines.append([])
+                heights.append(font.line_height)
+            elif token.code in (12, 14):
+                value = int.from_bytes(bytes(token.arguments), 'little')
+                if value > 255:
+                    raise ResourceError("SCUMM text color/charset is outside u8")
+                if token.code == 12:
+                    ink = value
+                else:
+                    font = read_font(value)
+                    heights[-1] = max(heights[-1], font.line_height)
+            else:
+                raise ResourceError(f"SCUMM text presentation control {token.code} is unsupported")
         logical_width = context.profile.video.logical_width or context.profile.video.width
         logical_height = context.profile.video.logical_height or context.profile.video.height
         physical = context.services.video.surface
@@ -1784,23 +1800,25 @@ class ScummV5Engine(Engine):
         source_y = max(0, (logical_height - physical.height) // 2)
         destination_x = max(0, (physical.width - logical_width) // 2)
         destination_y = max(0, (physical.height - logical_height) // 2)
-        for glyph in advances:
-            if glyph is None:
-                pen_x += 4
-                continue
-            for glyph_y in range(glyph.height):
-                logical_y = message.style.y + glyph.y_offset + glyph_y
-                physical_y = destination_y + logical_y - source_y
-                if not 0 <= physical_y < physical.height:
-                    continue
-                for glyph_x in range(glyph.width):
-                    if not glyph.pixels[glyph_y * glyph.width + glyph_x]:
+        pen_y = message.style.y
+        for line, height in zip(lines, heights):
+            width = sum(g.advance for g, _, _ in line)
+            pen_x = message.style.x - width // 2 if message.style.center else message.style.x
+            for glyph, colors, color in line:
+                for glyph_y in range(glyph.height):
+                    physical_y = destination_y + pen_y + glyph.y_offset + glyph_y - source_y
+                    if not 0 <= physical_y < physical.height:
                         continue
-                    logical_x = pen_x + glyph.x_offset + glyph_x
-                    physical_x = destination_x + logical_x - source_x
-                    if logical_x <= message.style.right and 0 <= physical_x < physical.width:
-                        target.set_pixel(physical_x, physical_y, message.style.color)
-            pen_x += glyph.advance
+                    for glyph_x in range(glyph.width):
+                        slot = glyph.pixels[glyph_y * glyph.width + glyph_x]
+                        if not slot:
+                            continue
+                        logical_x = pen_x + glyph.x_offset + glyph_x
+                        physical_x = destination_x + logical_x - source_x
+                        if logical_x <= message.style.right and 0 <= physical_x < physical.width:
+                            target.set_pixel(physical_x, physical_y, color if slot == 1 else colors[slot])
+                pen_x += glyph.advance
+            pen_y += height
 
     @staticmethod
     def _talk_glyph_count(raw: bytearray) -> int:
@@ -1851,13 +1869,16 @@ class ScummV5Engine(Engine):
             arguments = control_argument_count(control)
             if index + arguments > len(raw):
                 raise EngineExecutionError("SCUMM actor-talk control arguments are truncated")
-            if control != 3:
+            if control == 3:
+                segment.append(0)
+                return segment, index, False
+            if control not in (1, 12, 14):
                 raise EngineExecutionError(
                     f"SCUMM actor-talk control {control} is unsupported"
                 )
+            segment.extend((0xFF, control))
+            segment.extend(raw[index:index + arguments])
             index += arguments
-            segment.append(0)
-            return segment, index, False
         raise EngineExecutionError("SCUMM actor-talk message has no terminator")
 
     def _record_talk_event(self, kind: str, actor: int, animation: int) -> None:
@@ -1890,7 +1911,7 @@ class ScummV5Engine(Engine):
         # Validate and compute everything before replacing current ownership.
         self._talk_glyph_count(raw)
         segment, cursor, final = self._talk_segment(raw, 0)
-        glyph_count = len(segment) - 1
+        glyph_count = self._talk_glyph_count(segment)
         char_increment = self.state.variables[_VAR_CHARINC]
         if char_increment < 0:
             raise EngineExecutionError("SCUMM VAR_CHARINC must not be negative")
@@ -1921,7 +1942,7 @@ class ScummV5Engine(Engine):
     def _continue_actor_talk(self) -> None:
         talk = self.state.talk
         segment, cursor, final = self._talk_segment(talk.raw, talk.cursor)
-        glyph_count = len(segment) - 1
+        glyph_count = self._talk_glyph_count(segment)
         delay = _TALK_BASE_DELAY + glyph_count * self.state.variables[_VAR_CHARINC]
         if delay > 0x7FFF:
             raise EngineExecutionError("SCUMM actor-talk delay exceeds s16")
@@ -3119,6 +3140,10 @@ class ScummV5Engine(Engine):
             self.state.cursor_id = self._byte_for_flags(slot, flags, 0x80)
         elif subop == 13:
             self.state.charset_id = self._byte_for_flags(slot, flags, 0x80)
+            # v5 initCharset changes the two default text styles, not an
+            # already-owned message's copied style or the debug/system slots.
+            for default in self.state.print_slots[:2]:
+                default.charset = self.state.charset_id
         elif subop == 14:
             colors: list[int] = []
             while True:

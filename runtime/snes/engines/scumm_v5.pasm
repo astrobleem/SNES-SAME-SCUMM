@@ -18219,6 +18219,10 @@ ScummV5_Op_CursorCommand__charset_id:
 ScummV5_Op_CursorCommand__charset_id_ok:
     .a8
     sta.l SAME_SCUMM_C7_CHARSET_ID
+    ; v5 initCharset updates default print slots 0/1. C23 working/message
+    ; state and slots 2/3 retain their existing ownership and styles.
+    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_P_CHARSET
+    sta.l SAME_SCUMM_C23_SLOTS+SAME_SCUMM_C23_SLOT_STRIDE+SAME_SCUMM_C23_P_CHARSET
     jmp ScummV5_Op_CursorCommand__done
 ScummV5_Op_CursorCommand__colors:
     sep #$20

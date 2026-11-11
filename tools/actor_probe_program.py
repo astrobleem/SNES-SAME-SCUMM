@@ -27,6 +27,7 @@ class ProbeConfig:
     stand_frame: int = 3
     animate_frame: int = 2
     boot_script: int = 1
+    font_sample: bool = False
 
     def validate(self) -> None:
         for name in ('room', 'costume', 'boot_script'):
@@ -86,6 +87,11 @@ def build_probe(config: ProbeConfig) -> tuple[bytes, dict]:
     p.emit('putActor initial position', bytes((0x01, a)) + struct.pack('<hh', config.x, config.y))
     p.emit('animateActor facing 180', bytes((0x11, a, 250)))
     p.emit('animateActor standing frame', bytes((0x11, a, config.stand_frame)))
+    if config.font_sample:
+        # Original diagnostic words; source glyphs remain external resources.
+        p.move(37, 255)
+        p.emit('initCharset 2', bytes((0x2c, 0x0d, 2)))
+        p.emit('print actor diagnostic text', b"\x14\x01\x01\x0f\x0fSAME text 24\0")
     p.wait_ack(1, 'standing')
     p.emit('animateActor facing 90', bytes((0x11, a, 249)))
     p.emit('animateActor standing frame', bytes((0x11, a, config.stand_frame)))

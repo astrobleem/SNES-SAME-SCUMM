@@ -73,7 +73,7 @@ class CharsetGlyph:
 
     @property
     def advance(self) -> int:
-        return max(1, self.width + max(0, self.x_offset))
+        return self.width + self.x_offset
 
 
 def _signed_byte(value: int) -> int:
@@ -90,6 +90,7 @@ class ScummV5Charset:
     def __init__(self, data: bytes, *, key: str, allow_multibit: bool = False) -> None:
         self.data = bytes(data)
         self.key = key
+        self.max_glyph_dimension = 255 if allow_multibit else 64
         if len(self.data) < 25:
             raise ResourceError(f"SCUMM charset {key!r} is shorter than its header")
         declared = struct.unpack_from("<I", self.data, 0)[0]
@@ -158,7 +159,7 @@ class ScummV5Charset:
                 f"SCUMM charset {self.key!r} glyph {codepoint} header is out of bounds"
             )
         width, height, x_offset, y_offset = self.data[absolute_offset : absolute_offset + 4]
-        if width > 64 or height > 64:
+        if width > self.max_glyph_dimension or height > self.max_glyph_dimension:
             raise ResourceError(
                 f"SCUMM charset {self.key!r} glyph {codepoint} is {width}x{height}"
             )
@@ -189,6 +190,20 @@ class ScummV5Charset:
             _signed_byte(y_offset),
             pixels,
         )
+
+    @property
+    def slot_colors(self) -> tuple[int, ...]:
+        """Classic loadCharset's fifteen colors, after the stripped header.
+
+        Slot zero is transparent before mapping. A nonzero slot may map to
+        opaque screen color zero; callers must not use the result as a mask.
+        """
+        start = 6 if self._base == 21 else 4
+        return (0, *self.data[start:start + 15])
+
+    @property
+    def line_height(self) -> int:
+        return self.data[22] if self._base == 21 else 9
 
 
 def decode_scene(data: bytes, *, key: str) -> ScummScene:
@@ -336,32 +351,31 @@ class ScummV5VideoAdapter:
         text: SceneText,
         font: ScummV5Charset,
     ) -> int:
-        # A caller can explicitly decode multibit source outside this adapter.
-        # This renderer still supports masks only; do not flatten source slots.
-        if font.bits_per_pixel != 1:
-            raise ResourceError("SCUMM scene text rendering requires a 1bpp charset")
+        # Validate the entire request before changing the destination.
+        glyphs = {ord(c): font.glyph(ord(c)) for c in text.text if c != "\n"}
         origin_x = pen_x = text.x
         pen_y = text.y
         drawn = 0
         for character in text.text:
             if character == "\n":
                 pen_x = origin_x
-                pen_y += 9
+                pen_y += font.line_height
                 continue
-            glyph = font.glyph(ord(character))
+            glyph = glyphs[ord(character)]
             if glyph is None:
-                pen_x += 4
-                continue
+                continue  # Original zero-offset glyph: no draw, zero advance.
             for glyph_y in range(glyph.height):
                 target_y = pen_y + glyph.y_offset + glyph_y
                 if not 0 <= target_y < surface.height:
                     continue
                 for glyph_x in range(glyph.width):
-                    if not glyph.pixels[glyph_y * glyph.width + glyph_x]:
+                    slot = glyph.pixels[glyph_y * glyph.width + glyph_x]
+                    if not slot:
                         continue
                     target_x = pen_x + glyph.x_offset + glyph_x
                     if 0 <= target_x < surface.width:
-                        surface.pixels[target_y * surface.width + target_x] = text.color
+                        surface.pixels[target_y * surface.pitch + target_x] = (
+                            text.color if slot == 1 else font.slot_colors[slot])
             pen_x += glyph.advance
             drawn += 1
         return drawn

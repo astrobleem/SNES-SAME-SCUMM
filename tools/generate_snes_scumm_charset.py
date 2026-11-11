@@ -20,11 +20,49 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def emit_native_v2(sources: dict[int, bytes], output: Path, include: Path,
+                   manifest: Path) -> dict:
+    """One bank of CRC-checked SC5FNT records; no palette-index truncation."""
+    offsets = bytearray(b"\xff\xff" * 256)
+    records = bytearray()
+    rows = []
+    for identity, source in sorted(sources.items()):
+        if type(identity) is not int or not 0 <= identity <= 255:
+            raise ValueError("native charset identity must fit u8")
+        raw = encode_charset(source, logical_id=identity, source_id=identity, version=2)
+        font = decode_charset(raw, expected_logical_id=identity)
+        if len(records) + len(raw) + len(offsets) > 32768:
+            raise ValueError("native font directory exceeds its 32 KiB LoROM bank")
+        offsets[identity*2:identity*2+2] = len(records).to_bytes(2, "little")
+        rows.append(dict(logical_id=identity, offset=len(records), length=len(raw),
+                         sha256=sha(raw), source_sha256=font.source_sha256.hex(),
+                         bpp=font.bits_per_pixel))
+        records.extend(raw)
+    if len(records)+len(offsets) > 32768:
+        raise ValueError("native font directory exceeds its 32 KiB LoROM bank")
+    for path in (output, include, manifest): path.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(records)
+    directory = output.with_suffix('.directory.bin')
+    directory.write_bytes(offsets)
+    include.write_text(
+        '; Generated checked SC5FNT v2 directory; IDs are source identities.\n'
+        '.bank 24\n.org $8000\nScummV5_FontDirectory:\n'
+        f'.incbin "{directory.resolve().as_posix()}"\n'
+        'ScummV5_FontRecords:\n'
+        f'.incbin "{output.resolve().as_posix()}"\n')
+    report = dict(format='same-scumm-v5-font-manifest', version=2, records=rows,
+                  record_sha256=sha(records), directory_sha256=sha(offsets),
+                  bytes=len(records)+len(offsets))
+    manifest.write_text(json.dumps(report, indent=2, sort_keys=True)+'\n')
+    return report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--logical-id", type=int, default=0)
+    parser.add_argument("--native-v2", action="store_true")
     parser.add_argument("--source-id", type=int, default=1)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--include", type=Path, required=True)
@@ -43,6 +81,11 @@ def main() -> int:
     if policy is None:
         raise RuntimeError("profile has no SCUMM v5 resource policy")
     provider = LucasartsScummV5ResourceProvider(MemoryResourceProvider(raw), policy)
+    if args.native_v2:
+        sources = {int(key.split('.')[1]): provider.read(key)
+                   for key in provider.keys() if key.startswith('charset.')}
+        print(json.dumps(emit_native_v2(sources, args.output, args.include, args.manifest), sort_keys=True))
+        return 0
     source_key = f"charset.{args.source_id}"
     source = provider.read(source_key)
     cooked = encode_charset(source, logical_id=args.logical_id,

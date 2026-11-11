@@ -83,7 +83,8 @@ class ControllerMachine:
         if arg.startswith('#$'):
             return int(arg[2:], 16)
         if arg.startswith('#'):
-            return {'SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR': 1,
+            return {'SAME_VIDEO_SCENE_BOTTOM': self.target_size[1],
+                    'SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR': 1,
                     'SCUMM_ERR_RESOURCE': 9,
                     'SCUMM_MSU1_PROJECTION_MISSING': 65535,
                     'SCUMM_MSU1_PROJECTION_HEADER_SIZE': 12,

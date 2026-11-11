@@ -16,7 +16,8 @@ class SparseUnderlayAuditTests(unittest.TestCase):
             ('room_palette_desired','$400300','$400600',768),
             ('room_palette_state','$400600','$400620',32),
             ('cursor_underlay','$400620','$400740',288),
-            ('cursor_presentation','$400740','$400780',64)])
+            ('cursor_presentation','$400740','$400780',64),
+            ('text_presentation','$400780','$400800',128)])
         self.assertTrue(all(r['disjoint_from_save'] for r in rows))
         self.assertEqual(report['bwram_save_reserved'],
                          {'start':'$400800','end_exclusive':'$401000','bytes':2048})

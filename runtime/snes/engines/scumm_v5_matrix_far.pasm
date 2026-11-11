@@ -6142,8 +6142,10 @@ ScummV5_Talk_Begin_Far__scan:
     beq ScummV5_Talk_Begin_Far__control_no_args
     inx
     inx
+    inx
     bra ScummV5_Talk_Begin_Far__scan
 ScummV5_Talk_Begin_Far__control_no_args:
+    inx
     bra ScummV5_Talk_Begin_Far__scan
 ScummV5_Talk_Begin_Far__wait_valid:
     inx
@@ -6177,8 +6179,26 @@ ScummV5_Talk_Begin_Far__scan_done_common:
     lda.l SAME_SCUMM_LOOP
     sep #$20
     .a8
-    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
     sta.l SAME_SCUMM_TALK_SEGMENT_GLYPHS
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    ; Rasterization consumes encoded bytes; timing counts only glyphs.
+    ; FF 03 belongs to the sequencer and is excluded from the display pass.
+    lda.l SAME_SCUMM_TALK_CURSOR
+    sec
+    sbc.l SAME_SCUMM_TALK_SEGMENT_START
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    lda.l SAME_SCUMM_TALK_HAVE_MSG
+    cmp #$FF
+    bne ScummV5_Talk_Begin_Far__scan_done_common_encoded
+    lda.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    dec
+    dec
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+ScummV5_Talk_Begin_Far__scan_done_common_encoded:
+    .a8
+    .else
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    .endif
 ScummV5_Talk_Begin_Far__message_ready:
     sep #$20
     .a8
@@ -6331,7 +6351,8 @@ ScummV5_Talk_FrameBegin_Far:
     ; retry only the presentation publish at the normal frame boundary so
     ; visible dialogue cannot remain stuck on the old HUD prompt.
     lda.l SAME_SCUMM_TALK_VISUAL_STATUS
-    beq ScummV5_Talk_FrameBegin_Far__delay
+    cmp #$01
+    bne ScummV5_Talk_FrameBegin_Far__delay
     .if SAME_VIDEO_TEXT_SERVICE_AVAILABLE
     rep #$20
     .a16
@@ -6340,8 +6361,29 @@ ScummV5_Talk_FrameBegin_Far:
     sep #$20
     .a8
     jsl Same_VideoText_ShowSegment_Far
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    ; Do not expire an owned message before its queued surface request has
+    ; been consumed. Unsupported (2) remains explicit and is not retried.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_TALK_VISUAL_STATUS
+    cmp #$01
+    bne ScummV5_Talk_FrameBegin_Far__delay
+    brl ScummV5_Talk_FrameBegin_Far__publish
+    .endif
     .endif
 ScummV5_Talk_FrameBegin_Far__delay:
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    ; Surface composition is not presentation. Start the visible lifetime
+    ; only after the normal backend acknowledges the matching generation.
+    rep #$20
+    .a16
+    lda.l SAME_OVERLAY_STATE
+    beq ScummV5_Talk_FrameBegin_Far__presented
+    brl ScummV5_Talk_FrameBegin_Far__publish16
+ScummV5_Talk_FrameBegin_Far__presented:
+    .a16
+    .endif
     rep #$20
     .a16
     lda.l SAME_SCUMM_TALK_DELAY
@@ -6561,6 +6603,7 @@ ScummV5_Talk_Continue_Far__control:
     beq ScummV5_Talk_Continue_Far__control_no_args
     inx
     inx
+    inx
     bra ScummV5_Talk_Continue_Far__scan
 ScummV5_Talk_Continue_Far__control_no_args:
     inx
@@ -6603,8 +6646,26 @@ ScummV5_Talk_Continue_Far__publish:
     lda.l SAME_SCUMM_LOOP
     sep #$20
     .a8
-    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
     sta.l SAME_SCUMM_TALK_SEGMENT_GLYPHS
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    ; Rasterization consumes encoded bytes; timing counts only glyphs.
+    ; FF 03 belongs to the sequencer and is excluded from the display pass.
+    lda.l SAME_SCUMM_TALK_CURSOR
+    sec
+    sbc.l SAME_SCUMM_TALK_SEGMENT_START
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    lda.l SAME_SCUMM_TALK_HAVE_MSG
+    cmp #$FF
+    bne ScummV5_Talk_Continue_Far__publish_encoded
+    lda.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    dec
+    dec
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+ScummV5_Talk_Continue_Far__publish_encoded:
+    .a8
+    .else
+    sta.l SAME_SCUMM_TALK_SEGMENT_LENGTH
+    .endif
     lda.l SAME_SCUMM_C23_TEXT_TRUNCATED
     and #$80
     beq ScummV5_Talk_Continue_Far__publish_visual

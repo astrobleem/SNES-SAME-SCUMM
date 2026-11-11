@@ -86,7 +86,7 @@ def admission(logical, requested, *, busy=False, flags=0, status=0, color=15):
 class FontBindingTests(unittest.TestCase):
     def test_build_invocation_defaults_and_explicit_binding(self):
         source = (ROOT / 'tools/build_snes.sh').read_text()
-        command = source.split('    "$PYTHON" tools/generate_snes_scumm_charset.py', 1)[1].split('\nelse', 1)[0]
+        command = source.split('elif [[ "$SAME_SNES_VIDEO_OVERLAY" == "bg2_index4" ]]; then', 1)[1].split('    "$PYTHON" tools/generate_snes_scumm_charset.py', 1)[1].split('\nelse', 1)[0]
         command = '"$PYTHON" tools/generate_snes_scumm_charset.py' + command
         for binding in ({}, {'SAME_SCUMM_FONT_SOURCE_ID': '1', 'SAME_SCUMM_FONT_LOGICAL_ID': '1'},
                         {'SAME_SCUMM_FONT_SOURCE_ID': '7', 'SAME_SCUMM_FONT_LOGICAL_ID': '3'}):

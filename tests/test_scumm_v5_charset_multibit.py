@@ -60,27 +60,51 @@ class CharsetMultibitTests(unittest.TestCase):
         font = ScummV5Charset(charset(1, 2, 1, b'\x80'), key='synthetic')
         self.assertEqual(font.glyph(1).pixels, b'\x01\x00')
 
-    def test_host_renderers_reject_multibit_before_touching_pixels(self):
-        for bpp in (2, 4):
+    def test_host_renderers_preserve_source_slots_and_opaque_palette_zero(self):
+        for bpp, packed, slots in ((2, b'\x1b\x90', (0,1,2,3,2,1)),
+                                   (4, b'\x01\x2f\x80', (0,1,2,15,8,0))):
             with self.subTest(bpp=bpp):
-                source = charset(bpp, 3, 2, b'\xff\xff\xff')
+                source = charset(bpp, 3, 2, packed)
                 font = ScummV5Charset(source, key='synthetic', allow_multibit=True)
                 target = IndexedSurface(16, 16)
-                target.pixels[:] = bytes([83]) * len(target.pixels)
-                before = bytes(target.pixels)
+                expected = bytearray([83]) * 256
+                colors = (0, *source[6:21])
+                for i, slot in enumerate(slots):
+                    if slot:
+                        expected[(3+i//3)*16+2+i%3] = 240 if slot == 1 else colors[slot]
+                target.pixels[:] = bytes([83]) * 256
                 adapter = ScummV5VideoAdapter(None)
-                with self.assertRaisesRegex(ResourceError, 'requires a 1bpp charset'):
-                    adapter._draw_text(target, SceneText(4, 0, 15, 'synthetic', '\x01'), font)
-                self.assertEqual(bytes(target.pixels), before)
+                adapter._draw_text(target, SceneText(4, 0, 240, 'synthetic', '\x01'), font)
+                self.assertEqual(target.pixels, expected)
 
                 resources = MemoryResourceProvider({'charset.2': source})
                 context = SimpleNamespace(services=SimpleNamespace(
-                    resources=resources, resource_read=resources.read))
+                    resources=resources, resource_read=resources.read,
+                    video=SimpleNamespace(surface=target)),
+                    profile=SimpleNamespace(video=SimpleNamespace(
+                        logical_width=16, logical_height=16, width=16, height=16)))
                 receiver = SimpleNamespace(_resource_key=lambda kind, number: f'{kind}.{number}')
-                message = PrintMessageState(1, 0, PrintSlotState(charset=2), bytearray(b'\x01\0'))
-                with self.assertRaisesRegex(ResourceError, 'explicit multibit'):
+                message = PrintMessageState(1, 0, PrintSlotState(x=4, y=0, color=240, charset=2), bytearray(b'\x01\0'))
+                target.pixels[:] = bytes([83]) * 256
+                ScummV5Engine._present_print(receiver, context, message, target)
+                self.assertEqual(target.pixels, expected)
+                # No fallback from missing charset 1 to source charset 2.
+                message.style.charset = 1
+                before = bytes(target.pixels)
+                with self.assertRaises(ResourceError):
                     ScummV5Engine._present_print(receiver, context, message, target)
                 self.assertEqual(bytes(target.pixels), before)
+
+    def test_text_controls_keep_encoded_operands_but_not_in_glyph_timing(self):
+        raw = bytearray(b'A\xff\x0c\xf0\0B\xff\x01C\xff\x0e\x02\0D\xff\x03E\0')
+        segment, cursor, final = ScummV5Engine._talk_segment(raw, 0)
+        self.assertEqual(segment, raw[:cursor-2] + b'\0')
+        self.assertFalse(final)
+        self.assertEqual(ScummV5Engine._talk_glyph_count(segment), 4)
+        self.assertEqual(ScummV5Engine._talk_segment(raw, cursor), (bytearray(b'E\0'), len(raw), True))
+        for damaged in (bytearray(b'A\xff'), bytearray(b'A\xff\x0c\x01')):
+            with self.assertRaises(Exception):
+                ScummV5Engine._talk_segment(damaged, 0)
 
     def test_each_bit_depth_rejects_truncated_pixel_payload(self):
         for bpp in (1, 2, 4):

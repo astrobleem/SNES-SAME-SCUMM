@@ -201,11 +201,13 @@ def _projection_directory(visual_records: list[dict[str, object]]) -> tuple[byte
             raise ValueError("visual projection metadata must be a mapping")
         sw = integer(projection.get("source_width"), 1, 65535, "source_width")
         sh = integer(projection.get("source_height"), 1, 65535, "source_height")
-        if tw * sh <= th * sw:
+        reserved = integer(projection.get("reserved_bottom", 0), 0, th-1, "reserved_bottom")
+        vh = th-reserved
+        if tw * sh <= vh * sw:
             cw, ch = tw, max(1, sh * tw // sw)
         else:
-            cw, ch = max(1, sw * th // sh), th
-        ox, oy = (tw - cw) // 2, (th - ch) // 2
+            cw, ch = max(1, sw * vh // sh), vh
+        ox, oy = (tw - cw) // 2, (vh - ch) // 2
         expected = dict(target_width=tw, target_height=th, content_width=cw,
                         content_height=ch, offset_x=ox, offset_y=oy)
         for key, value in expected.items():
@@ -503,6 +505,7 @@ def build_program_storage(
     diagnostic_allow_invalid_live_route: bool = False,
     diagnostic_live_route_validation_resources: Mapping[int, bytes] | None = None,
     room_visual_resources: Mapping[int, bytes] | None = None,
+    visual_reserved_bottom: int = 0,
     rom_bank: int | None = None,
     page_directory_bank: int | None = None,
     projection_directory_bank: int | None = None,
@@ -796,6 +799,7 @@ def build_program_storage(
             source_visual = decode_room_visual(source_body, expected_room=int(room_id))
             body, projection = project_room_visual(
                 source_body, target_width=256, target_height=224,
+                reserved_bottom=visual_reserved_bottom,
             )
             visual = decode_room_visual(body, expected_room=int(room_id))
             header_values = VISUAL_HEADER.unpack_from(body)

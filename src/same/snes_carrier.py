@@ -97,6 +97,7 @@ def _validate_layout(layout: dict[str, Any]) -> tuple[MemoryRegion, ...]:
         "room_palette_state": (1536, 32, "SCUMM palette publication state"),
         "cursor_underlay": (1568, 288, "video_surface independent cursor underlay"),
         "cursor_presentation": (1856, 64, "SCUMM cursor presentation state"),
+        "text_presentation": (1920, 128, "video surface bounded text producer and presentation fence"),
     }
     if set(palette_allocations) != set(expected_palette):
         raise ValueError("protected-low palette owners differ")

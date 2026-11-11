@@ -315,6 +315,7 @@ def apply_synthetic_actor_probe(
     audit_path: Path,
     position: tuple[int, int, int] = (160, 136, 184),
     pose: tuple[int, int, int] = (2, 3, 2),
+    font_sample: bool = False,
 ) -> tuple[NativeProgramDirectory, dict[str, object]]:
     """Apply the explicit data-only actor driver before directory/package output."""
     if __package__:
@@ -338,7 +339,7 @@ def apply_synthetic_actor_probe(
     proof_document, proof_bodies, proof_pages, audit = apply_actor_probe(
         native_directory.document, bodies, pages,
         ProbeConfig(room=4, costume=pose[0], boot_script=1,
-                    stand_frame=pose[1], animate_frame=pose[2], x=position[0], y=position[1], moved_x=position[2]),
+                    stand_frame=pose[1], animate_frame=pose[2], x=position[0], y=position[1], moved_x=position[2], font_sample=font_sample),
         diagnostic_authorized=True,
     )
     updated_directory = NativeProgramDirectory(proof_document)
@@ -540,6 +541,8 @@ def main() -> int:
         "--msu1-program-page-directory-bank", type=int,
         help="ROM bank for compiler-proven bytecode page index/CRC records",
     )
+    parser.add_argument("--actor-probe-font-sample", action="store_true")
+    parser.add_argument("--visual-reserved-bottom", type=int, default=0)
     parser.add_argument("--msu1-program-cache-bytes", type=lambda value: int(value, 0), default=0x0800)
     parser.add_argument(
         "--diagnostic-actor-probe", action="store_true",
@@ -601,6 +604,8 @@ def main() -> int:
         parser.error("--actor-probe-pose requires --diagnostic-actor-probe")
     if tuple(args.actor_probe_position) != (160, 136, 184) and not args.diagnostic_actor_probe:
         parser.error("--actor-probe-position requires --diagnostic-actor-probe")
+    if args.actor_probe_font_sample and not args.diagnostic_actor_probe:
+        parser.error("--actor-probe-font-sample requires --diagnostic-actor-probe")
     if args.actor_probe_audit and not args.diagnostic_actor_probe:
         parser.error("--actor-probe-audit requires --diagnostic-actor-probe")
     if args.msu1_include_source_room_records and not args.msu1_live_room_resources:
@@ -1708,7 +1713,7 @@ def main() -> int:
             raise RuntimeError("synthetic actor probe requires the canonical native directory")
         native_directory, actor_probe_report = apply_synthetic_actor_probe(
             native_directory, programs, args.actor_probe_audit,
-            tuple(args.actor_probe_position), tuple(args.actor_probe_pose),
+            tuple(args.actor_probe_position), tuple(args.actor_probe_pose), args.actor_probe_font_sample,
         )
         actor_probe_audit_path = args.actor_probe_audit.resolve()
 
@@ -1810,6 +1815,7 @@ def main() -> int:
                 diagnostic_live_route_validation_resources
             ),
             room_visual_resources=room_visual_resources,
+            visual_reserved_bottom=args.visual_reserved_bottom,
             rom_bank=args.msu1_program_directory_bank,
             projection_directory_bank=args.msu1_projection_directory_bank,
             page_directory_bank=(

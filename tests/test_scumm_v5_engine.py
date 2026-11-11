@@ -1426,6 +1426,25 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertNotIn(76, result_state["bits"])
         self.assertEqual(result_state["scripts"][0]["pc"], 10)
 
+    def test_init_charset_updates_only_default_talk_and_string_styles(self) -> None:
+        for command in (bytes.fromhex("2c 0d 07"),
+                        bytes.fromhex("1a 1e 00 07 00 2c 8d 1e 00")):
+            host = self._host(command + b"\x80\x00")
+            state = host.engine.state
+            before = [replace(style, charset=10+i, color=30+i)
+                      for i, style in enumerate(state.print_slots)]
+            state.print_slots = [replace(style) for style in before]
+            owned = PrintMessageState(1, 0, replace(before[0]), bytearray(b"A\0"))
+            host.tick()
+            self.assertEqual(state.charset_id, 7)
+            for i, style in enumerate(state.print_slots):
+                self.assertEqual(style, replace(before[i], charset=7) if i < 2 else before[i])
+            self.assertEqual(owned.style, before[0])
+            host.save(0)
+            state.print_slots[0].charset = 99
+            host.load(0)
+            self.assertEqual(host.engine.state.print_slots[0].charset, 7)
+
     def test_c7_cursor_command_and_bit_variables_are_exact_and_saved(self) -> None:
         script = (ROOT / "examples/resources/scumm_v5/c7_cursor_bits.scrp").read_bytes()
         host = self._host(script)

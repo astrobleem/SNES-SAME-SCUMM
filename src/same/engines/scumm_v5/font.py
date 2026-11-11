@@ -128,7 +128,7 @@ def decode_charset(data: bytes, *, expected_logical_id: int | None = None) -> Co
 # covers header, map, directory and payload. Runtime palette overrides are NOT
 # baked into these immutable source slots. V1 native consumers remain V1-only.
 _GLYPH2 = struct.Struct("<BhBBbbII")
-_MAX_V2_SIZE = _HEADER.size + 16 + 256 * _GLYPH2.size + 256 * 2048 + 4
+_MAX_V2_SIZE = _HEADER.size + 16 + 256 * _GLYPH2.size + 256 * ((255 * 255 * 4 + 7) // 8) + 4
 
 
 def _encode_multibit(source, logical_id, source_id, height, baseline, spacing):
@@ -192,7 +192,7 @@ def _decode_multibit(data, expected):
             glyphs.append(None)
             continue
         needed = (width*h*bpp+7)//8
-        if (present != 1 or width > 64 or h > 64 or advance != width+x
+        if (present != 1 or advance != width+x
                 or offset != cursor or size != needed or cursor+size > len(data)-4):
             raise ResourceError(f"SC5FNT v2 glyph {code} is invalid")
         packed = data[cursor:cursor+size]
