@@ -2370,30 +2370,17 @@ ScummV5_ActorPose_Ensure__restart:
     sta.l SAME_SCUMM_ACTOR_POSE_STATE
 ScummV5_ActorPose_Ensure__provider:
     .a8
+    ; READ_OK means the provider finished, not that its consumer released
+    ; the request descriptor or pending bytes. Room installation still reads
+    ; the verified length/CRC after completion. Check every owner before even
+    ; looking up a costume: lookup populates the shared provider request.
     lda.l SAME_MSU1_STATUS
     cmp #SAME_MSU1_STATE_READY
-    beq ScummV5_ActorPose_Ensure__find
+    beq ScummV5_ActorPose_Ensure__provider_available
     cmp #SAME_MSU1_STATE_READ_OK
-    beq ScummV5_ActorPose_Ensure__find
-    cmp #SAME_MSU1_STATE_READING
-    bne ScummV5_ActorPose_Ensure__provider_not_reading
+    beq ScummV5_ActorPose_Ensure__provider_available
     jml ScummV5_ActorPose_Ensure__pending
-ScummV5_ActorPose_Ensure__provider_not_reading:
-    .a8
-    cmp #SAME_MSU1_STATE_INITIALIZING
-    bne ScummV5_ActorPose_Ensure__provider_not_initializing
-    jml ScummV5_ActorPose_Ensure__pending
-ScummV5_ActorPose_Ensure__provider_not_initializing:
-    .a8
-    cmp #SAME_MSU1_STATE_TAIL_CHECK
-    bne ScummV5_ActorPose_Ensure__provider_not_tail_check
-    jml ScummV5_ActorPose_Ensure__pending
-ScummV5_ActorPose_Ensure__provider_not_tail_check:
-    .a8
-    cmp #SAME_MSU1_STATE_ERROR
-    bne ScummV5_ActorPose_Ensure__provider_not_error
-    jml ScummV5_ActorPose_Ensure__pending
-ScummV5_ActorPose_Ensure__provider_not_error:
+ScummV5_ActorPose_Ensure__provider_available:
     .a8
     lda.l SAME_SCUMM_MSU_CACHE_REQUEST_SLOT
     cmp #$FF

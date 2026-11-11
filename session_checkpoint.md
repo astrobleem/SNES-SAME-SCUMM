@@ -1,3 +1,30 @@
+# Active Milestone B — subtitle verified; actor request ownership repaired
+
+Continue toward original object/verb interaction. Commit 725fdb5 hosted CI
+42960047911 is green; 1407 local tests /12 skips and validation pass for the
+subsequent actor guard correction. No seven-action replay or recovery edits.
+
+An original X skip from Local221 exposed an actor admission defect: completed
+room request length1880 was overwritten with actor length550 before install.
+Provider READY/READ_OK now pass room/code/scratch guards before descriptor writes.
+Corrected native room1 transition/display succeeds error0, then authored code
+requests close-up room74. This is not settled gameplay. ROM dd57a0ee... in
+`/tmp/astra-text-assembly-build.1fmt6vqw`; source `19goyim6`.
+Exact checkpoint: `/tmp/astra-authored-room1-owner-control2-20261110/observations/room1-published.state`.
+Never restore old-ROM states into this ROM.
+
+Source intro keeps verbs saved/disabled. Follow only established original
+cutscene skip ownership to reach its authored interactive state; never force
+C17 flags. Source room10 requires actor costume1, not yet in the current selected
+actor resource set (2,26). Include the actual source costume through the existing
+cooker if that scene is needed. Full2203-unit code/room package remains intact.
+
+Original room4 subtitles now have exact source/pixel/PPU proof, including an
+image with Indy visible. They do not certify an object action. See
+MULTIBIT_TEXT_INTEGRATION.md and private evidence paths below.
+
+---
+
 # Active Milestone B — original authored subtitle now pixel-verified
 
 Continue toward a normal original object/verb action; no seven-action replay.

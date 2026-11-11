@@ -1878,8 +1878,11 @@ def _finish_room4_intro(session: Any, *, max_frames: int,
                 "result": "intro completed; cursor reached the authored room-world checkpoint",
             }
         remaining = max_frames - (state["frame"] - start_frame)
-        step = min(1 if (state["talk_active"] and
-                         (state["talk_have_msg"] == 0xFF or state["talk_delay"] <= 1))
+        # HAVE_MSG=$FF marks a segment with a continuation, not readiness for
+        # input. Polling every frame for its entire visible lifetime adds
+        # thousands of unrelated RPC reads. Only the imminent timer boundary
+        # needs the single-frame observation; no controller edge is skipped.
+        step = min(1 if (state["talk_active"] and state["talk_delay"] <= 1)
                    else 16, remaining)
         advanced = advance_bounded(session, step)
         if advanced["frames_advanced"] != step:

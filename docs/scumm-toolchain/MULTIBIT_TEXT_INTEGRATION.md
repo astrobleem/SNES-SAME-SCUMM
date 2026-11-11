@@ -113,3 +113,40 @@ control operands, replacement state, request generations and frame ordering.
 Object-name substitution, distinct UI responsibilities, runtime font-map
 mutation, complete long-message pagination and actual object-action acceptance
 remain open. Whole-game readiness remains NOT_READY.
+
+## Actor/provider ownership exposed by authored room transition
+
+A normal controller skip through the original room-local override requested
+another room. Its 1,880-byte checked metadata was intact in staging, but only
+550 bytes reached active storage. Native captures show that actor pose lookup
+had overwritten the shared completed request length before room installation
+consumed it. READY/READ_OK branches bypassed the existing room/code/scratch
+ownership guards; the later scratch check prevented transfer but was too late
+to protect the descriptor.
+
+All available-provider paths now pass those guards before lookup or request
+writes. Nonavailable/unknown provider states wait. A source-instruction test
+covers 315 provider/code/room/scratch combinations and verifies blocked cases
+perform no writes, including a completed checked room request.
+
+The corrected ROM
+`dd57a0ee2df9b41fad0b7bdec88a996f29bfe870d078c2c77cf5d7ccb7c202a0`
+passes that original transition and presents the original office background
+and dialogue with resource error zero. The source sequence immediately requests
+its next close-up; this is not a settled interactive-room acceptance. Evidence:
+`/tmp/astra-authored-room1-owner-control2-20261110`, 50.246 seconds. A prior
+observer incorrectly expected Local221 to have started in an earlier saved
+frame; it sent no input and is not counted as a native engine failure. The
+corrected observer verifies the actual saved room/frame/talk identity and waits
+for the source override to be installed before sending one normal X edge.
+
+The second original room4 subtitle, with Indy visible, also matches source
+font/INDEX8/VRAM/screenshot pixels exactly on the earlier subtitle ROM. Its
+identity-bound evidence is
+`/tmp/astra-authentic-dialogue-continue-20261110/observations/comparison-46`.
+Do not transfer that comparison to the ownership-fix ROM.
+
+Broad intro observation now distinguishes HAVE_MSG=$FF (a continuation exists)
+from an imminent expiry/acknowledgement boundary. It does not poll every frame
+for the entire visible lifetime merely because a continuation exists. This
+changes observation overhead, not input or SCUMM timing.
