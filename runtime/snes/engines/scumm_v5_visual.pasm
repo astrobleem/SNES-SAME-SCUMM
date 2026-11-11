@@ -72,6 +72,9 @@ ScummV5_Visual_CameraPublished_Far:
 
 ScummV5_Visual_Frame_Far:
     php
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER && SCUMM_MSU1_CAMERA_VIEWPORT
+    jsl ScummV5_Camera_ServiceForeground_Far
+    .endif
     ; Resolve any room/camera presentation request before the actor pass.
     ; Actor composition must be the final indexed-surface mutation for this
     ; frame; otherwise a pending background blit can erase the actor before

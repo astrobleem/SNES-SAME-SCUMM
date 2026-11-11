@@ -28,6 +28,7 @@ MODE3_R_TEMP = SAME_BWRAM_RETAINED_VIEWPORT+$32
 MODE3_R_GENERATION_HI = SAME_BWRAM_RETAINED_VIEWPORT+$36
 MODE3_R_VALIDATED = SAME_BWRAM_RETAINED_VIEWPORT+$38
 MODE3_R_EXCHANGE = SAME_BWRAM_RETAINED_VIEWPORT+$39
+MODE3_R_KEEP_ACTOR = SAME_BWRAM_RETAINED_VIEWPORT+$3A
 
 Same_Mode3_Retained_Reset_Far:
     .a16
@@ -1200,6 +1201,26 @@ Same_Mode3_Retained_Fixture__not_step:
     jmp Same_Mode3_Retained_Fixture_Foreground
 Same_Mode3_Retained_Fixture__not_foreground:
     .a16
+    cmp #$0005
+    bne Same_Mode3_Retained_Fixture__not_admission
+    jmp Same_Mode3_Retained_Fixture_Admission
+Same_Mode3_Retained_Fixture__not_admission:
+    .a16
+    cmp #$0006
+    bne Same_Mode3_Retained_Fixture__not_cold
+    jmp Same_Mode3_Retained_Fixture_Cold
+Same_Mode3_Retained_Fixture__not_cold:
+    .a16
+    cmp #$0007
+    bne Same_Mode3_Retained_Fixture__not_stale
+    jmp Same_Mode3_Retained_Fixture_Stale
+Same_Mode3_Retained_Fixture__not_stale:
+    .a16
+    cmp #$0008
+    bne Same_Mode3_Retained_Fixture__not_recover
+    jmp Same_Mode3_Retained_Fixture_Recover
+Same_Mode3_Retained_Fixture__not_recover:
+    .a16
     cmp #$0003
     beq Same_Mode3_Retained_Fixture__wait
 Same_Mode3_Retained_Fixture__return:
@@ -2172,4 +2193,134 @@ Same_Mode3_Retained_Fixture_Cursor__write:
     lda #6
     sta.l MODE3_R_DAMAGE_H
     pla
+    rts
+
+; Native failure controls use only this original fixture's command protocol.
+; The observer never writes backend state. No command is a gameplay API.
+Same_Mode3_Retained_Fixture_Admission:
+    .a16
+    lda.l MODE3_R_CURRENT
+    inc
+    jsl Same_Mode3_Retained_Begin_Far
+    bcc Same_Mode3_Retained_Fixture_Admission__begun
+    jmp Same_Mode3_Retained_Fixture__error
+Same_Mode3_Retained_Fixture_Admission__begun:
+    .a16
+    lda.l MODE3_R_CURRENT
+    inc
+    jsl Same_Mode3_Retained_Begin_Far
+    bcs Same_Mode3_Retained_Fixture_Admission__refused
+    jmp Same_Mode3_Retained_Fixture__error
+Same_Mode3_Retained_Fixture_Admission__refused:
+    .a16
+    jsl Same_Mode3_Retained_Abort_Far
+    bcc Same_Mode3_Retained_Fixture_Admission__aborted
+    jmp Same_Mode3_Retained_Fixture__error
+Same_Mode3_Retained_Fixture_Admission__aborted:
+    .a16
+    jmp Same_Mode3_Retained_Fixture__success
+
+Same_Mode3_Retained_Fixture_Stale:
+    .a16
+    lda.l MODE3_R_CURRENT
+    sta.l MODE3_RF_LEFT
+    clc
+    adc #$0008
+    sta.l MODE3_R_NEXT
+    lda.l SAME_BWRAM_CONTROL_PENDING_GENERATION
+    sta.l MODE3_R_GENERATION
+    lda.l SAME_MODE3_CONTROL_PENDING_GENERATION_HI
+    inc ; stale high word with matching low word must not publish
+    sta.l MODE3_R_GENERATION_HI
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_MODE3_CONTROL_SURFACE_LOCKED
+    lda #SAME_MODE3_STATE_COMPLETE
+    sta.l SAME_MODE3_CONTROL_STATE
+    lda #$02
+    sta.l MODE3_R_PHASE
+    rep #$20
+    .a16
+    jmp Same_Mode3_Retained_Fixture__success
+
+Same_Mode3_Retained_Fixture_Recover:
+    .a16
+    lda.l MODE3_R_CURRENT
+    cmp.l MODE3_RF_LEFT
+    beq Same_Mode3_Retained_Fixture_Recover__unchanged
+    jmp Same_Mode3_Retained_Fixture__error
+Same_Mode3_Retained_Fixture_Recover__unchanged:
+    .a16
+    sta.l MODE3_R_NEXT
+    sep #$20
+    .a8
+    lda #$00
+    sta.l MODE3_R_PHASE
+    sta.l SAME_MODE3_CONTROL_SURFACE_LOCKED
+    lda #SAME_MODE3_STATE_IDLE
+    sta.l SAME_MODE3_CONTROL_STATE
+    rep #$20
+    .a16
+    jmp Same_Mode3_Retained_Fixture__success
+
+Same_Mode3_Retained_Fixture_Cold:
+    .a16
+    jsl Same_Mode3_Retained_Retire_Far
+    bcc Same_Mode3_Retained_Fixture_Cold__retired
+    jmp Same_Mode3_Retained_Fixture__error
+Same_Mode3_Retained_Fixture_Cold__retired:
+    .a16
+    jsl Same_Mode3_Retained_Cold_Far
+    bcc Same_Mode3_Retained_Fixture_Cold__ready
+    jmp Same_Mode3_Retained_Fixture__error
+Same_Mode3_Retained_Fixture_Cold__ready:
+    .a16
+    lda #$0000
+    sta.l MODE3_RF_FOREGROUND
+    sta.l MODE3_RF_Y
+Same_Mode3_Retained_Fixture_Cold__row:
+    .a16
+    lda #$0000
+    sta.l MODE3_RF_X
+Same_Mode3_Retained_Fixture_Cold__pixel:
+    .a16
+    lda.l MODE3_RF_X
+    jsr Same_Mode3_Retained_Fixture_Pixel
+    pha
+    lda.l MODE3_RF_Y
+    xba
+    clc
+    adc.l MODE3_RF_X
+    tax
+    pla
+    sep #$20
+    .a8
+    sta.l SAME_BWRAM_SURFACE_BASE,x
+    rep #$20
+    .a16
+    lda.l MODE3_RF_X
+    inc
+    sta.l MODE3_RF_X
+    cmp #$0100
+    bcc Same_Mode3_Retained_Fixture_Cold__pixel
+    lda.l MODE3_RF_Y
+    inc
+    sta.l MODE3_RF_Y
+    cmp #$00E0
+    bcc Same_Mode3_Retained_Fixture_Cold__row
+    lda #$0000
+    sta.l SAME_MODE3_WORK_X0
+    sta.l SAME_MODE3_WORK_Y0
+    lda #$0100
+    sta.l SAME_MODE3_WORK_X1
+    lda #$00E0
+    sta.l SAME_MODE3_WORK_Y1
+    jsr Same_Mode3_Fixture_PushDirty
+    lda.l SAME_BWRAM_CONTROL_COMMITTED_GENERATION
+    inc
+    sta.l MODE3_RF_GENERATION
+    jsr Same_Mode3_Fixture_PushPresent
+    lda #$0003
+    sta.l MODE3_RF_COMMAND
     rts

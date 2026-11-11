@@ -19,8 +19,9 @@ def execute(source, hidden_b):
                  'SCUMM_LIVE_ROOM_CHUNK_MODE': 1,
                  'SCUMM_LIVE_ROOM_CHUNK_INDEX': 2,
                  'SAME_SCUMM_VIEWPORT_STATE': 4,
-                 'SAME_SCUMM_VIEWPORT_MODE': 5}
-    memory = bytearray(b'\xA5' * 7)
+                 'SAME_SCUMM_VIEWPORT_MODE': 5,
+                 'SAME_SCUMM_VIEWPORT_ACTOR_SERVED': 6}
+    memory = bytearray(b'\xA5' * 8)
     for raw in source.splitlines():
         line = raw.split(';')[0].strip()
         if not line or line.startswith('.'): continue
@@ -40,7 +41,7 @@ def execute(source, hidden_b):
 class RoomTransactionWidthTests(unittest.TestCase):
     def test_all_hidden_accumulator_bytes_reset_both_cursor_bytes(self):
         for hidden_b in range(256):
-            self.assertEqual(execute(reset_source(), hidden_b), b'\0\0\0\0\0\0\xA5')
+            self.assertEqual(execute(reset_source(), hidden_b), b'\0\0\0\0\0\0\0\xA5')
 
     def test_unfixed_source_reproduces_native_0100_cursor(self):
         unfixed = reset_source().replace('    lda #$0000\n', '')

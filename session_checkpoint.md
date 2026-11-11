@@ -4169,3 +4169,21 @@ Authentic current-ROM continuous acceptance is in progress, not yet a pass:
 Source linkage matches58 non-generated native files in private build
 `/tmp/astra-camera-link-source.tgxau257`; full package unchanged. Preserve all
 prior failed logs and the separate progression recovery worktree.
+
+## Retained actor/camera correction in progress
+
+The first circular authentic run reached source208 but failed error16: desired
+standing chore3/step1 inherited old walking loop8. Evidence preserved at
+`/tmp/astra-retained-ring-authentic-20261111`; not accepted. New pose-key reset
+clears loop bounds. Fully visible actors retain physical pixels while only
+journal coordinates rebase. Camera gives the late compositor one checked
+foreground turn between strips, with no render call inside an opcode.
+
+Current circular native132-step wrap/reverse control passes full pixels:
+`/tmp/astra-retained-ring-wrap2-20261111`. Stale-ticket high-word rejection,
+refusal/abort and cold replacement pass:
+`/tmp/astra-retained-fault-native-20261111` (29.285seconds).
+Integrated authentic run is currently in progress, not yet accepted:
+`/tmp/astra-retained-actor-authentic-20261111`, ROM build`lwnjmox2`, source
+`q4g9ri5t`.58non-generated runtime inputs match current source. Preserve
+its checkpoints and observe first failing boundary; no unchanged retry.

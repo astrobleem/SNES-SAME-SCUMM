@@ -46,7 +46,7 @@ class StripMachine(ServiceMachine):
         self.ram[0x410000:0x41E000]=bytes(57344)
 
     def consume(self):
-        a=x=y=pc=0;p=0;stack=[];written=[];returns=[]
+        a=x=y=0;pc=getattr(self,"entry",0);p=0;stack=[];written=[];returns=[]
         cache={}
         def value(expr):
             if expr not in cache:cache[expr]=self.value(expr)
@@ -458,3 +458,38 @@ class RetainedCameraTransactionTests(unittest.TestCase):
         self.assertEqual(m.get('SAME_SCUMM_ACTOR_SCRATCH_OWNER',1),0)
         self.assertEqual(m.get('SAME_VIDEO_SURFACE_SOURCE_X'),40)
         self.assertEqual(m.get('SAME_VIDEO_SURFACE_PENDING_VISUAL',1),1)
+
+class CameraForegroundFairnessTests(unittest.TestCase):
+    def test_same_room_pan_does_not_cancel_actor_and_yields_only_one_turn(self):
+        m=RetainedCameraTransactionMachine()
+        m.symbols.update(SAME_MSU1_STATE_READING=4,SCUMM_MSU_ROOM_REQUESTED=1,
+                         SAME_SCUMM_CURSOR_PENDING=0x40074E)
+        m.put('SAME_SCUMM_VIEWPORT_STATE',0,1);m.put('SAME_SCUMM_VIEWPORT_MODE',0,1)
+        m.put('SAME_VIDEO_SURFACE_PENDING_XSTART',176)
+        m.put('SAME_VIDEO_SURFACE_WIDTH',640);m.put('SAME_VIDEO_SURFACE_COPY_WIDTH',256)
+        m.put('SAME_MSU1_STATUS',5,1);m.put('SAME_SCUMM_MSU_CACHE_REQUEST_SLOT',255,1)
+        m.put('SAME_SCUMM_ACTOR_POSE_STATE',1,1)
+        def service(name,p,a):
+            m.calls.append(name)
+            if name in ('Same_VideoSurface_CanWrite_Far','ScummV5_MsuProgram_ReconcileRead_Far'):
+                return p&~1,a
+            if name in ('ScummV5_Controller_RenderActor_Far','ScummV5_Cursor_Frame_Far'):
+                return p,a
+            raise AssertionError('must not cancel checked actor read: '+name)
+        m.service=service
+        m.consume()
+        self.assertNotIn('ScummV5_Controller_RenderActor_Far',m.calls)
+        m.entry=m.labels['ScummV5_Camera_ServiceForeground_Far']
+        for _ in range(3):
+            m.consume()
+            self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_ACTOR_SERVED',1),2)
+            self.assertEqual(m.get('SAME_SCUMM_MSU_ROOM_STATE',1),0)
+        # Existing compositor has now consumed its checked bytes and queued
+        # its publication. The next idle turn may admit camera I/O even if a
+        # new animation tick changes the desired actor again.
+        m.put('SAME_SCUMM_ACTOR_POSE_STATE',0,1)
+        m.put('SAME_SCUMM_ACTOR_SCRATCH_OWNER',0,1)
+        m.consume();self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_ACTOR_SERVED',1),1)
+        m.calls=[];m.entry=0;m.consume()
+        self.assertNotIn('ScummV5_Controller_RenderActor_Far',m.calls)
+        self.assertEqual(m.get('SAME_SCUMM_MSU_ROOM_STATE',1),1)

@@ -1901,6 +1901,26 @@ Same_VideoSurface_ComposeRetainedScroll__capacity:
 Same_VideoSurface_ComposeRetainedScroll__cursor_saved:
     .a16
     jsl Same_Mode3_Retained_FlushDamage_Far
+    ; A fully visible world-anchored pose already occupies the correct
+    ; physical ring pixels. Rebase only its restoration journal; no pixel
+    ; copy, tile invalidation, or actor DMA is necessary for camera motion.
+    sep #$20
+    .a8
+    lda #$00
+    sta.l MODE3_R_KEEP_ACTOR
+    rep #$20
+    .a16
+    jsl Same_VideoSurface_RetainActorUnderlay_Far
+    bcs Same_VideoSurface_ComposeRetainedScroll__exchange_actor
+    sep #$20
+    .a8
+    lda #$01
+    sta.l MODE3_R_KEEP_ACTOR
+    rep #$20
+    .a16
+    bra Same_VideoSurface_ComposeRetainedScroll__actor_saved
+Same_VideoSurface_ComposeRetainedScroll__exchange_actor:
+    .a16
     jsl Same_VideoSurface_ExchangeActorUnderlay_Far
     bcc Same_VideoSurface_ComposeRetainedScroll__actor_saved
     jmp Same_VideoSurface_ComposeRetainedScroll__failed
@@ -1917,6 +1937,9 @@ Same_VideoSurface_ComposeRetainedScroll__strip_ready:
     .a16
     jsl Same_Mode3_Retained_ShiftSurface_Far
     jsl Same_Mode3_Retained_FillEdge_Far
+    lda.l MODE3_R_KEEP_ACTOR
+    and #$00FF
+    bne Same_VideoSurface_ComposeRetainedScroll__actor_retained
     jsl Same_VideoSurface_RebaseActorUnderlay_Far
     bcc Same_VideoSurface_ComposeRetainedScroll__rebased
     jmp Same_VideoSurface_ComposeRetainedScroll__failed
@@ -1928,6 +1951,8 @@ Same_VideoSurface_ComposeRetainedScroll__rebased:
 Same_VideoSurface_ComposeRetainedScroll__actor_restored:
     .a16
     jsl Same_Mode3_Retained_MarkDamage_Far
+Same_VideoSurface_ComposeRetainedScroll__actor_retained:
+    .a16
     rep #$20
     .a16
     jsr Same_VideoSurface_Underlay_ZeroDamage
@@ -1947,6 +1972,111 @@ Same_VideoSurface_ComposeRetainedScroll__failed:
     plp
     sec
     rtl
+
+; Retain a committed world-anchored pose in the circular INDEX8/VRAM
+; mapping. C clear means no exchange is needed; C set selects the existing
+; clipping/exchange path. Validate the whole journal and translated bounds
+; BEFORE changing any descriptor. Payload, physical pixels and identity stay
+; untouched. A pose intersecting the exposed edge must use exchange so its
+; retired character slots contain background, never stale actor pixels.
+Same_VideoSurface_RetainActorUnderlay_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    cld
+    jsr Same_VideoSurface_Underlay_Locate
+    bcc Same_VideoSurface_RetainActor__located
+    jmp Same_VideoSurface_Underlay_Failure
+Same_VideoSurface_RetainActor__located:
+    .a16
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
+    and #$00FF
+    cmp #SAME_VIDEO_ACTOR_UNDERLAY_MAGIC
+    beq Same_VideoSurface_RetainActor__committed
+    jmp Same_VideoSurface_Underlay_Failure
+Same_VideoSurface_RetainActor__committed:
+    .a16
+    jsr Same_VideoSurface_Underlay_Identity
+    bcc Same_VideoSurface_RetainActor__identity
+    jmp Same_VideoSurface_Underlay_Failure
+Same_VideoSurface_RetainActor__identity:
+    .a16
+    jsr Same_VideoSurface_Underlay_Validate
+    bcc Same_VideoSurface_RetainActor__validated
+    jmp Same_VideoSurface_Underlay_Failure
+Same_VideoSurface_RetainActor__validated:
+    .a16
+    jsl Same_VideoSurface_CanWrite_Far
+    bcc Same_VideoSurface_RetainActor__writable
+    jmp Same_VideoSurface_Underlay_Failure
+Same_VideoSurface_RetainActor__writable:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    tax
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$04,x
+    bne Same_VideoSurface_RetainActor__nonempty
+    jmp Same_VideoSurface_Underlay_Success
+Same_VideoSurface_RetainActor__nonempty:
+    .a16
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$0A,x
+    cmp #$00C0
+    bcc Same_VideoSurface_RetainActor__scene
+    jmp Same_VideoSurface_Underlay_Success ; fixed HUD journal
+Same_VideoSurface_RetainActor__scene:
+    .a16
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$0E,x
+    cmp #$00C1
+    bcc Same_VideoSurface_RetainActor__bounds
+    jmp Same_VideoSurface_Underlay_Failure ; mixed scene/HUD needs clipping
+Same_VideoSurface_RetainActor__bounds:
+    .a16
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$08,x
+    sec
+    sbc.l MODE3_R_DELTA
+    cmp #$0100
+    bcc Same_VideoSurface_RetainActor__left
+    jmp Same_VideoSurface_Underlay_Failure
+Same_VideoSurface_RetainActor__left:
+    .a16
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$0C,x
+    sec
+    sbc.l MODE3_R_DELTA
+    cmp #$0101
+    bcc Same_VideoSurface_RetainActor__ready
+    jmp Same_VideoSurface_Underlay_Failure
+Same_VideoSurface_RetainActor__ready:
+    .a16
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$0C,x
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$08,x
+    txa
+    clc
+    adc #$0010
+    tax
+Same_VideoSurface_RetainActor__record:
+    .a16
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
+    sec
+    sbc.l MODE3_R_DELTA
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
+    txa
+    clc
+    adc #$0004
+    clc
+    adc.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$02,x
+    tax
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    dec
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    bne Same_VideoSurface_RetainActor__record
+    jmp Same_VideoSurface_Underlay_Success
 
 Same_VideoSurface_RebaseActorUnderlay_Far:
     php

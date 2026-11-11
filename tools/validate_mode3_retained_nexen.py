@@ -30,6 +30,7 @@ def main():
     ap.add_argument('--port',required=True,type=int)
     ap.add_argument('--seconds',type=int,default=150)
     ap.add_argument('--foreground',action='store_true')
+    ap.add_argument('--faults-and-replacement',action='store_true')
     ap.add_argument('--targets',default='1,8,9,16,8,0')
     a=ap.parse_args(); a.output.mkdir(parents=True,exist_ok=False)
     mp,symbols=verified_symbol_map_for_rom(a.rom.resolve())
@@ -130,6 +131,40 @@ def main():
                     assert not step['vram_mismatches'],'VRAM mismatch'
                     assert step['ppu_equal'],'visible PPU mismatch'
                     assert step['converted_tiles']<= (30 if a.foreground else 24) and step['character_bytes']<= (30*64 if a.foreground else 1536),'full conversion regression'
+            if a.faults_and_replacement:
+                current=word(0x401084);before=rd(0x402000,57344)
+                vram_before=s.read_memory('snesVideoRam',0,65536)
+                wr(0x41e900,5);wait(lambda:word(0x41e900)==0,20)
+                assert word(0x41e904)==1 and word(0x401084)==current
+                assert rd(0x402000,57344)==before
+                assert s.read_memory('snesVideoRam',0,65536)==vram_before
+                report['ticket_refusal_abort']='PASS';save()
+                wr(0x41e900,7);wait(lambda:word(0x41e900)==0,20)
+                frames(4) # actual NMI sees a matching low, stale high generation
+                report['stale_ticket']={'retained':rd(0x401084,64).hex(),
+                                         'control':rd(0x401000,64).hex()}
+                assert word(0x401084)==current and rd(0x401092,1)==b'\x02'
+                assert rd(0x401014,1)==b'\x01'
+                assert s.read_memory('snesVideoRam',0,65536)==vram_before
+                wr(0x41e900,8);wait(lambda:word(0x41e900)==0,20)
+                assert word(0x41e904)==1
+                report['stale_generation_rejection']='PASS';save()
+                wr(0x41e900,6);wait(lambda:word(0x41e900)==0,1200)
+                frames(2)
+                assert word(0x41e904)==1 and rd(0x40100d,1)==b'\0'
+                expected=bytes(pixel(x,y) for y in range(224) for x in range(256))
+                assert rd(0x402000,57344)==expected
+                v=s.read_memory('snesVideoRam',0,65536);cg=s.read_memory('snesCgRam',0,512)
+                tiles={t:decode_snes_8bpp_tile(v[t*64:t*64+64]) for t in range(920)}
+                actual=bytes(tiles[int.from_bytes(v[0xf000+retained_map_offset(x//8,y//8):0xf002+retained_map_offset(x//8,y//8)],'little')&1023][y&7][x&7] for y in range(224) for x in range(256))
+                assert actual==expected
+                shot=base64.b64decode(s.take_screenshot(format='base64')['base64'])
+                img=Image.open(io.BytesIO(shot)).convert('RGB').crop((0,0,256,224))
+                colors=decode_cgram(cg)
+                ref=Image.frombytes('RGB',(256,224),bytes(v for p in expected for v in colors[p]))
+                img.save(a.output/'replacement-native.png');ref.save(a.output/'replacement-reference.png')
+                assert ImageChops.difference(img,ref).getbbox() is None
+                report['cold_replacement']='PASS';save()
             report['result']='PASS';save()
     except BaseException as e:
         report['failure']=repr(e);save();raise

@@ -627,12 +627,26 @@ ScummV5_Camera_ServicePending__bounded:
     .a8
     lda #$00
     sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+    sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
     clc
     rtl
 ScummV5_Camera_ServicePending__changed:
     .a8
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    ; Camera notifications may originate inside an executing opcode. Request
+    ; a foreground turn here; only the late visual phase may compose actors.
+    lda.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
+    cmp #$01
+    beq ScummV5_Camera_ServicePending__foreground_served
+    lda #$02
+    sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
+    clc
+    rtl
+ScummV5_Camera_ServicePending__foreground_served:
+    .a8
+    .endif
     lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
     cmp #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ACTOR
     bne ScummV5_Camera_ServicePending__actor_drained
@@ -669,6 +683,38 @@ ScummV5_Camera_ServicePending__wait:
     clc
     rtl
 .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+; Runs only from the late visual phase, never inside a SCUMM opcode.
+ScummV5_Camera_ServiceForeground_Far:
+    php
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
+    cmp #$02
+    bne ScummV5_Camera_ServiceForeground__done
+    lda.l SAME_SCUMM_M23A_PHASE
+    ora.l SAME_SCUMM_VIEWPORT_STATE
+    bne ScummV5_Camera_ServiceForeground__done
+    jsl Same_VideoSurface_CanWrite_Far
+    bcs ScummV5_Camera_ServiceForeground__done
+    jsl ScummV5_MsuProgram_ReconcileRead_Far
+    bcs ScummV5_Camera_ServiceForeground__done
+    jsl ScummV5_Controller_RenderActor_Far
+    jsl ScummV5_Cursor_Frame_Far
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ACTOR_POSE_STATE
+    bne ScummV5_Camera_ServiceForeground__done
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    bne ScummV5_Camera_ServiceForeground__done
+    lda.l SAME_SCUMM_CURSOR_PENDING
+    ora.l SAME_SCUMM_CURSOR_PENDING+1
+    bne ScummV5_Camera_ServiceForeground__done
+    lda #$01
+    sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
+ScummV5_Camera_ServiceForeground__done:
+    plp
+    rtl
+
 ScummV5_Camera_ServicePending__retained_commit:
     .a8
     lda #$00
@@ -707,6 +753,7 @@ ScummV5_Camera_ServicePending__retained_wait:
     sta.l SAME_SCUMM_VIEWPORT_STATE
     sta.l SAME_SCUMM_VIEWPORT_MODE
     sta.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
     lda #$01
     sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
     clc

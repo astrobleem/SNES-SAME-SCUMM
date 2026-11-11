@@ -1406,6 +1406,12 @@ ScummV5_Controller_PublishActorVisual__reset_pose_step:
     lda #$00
     sta.l SAME_SCUMM_ACTOR_POSE_DESIRED_STEP
     sta.l SAME_SCUMM_ACTOR_POSE_ANIM_COUNTER
+    ; Loop metadata belongs to the checked pose key, not to the actor. A
+    ; camera/room request can defer loading the new chore for many ticks.
+    ; Keep its step unseeded until that key's directory row is selected;
+    ; otherwise a standing chore can inherit the previous walking loop.
+    sta.l SAME_SCUMM_ACTOR_POSE_LOOP_START
+    sta.l SAME_SCUMM_ACTOR_POSE_LOOP_LENGTH
 ScummV5_Controller_PublishActorVisual__save_pose_key:
     lda.l SAME_SCUMM_ACTOR_POSE_DESIRED_FRAME
     sta.l SAME_SCUMM_ACTOR_POSE_LAST_FRAME

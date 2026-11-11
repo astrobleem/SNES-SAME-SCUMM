@@ -467,3 +467,48 @@ clipped rebasing and neighboring guards. The independent observer decodes the
 actual physical surface origin; it still compares every visible pixel and
 requires the exact committed generation. Authentic integration remains a
 separate gate until the continuous new-ROM result is recorded.
+
+### Retained actor lifetime and native fault controls
+
+The first circular-surface authentic run retained original pickup/inventory
+behavior but ended at final source origin208 with resource error16. It is not
+accepted: `/tmp/astra-retained-ring-authentic-20261111/observations/action.json`.
+The standing chore had inherited the previous walking loop's eight steps while
+camera work postponed loading the new pose. Desired standing step1 had no
+matching source directory row. A pose-key change now clears its loop metadata;
+step0 remains unseeded until that key's own checked row supplies loop bounds.
+The source-instruction regression exercises hundreds of deferred ticks and
+subsequent one-step and multi-step loops.
+
+A fully visible world-anchored actor now stays in its physical INDEX8/character
+ring slots. The existing sparse underlay journal is validated, then only its
+logical destinations and half-open bounds are translated. Opaque-zero pixels,
+holes, identity and saved background bytes remain unchanged. Edge-clipped or
+mixed scene/HUD journals use the existing exchange/clip path. Tests restore
+these journals after circular-origin changes and verify every physical pixel,
+including rejection without mutation for busy, stale and malformed journals.
+No new pixel storage is allocated.
+
+Same-room camera strips request one foreground turn between commits. The
+existing actor/cursor compositor executes that turn only in the late visual
+phase, not inside a camera opcode. Its checked transfer is allowed to finish;
+then camera I/O gets its turn. The one-byte handshake uses the explicitly
+unused byte inside the existing40-byte camera allocation and resets on room
+requests. Incoming-room priority remains unchanged.
+
+Current circular-surface native controls:
+
+- `astra-retained-ring-wrap2-20261111`:132 completed forward/reverse steps,
+  both ring/map wraps, fixed cursor/HUD and opaque-zero world foreground.
+  Entire INDEX8/VRAM/PPU equality,9–24frames, at most27 converted tiles and
+  1664character bytes per step. ROM
+  `b03576cab04047f01978c62309d06f5d25d7577db7c265ebc8a49a90c4108e05`.
+- `astra-retained-fault-native-20261111`: overlapping ticket refusal and
+  abort preserve pixels/VRAM; actual NMI rejects a stale high generation word
+  even with a matching low word. Cold replacement after scrolling resets the
+  hardware map/scroll and matches every expected INDEX8/VRAM/PPU pixel.
+  Supervised29.285seconds, normal exit and owned-process cleanup.
+
+These are original fixture controls. They do not substitute for authentic
+camera acceptance or physical hardware evidence. The integrated actor-corrected
+original-game run is tracked separately and is not declared passing here.

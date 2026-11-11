@@ -132,3 +132,44 @@ class CircularSurfaceInstructionTests(unittest.TestCase):
                 row=pixels[y*256:(y+1)*256]
                 physical[y*256:(y+1)*256]=row[-origin:]+row[:-origin] if origin else row
             self.assertEqual(linearize_retained_index8(bytes(physical),origin=origin),pixels)
+
+class RetainedActorJournalTests(unittest.TestCase):
+    def test_in_view_actor_changes_only_descriptors_and_restores_after_ring_scroll(self):
+        for origin in (0,1,8,127,248,255):
+            for delta in (-8,-1,1,8):
+                m=ServiceMachine()
+                m.put('MODE3_R_ACTIVE',1,1);m.put('MODE3_R_INDEX_ORIGIN',origin)
+                runs=[(40*256+80,12),(41*256+83,7),(190*256+90,4)]
+                m.capture(runs)
+                for dest,count in runs:
+                    y,x=divmod(dest,256)
+                    for i in range(count):m.ram[m.surface+y*256+((x+i+origin)&255)]=i%3
+                pixels=bytes(m.ram[m.surface:m.surface+57344])
+                journal=bytes(m.ram[m.header:m.header+m.get(m.header+6)])
+                m.put('MODE3_R_DELTA',delta)
+                self.assertFalse(m.call('RetainActorUnderlay'))
+                self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),pixels)
+                self.assertEqual(bytes(m.ram[m.header:m.header+8]),journal[:8])
+                cursor=16
+                for dest,count in runs:
+                    self.assertEqual(m.get(m.header+cursor),dest-delta)
+                    self.assertEqual(bytes(m.ram[m.header+cursor+2:m.header+cursor+4+count]),journal[cursor+2:cursor+4+count])
+                    cursor+=4+count
+                m.put('MODE3_R_INDEX_ORIGIN',(origin+delta)&255)
+                self.assertFalse(m.call('RestoreActorUnderlay'))
+                self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),m.original_surface)
+
+    def test_clipped_mixed_busy_stale_or_malformed_journal_is_not_mutated(self):
+        for case in ('left','right','mixed','busy','stale','invalid'):
+            m=ServiceMachine()
+            runs={'left':[(40*256+1,7)],'right':[(40*256+250,6)],
+                  'mixed':[(191*256+40,8),(192*256+40,8)]}.get(case,[(40*256+80,12)])
+            m.capture(runs);m.paint(runs)
+            m.put('MODE3_R_DELTA',-8 if case=='right' else 8)
+            if case=='busy':m.busy=True
+            if case=='stale':m.put(m.header+2,6)
+            if case=='invalid':m.put(m.header+18,257)
+            before=bytes(m.ram[m.header:m.base+6144]);pixels=bytes(m.ram[m.surface:m.surface+57344])
+            self.assertTrue(m.call('RetainActorUnderlay'))
+            self.assertEqual(bytes(m.ram[m.header:m.base+6144]),before)
+            self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),pixels)
