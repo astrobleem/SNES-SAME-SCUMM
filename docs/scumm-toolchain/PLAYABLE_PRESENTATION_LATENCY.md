@@ -181,3 +181,26 @@ is native evidence for word-copy correctness, not authentic gameplay timing.
 
 Full local suite:1,438 tests executed,1,426 passed,12 skipped. `make validate`
 and the27-region ownership audit pass. No skipped test is native acceptance.
+
+## Accepted asynchronous HUD work must not be retried
+
+The camera-admission image exposed an independent presentation backlog. In
+`/tmp/astra-camera-admission-continuous-20261111`, the unchanged original
+Open/Close menu advanced text generations115 through296. The controller kept
+HUD_DIRTY because the text service returned BUSY even after validating and
+copying its request into the asynchronous producer. Each completed caption
+therefore caused the same caption to be queued again. This was real rendering
+work, not evidence that the source scripts kept changing the menu.
+
+The service now returns an acceptance receipt for a validated HUD request.
+Busy/rejected requests still retry. Authored talk retains its existing BUSY
+wait contract. Acceptance neither draws pixels nor advances the committed
+presentation generation; observers and other consumers must still use that
+fence. Actual-source instruction tests distinguish these states, preserve the
+request identity and stack, and reproduce20 old retries versus two genuine
+refusals followed by one accepted request. A subsequent real content change
+still queues normally. No buffers, source timing, or video budgets changed.
+
+Local full suite:1,494 tests run,12 skipped. `make validate`,33-region memory
+audit, pinned Poppy assembly and ROM audit pass. Native current-image evidence
+is recorded separately; these host/build checks alone do not certify latency.

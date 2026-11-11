@@ -4037,3 +4037,16 @@ assembly pass. A fresh source-bound native session is running at
 /tmp/astra-camera-admission-continuous-20261111 (600sec supervisor, port7421).
 No old checkpoint crosses ROM identities. No accepted seven-action replay.
 Observer errors and incomplete rasters remain failures, with all data retained.
+
+### HUD receipt correction; camera/persistent session in progress
+
+3431adb hosted CI43027084518 passed. Its native session stopped on an unchanged
+menu repeatedly requeued by the controller, before camera input. No camera
+acceptance is inferred. The service now distinguishes an accepted asynchronous
+HUD request from a BUSY rejection while preserving authored-talk waits and
+committed-generation visibility.1,494 tests/12skips,validate,pinned assembly
+and ROM audit pass. New native session uses fresh ROM under
+/tmp/astra-camera-link-build.c0i6701k, private port7422,600-second supervisor,
+with source hashes and first-failure captures. It uses the existing original
+startup/pickup/inventory/camera sequence, not the seven-action route. No old
+savestate crosses ROM identities. Continue the actual native gates.

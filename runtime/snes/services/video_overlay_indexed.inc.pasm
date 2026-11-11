@@ -268,6 +268,18 @@ Same_Text_Show_valid:
     sta.l SAME_TEXT_ROOM_GENERATION
     lda #$0002
     sta.l SAME_OVERLAY_STATE
+    ; A validated HUD request is now owned by this asynchronous producer.
+    ; Its caller retries only rejected requests; reporting BUSY here caused
+    ; an unchanged caption to be requeued after every completed generation.
+    ; Acceptance does not claim presentation: the generation fence still
+    ; owns visibility. Authored talk retains its existing wait contract.
+    lda.l SAME_VIDEO_TEXT_CONTROLLER_VALID
+    and #$00FF
+    beq Same_Text_Show_accepted_talk
+    jmp Same_Text_success
+Same_Text_Show_accepted_talk:
+    .a16
+    .i16
     jmp Same_Text_busy
 
 ; Called by the service frame hook before actor/cursor producers. A busy

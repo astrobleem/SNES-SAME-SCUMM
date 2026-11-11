@@ -81,6 +81,8 @@ class StripMachine(ServiceMachine):
             elif op=='plp':p,width=stack.pop();assert width==8
             elif op=='pha':stack.append((a,bits))
             elif op=='pla':result,width=stack.pop();assert width==bits
+            elif op=='phy':stack.append((y,16))
+            elif op=='ply':y,width=stack.pop();assert width==16
             elif op=='phx':stack.append((x,16))
             elif op=='plx':x,width=stack.pop();assert width==16
             elif op=='jsl':
