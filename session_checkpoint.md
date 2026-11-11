@@ -1,3 +1,14 @@
+# Milestone B in progress — native text not yet connected
+
+Starting checkpoint57fd60b. Added opt-in SC5FNTv2 cooking/validation and a bounded
+glyph oracle preserving1/2/4bpp slots, signed advances and opaque colorzero.
+Default V1 output/native consumers remain unchanged. Detailed contract and exact
+native palette constraint: docs/scumm-toolchain/MULTIBIT_TEXT_INTEGRATION.md.
+No new native run, text acceptance or object-action result is claimed.
+Private original font records: /home/chad/same-private-evidence/milestone-b-fonts.
+Next implementation is existing overlay/indexed-surface composition and lifetime,
+not force-enabling saved verbs. Preserve the recovery worktree and old evidence.
+
 # Current checkpoint — authentic room/walking accepted; text frontier isolated
 
 - Branch `scumm-fate-authentic-room`, draft PR #14. Actor PR #13 already merged.
