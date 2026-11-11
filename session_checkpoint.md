@@ -4205,3 +4205,16 @@ ROM /tmp/astra-camera-link-build.ax4wsre4/fate-authentic-room.sfc.
 It measures this specific correction, with a600-second supervisor and no guest
 state writes. Preserve its first failing boundary; no unchanged retry. Separate
 progression recovery worktree and unrelated Nexen PID104488 remain untouched.
+
+## Contiguous columns and bounded final camera measurement
+
+94a6c88 authentic run timed out in observer after reaching source208/error0.
+Preserve as NOT_ACCEPTED; no inferred image. Column-contiguous character
+storage removes three-batch column fragmentation without new memory/budgets.
+Native132-step wrap/reverse/foreground/fault/cold proof passes, ROM3201b090...,
+16–17frame new columns,9frame cached columns. Current authentic run uses
+ROM `/tmp/astra-camera-link-build.85nseceg/fate-authentic-room.sfc`,
+`/tmp/astra-column-authentic-20261111`, private supervisor600seconds,
+frame-polling immutable-generation fence and durable cost-event journal.
+Do not repeat unchanged failures or transfer old-ROM states/results.
+Whole task remains in progress until actual responsive gameplay is measured.

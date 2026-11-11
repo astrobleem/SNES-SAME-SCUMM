@@ -26,6 +26,7 @@ from same.snes_surface import (  # noqa: E402
     encode_snes_8bpp_tile,
     encode_surface_tiles,
 )
+from same.snes_video_backend import mode3_character_index, mode3_retained_tilemap, mode3_dma_batches
 from same.video import IndexedSurface  # noqa: E402
 
 DEFAULT_NEXEN = Path("/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/linux-x64/publish/Nexen")
@@ -215,11 +216,16 @@ def main() -> int:
     require(live_surface == states[-1], "final live indexed surface differs")
     palette = [tuple(live_palette[i:i + 3]) for i in range(0, 0x300, 3)]
     surface = IndexedSurface.wrap(256, 224, 256, live_surface, palette=palette)
-    expected_tiles = encode_surface_tiles(surface)
+    logical_tiles = encode_surface_tiles(surface)
+    arranged = bytearray(len(logical_tiles))
+    for tile in range(896):
+        dest = mode3_character_index(tile)*64
+        arranged[dest:dest+64] = logical_tiles[tile*64:(tile+1)*64]
+    expected_tiles = bytes(arranged)
     expected_cgram = encode_cgram(palette)
     require(tile_shadow == expected_tiles, "target 8bpp encoder differs from Phase-6A oracle")
     require(cgram_shadow == expected_cgram, "target BGR555 conversion differs")
-    require(vram[:0xE000] == tile_shadow and vram[0xF000:0xF800] == build_static_tilemap(),
+    require(vram[:0xE000] == tile_shadow and vram[0xF000:0xF800] == mode3_retained_tilemap()[:2048],
             "VRAM differs from fixed shadows/tilemap")
     require(cgram == cgram_shadow, "CGRAM differs from committed shadow")
     decoded = decode_bundle_indexed(SnesIndexedSurfaceBundle(tile_shadow, vram[0xF000:0xF800], cgram_shadow))
@@ -238,7 +244,7 @@ def main() -> int:
     expected = {
         1: (896, 0, 0xE000, 0x200, 29), 2: (0, 896, 0, 0, 0),
         3: (1, 0, 64, 0, 1), 4: (0, 0, 0, 2, 1),
-        5: (33, 0, 33 * 64, 0, 2), 6: (9, 0, 9 * 64, 0, 2),
+        5: (33, 0, 33 * 64, 0, 4), 6: (9, 0, 9 * 64, 0, 1),
     }
     for generation, values in expected.items():
         actual = snapshots[generation]
@@ -271,15 +277,13 @@ def main() -> int:
     }, f"terminal backend control differs: {final_control}")
     require(max_converted_per_emulator_frame <= 16,
             f"bounded four-step hook exceeded sixteen tiles in one emulator frame: {max_converted_per_emulator_frame}")
-    expected_active_batches = {
-        3: [[{"type": 0, "first": 33, "count": 1, "bytes": 64}]],
-        4: [[{"type": 2, "first": 1, "count": 1, "bytes": 2}]],
-        5: [[{"type": 0, "first": 0, "count": 32, "bytes": 2048}],
-            [{"type": 0, "first": 32, "count": 1, "bytes": 64}]],
-        6: [[{"type": 0, "first": tile, "count": 1, "bytes": 64}
-             for tile in (0, 2, 4, 6, 8, 10, 12, 14)],
-            [{"type": 0, "first": 32, "count": 1, "bytes": 64}]],
-    }
+    expected_active_batches = {4: [[{"type": 2, "first": 1, "count": 1, "bytes": 2}]]}
+    for generation, logical in ((3,[33]),(5,range(33)),(6,[0,2,4,6,8,10,12,14,32])):
+        batches = mode3_dma_batches((),[mode3_character_index(t) for t in logical])
+        expected_active_batches[generation] = [
+            [{"type":0,"first":run.first_tile,"count":run.tile_count,"bytes":run.byte_length}
+             for run in batch.tile_runs] for batch in batches]
+
     # A one-descriptor active batch can enqueue and commit between two emulator
     # frame observations. Multi-batch generations must expose their retained
     # work, while snapshots above prove the single-batch byte/count result.

@@ -162,7 +162,7 @@ def validate_mode3_layout(layout: dict[str, Any]) -> tuple[BackendRegion, ...]:
     if retained != {"scene_height":192, "visible_columns":32, "physical_columns":33,
                     "guard_tiles":24, "vram_character_end":58880,
                     "vram_tilemap_start":61440, "vram_tilemap_bytes":4096,
-                    "hdma_channel":6, "hud_scroll_x":0}:
+                    "hdma_channel":6, "hud_scroll_x":0, "scene_character_order":"column-major"}:
         raise ValueError("retained viewport VRAM/HDMA ownership differs")
     if retained["vram_character_end"] > retained["vram_tilemap_start"]:
         raise ValueError("retained characters overlap tilemap")
@@ -275,14 +275,23 @@ def mode3_static_tilemap() -> bytes:
     return build_static_tilemap()
 
 
-def mode3_retained_tilemap() -> bytes:
-    """Two SNES screen maps; the initial 32-column scene retains legacy IDs.
+def mode3_character_index(logical_tile: int) -> int:
+    """Physical character slot: contiguous scene columns, fixed row-major HUD."""
+    if not 0 <= logical_tile < 920:
+        raise ValueError("character outside audited Mode-3 storage")
+    return (logical_tile % 32) * 24 + logical_tile // 32 if logical_tile < 768 else logical_tile
 
-    The second map starts with the guard column. Unused entries are not
-    visible until the NMI-owned column/scroll transaction installs them.
-    """
+
+def mode3_character_table() -> bytes:
+    return b"".join(mode3_character_index(t).to_bytes(2, "little") for t in range(920))
+
+
+def mode3_retained_tilemap() -> bytes:
+    """64-column map; scene characters are column-contiguous for strip DMA."""
     result = bytearray(4096)
-    result[:2048] = build_static_tilemap()
+    cold = build_static_tilemap()
+    for off in range(0, 2048, 2):
+        result[off:off+2] = mode3_character_index(int.from_bytes(cold[off:off+2], "little")).to_bytes(2, "little")
     for row in range(24):
         off = 2048 + row * 64
         result[off:off + 2] = (896 + row).to_bytes(2, "little")
@@ -317,7 +326,7 @@ def retained_scene_tile(column: int, row: int, *, base_column: int = 0) -> int:
     if not 0 <= row < 24:
         raise ValueError("retained scene row outside 192-pixel viewport")
     physical_column = (column - base_column) % 33
-    return row * 32 + physical_column if physical_column < 32 else 896 + row
+    return physical_column * 24 + row if physical_column < 32 else 896 + row
 
 
 def retained_map_offset(column: int, row: int) -> int:

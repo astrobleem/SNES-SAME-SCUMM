@@ -41,7 +41,8 @@ Same_Mode3_Retained_Reset_Far:
     rtl
 
 ; Enable a cold, already-published 256x192 scene. A16 is the maximum relative
-; horizontal origin; X16 is the tile-aligned cold source origin. Initial INDEX8/characters are the existing row-major map.
+; horizontal origin; X16 is the tile-aligned cold source origin. INDEX8 is
+; row-major; the generated cold map resolves column-contiguous scene characters.
 ; Caller must own an idle surface; this does not publish or alter pixels.
 Same_Mode3_Retained_Init_Far:
     .a8
@@ -523,6 +524,7 @@ Same_Mode3_Retained_Nmi__guard:
     adc #$0380
 Same_Mode3_Retained_Nmi__tile:
     .a16
+    jsr Same_Mode3_CharacterIndex
     sta VMDATAL
     tya
     clc
@@ -1013,6 +1015,7 @@ Same_Mode3_Retained_ShadowAddress:
     lda.l SAME_MODE3_WORK_TILE
     cmp #$0380
     bcs Same_Mode3_Retained_ShadowAddress__guard
+    jsr Same_Mode3_CharacterIndex
     asl
     asl
     asl

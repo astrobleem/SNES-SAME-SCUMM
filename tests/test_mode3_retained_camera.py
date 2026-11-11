@@ -198,3 +198,27 @@ class RestorationPreservationTests(unittest.TestCase):
                                  for xx in range(x,x+width))
                         self.assertEqual(not failed,safe,(delta,x,width,y,height))
                         self.assertEqual(writes,[])
+
+
+class CharacterStorageOrderTests(unittest.TestCase):
+    def test_scene_columns_are_contiguous_and_hud_guard_identity_is_preserved(self):
+        from same.snes_video_backend import mode3_character_index, mode3_character_table
+        indices=[mode3_character_index(t) for t in range(920)]
+        self.assertEqual(sorted(indices),list(range(920)))
+        self.assertEqual(indices[768:],list(range(768,920)))
+        for col in range(32):
+            self.assertEqual([indices[row*32+col] for row in range(24)],
+                             list(range(col*24,(col+1)*24)))
+        table=mode3_character_table()
+        self.assertEqual(len(table),1840)
+        self.assertEqual([int.from_bytes(table[i:i+2],'little') for i in range(0,len(table),2)],indices)
+        for t in (-1,920):
+            with self.assertRaises(ValueError):mode3_character_index(t)
+
+    def test_one_background_column_fits_one_existing_dma_descriptor(self):
+        from same.snes_video_backend import mode3_character_index, mode3_dma_batches
+        for col in range(32):
+            batch=mode3_dma_batches((),[mode3_character_index(row*32+col) for row in range(24)])
+            self.assertEqual(len(batch),1)
+            self.assertEqual(len(batch[0].tile_runs),1)
+            self.assertEqual(batch[0].tile_runs[0].byte_length,1536)

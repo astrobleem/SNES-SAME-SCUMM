@@ -82,7 +82,8 @@
     "vram_tilemap_start": 61440,
     "vram_tilemap_bytes": 4096,
     "hdma_channel": 6,
-    "hud_scroll_x": 0
+    "hud_scroll_x": 0,
+    "scene_character_order": "column-major"
   },
   "scroll_hdma": {
     "address": "41:E73A",

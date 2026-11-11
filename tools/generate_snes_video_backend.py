@@ -19,6 +19,7 @@ from same.snes_video_backend import (
     load_video_backend,
     mode3_static_tilemap,
     mode3_retained_tilemap,
+    mode3_character_table,
     validate_mode3_layout,
 )
 
@@ -197,6 +198,8 @@ def generate(
     tilemap_path.write_bytes(mode3_static_tilemap() if backend.layout is not None else b"")
     retained_path = output_dir / "video_backend_mode3_retained_tilemap.bin"
     retained_path.write_bytes(mode3_retained_tilemap() if backend.layout is not None else b"")
+    order_path = output_dir / "video_backend_mode3_character_order.bin"
+    order_path.write_bytes(mode3_character_table() if backend.layout is not None else b"")
     manifest: dict[str, object] = {
         "format": "same-snes-video-backend-manifest",
         "version": 1,
@@ -210,6 +213,7 @@ def generate(
         "layout": backend.layout,
         "tilemap_sha256": hashlib.sha256(tilemap_path.read_bytes()).hexdigest(),
         "retained_tilemap_sha256": hashlib.sha256(retained_path.read_bytes()).hexdigest(),
+        "character_order_sha256": hashlib.sha256(order_path.read_bytes()).hexdigest(),
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")

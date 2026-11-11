@@ -25,7 +25,8 @@ def run(tile, scratch, previous, valid, dbr):
         reads.update(range(n,n+width//8))
         return sum(ram.get(n+i,0xA5)<<(i*8) for i in range(width//8))
     for i,v in enumerate(scratch):ram[0x41E6BA+i]=v
-    dest=0x410000+64*tile
+    physical=(tile%32)*24+tile//32 if tile<768 else tile
+    dest=0x410000+64*physical
     for i,v in enumerate(previous):ram[dest+i]=v
     put(SYMBOLS['SAME_MODE3_WORK_TILE'],tile,16)
     put(SYMBOLS['SAME_BWRAM_CONTROL_TILE_VALID'],valid,8)
@@ -62,8 +63,11 @@ def run(tile, scratch, previous, valid, dbr):
         elif op in ('beq','bne','bcc'):
             if {'beq':zero,'bne':not zero,'bcc':not carry}[op]:pc=labels[arg]
         elif op=='jsr':
-            assert arg=='Same_Mode3_SetPendingTile' and bank==dbr
-            pending.append(a);a=0x1234;x=0x45;y=0x67 # helper may clobber
+            if arg=='Same_Mode3_CharacterIndex':
+                a=(a%32)*24+a//32 if a<768 else a
+            else:
+                assert arg=='Same_Mode3_SetPendingTile' and bank==dbr
+                pending.append(a);a=0x1234;x=0x45;y=0x67 # helper may clobber
         elif op=='rts':
             assert not stack and bank==dbr and width==16
             allowed=set(range(dest,dest+64))|set(range(0x41E766,0x41E768))|set(range(0x40102A,0x40102E))
@@ -82,7 +86,7 @@ class TileShadowTests(unittest.TestCase):
             for mismatch in range(64):
                 old=bytearray(payload);old[mismatch]^=255
                 actual,pending,changed,unchanged,count=run(tile,payload,old,1,0x7E)
-                self.assertEqual(actual,payload);self.assertEqual(pending,[tile])
+                self.assertEqual(actual,payload);self.assertEqual(pending,[(tile%32)*24+tile//32 if tile<768 else tile])
                 self.assertEqual((changed,unchanged),(30,17));self.assertLess(count,600)
 
     def test_identical_and_invalid_shadow_have_distinct_publication(self):

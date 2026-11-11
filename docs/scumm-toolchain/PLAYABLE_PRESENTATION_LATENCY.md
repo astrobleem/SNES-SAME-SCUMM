@@ -583,3 +583,49 @@ includes, so the generated slice is included once in the neutral video-service
 wrapper. The changed schedule passed six native forward/reverse full-pixel
 steps and the refusal/stale/cold-replacement controls. Its authentic current-ROM
 measurement is still pending and is not inferred from those fixture results.
+
+## Contiguous character columns (retained viewport)
+
+Scene character storage is now column-major: logical row*32+column maps to
+column*24+row. INDEX8 and dirty candidates keep their existing logical
+coordinates; pending/in-flight DMA IDs name physical characters. The fixed
+HUD and guard characters keep their IDs. The ROM lookup is1,840bytes; no
+WRAM, BW-RAM, VRAM, tile-conversion limit or DMA budget grows. Initial and
+NMI-owned tilemaps use the same mapping; legacy BG2 retains row-major storage.
+
+The prior row-major layout scattered an exposed column across24descriptors
+and three eight-descriptor batches. A background column now occupies one
+1,536-byte run. Foreground damage in the original fixture totals1,664bytes
+in one batch. This fixes descriptor fragmentation without increasing the
+2,048-byte NMI budget.
+
+Native original fixture: `/tmp/astra-column-native-20261111/observations/report.json`.
+ROM `3201b0902b2b48c17ca7dd36fb2fee813573c2e965047d396ef542a37ba5d95e`;
+map `dde57f8ec949f34dc5f77e64f42c5556fd2090b9458866e186ca695053d90ecb`;
+build identity `44617583ea9eb7818ea937baa94bb18b55c761d7bbd6cfa3d3a53563940be3ec`.
+All132steps pass full INDEX8/VRAM/screenshot equality, including1pixel,
+8pixels, repeated motion, both ring wraps, reversal, fixed foreground/HUD,
+DMA refusal/abort, stale32-bit generation and cold replacement. Ordinary
+new-column steps take16–17emulated frames with26converted tiles/1,664bytes/
+one batch; cached-column steps take9frames with2tiles/128bytes. Initial
+partial steps take19–20frames. This is still a measured latency frontier,
+not a claim of few-frame authentic gameplay. Supervised189.555seconds,
+normal exit and owned-process cleanup.
+
+The preceding `94a6c88` authentic run reached the intended camera origin and
+error0, but its observer required two idle samples while cursor publications
+continued. The600-second supervisor terminated it. It is NOT_ACCEPTED, and
+no screenshot is inferred. Captured samples contain valid committed windows;
+offline observer regression passes14tests. The next observer polls each frame
+at the target and also uses the existing immutable queued-generation fence,
+requiring a complete raster before capture and rejecting subsequent DMA.
+Read-only execution-hook events are now journaled during collection, rather
+than written only on normal session exit. No replay was used to test this
+reporting correction. The changed-ROM authentic measurement remains separate.
+
+Column tranche validation:1,535tests run,1,523passed,12skipped; `make validate`
+and33-region ownership audit pass. Pinned Poppy assembles both the original
+fixture and full authentic configuration; ROM audits pass. The prior
+94a6c88hosted run43085838908passed both jobs; it does not certify this change.
+The synthetic command-to-commit interval includes its generated strip loop,
+so16–17frames is not asserted to be pure conversion/DMA time.

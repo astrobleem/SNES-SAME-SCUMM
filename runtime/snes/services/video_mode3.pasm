@@ -1446,6 +1446,7 @@ Same_Mode3_CommitEncodedTile:
     .a16
     .i16
     lda.l SAME_MODE3_WORK_TILE
+    jsr Same_Mode3_CharacterIndex
     asl
     asl
     asl
@@ -1498,6 +1499,7 @@ Same_Mode3_CommitEncodedTile__copy_loop:
     bcc Same_Mode3_CommitEncodedTile__copy_loop
     plb
     lda.l SAME_MODE3_WORK_TILE
+    jsr Same_Mode3_CharacterIndex
     jsr Same_Mode3_SetPendingTile
     rep #$20
     .a16
@@ -2412,3 +2414,20 @@ Same_Mode3_RetainedTilemap:
 
 Same_Mode3_StaticTilemap:
     .incbin "../generated/video_backend_mode3_tilemap.bin"
+
+; Logical candidates retain the existing row-major surface coordinates.
+; Only immutable character storage/pending DMA IDs use column-major scene
+; slots. HUD and legacy BG2 storage retain their established identities.
+Same_Mode3_CharacterIndex:
+    .a16
+    .i16
+    .if SAME_VIDEO_OVERLAY_BG2 == 0
+    phx
+    asl
+    tax
+    lda.l Same_Mode3_CharacterOrder,x
+    plx
+    .endif
+    rts
+Same_Mode3_CharacterOrder:
+    .incbin "../generated/video_backend_mode3_character_order.bin"
