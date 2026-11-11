@@ -50,6 +50,8 @@ class CursorMachine(ControllerMachine):
                          'SAME_SCUMM_CONTROLLER_CURSOR_X': 160,
                          'SAME_SCUMM_CONTROLLER_CURSOR_Y': 100,
                          'SAME_SCUMM_FRAME_COUNT': 0})
+        self.mem.update(SAME_VIDEO_SURFACE_WIDTH=source_size[0],
+                        SAME_VIDEO_SURFACE_COPY_WIDTH=min(256,source_size[0]))
         self.journal = None
         self.retained = None
         service_source = (ROOT / 'runtime/snes/services/cursor_underlay.inc.pasm').read_text()
@@ -583,3 +585,26 @@ class CameraCursorTests(unittest.TestCase):
                     dx,dy=left+i%16,top+i//16
                     if covered and 0<=dx<256 and 0<=dy<224:want[dy*256+dx]=COLORS[0]
                 vm.entry('Draw');self.assertFalse(vm.c);self.assertEqual(vm.surface,want)
+
+    def test_future_camera_target_cannot_move_fixed_cursor_before_strip_commit(self):
+        for width in (160,256,280,320,640):
+            inset=min(32,max(0,width-min(width,256)))
+            for target in (0,8,176,320):
+                for committed in (0,32,72,208):
+                    vm=CursorMachine((width,144),camera=True)
+                    vm.mem.update(SAME_SCUMM_CONTROLLER_CURSOR_X=120,
+                                  SAME_SCUMM_CONTROLLER_CURSOR_Y=100,
+                                  SAME_SCUMM_CAMERA_VSCREEN_XSTART=target,
+                                  SAME_SCUMM_CAMERA_CURRENT_Y=100,
+                                  SAME_VIDEO_SURFACE_SOURCE_X=committed,
+                                  SAME_VIDEO_SURFACE_SOURCE_Y=0,
+                                  SAME_VIDEO_SURFACE_DEST_X=max(0,(256-width)//2),
+                                  SAME_VIDEO_SURFACE_DEST_Y=24)
+                    want=bytearray(vm.original)
+                    left=120-inset+max(0,(256-width)//2)-HOTSPOTS[0][0]
+                    top=124-HOTSPOTS[0][1]
+                    for i,covered in enumerate(MASKS[0]):
+                        dx,dy=left+i%16,top+i//16
+                        if covered and 0<=dx<256 and 0<=dy<224:want[dy*256+dx]=COLORS[0]
+                    vm.entry('Draw');self.assertFalse(vm.c)
+                    self.assertEqual(vm.surface,want)

@@ -463,7 +463,8 @@ class CameraForegroundFairnessTests(unittest.TestCase):
     def test_same_room_pan_does_not_cancel_actor_and_yields_only_one_turn(self):
         m=RetainedCameraTransactionMachine()
         m.symbols.update(SAME_MSU1_STATE_READING=4,SCUMM_MSU_ROOM_REQUESTED=1,
-                         SAME_SCUMM_CURSOR_PENDING=0x40074E)
+                         SAME_SCUMM_CURSOR_PENDING=0x40074E,
+                         SAME_SCUMM_CURSOR_COMPOSING=0x400778)
         m.put('SAME_SCUMM_VIEWPORT_STATE',0,1);m.put('SAME_SCUMM_VIEWPORT_MODE',0,1)
         m.put('SAME_VIDEO_SURFACE_PENDING_XSTART',176)
         m.put('SAME_VIDEO_SURFACE_WIDTH',640);m.put('SAME_VIDEO_SURFACE_COPY_WIDTH',256)
@@ -489,6 +490,17 @@ class CameraForegroundFairnessTests(unittest.TestCase):
         # new animation tick changes the desired actor again.
         m.put('SAME_SCUMM_ACTOR_POSE_STATE',0,1)
         m.put('SAME_SCUMM_ACTOR_SCRATCH_OWNER',0,1)
+        m.consume();self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_ACTOR_SERVED',1),1)
+        self.assertNotIn('ScummV5_Cursor_Frame_Far',m.calls)
+        # A previously deferred cursor publication/restoration must drain
+        # before actor composition. It never becomes a new blink-only pass.
+        for field in ('SAME_SCUMM_CURSOR_PENDING','SAME_SCUMM_CURSOR_COMPOSING'):
+            m.put('SAME_SCUMM_VIEWPORT_ACTOR_SERVED',2,1)
+            m.put(field,1);m.calls=[];m.consume()
+            self.assertIn('ScummV5_Cursor_Frame_Far',m.calls)
+            self.assertNotIn('ScummV5_Controller_RenderActor_Far',m.calls)
+            self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_ACTOR_SERVED',1),2)
+            m.put(field,0)
         m.consume();self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_ACTOR_SERVED',1),1)
         m.calls=[];m.entry=0;m.consume()
         self.assertNotIn('ScummV5_Controller_RenderActor_Far',m.calls)

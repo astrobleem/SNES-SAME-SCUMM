@@ -483,13 +483,24 @@ ScummV5_Cursor_Project_Far:
     phx
     phy
     .if SCUMM_MSU1_CAMERA_VIEWPORT
-    ; Cursor is logical virtual-screen space; projection uses the currently
-    ; installed viewport, while object hit testing keeps original world space.
-    lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
-    clc
-    adc.l SAME_SCUMM_CAMERA_VSCREEN_XSTART
+    ; Cursor belongs to the virtual screen, not to a future world-camera
+    ; target. The 256px adapter crops at most32px from the320px virtual
+    ; screen; narrower source rooms clamp that inset just like SC5VIS.
+    ; Adding the authored camera target while an older strip is displayed
+    ; sends a stationary cursor offscreen during a pan. World hit testing
+    ; remains gated until the corresponding camera transform is committed.
+    lda.l SAME_VIDEO_SURFACE_WIDTH
     sec
-    sbc.l SAME_VIDEO_SURFACE_SOURCE_X
+    sbc.l SAME_VIDEO_SURFACE_COPY_WIDTH
+    cmp #$0020
+    bcc ScummV5_Cursor_Project__camera_inset
+    lda #$0020
+ScummV5_Cursor_Project__camera_inset:
+    .a16
+    sta.l SAME_SCUMM_CURSOR_SOURCE_X
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    sec
+    sbc.l SAME_SCUMM_CURSOR_SOURCE_X
     clc
     adc.l SAME_VIDEO_SURFACE_DEST_X
     sta.l SAME_SCUMM_CURSOR_LEFT

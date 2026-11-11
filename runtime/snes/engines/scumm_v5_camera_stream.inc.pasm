@@ -698,8 +698,21 @@ ScummV5_Camera_ServiceForeground_Far:
     bcs ScummV5_Camera_ServiceForeground__done
     jsl ScummV5_MsuProgram_ReconcileRead_Far
     bcs ScummV5_Camera_ServiceForeground__done
-    jsl ScummV5_Controller_RenderActor_Far
+    ; Drain an existing cursor transaction, but do not manufacture a new
+    ; cursor-only PRESENT (for its color cycle) before every camera strip.
+    ; The retained scroll exchanges the fixed cursor journal in its own
+    ; publication. A changed actor also draws the cursor in its PRESENT.
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_CURSOR_PENDING
+    ora.l SAME_SCUMM_CURSOR_PENDING+1
+    ora.l SAME_SCUMM_CURSOR_COMPOSING
+    ora.l SAME_SCUMM_CURSOR_COMPOSING+1
+    beq ScummV5_Camera_ServiceForeground__actor
     jsl ScummV5_Cursor_Frame_Far
+    bra ScummV5_Camera_ServiceForeground__done
+ScummV5_Camera_ServiceForeground__actor:
+    jsl ScummV5_Controller_RenderActor_Far
     sep #$20
     .a8
     lda.l SAME_SCUMM_ACTOR_POSE_STATE

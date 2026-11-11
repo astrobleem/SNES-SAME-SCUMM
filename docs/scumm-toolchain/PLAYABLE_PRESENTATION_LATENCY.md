@@ -512,3 +512,27 @@ Current circular-surface native controls:
 These are original fixture controls. They do not substitute for authentic
 camera acceptance or physical hardware evidence. The integrated actor-corrected
 original-game run is tracked separately and is not declared passing here.
+
+### Cursor ownership during incremental publication
+
+The actor-corrected run reached the authored camera transition without error,
+but an observer admission guard recognized only an MSU transfer, not the new
+foreground service turn. Its matching-ROM continuation finished the pan and
+then correctly failed the full source-pixel check: cursor projection had used
+the future logical camera target while earlier retained strips were visible.
+The stationary cursor could move offscreen, and its final journal retained an
+intermediate projection. Neither run is counted as integrated acceptance.
+
+The cursor now uses the fixed, bounded inset of the320-pixel SCUMM virtual
+screen into the256-pixel target viewport. Future camera targets no longer
+move screen-owned cursor pixels. Logical world hit testing still waits for
+its committed camera transform. Actual-source host execution covers delayed
+commits, narrow-room clipping, multiple target origins and full cursor pixels.
+
+A foreground turn drains an already pending cursor publication or restoration,
+but does not initiate a fresh cursor blink-only PRESENT before each strip.
+The camera exchanges the existing fixed cursor journal in its publication;
+a changed actor draws the cursor within its own publication. Ordinary cursor
+updates resume through the existing path after the pan. This removes a
+redundant transaction without raising conversion or DMA budgets. Tests verify
+pending/composing cursor ownership is drained before actor work.
