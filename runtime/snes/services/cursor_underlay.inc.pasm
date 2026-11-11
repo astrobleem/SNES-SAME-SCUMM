@@ -109,7 +109,34 @@ Same_VideoSurface_Cursor_Capture__pixel:
     sta.l SAME_VIDEO_CURSOR_UNDERLAY
     jmp Same_VideoSurface_Cursor_Success
 
+Same_VideoSurface_ExchangeCursorUnderlay_Far:
+    php
+    rep #$20
+    .a16
+    pha
+    sep #$20
+    .a8
+    lda #$01
+    sta.l MODE3_R_EXCHANGE
+    rep #$20
+    .a16
+    pla
+    plp
+    bra Same_VideoSurface_RestoreCursorUnderlay__common
 Same_VideoSurface_RestoreCursorUnderlay_Far:
+    php
+    rep #$20
+    .a16
+    pha
+    sep #$20
+    .a8
+    lda #$00
+    sta.l MODE3_R_EXCHANGE
+    rep #$20
+    .a16
+    pla
+    plp
+Same_VideoSurface_RestoreCursorUnderlay__common:
     php
     rep #$30
     .a16
@@ -124,6 +151,12 @@ Same_VideoSurface_RestoreCursorUnderlay_Far:
     lda.l SAME_VIDEO_CURSOR_UNDERLAY
     cmp #SAME_VIDEO_CURSOR_MAGIC
     beq Same_VideoSurface_Cursor_Restore__committed
+    cmp #$CB
+    bne Same_VideoSurface_Cursor_Restore__not_committed
+    lda.l MODE3_R_EXCHANGE
+    bne Same_VideoSurface_Cursor_Restore__committed
+Same_VideoSurface_Cursor_Restore__not_committed:
+    .a8
     jmp Same_VideoSurface_Cursor_Success
 Same_VideoSurface_Cursor_Restore__committed:
     .a8
@@ -153,6 +186,20 @@ Same_VideoSurface_Cursor_Restore__pixel:
     .a8
     lda.l SAME_VIDEO_CURSOR_PIXELS,x
     pha
+    lda.l MODE3_R_EXCHANGE
+    beq Same_VideoSurface_Cursor_Restore__plain_copy
+    phx
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_BWRAM_SURFACE_BASE,x
+    plx
+    sta.l SAME_VIDEO_CURSOR_PIXELS,x
+Same_VideoSurface_Cursor_Restore__plain_copy:
+    .a8
     rep #$20
     .a16
     lda.l SAME_VIDEO_CURSOR_WORK_SURFACE
@@ -167,6 +214,14 @@ Same_VideoSurface_Cursor_Restore__pixel:
     bcc Same_VideoSurface_Cursor_Restore__pixel
     jsr Same_VideoSurface_Cursor_UnionDamage
     sep #$20
+    .a8
+    lda.l MODE3_R_EXCHANGE
+    beq Same_VideoSurface_Cursor_Restore__consume
+    lda.l SAME_VIDEO_CURSOR_UNDERLAY
+    eor #$02
+    sta.l SAME_VIDEO_CURSOR_UNDERLAY
+    jmp Same_VideoSurface_Cursor_Success
+Same_VideoSurface_Cursor_Restore__consume:
     .a8
     lda #$00
     sta.l SAME_VIDEO_CURSOR_UNDERLAY

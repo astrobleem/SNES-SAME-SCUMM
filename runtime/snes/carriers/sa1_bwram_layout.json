@@ -56,11 +56,6 @@
         "bytes": 68,
         "owner": "video_surface.pasm"
       },
-      "live_room_palette_stage": {
-        "offset": 132,
-        "bytes": 768,
-        "owner": "SCUMM live-room MSU transition"
-      },
       "live_room_control": {
         "offset": 900,
         "bytes": 64,
@@ -70,6 +65,16 @@
         "offset": 964,
         "bytes": 3132,
         "owner": "SCUMM live-room incoming metadata transaction"
+      },
+      "retained_viewport": {
+        "offset": 132,
+        "bytes": 64,
+        "owner": "Mode-3 retained viewport and NMI scroll state"
+      },
+      "retained_guard_head": {
+        "offset": 196,
+        "bytes": 704,
+        "owner": "Mode-3 retained guard-column planar shadow, rows 0..10"
       }
     }
   },
@@ -104,5 +109,17 @@
       "runtime/snes/video_backends/mode3_surface_layout.json:fixture",
       "runtime/snes/video_backends/mode3_surface_layout.json:reserved"
     ]
+  },
+  "live_room_palette_stage_alias": {
+    "address": "40:1084",
+    "bytes": 768,
+    "owner": "checked incoming palette; retired camera control/guard head until cold publication",
+    "aliases": "retained viewport and guard head; no active reader after Retire"
+  },
+  "retained_guard_tail_alias": {
+    "address": "40:1BC4",
+    "bytes": 832,
+    "owner": "Mode-3 retained guard-column planar shadow, rows 11..23",
+    "aliases": "live_room_pending tail beyond actor/strip 2048-byte prefix; invalidated before room transaction"
   }
 }

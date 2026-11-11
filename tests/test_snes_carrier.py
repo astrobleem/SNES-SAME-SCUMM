@@ -75,8 +75,8 @@ class SnesCarrierTests(unittest.TestCase):
         allocations = carrier.layout["backend_reserved"]["allocations"]
         self.assertEqual(allocations["mode3_control"]["bytes"], 0x40)
         self.assertEqual(allocations["video_surface_state"]["offset"], 0x40)
-        self.assertEqual(allocations["live_room_palette_stage"]["offset"], 0x84)
-        self.assertEqual(allocations["live_room_palette_stage"]["bytes"], 768)
+        self.assertEqual(allocations["retained_viewport"]["offset"], 0x84)
+        self.assertEqual(allocations["retained_viewport"]["bytes"], 64)
         self.assertEqual(allocations["live_room_pending"]["offset"], 0x3C4)
         self.assertEqual(allocations["live_room_pending"]["bytes"], 3132)
         self.assertEqual(carrier.layout["live_room_active"], {

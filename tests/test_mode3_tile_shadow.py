@@ -4,7 +4,7 @@ import random
 import unittest
 
 SOURCE=Path(__file__).resolve().parents[1]/'runtime/snes/services/video_mode3.pasm'
-SYMBOLS={'Same_Mode3_TileScratchLow':0xE6B0,'Same_Mode3_TileShadowLow':0,
+SYMBOLS={'Same_Mode3_TileScratchLow':0xE6BA,'Same_Mode3_TileShadowLow':0,
          'SAME_MODE3_WORK_TILE':0x41E750,'SAME_MODE3_WORK_TEMP':0x41E766,
          'SAME_BWRAM_CONTROL_TILE_VALID':0x40100C,
          'SAME_MODE3_CONTROL_UNCHANGED_COUNT':0x40102C,
@@ -24,7 +24,7 @@ def run(tile, scratch, previous, valid, dbr):
     def read(n,width):
         reads.update(range(n,n+width//8))
         return sum(ram.get(n+i,0xA5)<<(i*8) for i in range(width//8))
-    for i,v in enumerate(scratch):ram[0x41E6B0+i]=v
+    for i,v in enumerate(scratch):ram[0x41E6BA+i]=v
     dest=0x410000+64*tile
     for i,v in enumerate(previous):ram[dest+i]=v
     put(SYMBOLS['SAME_MODE3_WORK_TILE'],tile,16)

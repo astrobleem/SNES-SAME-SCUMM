@@ -27,6 +27,12 @@ ScummV5_Camera_StartStrip__prepare_ok:
     rtl
 ScummV5_Camera_StartStrip__prepared:
     .a8
+    cmp #$02
+    bne ScummV5_Camera_StartStrip__needs_read
+    clc ; retained source column already checked and cached
+    rtl
+ScummV5_Camera_StartStrip__needs_read:
+    .a8
     cmp #$01
     beq ScummV5_Camera_StartStrip__state_ok
     jml ScummV5_Camera_Invalid_Far
@@ -65,6 +71,21 @@ ScummV5_Camera_StartStrip__offset_ok:
 ScummV5_Camera_StartStrip__offset_ready:
     .a16
     lda.l SAME_SCUMM_VIEWPORT_STRIP_BYTES
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    pha
+    lda.l SAME_SCUMM_VIEWPORT_MODE
+    and #$00FF
+    beq ScummV5_Camera_StartStrip__cold_capacity
+    pla
+    cmp #$0801
+    bcc ScummV5_Camera_StartStrip__bounded_input
+    jml ScummV5_Camera_Invalid_Far
+ScummV5_Camera_StartStrip__cold_capacity:
+    .a16
+    pla
+ScummV5_Camera_StartStrip__bounded_input:
+    .a16
+    .endif
     sta.l SAME_MSU1_REQUEST_LENGTH
     sta.l SCUMM_LIVE_ROOM_READ_LENGTH
     sta.l SAME_MSU1_DEST_CAPACITY
@@ -208,6 +229,55 @@ ScummV5_Camera_Prepare__x_positive:
 ScummV5_Camera_Prepare__x_clamped:
     .a16
     sta.l SAME_SCUMM_VIEWPORT_SOURCE_X
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_VIEWPORT_MODE
+    beq ScummV5_Camera_Prepare__cold_grid
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_VIDEO_SURFACE_SOURCE_X
+    tay
+    lda.l SAME_SCUMM_VIEWPORT_ROOM_WIDTH
+    sec
+    sbc.l SAME_SCUMM_VIEWPORT_WIDTH
+    tax
+    lda.l SAME_SCUMM_VIEWPORT_SOURCE_X
+    jsl Same_VideoSurface_BeginScroll_Far
+    bcc ScummV5_Camera_Prepare__retained_step
+    jml ScummV5_Camera_Invalid_Far
+ScummV5_Camera_Prepare__retained_step:
+    .a16
+    sta.l SAME_SCUMM_VIEWPORT_STRIP
+    txa
+    sta.l SAME_SCUMM_VIEWPORT_SOURCE_X
+    lda.l SAME_SCUMM_VIEWPORT_STRIP
+    cmp #$FFFF
+    bne ScummV5_Camera_Prepare__retained_read
+    sep #$20
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    lda #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ROOM
+    sta.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    lda #SCUMM_MSU_ROOM_VALIDATED
+    sta.l SAME_SCUMM_MSU_ROOM_STATE
+    clc
+    rtl
+ScummV5_Camera_Prepare__retained_read:
+    .a16
+    sta.l SAME_SCUMM_VIEWPORT_STRIP
+    sta.l SAME_SCUMM_VIEWPORT_FIRST
+    inc
+    sta.l SAME_SCUMM_VIEWPORT_LAST
+    jmp ScummV5_Camera_Prepare__directory
+ScummV5_Camera_Prepare__cold_grid:
+    .a8
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_VIEWPORT_SOURCE_X
+    .endif
     lsr
     lsr
     lsr
@@ -222,6 +292,8 @@ ScummV5_Camera_Prepare__x_clamped:
     lsr
     lsr
     sta.l SAME_SCUMM_VIEWPORT_LAST
+ScummV5_Camera_Prepare__directory:
+    .a16
     lda.l SAME_SCUMM_MSU_ROOM_ID
     and #$00FF
     sep #$20
@@ -234,6 +306,11 @@ ScummV5_Camera_Prepare__x_clamped:
     tax
     lda.l ScummV5_MsuCameraCrcOffsets,x
     sta.l SAME_SCUMM_VIEWPORT_CRC_BASE
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    lda.l SAME_SCUMM_VIEWPORT_MODE
+    and #$00FF
+    bne ScummV5_Camera_Prepare__staging_ready
+    .endif
     ; Zero only the staging alias after its former backend owner is idle.
     lda #$0000
     ldx #$0000
@@ -244,6 +321,8 @@ ScummV5_Camera_Prepare__clear:
     inx
     cpx #$E000
     bcc ScummV5_Camera_Prepare__clear
+ScummV5_Camera_Prepare__staging_ready:
+    .a16
     sep #$20
     .a8
     lda #$01
@@ -266,6 +345,39 @@ ScummV5_Camera_ConsumeStrip_Far:
     rtl
 ScummV5_Camera_ConsumeStrip__length_ok:
     .a16
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    lda.l SAME_SCUMM_VIEWPORT_MODE
+    and #$00FF
+    beq ScummV5_Camera_ConsumeStrip__cold
+    lda #SAME_SCUMM_LIVE_ROOM_PENDING_BASE&$FFFF
+    sta SAME_VIDEO_SURFACE_DP_SOURCE
+    sep #$20
+    .a8
+    lda #$40
+    sta SAME_VIDEO_SURFACE_DP_SOURCE+2
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_VIEWPORT_SOURCE_Y
+    tay
+    lda.l SAME_SCUMM_VIEWPORT_DEST_Y
+    tax
+    lda.l SAME_SCUMM_VIEWPORT_HEIGHT
+    jsl Same_VideoSurface_CheckedScrollColumn_Far
+    bcc ScummV5_Camera_ConsumeStrip__retained_valid
+    sec
+    rtl
+ScummV5_Camera_ConsumeStrip__retained_valid:
+    .a16
+    sep #$20
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    clc
+    rtl
+ScummV5_Camera_ConsumeStrip__cold:
+    .a16
+    .endif
     lda.l SAME_SCUMM_VIEWPORT_STRIP
     asl
     asl
@@ -451,6 +563,13 @@ ScummV5_Camera_ServicePending_Far:
 ScummV5_Camera_ServicePending__lifecycle_idle:
     .a8
     lda.l SAME_SCUMM_VIEWPORT_STATE
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    cmp #$04
+    bne ScummV5_Camera_ServicePending__not_waiting_ppu
+    jmp ScummV5_Camera_ServicePending__retained_wait
+ScummV5_Camera_ServicePending__not_waiting_ppu:
+    .a8
+    .endif
     cmp #$03
     bne ScummV5_Camera_ServicePending__check_checked
     jmp ScummV5_Camera_ServicePending__publish
@@ -464,7 +583,11 @@ ScummV5_Camera_ServicePending__check_checked:
     rtl
 ScummV5_Camera_ServicePending__camera_owned:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    jmp ScummV5_Camera_ServicePending__retained_commit
+    .else
     jmp ScummV5_Camera_ServicePending__coalesce
+    .endif
 ScummV5_Camera_ServicePending__not_ready:
     .a8
     cmp #$00
@@ -545,6 +668,55 @@ ScummV5_Camera_ServicePending__wait:
     .a8
     clc
     rtl
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+ScummV5_Camera_ServicePending__retained_commit:
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    jsl Same_VideoSurface_CanPublishRetained_Far
+    bcc ScummV5_Camera_ServicePending__retained_capacity
+    sep #$20
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    clc
+    rtl
+ScummV5_Camera_ServicePending__retained_capacity:
+    .a8
+    jsl Same_VideoSurface_ComposeRetainedScroll_Far
+    bcc ScummV5_Camera_ServicePending__retained_published
+    ; A malformed journal is an explicit transaction failure, never a retry
+    ; after silently publishing partial pixels.
+    jml ScummV5_Camera_Invalid_Far
+ScummV5_Camera_ServicePending__retained_published:
+    .a8
+    sep #$20
+    .a8
+    lda #$04
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    clc
+    rtl
+ScummV5_Camera_ServicePending__retained_wait:
+    .a8
+    jsl Same_VideoSurface_ScrollPresented_Far
+    bcs ScummV5_Camera_ServicePending__retained_pending
+    jsl ScummV5_Camera_InstallGeometry_Far
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    sta.l SAME_SCUMM_VIEWPORT_MODE
+    sta.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
+    lda #$01
+    sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+    clc
+    rtl
+ScummV5_Camera_ServicePending__retained_pending:
+    .a8
+    clc
+    rtl
+.endif
+
 ScummV5_Camera_ServicePending__commit:
     .a8
     ; Incoming staged pixels are complete. No producer can publish the aliased
@@ -694,7 +866,16 @@ ScummV5_Camera_YieldToRoom__drained:
     rtl
 ScummV5_Camera_YieldToRoom__verified_or_idle:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    jsl Same_VideoSurface_AbortScroll_Far
+    bcc ScummV5_Camera_YieldToRoom__aborted
+    sec
+    rtl
+ScummV5_Camera_YieldToRoom__aborted:
+    .a8
+    .else
     jsl Same_VideoSurface_InvalidateTileCache_Far
+    .endif
     sep #$20
     lda #$00
     sta.l SAME_SCUMM_VIEWPORT_STATE

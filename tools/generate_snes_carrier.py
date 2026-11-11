@@ -133,7 +133,9 @@ def generate(
                 "SAME_SCUMM_LIVE_ROOM_PENDING_CAPACITY = SAME_BWRAM_LIVE_ROOM_PENDING_SIZE",
                 f"SAME_SCUMM_LIVE_ROOM_PENDING_BANK = ${((live_room_pending >> 16) & 0xFF):02X}",
                 "SAME_SCUMM_LIVE_ROOM_CONTROL = SAME_BWRAM_LIVE_ROOM_CONTROL",
+                "SAME_BWRAM_LIVE_ROOM_PALETTE_STAGE = SAME_BWRAM_BACKEND_BASE+$0084",
                 "SAME_SCUMM_LIVE_ROOM_PALETTE_STAGE = SAME_BWRAM_LIVE_ROOM_PALETTE_STAGE",
+                f"SAME_MODE3_GUARD_TAIL = {hex24(parse_address(layout['retained_guard_tail_alias']['address']))}",
                 "SAME_SCUMM_LIVE_ROOM_PIXEL_STAGE_BASE = SAME_BWRAM_TILE_SHADOW_BASE",
                 f"SAME_SCUMM_LIVE_ROOM_PIXEL_STAGE_BANK = ${((parse_address(layout['tile_shadow']['address']) >> 16) & 0xFF):02X}",
             ]

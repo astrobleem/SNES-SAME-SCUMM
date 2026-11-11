@@ -1,3 +1,30 @@
+## Active camera repair — retained backend native proof, integration pending
+
+HEAD before this tranche: 80719edf. Do not stop at this intermediate checkpoint.
+No new full seven-action replay. Recovery worktree is untouched.
+
+132 native original-fixture scroll steps passed full INDEX8/VRAM/PPU equality,
+including both ring wraps and reverse motion. Subsequent production edge-fill
+and foreground-damage controls also pass. New column:24tiles/1536B; foreground
+control:26–27 conversions/1664B rather than896tiles/57344B. Cached columns use
+zero background conversions. Steps still18–33frames; CPU-cost instrumentation
+measured INDEX8 shifting at7–8frames, cached-column decode4frames and edge
+fill2–3frames. These remain optimization targets; budgets were not increased.
+
+Native first authentic attempt failed before gameplay at frame128/error16:
+the moved palette destination was not accepted by the checked provider.
+Corrected by preserving its original destination and retiring overlapping
+camera state; HDMA table remains in its separately audited permanent range.
+Source/backend boundaries now go through surface-service APIs. 82 focused
+tests pass; complete suite, new authentic integration, and CI still pending.
+
+Evidence is in /tmp/astra-retained-* (private; do not commit payloads/captures).
+See PLAYABLE_PRESENTATION_LATENCY.md for exact native scope and identities.
+Continue with the corrected isolated authentic build and bounded controls;
+never reuse the failed ROM checkpoint across changed identities.
+
+--- Historical checkpoints follow ---
+
 ## Active Milestone C — camera checkpoint, not completion
 
 The optional source-resolution camera reached an authentic room-10 settled

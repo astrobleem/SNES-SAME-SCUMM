@@ -362,3 +362,74 @@ Python compilation, 60 tracked JSON files, all 3 tracked Bash scripts, and
 Winston image; all 17 non-generated assembler inputs match this source tree.
 The private generated build Git identity is distinct from the public source
 checkpoint. Skips and hosted assembly are never counted as Nexen acceptance.
+
+
+## Retained viewport integration (in progress, 2026-11-11)
+
+The backend now retains 33 physical scene columns (24 tiles each), the fixed
+32x4 HUD, and a 64x32 hardware map at VRAM $F000. Character storage ends at
+$E600. Only the newly exposed checked column is converted; cached columns
+are reused. NMI changes tile references and the scene scroll after character
+transfers complete. An HDMA split holds the lower 32 lines fixed. The existing
+2,048-byte/eight-descriptor transfer budget and four-tile conversion budget
+are unchanged. BG2-overlay personalities retain their legacy allocation and
+do not enable retained scrolling.
+
+The extra 1,536-byte shadow is split between $4010C4..401384 and
+$401BC4..401F04. Checked camera/actor reads use only the first 2 KiB of pending
+scratch. Incoming room transactions retire the guard lifetime first. The
+original palette destination $401084 remains unchanged, as required by both
+the checked provider and palette consumer. The live HDMA table at
+$41E73A..41E744 is outside every incoming-room alias. All ranges are declared
+in the carrier/backend ownership descriptions and checked by the memory audit.
+
+The existing actor and cursor journals can exchange opaque pixels with the
+surface, restore their backgrounds into retained characters, rebase the actor
+journal, and compose again without allocating another framebuffer. Journal
+validation precedes writes. Source/world coordinates remain authoritative;
+SCUMM uses surface-service APIs and installs the accepted transform only after
+the exact two-word presentation generation commits. Busy queues retain the
+checked strip and do not recompose a partially published surface.
+
+Native copyright-free evidence (not authentic gameplay acceptance):
+
+- `astra-retained-wrap-native-20261111`: 132 committed steps across both the
+  33-column character ring and 64-column map, then back. Every complete
+  INDEX8/VRAM/PPU comparison passed. ROM
+  `7558a356c1e06e9aaebbbf42210d1828dd9be9dba49bc44c023c8d70de6b2760`.
+- `astra-retained-production-edge-20261111`: production cached-column decode
+  and edge fill, six forward/reverse steps, complete pixel equality. A new
+  column converted 24 tiles/1,536 bytes; cached steps converted/uploaded zero.
+- `astra-retained-foreground-20261111`: world-space opaque-zero foreground and
+  fixed cursor, eight forward/reverse steps, full INDEX8/VRAM/PPU equality.
+  Changed strips plus cursor damage uploaded 1,664 bytes; cached steps with
+  cursor damage uploaded 128 bytes. Measured step intervals were 18–33 frames.
+  This still includes a synchronous, interruptible INDEX8 scene move; few-frame
+  scrolling is not claimed. A separate instrumented cost control isolates it.
+
+An initial native failure exposed Poppy excluding a unary-negated conditional
+around the NMI scroll routine. Explicit `== 0` fixed the emitted code; the
+validator now requires the assembled commit labels before launching Nexen.
+The first authentic integration attempt stopped at frame128 with explicit
+resource error16 before gameplay. The proposed alternate palette destination
+was rejected by the existing checked-read whitelist. The fix preserves the
+original palette address and retires the aliased camera state instead. That
+failed image is not accepted, and its captures/checkpoint remain preserved.
+
+The initial full host run additionally caught direct backend references in
+the engine adapter. These were moved into the existing surface-service ABI;
+the architecture gate remains unchanged. The small source-instruction camera
+runner now honors build conditionals instead of executing both personalities.
+Focused interface, palette, ownership, and old/new transaction tests pass.
+
+**Integrated authentic camera acceptance and final Milestone C remain pending.**
+No seven-action replay, gameplay-state writes, recovery-worktree modifications,
+new renderer, package format, or selector changes are part of this work.
+
+Cost control `astra-retained-cost-fixed-observer-20261111` passed all six
+full-pixel checks. Median Nexen cycleCount deltas: tile conversion11,680,
+INDEX8 scene move346,914 (7.5frames), cached-column decode178,646 (4frames),
+edge fill112,926 (2frames). The initial profiler failed before reset because
+its overridden MCP method required an optional argument; no timing was inferred
+from that failed run. The corrected observer installed hooks after reset.
+These measurements identify remaining CPU work independently of provider I/O.

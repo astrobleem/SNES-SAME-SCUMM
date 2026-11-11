@@ -118,6 +118,14 @@ ScummV5_MsuLiveRoom_Start_Far__not_pixels:
     rtl
 ScummV5_MsuLiveRoom_Start_Far__metadata:
     .a8
+    .if SCUMM_MSU1_CAMERA_VIEWPORT && SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    jsl Same_VideoSurface_RetireScroll_Far
+    bcc ScummV5_MsuLiveRoom_Start_Far__video_retired
+    clc ; ordinary backpressure before metadata reuses guard staging
+    rtl
+ScummV5_MsuLiveRoom_Start_Far__video_retired:
+    .a8
+    .endif
 .if SAME_SCUMM_MSU1_LIVE_ROOM_PCM_TEST_TRACK > 0
     ; Optional diagnostic: start one looping MSU PCM track when the first
     ; package-backed room transaction begins. This tests data/audio overlap;
@@ -2319,6 +2327,13 @@ ScummV5_LiveRoom_PublishVisual_Far__pixels:
     .if SCUMM_MSU1_CAMERA_VIEWPORT
     jsl ScummV5_Camera_InstallRoomBounds_Far
     jsl ScummV5_Camera_InstallGeometry_Far
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    jsl Same_VideoSurface_ColdScroll_Far
+    bcc ScummV5_LiveRoom_PublishVisual_Far__cold_map
+    jmp ScummV5_LiveRoom_PublishVisual_Far__bad
+ScummV5_LiveRoom_PublishVisual_Far__cold_map:
+    .a16
+    .endif
     .endif
     sep #$20
     .a8

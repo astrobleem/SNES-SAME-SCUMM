@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from same.snes_carrier import _validate_layout
+from same.snes_video_backend import validate_mode3_layout
 
 MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 
@@ -288,6 +289,18 @@ def audit() -> dict[str, Any]:
     )[1].split("Same_Mode3_HandlePresent__reject:", 1)[0]
     if "sta.l SAME_BWRAM_CONTROL_TILE_VALID" in present_accept:
         raise ValueError("ordinary PRESENT must not invalidate cached tiles")
+    validate_mode3_layout(video)
+    retained_source = (ROOT / "runtime/snes/services/video_mode3_retained.inc.pasm").read_text()
+    camera_source = (ROOT / "runtime/snes/engines/scumm_v5_camera_stream.inc.pasm").read_text()
+    if "MODE3_R_HDMA = SAME_MODE3_SCROLL_HDMA" not in retained_source:
+        raise ValueError("retained HDMA must survive room-staging aliases")
+    if (parse_address(video['scroll_hdma']['address']), video['scroll_hdma']['bytes']) != (0x41e73a,10):
+        raise ValueError("retained NMI scroll table ownership changed")
+    for contract in ('Same_VideoSurface_RetireScroll_Far', 'Same_VideoSurface_ColdScroll_Far'):
+        if f'jsl {contract}' not in live_room_source:
+            raise ValueError('incoming room omits retained cache lifetime handoff')
+    if 'cmp #$0801' not in camera_source or 'jsl Same_VideoSurface_AbortScroll_Far' not in camera_source:
+        raise ValueError('same-room checked strip must respect retained guard tail')
     active = bwram["live_room_active"]
     active_start = parse_address(str(active["address"]))
     active_end = active_start + int(active["bytes"])
@@ -337,12 +350,21 @@ def audit() -> dict[str, Any]:
             "address": page2["start"], "bytes": page2["bytes"],
             "exclusive_with": [],
         },
+        "retained_video_ownership": {
+            "guard_head": bwram['backend_reserved']['allocations']['retained_guard_head'],
+            "guard_tail": bwram['retained_guard_tail_alias'],
+            "camera_transaction": bwram['backend_reserved']['allocations']['retained_viewport'],
+            "persistent_hdma": video['scroll_hdma'],
+            "vram": video['retained_viewport'],
+            "staging_prefix_limit": 2048,
+            "retirement": "idle surface and empty event/DMA queues before incoming room; HDMA table remains outside retired aliases",
+        },
         "bwram_lifetime_aliases": [{
             "owner": "SCUMM checked SC5VIS pixel staging",
             "address": f"${pixel_stage_address:06X}",
             "bytes": tile_shadow["bytes"],
             "aliases": "Mode-3 encoded tile shadow",
-            "lifetime": "incoming visual transfer through checked publication",
+            "lifetime": "cold incoming room only; same-room retained columns do not use tile-shadow staging",
             "coherency": "full room present invalidates shadow before re-encoding",
         }, {
             "owner": "SCUMM actor chunk / live-room transaction",

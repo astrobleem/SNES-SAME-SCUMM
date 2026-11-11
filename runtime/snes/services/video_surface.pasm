@@ -1540,7 +1540,37 @@ Same_VideoSurface_RestoreRect__busy:
 ; C=count/right, D=surface cursor, J=journal cursor. No pose scratch is used.
 .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER && SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && (SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D)
 
+; Exchange uses the existing journal as the pose temporary: background goes
+; to INDEX8 and actor pixels replace its payload, then the second exchange
+; restores the actor and captures its new background. No extra pixel buffer.
+Same_VideoSurface_ExchangeActorUnderlay_Far:
+    php
+    rep #$20
+    .a16
+    pha
+    sep #$20
+    .a8
+    lda #$01
+    sta.l MODE3_R_EXCHANGE
+    rep #$20
+    .a16
+    pla
+    plp
+    bra Same_VideoSurface_RestoreActorUnderlay__common
 Same_VideoSurface_RestoreActorUnderlay_Far:
+    php
+    rep #$20
+    .a16
+    pha
+    sep #$20
+    .a8
+    lda #$00
+    sta.l MODE3_R_EXCHANGE
+    rep #$20
+    .a16
+    pla
+    plp
+Same_VideoSurface_RestoreActorUnderlay__common:
     php
     rep #$30
     .a16
@@ -1560,6 +1590,12 @@ Same_VideoSurface_Underlay_Restore__located:
     lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
     cmp #SAME_VIDEO_ACTOR_UNDERLAY_MAGIC
     beq Same_VideoSurface_Underlay_Restore__magic
+    cmp #$AA ; exchanged pose, never a partially built ($A9) journal
+    bne Same_VideoSurface_Underlay_Restore__not_committed
+    lda.l MODE3_R_EXCHANGE
+    bne Same_VideoSurface_Underlay_Restore__magic
+Same_VideoSurface_Underlay_Restore__not_committed:
+    .a8
     jmp Same_VideoSurface_Underlay_Restore__empty
 Same_VideoSurface_Underlay_Restore__magic:
     rep #$20
@@ -1594,6 +1630,24 @@ Same_VideoSurface_Underlay_Restore__record:
     .a16
     lda.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
     bne Same_VideoSurface_Underlay_Restore__run
+    sep #$20
+    .a8
+    lda.l MODE3_R_EXCHANGE
+    beq Same_VideoSurface_Underlay_Restore__consume
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
+    eor #$02
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
+    jmp Same_VideoSurface_Underlay_Success
+Same_VideoSurface_Underlay_Restore__consume:
+    .a8
+    rep #$20
+    .a16
     jsr Same_VideoSurface_Underlay_ClearMagic
     jmp Same_VideoSurface_Underlay_Success
 Same_VideoSurface_Underlay_Restore__run:
@@ -1616,6 +1670,20 @@ Same_VideoSurface_Underlay_Restore__pixel:
     .a8
     lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
     pha
+    lda.l MODE3_R_EXCHANGE
+    beq Same_VideoSurface_Underlay_Restore__plain_copy
+    phx
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x
+    plx
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
+Same_VideoSurface_Underlay_Restore__plain_copy:
+    .a8
     rep #$20
     .a16
     lda.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
@@ -1639,11 +1707,390 @@ Same_VideoSurface_Underlay_Restore__pixel:
     lda.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
     dec
     sta.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
-    bra Same_VideoSurface_Underlay_Restore__record
+    brl Same_VideoSurface_Underlay_Restore__record
 Same_VideoSurface_Underlay_Restore__empty:
     rep #$20
     .a16
     jsr Same_VideoSurface_Underlay_ZeroDamage
+    jmp Same_VideoSurface_Underlay_Success
+
+; Translate an exchanged pose journal by the camera delta, clipping each run
+; and compacting forward in-place. All old records validate before mutation;
+; writes never overtake unread payload. Empty results remain valid journals.
+; Camera composition transaction on the existing surface/journals. Input is
+; an accepted retained ticket and a checked strip (or retained-column cache).
+; No yield occurs while journals hold exchanged pixels. Room/camera ownership
+; prevents other producers from observing intermediate INDEX8 state.
+; Surface camera ABI: A16 desired source X, X16 maximum source X,
+; Y16 cold committed source X. Return A16 checked-column index or $FFFF,
+; X16 accepted source X. The producer never sees physical tile ownership.
+Same_VideoSurface_BeginScroll_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    lda.l MODE3_R_ACTIVE
+    and #$00FF
+    bne Same_VideoSurface_BeginScroll__initialized
+    txa
+    tyx
+    jsl Same_Mode3_Retained_Init_Far
+    bcc Same_VideoSurface_BeginScroll__initialized
+    pla
+    plp
+    sec
+    rtl
+Same_VideoSurface_BeginScroll__initialized:
+    .a16
+    pla
+    jsl Same_Mode3_Retained_Begin_Far
+    bcs Same_VideoSurface_BeginScroll__failed
+    pha
+    lda.l MODE3_R_NEXT
+    tax
+    pla
+    plp
+    clc
+    rtl
+Same_VideoSurface_BeginScroll__failed:
+    plp
+    sec
+    rtl
+
+; Checked eight-pixel strip in the existing service source pointer.
+; A16 visible height, X16 destination top, Y16 source row offset. The pointer
+; must name the provider-owned prefix, never a guest address or released read.
+Same_VideoSurface_CheckedScrollColumn_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    sta.l MODE3_R_HEIGHT
+    txa
+    sta.l MODE3_R_TOP
+    tya
+    sta.l MODE3_R_SOURCE_Y
+    lda SAME_VIDEO_SURFACE_DP_SOURCE
+    sta.l MODE3_R_INPUT
+    sep #$20
+    .a8
+    lda SAME_VIDEO_SURFACE_DP_SOURCE+2
+    cmp #$40
+    bne Same_VideoSurface_CheckedScrollColumn__bad
+    jsl Same_Mode3_Retained_ColumnReady_Far
+    bcs Same_VideoSurface_CheckedScrollColumn__bad
+    plp
+    clc
+    rtl
+Same_VideoSurface_CheckedScrollColumn__bad:
+    plp
+    sec
+    rtl
+
+Same_VideoSurface_RetireScroll_Far:
+    jml Same_Mode3_Retained_Retire_Far
+Same_VideoSurface_ColdScroll_Far:
+    jml Same_Mode3_Retained_Cold_Far
+Same_VideoSurface_AbortScroll_Far:
+    jml Same_Mode3_Retained_Abort_Far
+
+; Immutable publication fence: carry clear only after both generation words
+; match and the service has released the surface. Preserve caller A and P.
+Same_VideoSurface_ScrollPresented_Far:
+    php
+    rep #$20
+    .a16
+    pha
+    lda.l SAME_MODE3_CONTROL_SURFACE_LOCKED
+    and #$00FF
+    bne Same_VideoSurface_ScrollPresented__pending
+    lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION
+    cmp.l SAME_BWRAM_CONTROL_COMMITTED_GENERATION
+    bne Same_VideoSurface_ScrollPresented__pending
+    lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION+2
+    cmp.l SAME_MODE3_CONTROL_COMMITTED_GENERATION_HI
+    bne Same_VideoSurface_ScrollPresented__pending
+    pla
+    plp
+    clc
+    rtl
+Same_VideoSurface_ScrollPresented__pending:
+    .a16
+    pla
+    plp
+    sec
+    rtl
+
+Same_VideoSurface_CanPublishRetained_Far:
+    php
+    jsl Same_VideoSurface_CanWrite_Far
+    bcs Same_VideoSurface_CanPublishRetained__wait
+    jsr Same_VideoSurface_PreflightDirtyPresent
+    bcs Same_VideoSurface_CanPublishRetained__wait
+    plp
+    clc
+    rtl
+Same_VideoSurface_CanPublishRetained__wait:
+    plp
+    sec
+    rtl
+
+Same_VideoSurface_ComposeRetainedScroll_Far:
+    php
+    jsl Same_VideoSurface_CanWrite_Far
+    bcc Same_VideoSurface_ComposeRetainedScroll__writable
+    jmp Same_VideoSurface_ComposeRetainedScroll__failed
+Same_VideoSurface_ComposeRetainedScroll__writable:
+    .a8
+    jsr Same_VideoSurface_PreflightDirtyPresent
+    bcc Same_VideoSurface_ComposeRetainedScroll__capacity
+    jmp Same_VideoSurface_ComposeRetainedScroll__failed
+Same_VideoSurface_ComposeRetainedScroll__capacity:
+    .a8
+    rep #$20
+    .a16
+    jsr Same_VideoSurface_Underlay_ZeroDamage
+    jsl Same_VideoSurface_ExchangeCursorUnderlay_Far
+    bcc Same_VideoSurface_ComposeRetainedScroll__cursor_saved
+    jmp Same_VideoSurface_ComposeRetainedScroll__failed
+Same_VideoSurface_ComposeRetainedScroll__cursor_saved:
+    .a16
+    jsl Same_Mode3_Retained_FlushDamage_Far
+    jsl Same_VideoSurface_ExchangeActorUnderlay_Far
+    bcc Same_VideoSurface_ComposeRetainedScroll__actor_saved
+    jmp Same_VideoSurface_ComposeRetainedScroll__failed
+Same_VideoSurface_ComposeRetainedScroll__actor_saved:
+    .a16
+    jsl Same_Mode3_Retained_FlushDamage_Far
+    rep #$20
+    .a16
+    lda.l MODE3_R_COLUMN
+    cmp #$FFFF
+    bne Same_VideoSurface_ComposeRetainedScroll__strip_ready
+    jsl Same_Mode3_Retained_ReadColumn_Far
+Same_VideoSurface_ComposeRetainedScroll__strip_ready:
+    .a16
+    jsl Same_Mode3_Retained_ShiftSurface_Far
+    jsl Same_Mode3_Retained_FillEdge_Far
+    jsl Same_VideoSurface_RebaseActorUnderlay_Far
+    bcc Same_VideoSurface_ComposeRetainedScroll__rebased
+    jmp Same_VideoSurface_ComposeRetainedScroll__failed
+Same_VideoSurface_ComposeRetainedScroll__rebased:
+    .a16
+    jsl Same_VideoSurface_ExchangeActorUnderlay_Far
+    bcc Same_VideoSurface_ComposeRetainedScroll__actor_restored
+    jmp Same_VideoSurface_ComposeRetainedScroll__failed
+Same_VideoSurface_ComposeRetainedScroll__actor_restored:
+    .a16
+    jsl Same_Mode3_Retained_MarkDamage_Far
+    rep #$20
+    .a16
+    jsr Same_VideoSurface_Underlay_ZeroDamage
+    jsl Same_VideoSurface_ExchangeCursorUnderlay_Far
+    bcc Same_VideoSurface_ComposeRetainedScroll__cursor_restored
+    jmp Same_VideoSurface_ComposeRetainedScroll__failed
+Same_VideoSurface_ComposeRetainedScroll__cursor_restored:
+    .a16
+    jsl Same_Mode3_Retained_MarkDamage_Far
+    ; Existing publication tail, without manufacturing full-screen damage.
+    jsr Same_VideoSurface_PushDirtyPresent__dirty_queued
+    bcs Same_VideoSurface_ComposeRetainedScroll__failed
+    plp
+    clc
+    rtl
+Same_VideoSurface_ComposeRetainedScroll__failed:
+    plp
+    sec
+    rtl
+
+Same_VideoSurface_RebaseActorUnderlay_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    cld
+    jsr Same_VideoSurface_Underlay_Locate
+    bcc Same_VideoSurface_RebaseActor__located
+    jmp Same_VideoSurface_Underlay_Success
+Same_VideoSurface_RebaseActor__located:
+    .a16
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
+    cmp #$AA
+    beq Same_VideoSurface_RebaseActor__exchanged
+    jmp Same_VideoSurface_Underlay_Success
+Same_VideoSurface_RebaseActor__exchanged:
+    .a8
+    rep #$20
+    .a16
+    jsr Same_VideoSurface_Underlay_Identity
+    bcc Same_VideoSurface_RebaseActor__identity
+    jmp Same_VideoSurface_Underlay_Reject
+Same_VideoSurface_RebaseActor__identity:
+    .a16
+    jsr Same_VideoSurface_Underlay_Validate
+    bcc Same_VideoSurface_RebaseActor__validated
+    jmp Same_VideoSurface_Underlay_Reject
+Same_VideoSurface_RebaseActor__validated:
+    .a16
+    jsl Same_VideoSurface_CanWrite_Far
+    bcc Same_VideoSurface_RebaseActor__writable
+    jmp Same_VideoSurface_Underlay_Failure
+Same_VideoSurface_RebaseActor__writable:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    tax
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$04,x
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    lda #$0000
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$04,x
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$08,x
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$0A,x
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$0C,x
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$0E,x
+    txa
+    clc
+    adc #$0010
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+Same_VideoSurface_RebaseActor__record:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    bne Same_VideoSurface_RebaseActor__read
+    jmp Same_VideoSurface_RebaseActor__finish
+Same_VideoSurface_RebaseActor__read:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    tax
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$02,x
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    txa
+    clc
+    adc #$0004
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    clc
+    adc.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_DATA_BASE ; next old record
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    cmp #$C000
+    bcc Same_VideoSurface_RebaseActor__scene
+    jmp Same_VideoSurface_RebaseActor__emit
+Same_VideoSurface_RebaseActor__scene:
+    .a16
+    and #$00FF
+    sec
+    sbc.l MODE3_R_DELTA
+    bpl Same_VideoSurface_RebaseActor__left_ok
+    eor #$FFFF
+    inc
+    cmp.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    bcc Same_VideoSurface_RebaseActor__left_clip
+    jmp Same_VideoSurface_RebaseActor__next
+Same_VideoSurface_RebaseActor__left_clip:
+    .a16
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
+    clc
+    adc.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    sec
+    sbc.l SAME_VIDEO_SURFACE_DAMAGE_X
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    lda #$0000
+Same_VideoSurface_RebaseActor__left_ok:
+    .a16
+    cmp #$0100
+    bcc Same_VideoSurface_RebaseActor__right
+    jmp Same_VideoSurface_RebaseActor__next
+Same_VideoSurface_RebaseActor__right:
+    .a16
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
+    lda #$0100
+    sec
+    sbc.l SAME_VIDEO_SURFACE_DAMAGE_X
+    cmp.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    bcs Same_VideoSurface_RebaseActor__right_ok
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+Same_VideoSurface_RebaseActor__right_ok:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    and #$FF00
+    ora.l SAME_VIDEO_SURFACE_DAMAGE_X
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+Same_VideoSurface_RebaseActor__emit:
+    .a16
+    jsr Same_VideoSurface_Underlay_ExpandHeader
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    tax
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$04,x
+    inc
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$04,x
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    tax
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_ROW
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$02,x
+    txa
+    clc
+    adc #$0004
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+Same_VideoSurface_RebaseActor__byte:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
+    pha
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    tax
+    sep #$20
+    .a8
+    pla
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    inc
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    inc
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    dec
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_COLUMN
+    bne Same_VideoSurface_RebaseActor__byte
+Same_VideoSurface_RebaseActor__next:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_DATA_BASE
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    dec
+    sta.l SAME_VIDEO_ACTOR_UNDERLAY_AREA
+    jmp Same_VideoSurface_RebaseActor__record
+Same_VideoSurface_RebaseActor__finish:
+    .a16
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_SURFACE_CURSOR
+    sec
+    sbc.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    pha
+    lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_LENGTH
+    tax
+    pla
+    sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE+$06,x
+    jsr Same_VideoSurface_Underlay_ZeroDamage
+    jsr Same_VideoSurface_Underlay_UnionDamage
     jmp Same_VideoSurface_Underlay_Success
 
 Same_VideoSurface_BeginActorUnderlay_Far:

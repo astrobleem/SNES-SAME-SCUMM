@@ -26,6 +26,8 @@ class ServiceMachine:
             'SAME_SCUMM_LIVE_ROOM_SURFACE_BASE': addr('live_surface'),
             'SAME_SCUMM_LIVE_ROOM_CONTROL': reserved + alloc['live_room_control']['offset'],
             'SAME_BWRAM_VIDEO_SURFACE_STATE': reserved + alloc['video_surface_state']['offset'],
+            'MODE3_R_EXCHANGE': reserved + alloc['retained_viewport']['offset'] + 0x39,
+            'MODE3_R_DELTA': reserved + alloc['retained_viewport']['offset'] + 0x0c,
         }
         definitions = []
         for file in (ROOT / 'runtime/snes/kernel/memory.pasm',
@@ -48,7 +50,7 @@ class ServiceMachine:
         self.ram[self.surface:self.surface+57344] = bytes(i % 251 for i in range(57344))
         self.original_surface = bytes(self.ram[self.surface:self.surface+57344])
         source = SERVICE.read_text()
-        text = source[source.index('Same_VideoSurface_RestoreActorUnderlay_Far:'):]
+        text = source[source.index('Same_VideoSurface_ExchangeActorUnderlay_Far:'):]
         text = text.split('\n.endif', 1)[0]
         self.code, self.labels, self.offsets = [], {}, []
         position, width = 0, 16
@@ -64,7 +66,7 @@ class ServiceMachine:
             self.code.append(line)
             op, _, arg = line.partition(' ')
             if op in ('rep','sep') or op in ('bra','bcc','bcs','beq','bne'): size=2
-            elif op in ('jmp','jsr'): size=3
+            elif op in ('jmp','jsr','brl'): size=3
             elif op == 'jsl' or '.l' in op: size=4
             elif arg.startswith('#'): size=1+width//8
             else: size=1
@@ -124,6 +126,8 @@ class ServiceMachine:
             elif op == 'rep': p &= ~value
             elif op == 'sep': p |= value
             elif op == 'cld': p &= ~8
+            elif op == 'eor': result = a ^ value
+            elif op == 'brl': pc = self.labels[arg]
             elif op == 'clc': p &= ~1
             elif op == 'sec': p |= 1
             elif op in ('lda', 'lda.l'): result = value
@@ -158,9 +162,9 @@ class ServiceMachine:
                 assert arg == 'Same_VideoSurface_CanWrite_Far'
                 a = (a & 0xFF00) | int(self.busy)
                 p = (p & ~1) | int(self.busy)
-            elif op in ('jmp','bra','bcc','bcs','bne','beq'):
+            elif op in ('jmp','bra','bcc','bcs','bne','beq','bpl'):
                 take = {'bcc': not p & 1, 'bcs': bool(p & 1),
-                        'bne': not p & 2, 'beq': bool(p & 2)}.get(op, True)
+                        'bpl': not p & 0x80, 'bne': not p & 2, 'beq': bool(p & 2)}.get(op, True)
                 if take: pc = self.labels[arg]
             elif op == 'rtl':
                 assert (a,x,y,p & ~1,db) == (original[0],original[1],original[2],original[3] & ~1,original[4])
@@ -280,7 +284,8 @@ class SparseUnderlayServiceTests(unittest.TestCase):
         for address,size in m.writes:
             self.assertTrue(any(start <= address and address+size <= end for start,end in
                 [(m.header,m.base+6144),(m.surface,m.surface+57344),(scratch,scratch+14),
-                 (state+0x34,state+0x40),(error,error+1)]),hex(address))
+                 (state+0x34,state+0x40),(error,error+1),
+                 (m.symbols['MODE3_R_EXCHANGE'],m.symbols['MODE3_R_EXCHANGE']+1)]),hex(address))
 
     def test_short_branch_distances_and_feature_guard(self):
         m=ServiceMachine()

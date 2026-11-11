@@ -47,7 +47,7 @@ class Session:
         return {'base64': base64.b64encode(b'fake-session-ppu-png').decode()}
 
     def get_ppu_state(self):
-        return {'bgMode': 3, 'frameCount': 560}
+        return {'bgMode': 3, 'frameCount': 560, 'layers':[{'chrAddr':0,'tilemapAddr':0x7000}]}
 
     def get_state(self):
         return {'isPaused': True, 'frameCount': 560}
@@ -246,7 +246,7 @@ class CommittedPoseObserverTests(unittest.TestCase):
             self.assertEqual((Path(directory)/'walk.surface.ppm').read_bytes(),
                              b'P6\n256 224\n255\n'+bytes(57344*3))
             self.assertEqual(json.loads((Path(directory)/'walk.ppu-state.json').read_text()),
-                             {'bgMode':3,'frameCount':560})
+                             s.get_ppu_state())
             saved = json.loads((Path(directory)/'walk.committed.json').read_text())
             self.assertEqual(saved['pose'],record['pose'])
             self.assertEqual(obj.captures,[record])

@@ -18,6 +18,7 @@ from same.snes_video_backend import (
     default_video_backend,
     load_video_backend,
     mode3_static_tilemap,
+    mode3_retained_tilemap,
     validate_mode3_layout,
 )
 
@@ -76,6 +77,7 @@ def generate(
             "inflight_palette": "INFLIGHT_PALETTE",
             "tile_scratch": "TILE_SCRATCH",
             "inflight_records": "INFLIGHT_RECORDS",
+            "scroll_hdma": "SCROLL_HDMA",
             "work": "WORK",
             "fixture": "FIXTURE",
         }
@@ -139,17 +141,15 @@ def generate(
                 "SAME_MODE3_WORK_Y1 = SAME_MODE3_WORK+$001E",
                 "SAME_MODE3_WORK_PALETTE_WORD = SAME_MODE3_WORK+$0020",
                 "SAME_MODE3_WORK_TIMEOUT = SAME_MODE3_WORK+$0022",
-                "SAME_MODE3_INFLIGHT_RECORD_SIZE = $000C",
+                "SAME_MODE3_INFLIGHT_RECORD_SIZE = $0008",
                 "SAME_MODE3_INFLIGHT_TYPE = $00",
                 "SAME_MODE3_INFLIGHT_FIRST = $02",
                 "SAME_MODE3_INFLIGHT_COUNT = $04",
                 "SAME_MODE3_INFLIGHT_BYTES = $06",
-                "SAME_MODE3_INFLIGHT_EXPECTED = $08",
-                "SAME_MODE3_INFLIGHT_RESERVED = $0A",
                 "SAME_MODE3_INFLIGHT_TYPE_TILE = $00",
                 "SAME_MODE3_INFLIGHT_TYPE_PALETTE = $02",
-                "SAME_MODE3_TILE_COUNT = $0380",
-                "SAME_MODE3_TILE_BITSET_BYTES = $0070",
+                "SAME_MODE3_TILE_COUNT = $0398",
+                "SAME_MODE3_TILE_BITSET_BYTES = $0073",
                 "SAME_MODE3_PALETTE_COUNT = $0100",
                 "SAME_MODE3_PALETTE_BITSET_BYTES = $0020",
                 "SAME_MODE3_FIXTURE_PHASE = SAME_MODE3_FIXTURE+$0000",
@@ -179,6 +179,7 @@ def generate(
             "service": "    jsl Same_Mode3_Handle_Far\n    plp\n    rts\n",
             "commit": (
                 "    jsr Same_Dma_ProcessQueue\n"
+                "    jsl Same_Mode3_Retained_Nmi_Far\n"
                 '.include "video_overlay_commit.inc.pasm"\n'
                 "    plp\n"
                 "    rts\n"
@@ -192,6 +193,8 @@ def generate(
         )
     tilemap_path = output_dir / "video_backend_mode3_tilemap.bin"
     tilemap_path.write_bytes(mode3_static_tilemap() if backend.layout is not None else b"")
+    retained_path = output_dir / "video_backend_mode3_retained_tilemap.bin"
+    retained_path.write_bytes(mode3_retained_tilemap() if backend.layout is not None else b"")
     manifest: dict[str, object] = {
         "format": "same-snes-video-backend-manifest",
         "version": 1,
@@ -204,6 +207,7 @@ def generate(
         "layout_sha256": backend.layout_sha256,
         "layout": backend.layout,
         "tilemap_sha256": hashlib.sha256(tilemap_path.read_bytes()).hexdigest(),
+        "retained_tilemap_sha256": hashlib.sha256(retained_path.read_bytes()).hexdigest(),
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")

@@ -268,6 +268,26 @@ def committed_pose_is_presented(state: dict, *, expected_room: int | None = None
     )
 
 
+def decode_captured_mode3(session, vram: bytes, cgram: bytes, ppu: dict | None = None):
+    """Observe the selected physical map; never assume the historical map ABI."""
+    from same.snes_video_backend import decode_retained_mode3, retained_scroll_hdma
+    if ppu is None: ppu = session.get_ppu_state()
+    require(ppu.get('bgMode') == 3, 'capture is not Mode-3')
+    layer = ppu['layers'][0]
+    require(layer['chrAddr'] == 0, 'unexpected character base')
+    address = layer['tilemapAddr'] * 2
+    if address == 0xe000:
+        return decode_bundle_indexed(SnesIndexedSurfaceBundle(vram[:0xe000], vram[address:address+2048], cgram))
+    require(address == 0xf000, 'unknown Mode-3 tilemap allocation')
+    table = session.read_memory('snesMemory', 0x41e73a, 10)
+    if table == bytes(10):
+        hofs = 0 # cold init; retained HDMA has not been enabled
+    else:
+        hofs = int.from_bytes(table[1:3], 'little')
+        require(table == retained_scroll_hdma(hofs), 'invalid/unsettled retained HDMA table')
+    return decode_retained_mode3(vram, hofs=hofs)
+
+
 def capture_committed_surface(session, directory: Path, label: str, *,
                               cursor_base: int, projection: dict | None = None,
                               source_foot: tuple[int, int] | None = None,
@@ -324,8 +344,7 @@ def capture_committed_surface(session, directory: Path, label: str, *,
                 "source foot X differs from committed actor X")
         pose.update(foot_screen=list(source_foot), foot_coordinate_space="source_room",
                     foot_evidence="caller-provided committed foot; elevation not persisted natively")
-    ppu_pixels = decode_bundle_indexed(SnesIndexedSurfaceBundle(
-        vram[:0xE000], vram[0xE000:0xE800], cgram))
+    ppu_pixels = decode_captured_mode3(session, vram, cgram)
     expected_cgram = encode_cgram(tuple(tuple(palette[i:i+3]) for i in range(0, 768, 3)))
     record = {
         "label": label, "pose": pose,
@@ -335,6 +354,7 @@ def capture_committed_surface(session, directory: Path, label: str, *,
         "cgram_difference_bytes": sum(a != b for a,b in zip(cgram, expected_cgram)),
     }
     directory.mkdir(parents=True, exist_ok=True)
+    (directory / f'{label}.scroll-hdma.bin').write_bytes(session.read_memory('snesMemory',0x41e73a,10))
     for suffix, data in (("indexed.bin", pixels), ("palette-rgb.bin", palette),
                          ("vram.bin", vram), ("cgram.bin", cgram)):
         (directory / f"{label}.{suffix}").write_bytes(data)
@@ -478,7 +498,7 @@ def capture_presented_generation(session, snapshot: dict, directory: Path,
     require(read_committed_pose(session, cursor_base=cursor_base) == state,
             'presentation generation changed during paused capture')
     pixels, palette = snapshot['indexed'], snapshot['palette']
-    ppu = decode_bundle_indexed(SnesIndexedSurfaceBundle(vram[:0xE000], vram[0xE000:0xE800], cgram))
+    ppu = decode_captured_mode3(session, vram, cgram)
     colors = encode_cgram(tuple(tuple(palette[i:i+3]) for i in range(0,768,3)))
     record = dict(label=label, queued_pose=snapshot['state'], presented_state=state,
                   queued_frame=snapshot['frame'], presented_frame=session.get_state()['frameCount'],
@@ -487,6 +507,7 @@ def capture_presented_generation(session, snapshot: dict, directory: Path,
                   ppu_indexed_differences=sum(a != b for a,b in zip(pixels, ppu)),
                   cgram_difference_bytes=sum(a != b for a,b in zip(colors, cgram)))
     directory.mkdir(parents=True, exist_ok=True)
+    (directory / f'{label}.scroll-hdma.bin').write_bytes(session.read_memory('snesMemory',0x41e73a,10))
     for suffix, data in (('indexed.bin', pixels), ('palette-rgb.bin', palette),
                          ('cursor.bin', snapshot['cursor']), ('vram.bin', vram),
                          ('cgram.bin', cgram), ('ppu.png', screenshot)):
@@ -742,8 +763,7 @@ def capture_surface(session, directory: Path, label: str,
     cgram = session.read_memory("snesCgRam", 0, 0x200)
     (directory / f"{label}.vram.bin").write_bytes(vram)
     (directory / f"{label}.cgram.bin").write_bytes(cgram)
-    ppu_pixels = decode_bundle_indexed(SnesIndexedSurfaceBundle(
-        vram[:0xE000], vram[0xE000:0xE800], cgram))
+    ppu_pixels = decode_captured_mode3(session, vram, cgram)
     expected_cgram = encode_cgram(tuple(tuple(palette[i:i + 3])
                                       for i in range(0, 768, 3)))
 

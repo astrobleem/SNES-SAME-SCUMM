@@ -17,7 +17,7 @@ SYMBOLS = {
     'SAME_MODE3_WORK_SOURCE': 0x41E752,
     'SAME_MODE3_WORK_COLUMN': 0x41E756,
     'SAME_MODE3_WORK_X0': 0x41E768,
-    'SAME_MODE3_TILE_SCRATCH': 0x41E6B0,
+    'SAME_MODE3_TILE_SCRATCH': 0x41E6BA,
     'SAME_BWRAM_SURFACE_BASE': 0x402000,
 }
 
@@ -116,8 +116,8 @@ def execute(pixels, tile, initial_dbr):
         elif op in ('bra', 'brl'): pc = labels[arg]
         elif op == 'rts': break
         else: raise AssertionError(ins)
-    output = bytes(ram.get(0x41E6B0 + i, 0xA5) for i in range(64))
-    allowed = set(range(0x41E6B0, 0x41E6F0)) | set(range(0x41E768, 0x41E770)) | {0x41E752, 0x41E753, 0x41E756}
+    output = bytes(ram.get(0x41E6BA + i, 0xA5) for i in range(64))
+    allowed = set(range(0x41E6BA, 0x41E6FA)) | set(range(0x41E768, 0x41E770)) | {0x41E752, 0x41E753, 0x41E756}
     assert writes <= allowed, sorted(writes - allowed)
     assert reads & set(range(0x402000, 0x410000)) == source_addresses
     assert not stack and dbr == initial_dbr and aw == 16

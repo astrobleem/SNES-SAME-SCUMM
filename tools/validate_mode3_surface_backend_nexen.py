@@ -155,10 +155,10 @@ def main() -> int:
             record_count = int.from_bytes(control[0x3E:0x40], "little")
             batch_key = (pending_generation, expected_dma)
             if state == 4 and record_count and batch_key not in seen_batches:
-                raw_records = session.read_memory("snesMemory", 0x41E6F0, record_count * 12)
+                raw_records = session.read_memory("snesMemory", 0x41E6FA, record_count * 8)
                 records = []
                 for index in range(record_count):
-                    record = raw_records[index * 12:(index + 1) * 12]
+                    record = raw_records[index * 8:(index + 1) * 12]
                     records.append({
                         "type": int.from_bytes(record[0:2], "little"),
                         "first": int.from_bytes(record[2:4], "little"),
@@ -219,14 +219,14 @@ def main() -> int:
     expected_cgram = encode_cgram(palette)
     require(tile_shadow == expected_tiles, "target 8bpp encoder differs from Phase-6A oracle")
     require(cgram_shadow == expected_cgram, "target BGR555 conversion differs")
-    require(vram[:0xE000] == tile_shadow and vram[0xE000:0xE800] == build_static_tilemap(),
+    require(vram[:0xE000] == tile_shadow and vram[0xF000:0xF800] == build_static_tilemap(),
             "VRAM differs from fixed shadows/tilemap")
     require(cgram == cgram_shadow, "CGRAM differs from committed shadow")
-    decoded = decode_bundle_indexed(SnesIndexedSurfaceBundle(tile_shadow, vram[0xE000:0xE800], cgram_shadow))
+    decoded = decode_bundle_indexed(SnesIndexedSurfaceBundle(tile_shadow, vram[0xF000:0xF800], cgram_shadow))
     require(decoded == live_surface, "decoded VRAM indexed plane differs")
     require(ppu["bgMode"] == 3 and ppu["mainScreenLayers"] == 1 and ppu["subScreenLayers"] == 0,
             "Mode-3 BG1 PPU state differs")
-    require(ppu["layers"][0]["tilemapAddr"] == 0x7000 and ppu["layers"][0]["chrAddr"] == 0,
+    require(ppu["layers"][0]["tilemapAddr"] == 0x7800 and ppu["layers"][0]["chrAddr"] == 0,
             "BG1 VRAM bases differ")
     require(ppu["layers"][0]["hscroll"] == 0 and ppu["layers"][0]["vscroll"] == 0x3FF,
             "BG1 logical-surface alignment differs")
@@ -309,7 +309,7 @@ def main() -> int:
         "hashes": {"live_surface": sha(live_surface), "tile_shadow": sha(tile_shadow),
                    "cgram_shadow": sha(cgram_shadow),
                    "vram_realized": sha(vram[:0xE800]), "cgram": sha(cgram)},
-        "ppu": {"BGMODE": 3, "BG1SC": 0x70, "BG12NBA": 0, "TM": 1, "TS": 0},
+        "ppu": {"BGMODE": 3, "BG1SC": 0x79, "BG12NBA": 0, "TM": 1, "TS": 0},
         "dma": {"pending": int.from_bytes(dma[2:4], "little"),
                 "committed": int.from_bytes(dma[4:6], "little"),
                 "rejected": int.from_bytes(dma[10:12], "little")},

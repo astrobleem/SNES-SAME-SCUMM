@@ -70,7 +70,7 @@ class SnesVideoBackendTests(unittest.TestCase):
             )
             constants = (output / "video_backend_constants.inc.pasm").read_text()
             self.assertIn("SAME_MODE3_LIVE_PALETTE = $41E200", constants)
-            self.assertIn("SAME_MODE3_TILE_SCRATCH = $41E6B0", constants)
+            self.assertIn("SAME_MODE3_TILE_SCRATCH = $41E6BA", constants)
             self.assertIn("SAME_VIDEO_ACTIVE_CONVERT_TILE_BUDGET = $0004", constants)
             self.assertEqual(len((output / "video_backend_mode3_tilemap.bin").read_bytes()), 2048)
             self.assertEqual(result["carrier"], "sa1_bwram")
