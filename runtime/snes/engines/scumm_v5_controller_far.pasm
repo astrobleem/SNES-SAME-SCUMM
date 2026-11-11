@@ -440,7 +440,7 @@ ScummV5_Controller_Frame__mode_not_2:
 ScummV5_Controller_Frame__mode_select_verb:
     jmp ScummV5_Controller_Frame__select_verb
 
-; Mode 3 is a generic secondary-object hover state.  B explicitly requests
+; Mode 3 is a generic secondary-object hover state.  X explicitly requests
 ; this state from a selected verb; one-object verbs remain unchanged and A
 ; submits them directly.  The active-room source hit-test remains the only
 ; source of object identity.
@@ -705,7 +705,7 @@ ScummV5_Controller_Frame__select_verb:
     rep #$20
     .a16
     lda.l SAME_INPUT_PRESSED
-    and #$0040 ; B enters generic secondary-object selection
+    and #$0040 ; X enters generic secondary-object selection
     beq ScummV5_Controller_Frame__select_verb_cycle
     sep #$20
     .a8

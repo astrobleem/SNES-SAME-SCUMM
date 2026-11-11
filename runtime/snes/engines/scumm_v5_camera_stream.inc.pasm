@@ -375,6 +375,44 @@ ScummV5_Camera_ConsumeStrip__complete:
     clc
     rtl
 
+; Room commit only. The checked SC5VIS descriptor supplies source geometry.
+; SCUMM v5 starts a room at the left logical 320-pixel viewport, before ENCD.
+; Same-room camera refresh MUST NOT reset authored roomOps scroll bounds.
+ScummV5_Camera_InstallRoomBounds_Far:
+    .a16
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_VIEWPORT_ROOM_WIDTH
+    sta.l SAME_SCUMM_C10_ROOM_WIDTH
+    cmp #$0140
+    bcs ScummV5_Camera_InstallRoomBounds__wide
+    lda #$0140
+ScummV5_Camera_InstallRoomBounds__wide:
+    .a16
+    sec
+    sbc #$00A0
+    sta.l SAME_SCUMM_C10_SCROLL_MAX
+    lda #$00A0
+    sta.l SAME_SCUMM_C10_SCROLL_MIN
+    sta.l SAME_SCUMM_CAMERA_CURRENT_X
+    sta.l SAME_SCUMM_CAMERA_DEST_X
+    sta.l SAME_SCUMM_CAMERA_REQUEST_X
+    lda #$0000
+    sta.l SAME_SCUMM_CAMERA_SCREEN_START_STRIP
+    sta.l SAME_SCUMM_CAMERA_VSCREEN_XSTART
+    lda #$0027
+    sta.l SAME_SCUMM_CAMERA_SCREEN_END_STRIP
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C15_CAMERA_MODE
+    sta.l SAME_SCUMM_C15_MOVING_TO_ACTOR
+    lda #$01
+    sta.l SAME_SCUMM_CAMERA_UPDATE_PENDING
+    rep #$20
+    .a16
+    rtl
+
 ScummV5_Camera_InstallGeometry_Far:
     .a8
     rep #$20

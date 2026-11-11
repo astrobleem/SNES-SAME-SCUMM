@@ -4010,3 +4010,16 @@ path. C29 hit-test scratch also overlapped C15 camera follow state; ownership
 is repaired and audited. Camera follow now has host/native-source tests.
 A changed-ROM bounded continuous native test is in progress; no old savestate
 is transplanted into it. Separate progression recovery is untouched.
+
+### Milestone C persistent pickup preserved; camera commit repair
+
+f2801ff hosted CI passed run 43020341432. Native ROM ca43b98a... completed
+original newspaper pickup owner15->1/state0->1 with error0 through controller
+input, then inventory navigation. Matching continuation produced readable
+source inventory with exact source/INDEX8/PPU comparison. Do not conflate the
+separate capture sessions. All446 evidence files preserved in private
+milestone-c/live-query-success, including failures. Camera walk reached275139
+but limits stayed160/160; ordinary room installation omitted source bounds.
+Host/native commit correction and physical B/name-cache bounds fixes have
+focused tests and pinned assembly; current-image native camera proof pending.
+No emulator owned by these tests remains. Unrelated user Nexen7381 untouched.

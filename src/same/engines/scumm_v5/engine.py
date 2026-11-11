@@ -4428,6 +4428,20 @@ class ScummV5Engine(Engine):
         self.state.current_room = room
         self._room_lifecycle_event("new_room_activated", room)
         self.state.room_ops.room_width = adapter.room.width
+        # Restore reconstructs resources without re-entering the scene.
+        if not preserve_local_scripts:
+            logical_width = context.profile.video.logical_width or context.profile.video.width
+            half = logical_width // 2
+            # startScene initializes camera bounds before ENCD, independently of
+            # the physical presentation crop. Later roomOps may narrow them.
+            self.state.room_ops.scroll_min_x = half
+            self.state.room_ops.scroll_max_x = max(half, adapter.room.width - half)
+            self.state.camera_mode = 0
+            self.state.camera_moving_to_actor = False
+            self.state.camera_x = self.state.camera_destination_x = half
+            self.state.screen_start_strip = self.state.virtual_screen_xstart = 0
+            self.state.screen_end_strip = logical_width // 8 - 1
+            self.state.camera_update_pending = True
         self.state.room_hash = context.services.video.surface.hash()
         self._actors_dirty = True
         if before_entry is not None:

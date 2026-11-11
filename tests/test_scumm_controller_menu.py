@@ -135,3 +135,16 @@ class ControllerMenuOwnershipTests(_MenuHelpers, unittest.TestCase):
         self.assertEqual(m.get('SAME_SCUMM_PLAY_UI_MODE',1),0)
         self.assertEqual(m.get('SAME_SCUMM_CONTROLLER_OBJECT'),0)
         self.assertEqual(m.get('SAME_SCUMM_SENTENCE_API_PENDING',1),0)
+
+
+    def test_physical_snes_b_closes_page_without_submitting_or_changing_selection(self):
+        for button, expected_mode in ((0x8000, 0), (0x0040, 1)):
+            m=self.frame_machine();self.verb(m,11)
+            m.put('SAME_SCUMM_PLAY_UI_MODE',1,1);m.put('SAME_SCUMM_PLAY_UI_SELECTION',11)
+            m.put('SAME_SCUMM_PLAY_UI_SAVED_MODE',5,1)
+            m.put('SAME_SCUMM_CONTROLLER_OBJECT',91);m.put('SAME_INPUT_PRESSED',button)
+            owned,_=m.consume();self.assertTrue(owned)
+            self.assertEqual(m.get('SAME_SCUMM_PLAY_UI_MODE',1),expected_mode)
+            self.assertEqual(m.get('SAME_SCUMM_CONTROLLER_OBJECT'),91)
+            self.assertEqual(m.get('SAME_SCUMM_SENTENCE_API_PENDING',1),0)
+            if button==0x8000:self.assertEqual(m.get('SAME_SCUMM_CONTROLLER_MODE',1),5)

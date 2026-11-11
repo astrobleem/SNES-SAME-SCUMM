@@ -2317,6 +2317,7 @@ ScummV5_LiveRoom_PublishVisual_Far__pixels:
     lda #$00E0
     sta.l SAME_VIDEO_SURFACE_COPY_HEIGHT
     .if SCUMM_MSU1_CAMERA_VIEWPORT
+    jsl ScummV5_Camera_InstallRoomBounds_Far
     jsl ScummV5_Camera_InstallGeometry_Far
     .endif
     sep #$20
@@ -2517,6 +2518,15 @@ ScummV5_LiveRoom_LoadNames_Far__has_row:
     clc
     adc #$0001
     sta.l SCUMM_LIVE_ROOM_TEMP5 ; source string offset
+    ; The legacy name cache has fewer slots than the global object namespace.
+    ; Preserve the source row cursor, but never use an unrepresentable object
+    ; as a destination: object_id*32 would spill into unrelated bank-7F state.
+    lda.l SCUMM_LIVE_ROOM_TEMP2
+    cmp #SAME_SCUMM_OBJECT_NAME_COUNT
+    bcc ScummV5_LiveRoom_LoadNames_Far__cached_identity
+    jmp ScummV5_LiveRoom_LoadNames_Far__next
+ScummV5_LiveRoom_LoadNames_Far__cached_identity:
+    .a16
     ; Clear the previous room's tail so shorter names cannot expose stale bytes.
     lda #$0000
     sta.l SCUMM_LIVE_ROOM_COPY_INDEX

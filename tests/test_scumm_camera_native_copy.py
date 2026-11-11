@@ -77,6 +77,8 @@ class StripMachine(ServiceMachine):
             elif op=='tyx':x=y
             elif op=='inx':x=(x+1)&65535
             elif op=='iny':y=(y+1)&65535
+            elif op=='php':stack.append((p,8))
+            elif op=='plp':p,width=stack.pop();assert width==8
             elif op=='pha':stack.append((a,bits))
             elif op=='pla':result,width=stack.pop();assert width==bits
             elif op=='phx':stack.append((x,16))

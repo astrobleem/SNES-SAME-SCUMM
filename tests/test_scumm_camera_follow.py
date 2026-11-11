@@ -97,3 +97,55 @@ class CameraFollowTests(unittest.TestCase):
         bad=audit.symbols();bad['SAME_SCUMM_C29_SCRATCH_BASE']=0x7F5F0A;bad['SAME_SCUMM_C29_SCRATCH_END']=0x7F5F0F
         with patch.object(audit,'symbols',return_value=bad):
             with self.assertRaisesRegex(ValueError,'overlap'):audit.audit()
+
+
+class CameraRoomBoundsTests(unittest.TestCase):
+    def test_native_room_commit_installs_bounds_but_refresh_does_not(self):
+        source=(ROOT/'runtime/snes/engines/scumm_v5_camera_stream.inc.pasm').read_text()
+        body=source.split('ScummV5_Camera_InstallRoomBounds_Far:',1)[1].split('ScummV5_Camera_InstallGeometry_Far:',1)[0]
+        for width in (8,256,320,640,1280):
+            m=StripMachine();m.code=[];m.labels={}
+            for raw in body.splitlines():
+                line=raw.split(';')[0].strip()
+                if not line or line.startswith('.'):continue
+                if line.endswith(':'):m.labels[line[:-1]]=len(m.code)
+                else:m.code.append(line)
+            m.put('SAME_SCUMM_VIEWPORT_ROOM_WIDTH',width)
+            m.put('SAME_SCUMM_C10_SCROLL_MIN',300)
+            m.put('SAME_SCUMM_C10_SCROLL_MAX',300)
+            m.put('SAME_SCUMM_C15_CAMERA_MODE',1,1)
+            m.put('SAME_SCUMM_C15_MOVING_TO_ACTOR',1,1)
+            m.consume()
+            for name,value,size in (
+                ('SAME_SCUMM_C10_ROOM_WIDTH',width,2),
+                ('SAME_SCUMM_C10_SCROLL_MIN',160,2),
+                ('SAME_SCUMM_C10_SCROLL_MAX',max(160,width-160),2),
+                ('SAME_SCUMM_CAMERA_CURRENT_X',160,2),
+                ('SAME_SCUMM_CAMERA_DEST_X',160,2),
+                ('SAME_SCUMM_CAMERA_VSCREEN_XSTART',0,2),
+                ('SAME_SCUMM_C15_CAMERA_MODE',0,1),
+                ('SAME_SCUMM_C15_MOVING_TO_ACTOR',0,1)):
+                self.assertEqual(m.get(name,size),value,(width,name))
+        refresh=source.split('ScummV5_Camera_ServicePending_Far:',1)[1]
+        self.assertNotIn('jsl ScummV5_Camera_InstallRoomBounds_Far',refresh)
+        publisher=(ROOT/'runtime/snes/engines/scumm_v5_msu_live_room.pasm').read_text().split('ScummV5_LiveRoom_PublishVisual_Far:',1)[1].split('ScummV5_LiveRoom_LoadActiveRoom_Far:',1)[0]
+        self.assertIn('jsl ScummV5_Camera_InstallRoomBounds_Far',publisher)
+        self.assertLess(publisher.index('cmp #$0001'),publisher.index('jsl ScummV5_Camera_InstallRoomBounds_Far'))
+
+    def test_host_room_entry_resets_previous_scroll_before_entry_callback(self):
+        from examples.resources.scumm_v5.room_bundle_fixture import room2
+        host=conformance.ScummV5EngineTests()._host(b'\x80',resources={'room.2':room2()})
+        state=host.engine.state
+        state.room_ops.scroll_min_x=state.room_ops.scroll_max_x=400
+        state.camera_x=state.camera_destination_x=400
+        state.camera_mode=1;state.camera_moving_to_actor=True
+        observations=[]
+        host.engine._load_room(host.context,2,required=True,before_entry=lambda:observations.append((
+            state.room_ops.room_width,state.room_ops.scroll_min_x,state.room_ops.scroll_max_x,
+            state.camera_x,state.camera_mode,state.camera_moving_to_actor,state.virtual_screen_xstart)))
+        self.assertEqual(observations,[(8,160,160,160,0,False,0)])
+        # Later authored bounds are not reset by the ordinary camera tick.
+        state.room_ops.room_width=640
+        state.room_ops.scroll_min_x=240;state.room_ops.scroll_max_x=400
+        host.engine._move_camera(host.context)
+        self.assertEqual((state.room_ops.scroll_min_x,state.room_ops.scroll_max_x),(240,400))

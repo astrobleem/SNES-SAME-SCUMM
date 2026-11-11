@@ -161,3 +161,42 @@ frame for capture. This is only a candidate: independent source rasterization
 and full INDEX8/VRAM/CGRAM comparisons must pass before acceptance. It does
 not reinterpret overwritten pending text or an incremented counter as visible
 text. The older queued-generation observer remains unchanged.
+
+### Original persistent action and inventory (2026-11-11)
+
+The changed-ROM cold session `astra-live-query-continuous-ui-20261111`
+completed the original newspaper Pick up action once. Owner changed 15 to 1,
+state changed 0 to 1, and error remained zero. The original introduction was
+acknowledged normally before verb selection; no gameplay-state writes or
+synthetic story were used. The original object verb agrees with the narrow
+host source oracle for ownership/state/class changes. The same session then
+opened and navigated inventory. Its final capture sampled a previous sentence,
+so that image is not accepted as an inventory-page comparison.
+
+A separate identity-matched continuation captured the settled original
+`newspaper` / `National Arch` inventory page at generation 103, with zero
+independent source/INDEX8/PPU differences. This is explicitly separate from
+the uninterrupted cold session. ROM SHA:
+`ca43b98a448e402972f84cf5c046efe1bee0aba75a4b53126741b5a002bb7b47`.
+Package SHA:
+`70564585c15538ed04b7f614b5b4d929a07eedf7a8545b510ff0ed66e9ad29d0`.
+Both records and all subsequent failures are preserved privately under
+`/home/chad/SAME-private-evidence/milestone-c-20261111/live-query-success`.
+
+That continuation exposed a physical-button mismatch: menu close checked the
+raw X bit although its contract said B. It now checks raw `$8000` (B); the
+existing X secondary-object shortcut is unchanged. Adjacent name installation
+also checked the 1,024-object name-cache bound only after writing the name.
+The check now precedes both clearing and copying, while advancing every
+validated source row. Larger source identities retain their object metadata
+but have no cached name in this configuration; this is an explicit remaining
+capacity limitation. Guard tests reproduce the former overwrite and verify
+the last valid, several out-of-range, and following valid identities.
+
+A normal empty-floor walk reached (275,139), but camera panning stayed fixed.
+The source room-load contract initializes camera limits before ENCD; host and
+streamed native room installation had retained reset-time `[160,160]` limits.
+Installation now derives limits from validated source width and starts at the
+left logical viewport. Same-room refresh never resets authored scroll limits.
+Synthetic tests cover narrow/wide rooms, entry ordering, and retained authored
+limits. Current-ROM camera presentation remains a separate native gate.

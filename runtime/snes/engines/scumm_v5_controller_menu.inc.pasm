@@ -81,7 +81,7 @@ ScummV5_Controller_MenuFrame__check_verb:
 ScummV5_Controller_MenuFrame__verb_still_enabled:
     .a16
     lda.l SAME_INPUT_PRESSED
-    and #$0040
+    and #$8000 ; physical SNES B (X is $0040)
     beq ScummV5_Controller_MenuFrame__direction
     jmp ScummV5_Controller_MenuFrame__close
 ScummV5_Controller_MenuFrame__direction:
