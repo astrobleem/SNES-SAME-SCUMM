@@ -90,3 +90,37 @@ Acquisition-ordered inventory queries, complete dynamic object images,
 foreground masks, multi-actor/scaled composition, full audio/iMUSE, portable
 streamed saves and physical hardware qualification remain outside this proof.
 Whole-game status remains NOT_READY. No production FATE-specific hooks added.
+
+## Script-visible camera position correction
+
+The v5 outer loop now publishes current logical camera X to variable2 before
+script scheduling, independently of the optional scroll callback. It does not
+publish the destination or asynchronous displayed crop. Host and native use
+the same contract. Legacy embedded opcode-isolation fixtures explicitly opt
+out because they use global2 as test scratch; authentic bootstrap does not.
+
+A new authentic cold-start diagnostic walked right and left through the
+original room-local camera script. Forward current/variable2 reached336;
+reverse reached160 with actor(237,138), standing chore3, error0. Forward source
+crop208 and reverse source crop32 both have exact original-source/INDEX8/PPU
+pixels and CGRAM. The reverse picture was captured in a separate12-second,
+matching-ROM checkpoint diagnostic, not spliced into the cold run.
+
+The original observer timed out demanding two extra idle frames after a valid
+completed generation. Captured records show normal cursor composition resuming
+before that requirement. The existing paused committed-generation capture
+verifies the fence before and after readback and compares actual PPU pixels;
+no runtime timing or gameplay state was altered to obtain the picture.
+No superseded-crop branch was observed in this native run: its new contract
+remains covered by instruction-level host tests, not claimed as native proof.
+
+Camera-fix build identities:
+- rom_sha256: `6604a3cd664e6bafe852aa8422960ed2a653cdbfee6c91b9512858718b8a7c11`
+- map_sha256: `a092164c920b7f2990767e0d22704aa70535f3a47f0529de17028f78939ff5e4`
+- package_sha256: `70564585c15538ed04b7f614b5b4d929a07eedf7a8545b510ff0ed66e9ad29d0`
+- build_identity_sha256: `2a9063c4b6365621c8aa6d19b54ab5dd13d23e49f68f5b284e446cd7958f5d7d`
+
+The isolated assembly snapshot contains this camera correction but not later
+checked-read batching work. Full suite1502run,1490passed,12skipped; memory audit
+and pinned assembly/ROM audit pass. Forward/reverse presentation remains slow;
+this correction establishes semantics and fidelity, not a latency success.

@@ -764,6 +764,20 @@ ScummV5_AdvanceTimers__loop:
     plp
     rts
 
+; v5 VAR_CAMERA_POS_X is refreshed before script scheduling, independently
+; of VAR_SCROLL_SCRIPT. Do not expose destination or presented crop instead.
+ScummV5_PublishCameraPosition:
+    php
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CAMERA_CURRENT_X
+    sta.l SAME_SCUMM_VARIABLES+(2 * 2)
+    .if SAME_BUILD_SCUMM_M23B
+    sta.l SAME_SCUMM_M23B_VARIABLES+(2 * 2)
+    .endif
+    plp
+    rts
+
 ScummV5_Engine_Frame:
     php
     rep #$30
@@ -838,6 +852,11 @@ ScummV5_Engine_Frame__skip_caller_recorded:
     jmp ScummV5_Engine_Frame__fixture_check
     .endif
     jsr ScummV5_AdvanceTimers
+    ; Embedded opcode fixtures use global2 as scratch, without the outer-loop
+    ; system-variable contract. Authentic bootstrap always uses v5 semantics.
+    .if !SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS || SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP
+    jsr ScummV5_PublishCameraPosition
+    .endif
     sep #$20
     .a8
     ; Consume one semantic sentence submitted through the SCUMM-owned API.

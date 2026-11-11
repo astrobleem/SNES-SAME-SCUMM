@@ -20,9 +20,11 @@ class ScummV5S5BindingTests(unittest.TestCase):
         self.assertEqual(first.operations, 4)
         self.assertTrue(first.yielded)
         self.assertEqual(state["scripts"][0]["pc"], 10)
+        # This service profile retains the production outer loop: camera
+        # position is the centre of its 256-pixel logical screen at boot.
         self.assertEqual(
             state["variables"],
-            {"0": 0x1234, "9": 11, "11": 1, "12": 1, "13": 1, "40": 1400},
+            {"0": 0x1234, "2": 128, "9": 11, "11": 1, "12": 1, "13": 1, "40": 1400},
         )
         self.assertEqual(host.services.audio.music_track, 7)
         self.assertEqual(host.services.audio.sfx_history[-1]["sound"], 9)

@@ -999,6 +999,14 @@ class ScummV5Engine(Engine):
         for variable in (_VAR_TMR_1, _VAR_TMR_2, _VAR_TMR_3):
             value = (int(self.state.variables[variable]) + timer_delta) & 0xFFFF
             self.state.variables[variable] = value - 0x10000 if value & 0x8000 else value
+        # SCUMM v5 scummLoop_updateScummVars publishes the current logical
+        # camera before scripts, even without a scroll callback. Destination
+        # and asynchronously presented viewport are different coordinates.
+        # Old opcode-isolation fixtures reserve global2 as test scratch.
+        # Production defaults to the real outer-loop contract; opting out
+        # means the fixture is not evidence for engine-owned variables.
+        if context.profile.options.get("publish_camera_position", True):
+            self.state.variables[2] = self.state.camera_x
         self._advance_talk_frame_begin()
         self._tick_operations = 0
         self._tick_max_ops = context.profile.max_ops_per_tick

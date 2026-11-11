@@ -4087,3 +4087,17 @@ camera responsive: two checked crops and two full publications dominate.
 Next bounded performance correction should coalesce obsolete checked camera
 crops without changing logical source timing or adding caches/renderers.
 No story replay is needed to test that contract; preserve accepted evidence.
+
+### Camera outer-loop semantics and bounded capture
+
+Publish v5 current camera position to global2 before scripts even without
+scroll callback27. Original left-pan branch now observes160 after right336.
+Full1502test/12skip suite and pinned assembly pass. Native ROM6604a3cd...
+forward crop208 exact; matching-ROM reverse checkpoint captured in11.961sec
+with exact source/INDEX8/PPU and error0. The preceding observer timeout required
+extra idle frames while cursor composition kept progressing; do not call it
+a game deadlock or splice the restored capture into continuous gameplay.
+Evidence: /tmp/astra-camera-script-position-listed-20261111 and
+/tmp/astra-camera-completed-fence-20261111. Storage read-loop batching is a
+separate uncommitted performance change; preserve its tests and validate
+natively before claiming performance. No new story replay required.

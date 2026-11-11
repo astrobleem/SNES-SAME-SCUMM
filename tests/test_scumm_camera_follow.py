@@ -149,3 +149,45 @@ class CameraRoomBoundsTests(unittest.TestCase):
         state.room_ops.scroll_min_x=240;state.room_ops.scroll_max_x=400
         host.engine._move_camera(host.context)
         self.assertEqual((state.room_ops.scroll_min_x,state.room_ops.scroll_max_x),(240,400))
+
+
+class CameraScriptPositionTests(unittest.TestCase):
+    def test_source_program_observes_current_position_before_each_tick(self):
+        # Original synthetic v5: copy VAR_CAMERA_POS_X into50, yield, repeat.
+        program=bytes((0x9A,50,0,2,0,0x80,0x18,0xF7,0xFF))
+        host=conformance.ScummV5EngineTests()._host(program)
+        host.context.profile.options.pop("publish_camera_position", None)
+        state=host.engine.state
+        state.current_room=1
+        state.room_ops.room_width=640
+        state.room_ops.scroll_min_x=160;state.room_ops.scroll_max_x=480
+        self.assertEqual(state.variables[27],0) # no optional scroll callback
+        for x,destination in ((336,160),(328,160),(160,480),(480,160)):
+            state.camera_x=x;state.camera_destination_x=destination
+            state.variables[2]=-123
+            host.tick()
+            self.assertEqual(state.variables[50],x)
+            self.assertEqual(state.variables[2],x)
+            self.assertNotEqual(state.camera_x,x) # subsequent camera phase moved
+
+    def test_native_publication_updates_both_banks_and_preserves_adjacent_state(self):
+        source=(ROOT/'runtime/snes/engines/scumm_v5.pasm').read_text()
+        body=source.split('ScummV5_PublishCameraPosition:',1)[1].split('ScummV5_Engine_Frame:',1)[0]
+        for x in (160,168,336,480,32000):
+            m=StripMachine();m.code=[];m.labels={}
+            for raw in body.splitlines():
+                line=raw.split(';')[0].strip()
+                if not line or line.startswith('.'):continue
+                if line.endswith(':'):m.labels[line[:-1]]=len(m.code)
+                else:m.code.append(line)
+            m.put('SAME_SCUMM_CAMERA_CURRENT_X',x)
+            for bank in ('SAME_SCUMM_VARIABLES','SAME_SCUMM_M23B_VARIABLES'):
+                address=m.symbols[bank];m.ram[address:address+12]=bytes([0xA5])*12
+            failed,writes=m.consume();self.assertFalse(failed)
+            expected=[]
+            for bank in ('SAME_SCUMM_VARIABLES','SAME_SCUMM_M23B_VARIABLES'):
+                address=m.symbols[bank];expected.extend((address+4,address+5))
+                self.assertEqual(m.ram[address:address+12],bytes([0xA5])*4+x.to_bytes(2,'little')+bytes([0xA5])*6)
+            self.assertEqual(sorted(writes),sorted(expected))
+        frame=source.split('ScummV5_Engine_Frame:',1)[1]
+        self.assertLess(frame.index('jsr ScummV5_PublishCameraPosition'),frame.index('jsl ScummV5_QueueSentence'))
