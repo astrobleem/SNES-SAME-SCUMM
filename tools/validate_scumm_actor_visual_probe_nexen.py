@@ -347,6 +347,32 @@ def capture_committed_surface(session, directory: Path, label: str, *,
     return record
 
 
+def indexed_text_request_is_composed(text: bytes, raw: bytes, pose: dict,
+                                     expected: bytes, *, after_generation: int) -> bool:
+    """Reject pending/new raw text paired with a previous surface generation.
+
+    This is an association gate, not pixel evidence. The caller still compares
+    the retained surface and actual PPU against an independent font oracle.
+    after_generation is captured before the requested content was published.
+    """
+    if len(text) < 0x6C:
+        return False
+    word = lambda offset: int.from_bytes(text[offset:offset+2], 'little')
+    phase, generation, committed = word(0), word(2), word(4)
+    delta = (generation - after_generation) & 0xFFFF
+    if phase not in (0, 1) or not 0 < delta < 0x8000 or not word(0x68):
+        return False
+    if word(0x64) != pose['room'] or word(0x66) != pose['surface_room_generation']:
+        return False
+    pending = pose['backend_pending_generation']
+    if phase == 1 and generation != pending:
+        return False
+    if phase == 0 and (committed != generation or (pending-generation)&0xFFFF >= 0x8000):
+        return False
+    length = word(0x24)
+    return length == len(expected) and len(raw) >= length and raw[:length] == expected
+
+
 def snapshot_locked_generation(session, *, cursor_base: int) -> dict:
     """Retain the immutable input of one accepted PRESENT, without advancing.
 

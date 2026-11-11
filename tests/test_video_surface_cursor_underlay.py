@@ -65,6 +65,37 @@ class CursorUnderlayTests(unittest.TestCase):
         self.assertEqual(m.ram[m.header-16:m.header], bytes([0xD3])*16)
         self.assertEqual(m.ram[m.header+288:m.header+480], bytes([0xA7])*192)
 
+    def test_text_strip_does_not_restore_or_dirty_a_distant_cursor(self):
+        for x,y,w,h,overlap in ((10,80,16,16,False),(10,176,16,16,False),
+                              (10,177,16,16,True),(10,192,16,16,True),
+                              (255,223,1,1,True)):
+            with self.subTest(rect=(x,y,w,h)):
+                m=CursorMachine();self.assertFalse(m.capture(x,y,w,h));m.paint_rect(x,y,w,h)
+                for field,value in zip(('X','Y','WIDTH','HEIGHT'),(0,192,256,32)):
+                    m.put('SAME_VIDEO_SURFACE_DAMAGE_'+field,value)
+                before=bytes(m.ram[m.surface:m.surface+57344]);journal=m.persistent()
+                self.assertFalse(m.call('RestoreCursorOverlappingDamage'))
+                if overlap:
+                    self.assertEqual(m.get(m.header,1),0)
+                    self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),m.original_surface)
+                    self.assertEqual(m.damage(),(0,min(y,192),256,224-min(y,192)))
+                else:
+                    self.assertEqual(m.persistent(),journal)
+                    self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),before)
+                    self.assertEqual(m.damage(),(0,192,256,32))
+
+    def test_overlap_query_validates_journal_and_preserves_busy_owner(self):
+        for corrupt in (True,False):
+            m=CursorMachine();self.assertFalse(m.capture(10,190,4,4));m.paint_rect(10,190,4,4)
+            for field,value in zip(('X','Y','WIDTH','HEIGHT'),(0,192,256,32)):
+                m.put('SAME_VIDEO_SURFACE_DAMAGE_'+field,value)
+            if corrupt:m.put(m.header+12,17)
+            else:m.busy=True
+            before=bytes(m.ram[m.surface:m.surface+57344]);journal=m.persistent()
+            self.assertTrue(m.call('RestoreCursorOverlappingDamage'))
+            self.assertEqual(m.persistent(),journal)
+            self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),before)
+
     def test_damage_survives_actor_reset_and_unions_next_capture(self):
         m = CursorMachine()
         self.assertFalse(m.capture(x=10, y=20, w=4, h=5))
@@ -127,6 +158,7 @@ class CursorUnderlayTests(unittest.TestCase):
         for p in (0,8,0x20,0x28,0x10,0x18,0x30,0x38,0xCF):
             m=CursorMachine()
             self.assertFalse(m.capture(w=1,h=1,p=p,db=0xA5))
+            self.assertFalse(m.call('RestoreCursorOverlappingDamage',p=p,db=0xA5))
             self.assertFalse(m.call('MergeCursorDamage',p=p,db=0xA5))
             self.assertFalse(m.call('RestoreCursorUnderlay',p=p,db=0xA5))
             self.assertFalse(m.call('InvalidateCursorUnderlay',p=p,db=0xA5))

@@ -212,3 +212,51 @@ interleaving tests, not an emulator claim. Pinned assembly/ROM audit and the
 27-region memory audit pass; the corrected native startup is being checked
 separately. Local suite:1,416 tests run,12 skipped. Object interaction remains
 unverified until its original script and readable response are captured.
+
+
+## First original object response — exact native evidence
+
+Runtime revision `a6051dac241ce98c3cdfddca873f599982a9c7c5` reaches the original
+room10 interface through three source-owned X cutscene skips. Ordinary
+controller directional edges, A selection, Y cycling and one A submission
+execute object140 verb9 (canonical ProgramUnit178, OBCD-relative entry53).
+The original response is visible in source charset2. Its encoded bytes agree
+with the isolated host execution of the original verb body; source glyphs,
+whole scene INDEX8, decoded VRAM and screenshot/CGRAM comparisons all have
+zero differences. The actor, original background and cursor remain present.
+This is an authentic state-neutral Look action, not inventory progression.
+
+The submission counter changes50->51 exactly once (absolute diagnostic initial
+values are not assumed zero). Native room10 remains lifecycle RUNNING/error0;
+Ego approaches from(84,60) to(82,59). No guest gameplay writes, synthetic story
+or seven-action replay was used. The complete2203-unit directory remains active.
+
+Private action evidence: `/tmp/astra-dma-fixed-original-action-20261111`.
+The first observer paired REQUESTED response bytes with the prior HUD image;
+that failed comparison remains preserved. A read-only continuation from its
+matching-ROM state required a newly composed text generation before capture:
+`/tmp/astra-original-response-fence-20261111/observations/response.ppu.png`.
+That corrected observation completed in33.574 seconds, normal cleanup. No
+input was repeated. The action run itself completed in450.003 seconds under
+its600-second process-tree supervisor.
+
+- ROM SHA256: `01bb3ec0766a9db00c3dabffcdb1df246220c5bd4931512c1992cdb5cb5b824f`
+- map SHA256: `1058b815ca47f56a39be776da4ba2b7a38cfc4ce47e6d55ac9832f64547dbff6`
+- SAMEPKG SHA256: `5f4dfa58b58bbad5c654924380b8277929a6b2b67012a2042c2f3b4645162a16`
+- build identity SHA256: `fc019ea20c1e646f0ae96e4fe955f0644387769753918783d223f44c6b1032a8`
+- original verb instruction SHA256: `b04a90d9e2ef30246283645ce33b94c6bf486a1ddc02800e4baad4be12618cbe`
+- source font2 SHA256: `ce86c2b63044a2399762c0b849af0a30e9074be904218c4ec57239c471d06629`
+
+The caption capture exposed two outstanding issues: its old Use caption was
+not evidence that the new Look caption had been presented, and the streamed
+name-length adapter dropped the last character. Text unnecessarily restored a
+distant cursor and expanded strip damage across much of the screen. Corrections
+are being validated separately; this proof does not certify those later bytes.
+The final response image is observed1596 emulated frames after submission's
+sampled boundary, including delayed observer continuation. This is not raw MSU
+throughput or a new walking-latency measurement. The existing640-wide scene is
+whole-room aspect-fit into256pixels; it is not a source-faithful camera crop.
+
+Both hosted jobs pass for a6051da:
+https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/42970095323 .
+Hosted assembly is not Nexen execution. Commercial artifacts remain outside Git.

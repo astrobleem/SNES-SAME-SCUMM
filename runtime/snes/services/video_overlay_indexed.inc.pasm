@@ -308,7 +308,8 @@ Same_Text_Process_stale:
     jmp Same_Text_unsupported
 Same_Text_Process_ready:
     .a16
-    jsl Same_VideoSurface_RestoreCursorUnderlay_Far
+    jsr Same_Text_SeedDamage
+    jsl Same_VideoSurface_RestoreCursorOverlappingDamage_Far
     bcc Same_Text_Show_cursor_ready
     jmp Same_Text_busy
 Same_Text_Show_cursor_ready:
@@ -417,7 +418,8 @@ Same_Text_Hide_capacity:
 Same_Text_Hide_ready:
     .a16
     .i16
-    jsl Same_VideoSurface_RestoreCursorUnderlay_Far
+    jsr Same_Text_SeedDamage
+    jsl Same_VideoSurface_RestoreCursorOverlappingDamage_Far
     bcc Same_Text_Hide_cursor_ready
     jmp Same_Text_busy
 Same_Text_Hide_cursor_ready:
@@ -452,7 +454,7 @@ Same_Text_Clear_loop:
     bcc Same_Text_Clear_loop
     rts
 
-Same_Text_Publish:
+Same_Text_SeedDamage:
     .a16
     .i16
     rep #$20
@@ -465,7 +467,21 @@ Same_Text_Publish:
     sta.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
     lda #(SAME_VIDEO_TEXT_BOTTOM-SAME_VIDEO_TEXT_TOP)
     sta.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    rts
+
+Same_Text_Publish:
+    .a16
+    .i16
+    jsr Same_Text_SeedDamage
+    ; An intact journal means the cursor was outside the text strip and
+    ; remains composed. Only a consumed/restored journal contributes damage.
+    lda.l SAME_VIDEO_CURSOR_UNDERLAY
+    and #$00FF
+    cmp #SAME_VIDEO_CURSOR_MAGIC
+    beq Same_Text_Publish_cursor_retained
     jsl Same_VideoSurface_MergeCursorDamage_Far
+Same_Text_Publish_cursor_retained:
+    .a16
     jsl Same_VideoSurface_PushDamagePresent_Far
     bcs Same_Text_Publish_done
     lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION

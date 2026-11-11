@@ -63,6 +63,24 @@ def observer(session, directory):
 
 
 class CommittedPoseObserverTests(unittest.TestCase):
+    def test_requested_text_cannot_borrow_old_caption_pixels(self):
+        text=bytearray(128);expected=b'Look at lamp';pose={'room':4,
+            'surface_room_generation':2,'backend_pending_generation':65}
+        def put(offset,value):text[offset:offset+2]=value.to_bytes(2,'little')
+        for offset,value in ((0,2),(2,64),(4,64),(0x24,len(expected)),
+                             (0x64,4),(0x66,2),(0x68,1)):put(offset,value)
+        check=lambda:probe.indexed_text_request_is_composed(
+            text,expected,pose,expected,after_generation=64)
+        self.assertFalse(check())  # new bytes, old displayed generation
+        put(0,1);put(2,65);self.assertTrue(check())
+        self.assertFalse(probe.indexed_text_request_is_composed(
+            text,b'Use the lamp',pose,expected,after_generation=64))
+        put(0,0);self.assertFalse(check()) # completion not acknowledged
+        put(4,65);self.assertTrue(check())
+        pose['backend_pending_generation']=66;self.assertTrue(check()) # cursor-only next frame
+        put(0,2);self.assertFalse(check()) # new request can replace retained bytes
+        put(0,0);put(0x66,3);self.assertFalse(check())
+
     def test_immutable_generation_survives_new_cursor_composition(self):
         s = Session()
         s.put(probe.MODE3_COMMITTED_GENERATION,64)

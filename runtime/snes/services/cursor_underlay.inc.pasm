@@ -172,6 +172,73 @@ Same_VideoSurface_Cursor_Restore__pixel:
     sta.l SAME_VIDEO_CURSOR_UNDERLAY
     jmp Same_VideoSurface_Cursor_Success
 
+; Restore only when the validated cursor journal intersects caller DAMAGE.
+; Used by bounded surface overlays: an unchanged distant cursor must neither
+; disappear nor expand a text-strip publication into a whole-height rectangle.
+; Caller supplies a bounded, nonempty surface DAMAGE rectangle. The journal
+; is still identity/geometry validated before the intersection test.
+Same_VideoSurface_RestoreCursorOverlappingDamage_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    cld
+    sep #$20
+    .a8
+    lda.l SAME_VIDEO_CURSOR_UNDERLAY
+    cmp #SAME_VIDEO_CURSOR_MAGIC
+    beq Same_VideoSurface_Cursor_Overlap__committed
+    jmp Same_VideoSurface_Cursor_Success
+Same_VideoSurface_Cursor_Overlap__committed:
+    rep #$20
+    .a16
+    jsr Same_VideoSurface_Cursor_Identity
+    bcc Same_VideoSurface_Cursor_Overlap__identity
+    jmp Same_VideoSurface_Cursor_Discard
+Same_VideoSurface_Cursor_Overlap__identity:
+    jsr Same_VideoSurface_Cursor_LoadValidate
+    bcc Same_VideoSurface_Cursor_Overlap__valid
+    jmp Same_VideoSurface_Cursor_Failure
+Same_VideoSurface_Cursor_Overlap__valid:
+    .a16
+    .i16
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    and #$00FF
+    sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    clc
+    adc.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    cmp.l SAME_VIDEO_SURFACE_DAMAGE_X
+    bcc Same_VideoSurface_Cursor_Overlap__outside
+    beq Same_VideoSurface_Cursor_Overlap__outside
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    cmp.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    bcc Same_VideoSurface_Cursor_Overlap__outside
+    beq Same_VideoSurface_Cursor_Overlap__outside
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    xba
+    and #$00FF
+    sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    clc
+    adc.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    cmp.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    bcc Same_VideoSurface_Cursor_Overlap__outside
+    beq Same_VideoSurface_Cursor_Overlap__outside
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    cmp.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    bcc Same_VideoSurface_Cursor_Overlap__outside
+    beq Same_VideoSurface_Cursor_Overlap__outside
+    jmp Same_VideoSurface_Cursor_Restore__valid
+Same_VideoSurface_Cursor_Overlap__outside:
+    jmp Same_VideoSurface_Cursor_Success
+
 Same_VideoSurface_MergeCursorDamage_Far:
     php
     rep #$30

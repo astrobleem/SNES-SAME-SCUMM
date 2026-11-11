@@ -180,6 +180,28 @@ class HudTextTests(unittest.TestCase):
             for obj in (0,1,2,31,32):
                 with self.subTest(verb=verb,object=obj):self.check_case(verb,obj)
 
+    def test_streamed_payload_length_normalizes_to_shared_encoded_cache_contract(self):
+        source=(ROOT/'runtime/snes/engines/scumm_v5_msu_live_room.pasm').read_text()
+        block=source.split('ScummV5_LiveRoom_LoadNames_Far__store_length:',1)[1].split(
+            'ScummV5_LiveRoom_LoadNames_Far__next:',1)[0].replace('SCUMM_LIVE_ROOM_', 'SAME_TEST_LIVE_')
+        for size in (0,1,4,31,32):
+            with self.subTest(payload_bytes=size):
+                m=HudMachine(6,0)
+                m.symbols.update(SAME_TEST_LIVE_TEMP2=0x7E2F80,SAME_TEST_LIVE_WIDTH=0x7E2F82)
+                m.put('SAME_TEST_LIVE_TEMP2',3);m.put('SAME_TEST_LIVE_WIDTH',size)
+                m.code=[('php','')];m.labels={}
+                for line in block.splitlines():
+                    line=line.split(';',1)[0].strip()
+                    if not line or line.startswith('.'):continue
+                    op,_,arg=line.partition(' ');m.code.append((op,arg))
+                m.labels['ScummV5_LiveRoom_LoadNames_Far__next']=len(m.code)
+                m.code += [('plp',''),('rtl','')];m.run()
+                encoded=m.get(m.symbols['SAME_SCUMM_OBJECT_NAME_LENGTH']+3,1)
+                self.assertEqual(encoded,size+1)
+                # The actual HUD builder consumes the normalized length. Full
+                #32-byte payloads remain bounded by the31-byte caption budget.
+                self.check_case(6,encoded)
+
     def test_empty_verb_never_reads_name_or_underflows_and_object_only_works(self):
         for length in (0,1):
             m=self.check_case(length,32)

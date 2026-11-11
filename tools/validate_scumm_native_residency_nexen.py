@@ -912,11 +912,11 @@ def check_live_room_native(session: Any, inputs: dict[str, Any], room: int) -> d
         )[0]
         installed_name = bytes(session.read_memory(
             "snesMemory", OBJECT_NAMES + object_id * OBJECT_NAME_STRIDE,
-            min(name_length, OBJECT_NAME_STRIDE),
+            min(max(0, name_length - 1), OBJECT_NAME_STRIDE),
         ))
-        require(name_length == len(source_name) and installed_name == source_name,
+        require(name_length == len(source_name) + 1 and installed_name == source_name,
                 f"room {room} object name {object_id} was not installed from SC5LIVE: "
-                f"length={name_length}/{len(source_name)}, bytes={installed_name!r}/"
+                f"length={name_length}/{len(source_name) + 1}, bytes={installed_name!r}/"
                 f"{source_name!r}")
         name_samples.append({
             "object_id": object_id, "length": name_length,
