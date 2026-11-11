@@ -632,6 +632,9 @@ ScummV5_MsuRoom_Request_Far:
     sta.l SCUMM_LIVE_ROOM_CHUNK_MODE
     rep #$20
     .a16
+    ; SEP/LDA #0 cleared only A.low. B may still contain an unrelated
+    ; caller value: reset the full u16 chunk index for every new transaction.
+    lda #$0000
     sta.l SCUMM_LIVE_ROOM_CHUNK_INDEX
     sep #$20
     .a8
