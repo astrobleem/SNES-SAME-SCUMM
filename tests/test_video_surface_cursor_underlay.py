@@ -1,7 +1,7 @@
 """Execute actual dense cursor service instructions; CanWrite is the only stub."""
 import re
 import unittest
-from test_video_surface_sparse_underlay import ServiceMachine, ROOT
+from test_video_surface_sparse_underlay import ServiceMachine, ROOT, pixel_leaves
 
 SOURCE = ROOT / 'runtime/snes/services/cursor_underlay.inc.pasm'
 
@@ -11,7 +11,7 @@ class CursorMachine(ServiceMachine):
         super().__init__()
         self.symbols['SAME_VIDEO_CURSOR_UNDERLAY'] = 0x400620
         self.symbols['SAME_BWRAM_SURFACE_BASE'] = self.surface
-        text = SOURCE.read_text()
+        text = SOURCE.read_text() + pixel_leaves()
         for name, expr in re.findall(r'^([A-Z][A-Z0-9_]*)\s*=\s*([^;\n]+)', text, re.M):
             self.symbols[name] = self.value(expr)
         self.header = self.symbols['SAME_VIDEO_CURSOR_UNDERLAY']

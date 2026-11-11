@@ -83,3 +83,52 @@ class ScrollFenceInstructionTests(unittest.TestCase):
             m.put('SAME_MODE3_CONTROL_COMMITTED_GENERATION_HI',committed>>16)
             for status in (0,0x20,0x30,0xcf,0xff):
                 self.assertEqual(m.call('ScrollPresented',p=status),expected)
+
+
+class CircularSurfaceInstructionTests(unittest.TestCase):
+    def configure(self,m,origin):
+        m.put('MODE3_R_ACTIVE',1,1);m.put('MODE3_R_INDEX_ORIGIN',origin)
+
+    def physical(self,dest,origin):
+        y,x=divmod(dest,256)
+        return y*256+((x+origin)&255 if y<192 else x)
+
+    def test_actor_and_cursor_journals_restore_circular_scene_and_fixed_hud(self):
+        for origin in (1,7,8,127,248,255):
+            for m in (ServiceMachine(),CursorMachine()):
+                self.configure(m,origin)
+                if isinstance(m,CursorMachine):
+                    self.assertFalse(m.capture(240,188,16,16))
+                    runs=[(y*256+240,16) for y in range(188,204)]
+                    name='Cursor'
+                else:
+                    runs=[(20*256+240,16),(191*256+128,12),(192*256+248,8)]
+                    m.capture(runs);name='Actor'
+                for dest,count in runs:
+                    for i in range(count):m.ram[m.surface+self.physical(dest+i,origin)]=0
+                self.assertFalse(m.call('Exchange'+name+'Underlay'))
+                self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),m.original_surface)
+                self.assertFalse(m.call('Exchange'+name+'Underlay'))
+                self.assertFalse(m.call('Restore'+name+'Underlay'))
+                self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),m.original_surface)
+
+    def test_pair_wraps_inside_row_and_preserves_neighbor_guards(self):
+        for origin in (1,8,255):
+            for row in (0,191,192,223):
+                m=ServiceMachine();self.configure(m,origin)
+                x=(255-origin)&255;dest=row*256+x
+                before=bytearray(m.original_surface)
+                before[self.physical(dest,origin)]=0x18
+                before[self.physical(dest+1,origin)]=0xe7
+                m.call('WriteIndexedPair',a=0xe718,x=dest)
+                self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),bytes(before))
+
+    def test_ring_view_recovers_every_pixel_without_moving_hud(self):
+        from same.snes_video_backend import linearize_retained_index8
+        pixels=bytes((x*13+y*19)&255 for y in range(224) for x in range(256))
+        for origin in (0,1,8,127,255):
+            physical=bytearray(pixels)
+            for y in range(192):
+                row=pixels[y*256:(y+1)*256]
+                physical[y*256:(y+1)*256]=row[-origin:]+row[:-origin] if origin else row
+            self.assertEqual(linearize_retained_index8(bytes(physical),origin=origin),pixels)

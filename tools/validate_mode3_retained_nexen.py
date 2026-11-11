@@ -11,7 +11,7 @@ from PIL import Image, ImageChops
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 from same.snes_surface import decode_snes_8bpp_tile, decode_cgram
-from same.snes_video_backend import retained_map_offset
+from same.snes_video_backend import retained_map_offset, linearize_retained_index8
 from validate_mode3_surface_backend_nexen import fixture_states, reference_image
 from validate_scumm_startup42_nexen import verified_symbol_map_for_rom
 
@@ -103,7 +103,9 @@ def main():
                         if a.foreground and 100<=wx<112 and 80<=y<96:return 177 if wx&1 else 0
                         return pixel(wx,y)
                     expected=bytes(visible(xx,y) for y in range(224) for xx in range(256))
-                    live=rd(0x402000,57344)
+                    physical=rd(0x402000,57344)
+                    (a.output/f'{gen}-physical-index8.bin').write_bytes(physical)
+                    live=linearize_retained_index8(physical,origin=word(0x40109c))
                     step['index_mismatches']=sum(p!=q for p,q in zip(live,expected))
                     v=s.read_memory('snesVideoRam',0,65536); cg=s.read_memory('snesCgRam',0,512)
                     tiles={t:decode_snes_8bpp_tile(v[t*64:t*64+64]) for t in range(920)}

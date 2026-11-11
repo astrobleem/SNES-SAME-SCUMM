@@ -433,3 +433,37 @@ edge fill112,926 (2frames). The initial profiler failed before reset because
 its overridden MCP method required an optional argument; no timing was inferred
 from that failed run. The corrected observer installed hooks after reset.
 These measurements identify remaining CPU work independently of provider I/O.
+
+### Circular INDEX8 scene and retained foreground (integration in progress)
+
+The retained backend now keeps the existing scene INDEX8 bytes in a horizontal
+ring as well as retaining the planar characters. A camera step changes a bounded
+row origin and fills the exposed edge; it no longer copies all192 scene rows.
+The surface's byte/pair accessors map logical pixels, including actor and cursor
+journals, through that origin. The32-row HUD stays linear and fixed. No pixel
+buffer, executable cache page, transfer budget, or selector allocation was added.
+Pairs crossing physical x255 map their second pixel back into the same row.
+Cold room projections remain linear until retained initialization.
+
+Fully visible retained characters reuse the existing native planar encoder.
+Only partial edge characters need checked-strip/old-shadow merging. Exposed
+runs use interruptible bank-safe moves of at most8bytes, with every source and
+destination row boundary checked by exhaustive host step tests.
+
+The original foreground fixture passed six forward/reverse steps with full
+INDEX8/VRAM/CGRAM/actual PPU equality on ROM
+`/tmp/astra-retained-build.7e0c_d30/mode3.sfc` (private artifact; exact hashes in
+its build identity and the report). Evidence:
+`/tmp/astra-retained-ring-fast-native-20261111/observations/report.json`.
+Cached-column steps with a fixed cursor take9frames and upload128bytes;
+new-column steps take20–24frames and upload1664bytes. These include foreground
+restoration and publication. They are synthetic renderer measurements, not
+an authentic-game latency claim. The earlier linear INDEX8 shift alone took
+7–8frames; the circular origin change does no scene-wide pixel copy.
+
+Source-instruction tests cover exchanged actor/cursor journals across physical
+row wrap and the fixed-HUD boundary, opaque zero, decimal/width preservation,
+clipped rebasing and neighboring guards. The independent observer decodes the
+actual physical surface origin; it still compares every visible pixel and
+requires the exact committed generation. Authentic integration remains a
+separate gate until the continuous new-ROM result is recorded.

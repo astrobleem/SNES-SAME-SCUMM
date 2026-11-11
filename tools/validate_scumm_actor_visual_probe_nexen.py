@@ -288,6 +288,22 @@ def decode_captured_mode3(session, vram: bytes, cgram: bytes, ppu: dict | None =
     return decode_retained_mode3(vram, hofs=hofs)
 
 
+def read_logical_indexed_surface(session):
+    """Read one paused surface with its physical backing and storage origin.
+
+    The caller still must enforce its queued/committed generation fence. This
+    helper never advances execution or substitutes expected pixels.
+    """
+    from same.snes_video_backend import linearize_retained_index8
+    physical=session.read_memory("snesMemory", SURFACE, 256*224)
+    active=session.read_memory("snesMemory", 0x40100d, 1)
+    origin=0
+    if active == b"\x01":
+        origin=int.from_bytes(session.read_memory("snesMemory",0x40109c,2),'little')
+        require(origin < 256, 'invalid physical surface origin')
+    return linearize_retained_index8(physical,origin=origin)
+
+
 def capture_committed_surface(session, directory: Path, label: str, *,
                               cursor_base: int, projection: dict | None = None,
                               source_foot: tuple[int, int] | None = None,
@@ -308,7 +324,7 @@ def capture_committed_surface(session, directory: Path, label: str, *,
                                        expected_x=expected_x, expected_y=expected_y,
                                        expected_frame=expected_frame),
             f"committed actor presentation fence is not satisfied: {state}")
-    pixels = session.read_memory("snesMemory", SURFACE, 256 * 224)
+    pixels = read_logical_indexed_surface(session)
     palette = session.read_memory("snesMemory", PALETTE, 768)
     vram = session.read_memory("snesVideoRam", 0, 0x10000)
     cgram = session.read_memory("snesCgRam", 0, 0x200)
@@ -452,7 +468,8 @@ def snapshot_locked_generation(session, *, cursor_base: int) -> dict:
     result = {'state': state, 'frame': session.get_state()['frameCount']}
     for key, address, size in (('indexed', SURFACE, 57344), ('palette', PALETTE, 768),
                                ('cursor', cursor_base, 64)):
-        result[key] = session.read_memory('snesMemory', address, size)
+        result[key] = (read_logical_indexed_surface(session) if key == 'indexed'
+                       else session.read_memory('snesMemory', address, size))
         require(len(result[key]) == size, 'incomplete queued surface read')
     require(read_committed_pose(session, cursor_base=cursor_base) == state,
             'surface generation changed during paused snapshot')
@@ -743,7 +760,7 @@ def actor_bounds_on_surface(raw: bytes, projection: dict | None = None) -> tuple
 def capture_surface(session, directory: Path, label: str,
                     backdrop: bytes, *, projection: dict | None = None,
                     cursor_base: int | None = None) -> dict:
-    pixels = session.read_memory("snesMemory", SURFACE, 256 * 224)
+    pixels = read_logical_indexed_surface(session)
     palette = session.read_memory("snesMemory", PALETTE, 768)
     require(len(pixels) == len(backdrop), "incomplete indexed surface read")
     (directory / f"{label}.indexed.bin").write_bytes(pixels)
@@ -1107,7 +1124,7 @@ class ProbeObserver:
             boundary["screenshot_error"] = f"{type(exc).__name__}: {exc}"
         try:
             boundary["ppu_state"] = self.session.get_ppu_state()
-            pixels = self.session.read_memory("snesMemory", SURFACE, 256 * 224)
+            pixels = read_logical_indexed_surface(self.session)
             boundary["indexed_surface_sha256"] = hashlib.sha256(pixels).hexdigest()
             (self.output / "actor-timeout.indexed.bin").write_bytes(pixels)
             palette = self.session.read_memory("snesMemory", PALETTE, 768)

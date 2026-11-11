@@ -13,6 +13,13 @@ SERVICE = ROOT / 'runtime/snes/services/video_surface.pasm'
 U = 'Same_VideoSurface_Underlay_'
 
 
+def pixel_leaves():
+    source=SERVICE.read_text()
+    leaves=source[source.index('Same_VideoSurface_WriteIndexedPixel_Far:'):source.index('; Fill an inclusive viewport-relative')]
+    backend=(ROOT/'runtime/snes/services/video_mode3_retained.inc.pasm').read_text()
+    return '\n'+leaves+backend[backend.index('Same_Mode3_MapSurfaceX_Far:'):backend.index('; Extension of the existing copyright-free')]
+
+
 class ServiceMachine:
     def __init__(self, tail=4790):
         self.ram = bytearray(0x800000)
@@ -26,6 +33,9 @@ class ServiceMachine:
             'SAME_SCUMM_LIVE_ROOM_SURFACE_BASE': addr('live_surface'),
             'SAME_SCUMM_LIVE_ROOM_CONTROL': reserved + alloc['live_room_control']['offset'],
             'SAME_BWRAM_VIDEO_SURFACE_STATE': reserved + alloc['video_surface_state']['offset'],
+            'MODE3_R_ACTIVE': reserved + 13,
+            'MODE3_R_INDEX_ORIGIN': reserved + alloc['retained_viewport']['offset'] + 0x18,
+            'SAME_BWRAM_SURFACE_BASE': addr('live_surface'),
             'MODE3_R_EXCHANGE': reserved + alloc['retained_viewport']['offset'] + 0x39,
             'MODE3_R_DELTA': reserved + alloc['retained_viewport']['offset'] + 0x0c,
         }
@@ -51,7 +61,7 @@ class ServiceMachine:
         self.original_surface = bytes(self.ram[self.surface:self.surface+57344])
         source = SERVICE.read_text()
         text = source[source.index('Same_VideoSurface_ExchangeActorUnderlay_Far:'):]
-        text = text.split('\n.endif', 1)[0]
+        text = text.split('\n.endif', 1)[0] + pixel_leaves()
         self.code, self.labels, self.offsets = [], {}, []
         position, width = 0, 16
         for raw in text.splitlines():
@@ -150,6 +160,7 @@ class ServiceMachine:
             elif op in ('cmp', 'cmp.l'):
                 v = ((a & mask)-value) & mask
                 p = (p & ~0x83) | int((a & mask) >= value) | (2 if v == 0 else 0) | (0x80 if v & (1 << (width-1)) else 0)
+            elif op == 'inx': x = (x+1)&65535
             elif op == 'inc': result = (a & mask)+1
             elif op == 'dec': result = (a & mask)-1
             elif op == 'xba':
@@ -159,14 +170,18 @@ class ServiceMachine:
                 returns.append(pc); pc = self.labels[arg]
             elif op == 'rts': pc = returns.pop()
             elif op == 'jsl':
-                assert arg == 'Same_VideoSurface_CanWrite_Far'
-                a = (a & 0xFF00) | int(self.busy)
-                p = (p & ~1) | int(self.busy)
+                if arg == 'Same_VideoSurface_CanWrite_Far':
+                    a = (a & 0xFF00) | int(self.busy)
+                    p = (p & ~1) | int(self.busy)
+                else:
+                    returns.append(pc); pc = self.labels[arg]
             elif op in ('jmp','bra','bcc','bcs','bne','beq','bpl'):
                 take = {'bcc': not p & 1, 'bcs': bool(p & 1),
                         'bpl': not p & 0x80, 'bne': not p & 2, 'beq': bool(p & 2)}.get(op, True)
                 if take: pc = self.labels[arg]
             elif op == 'rtl':
+                if returns:
+                    pc=returns.pop();continue
                 assert (a,x,y,p & ~1,db) == (original[0],original[1],original[2],original[3] & ~1,original[4])
                 assert stack == [0xCA,0xFE,0xAB] and not returns
                 return bool(p & 1)

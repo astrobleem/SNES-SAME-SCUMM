@@ -86,7 +86,7 @@ Same_VideoSurface_Cursor_Capture__pixel:
     tax
     sep #$20
     .a8
-    lda.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_ReadIndexedPixel_Far
     pha
     rep #$20
     .a16
@@ -195,7 +195,7 @@ Same_VideoSurface_Cursor_Restore__pixel:
     tax
     sep #$20
     .a8
-    lda.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_ReadIndexedPixel_Far
     plx
     sta.l SAME_VIDEO_CURSOR_PIXELS,x
 Same_VideoSurface_Cursor_Restore__plain_copy:
@@ -207,7 +207,7 @@ Same_VideoSurface_Cursor_Restore__plain_copy:
     sep #$20
     .a8
     pla
-    sta.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
     rep #$20
     .a16
     jsr Same_VideoSurface_Cursor_NextPixel

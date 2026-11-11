@@ -4155,3 +4155,17 @@ Final source checks:1508tests run1496passed12skipped,makevalidate/33regions,
 Python/Bash/JSON/diffclean. CorrectedWinstonROM17nongeneratedassemblyinputs
 matchsource; privatebuildGitdiffers. No ownedNexen/Xvfbleft; unrelatedPID104488
 onport7381leftuntouched. Privateevidenceandseparateprogressiontreepreserved.
+
+## Retained camera continuation — circular surface
+
+Local retained-camera source now removes the scene-wide INDEX8 shift. Native
+original fixture passes six forward/reverse steps with foreground/cursor and
+full raster equality; cached-column steps9frames/128B, new-column20–24/1664B.
+Evidence `/tmp/astra-retained-ring-fast-native-20261111/observations/report.json`.
+Current full local suite1525tests run,12skips, no failures; validation/memory
+and source checks pass. Two additional edge-copy invariant tests pass focused.
+Authentic current-ROM continuous acceptance is in progress, not yet a pass:
+`/tmp/astra-retained-ring-authentic-20261111/observations/action.json`.
+Source linkage matches58 non-generated native files in private build
+`/tmp/astra-camera-link-source.tgxau257`; full package unchanged. Preserve all
+prior failed logs and the separate progression recovery worktree.

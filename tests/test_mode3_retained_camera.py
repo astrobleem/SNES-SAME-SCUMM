@@ -134,3 +134,34 @@ class RetainedLayoutTests(unittest.TestCase):
         video=json.loads((root/'runtime/snes/video_backends/mode3_surface_layout.json').read_text())
         self.assertEqual(video['scroll_hdma']['address'],'41:E73A')
         self.assertIn('Same_VideoSurface_RetireScroll_Far',s)
+
+
+class RetainedIndexRingTests(unittest.TestCase):
+    def test_every_bounded_edge_copy_stays_inside_source_and_destination_row(self):
+        for base in (0,32,248,512):
+            for current in range(base,base+520):
+                for target in (current-9,current-1,current+1,current+9):
+                    target=max(base,target)
+                    if target==current:continue
+                    nxt=min(target,(current&~7)+8) if target>current else max(target,(current-1)&~7)
+                    delta=nxt-current;count=abs(delta)
+                    logical=256-count if delta>0 else 0
+                    physical=(logical+nxt-base)&255
+                    source=(logical+nxt)&7
+                    self.assertLessEqual(count,8)
+                    self.assertLessEqual(physical+count,256)
+                    self.assertLessEqual(source+count,8)
+
+    def test_native_shift_is_origin_only_and_text_remains_in_fixed_hud(self):
+        root=Path(__file__).resolve().parents[1]
+        source=(root/'runtime/snes/services/video_mode3_retained.inc.pasm').read_text()
+        shift=source.split('Same_Mode3_Retained_ShiftSurface_Far:',1)[1].split('Same_Mode3_MapSurfaceX_Far:',1)[0]
+        self.assertIn('sta.l MODE3_R_INDEX_ORIGIN',shift)
+        self.assertNotIn('mvn ',shift);self.assertNotIn('mvp ',shift)
+        self.assertNotIn('SURFACE_BASE',shift)
+        overlay=(root/'runtime/snes/services/video_overlay_indexed.inc.pasm').read_text()
+        self.assertIn('SAME_VIDEO_TEXT_TOP',overlay)
+        self.assertIn('SAME_VIDEO_TEXT_BOTTOM',overlay)
+        mapper=source.split('Same_Mode3_MapSurfaceX_Far:',1)[1].split('; Extension of',1)[0]
+        self.assertIn('cmp #$C000',mapper)
+        self.assertIn('adc.l MODE3_R_INDEX_ORIGIN',mapper)

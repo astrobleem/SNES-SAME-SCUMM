@@ -16,6 +16,7 @@ MODE3_R_INPUT = SAME_BWRAM_RETAINED_VIEWPORT+$10
 MODE3_R_TOP = SAME_BWRAM_RETAINED_VIEWPORT+$12
 MODE3_R_HEIGHT = SAME_BWRAM_RETAINED_VIEWPORT+$14
 MODE3_R_SOURCE_Y = SAME_BWRAM_RETAINED_VIEWPORT+$16
+MODE3_R_INDEX_ORIGIN = SAME_BWRAM_RETAINED_VIEWPORT+$18
 MODE3_R_BASE = SAME_BWRAM_RETAINED_VIEWPORT+$1A
 MODE3_R_GENERATION = SAME_BWRAM_RETAINED_VIEWPORT+$1C
 MODE3_R_MAX = SAME_BWRAM_RETAINED_VIEWPORT+$1E
@@ -73,6 +74,7 @@ Same_Mode3_Retained_Init_Far:
     sta.l MODE3_R_LAST
     lda #$0000
     sta.l MODE3_R_PHASE
+    sta.l MODE3_R_INDEX_ORIGIN
     sta.l MODE3_R_VALIDATED
     lda #$FFFF
     sta.l MODE3_R_COLUMN
@@ -741,6 +743,36 @@ Same_Mode3_EncodeViewportTile__mask:
     sta.l MODE3_R_MASK
 Same_Mode3_EncodeViewportTile__setup:
     .a16
+    ; A fully visible character occupies one aligned physical INDEX8 tile.
+    ; Reuse the original verified encoder; only hidden edge pixels need the
+    ; checked-strip/old-shadow merge below. No extra conversion budget.
+    lda.l MODE3_R_X
+    cmp #$00F9
+    bcs Same_Mode3_EncodeViewportTile__partial
+    lda.l SAME_MODE3_WORK_TILE
+    pha
+    lda.l MODE3_R_X
+    clc
+    adc.l MODE3_R_INDEX_ORIGIN
+    and #$00FF
+    lsr
+    lsr
+    lsr
+    sta.l SAME_MODE3_WORK_TEMP
+    lda.l MODE3_R_Y
+    asl
+    asl
+    clc
+    adc.l SAME_MODE3_WORK_TEMP
+    sta.l SAME_MODE3_WORK_TILE
+    jsr Same_Mode3_EncodeTile
+    rep #$20
+    .a16
+    pla
+    sta.l SAME_MODE3_WORK_TILE
+    rts
+Same_Mode3_EncodeViewportTile__partial:
+    .a16
     phb
     sep #$20
     .a8
@@ -812,7 +844,10 @@ Same_Mode3_EncodeViewportTile__column:
     tax
     sep #$20
     .a8
+    phx
+    jsl Same_Mode3_MapSurfaceX_Far
     lda.l SAME_BWRAM_SURFACE_BASE,x
+    plx
     plx
     bra Same_Mode3_EncodeViewportTile__pixel
 Same_Mode3_EncodeViewportTile__background16:
@@ -833,6 +868,23 @@ Same_Mode3_EncodeViewportTile__background:
     .a8
     bcs Same_Mode3_EncodeViewportTile__zero
 Same_Mode3_EncodeViewportTile__read:
+    .a8
+    lda.l SAME_MODE3_WORK_DESC_TYPE
+    bne Same_Mode3_EncodeViewportTile__checked_read
+    phx
+    rep #$20
+    .a16
+    txa
+    sec
+    sbc #$2000
+    tax
+    jsl Same_Mode3_MapSurfaceX_Far
+    sep #$20
+    .a8
+    lda.l SAME_BWRAM_SURFACE_BASE,x
+    plx
+    bra Same_Mode3_EncodeViewportTile__pixel
+Same_Mode3_EncodeViewportTile__checked_read:
     .a8
     lda.l $400000,x
     bra Same_Mode3_EncodeViewportTile__pixel
@@ -1067,65 +1119,48 @@ Same_Mode3_CommitViewportTile__word:
     sta.l SAME_MODE3_CONTROL_CONVERTED_COUNT
     rts
 
-; Shift only the scene INDEX8 rows, preserving the fixed HUD. MVN/MVP remain
-; interruptible by NMI; each move is <=255 bytes and cannot cross a row/bank.
-; The caller fills the exposed strip from verified input before PRESENT.
+; The existing INDEX8 scene is a horizontal circular surface. Changing its
+; logical origin retains every still-visible pixel in place. Only FillEdge
+; writes newly exposed pixels. HUD rows remain linear. This runs under the
+; same immutable generation ownership as tile conversion and publication.
 Same_Mode3_Retained_ShiftSurface_Far:
     php
-    phb
-    rep #$30
+    rep #$20
     .a16
-    .i16
-    lda.l MODE3_R_DELTA
-    bmi Same_Mode3_Retained_ShiftSurface__right_setup
-    sta.l SAME_MODE3_WORK_ROW
-    lda #$2000
-    sta.l MODE3_R_TEMP
-Same_Mode3_Retained_ShiftSurface__left:
+    lda.l MODE3_R_NEXT
+    sec
+    sbc.l MODE3_R_BASE
+    and #$00FF
+    sta.l MODE3_R_INDEX_ORIGIN
+    plp
+    rtl
+
+; X16 logical INDEX8 offset -> physical offset. Preserve A/P/Y, no scratch.
+; Only the live retained scene is circular; cold/retired rooms and HUD stay
+; linear. Byte addition deliberately wraps within its original 256-byte row.
+Same_Mode3_MapSurfaceX_Far:
+    php
+    cld
+    rep #$20
     .a16
-    lda.l MODE3_R_TEMP
-    tay
+    pha
+    lda.l MODE3_R_ACTIVE
+    and #$00FF
+    cmp #$0001
+    bne Same_Mode3_MapSurfaceX__done
+    txa
+    cmp #$C000
+    bcs Same_Mode3_MapSurfaceX__done
+    sep #$20
+    .a8
     clc
-    adc.l SAME_MODE3_WORK_ROW
+    adc.l MODE3_R_INDEX_ORIGIN
+    rep #$20
+    .a16
     tax
-    lda #$00FF
-    sec
-    sbc.l SAME_MODE3_WORK_ROW
-    mvn $40,$40
-    lda.l MODE3_R_TEMP
-    clc
-    adc #$0100
-    sta.l MODE3_R_TEMP
-    cmp #$E000
-    bcc Same_Mode3_Retained_ShiftSurface__left
-    bra Same_Mode3_Retained_ShiftSurface__done
-Same_Mode3_Retained_ShiftSurface__right_setup:
+Same_Mode3_MapSurfaceX__done:
     .a16
-    eor #$FFFF
-    inc
-    sta.l SAME_MODE3_WORK_ROW
-    lda #$20FF
-    sta.l MODE3_R_TEMP
-Same_Mode3_Retained_ShiftSurface__right:
-    .a16
-    lda.l MODE3_R_TEMP
-    tay
-    sec
-    sbc.l SAME_MODE3_WORK_ROW
-    tax
-    lda #$00FF
-    sec
-    sbc.l SAME_MODE3_WORK_ROW
-    mvp $40,$40
-    lda.l MODE3_R_TEMP
-    clc
-    adc #$0100
-    sta.l MODE3_R_TEMP
-    cmp #$E0FF
-    bcc Same_Mode3_Retained_ShiftSurface__right
-Same_Mode3_Retained_ShiftSurface__done:
-    .a16
-    plb
+    pla
     plp
     rtl
 
@@ -1618,6 +1653,7 @@ Same_Mode3_Retained_ReadColumn__done:
 ; It can be MSU input or a decoded retained column; ownership is identical.
 Same_Mode3_Retained_FillEdge_Far:
     php
+    phb
     rep #$30
     .a16
     .i16
@@ -1646,7 +1682,10 @@ Same_Mode3_Retained_FillEdge__row:
     xba
     clc
     adc.l MODE3_R_X
-    sta.l SAME_MODE3_WORK_SOURCE ; destination
+    tax
+    jsl Same_Mode3_MapSurfaceX_Far
+    txa
+    sta.l SAME_MODE3_WORK_SOURCE
     lda.l MODE3_R_Y
     sec
     sbc.l MODE3_R_TOP
@@ -1668,52 +1707,33 @@ Same_Mode3_Retained_FillEdge__row:
     clc
     adc.l MODE3_R_TEMP
     tax
-    ldy #$0000
-Same_Mode3_Retained_FillEdge__copy:
-    .a16
-    sep #$20
-    .a8
-    lda.l $400000,x
-    phx
-    pha
-    rep #$20
-    .a16
-    tya
+    lda.l SAME_MODE3_WORK_SOURCE
     clc
-    adc.l SAME_MODE3_WORK_SOURCE
-    tax
-    sep #$20
-    .a8
-    pla
-    sta.l SAME_BWRAM_SURFACE_BASE,x
-    plx
-    rep #$20
-    .a16
-    inx
-    iny
-    tya
-    cmp.l SAME_MODE3_WORK_LIMIT
-    bcc Same_Mode3_Retained_FillEdge__copy
+    adc #$2000
+    tay
+    ; Begin limits each step to the next eight-pixel boundary. Thus this
+    ; physical run cannot cross a row (ending exactly at 256 is legal).
+    lda.l SAME_MODE3_WORK_LIMIT
+    dec
+    mvn $40,$40
     bra Same_Mode3_Retained_FillEdge__next
 Same_Mode3_Retained_FillEdge__zero:
     .a16
     lda.l SAME_MODE3_WORK_SOURCE
     tax
-    ldy #$0000
-Same_Mode3_Retained_FillEdge__clear:
-    .a16
+    lda.l SAME_MODE3_WORK_LIMIT
+    tay
     sep #$20
     .a8
     lda #$00
+Same_Mode3_Retained_FillEdge__clear:
+    .a8
     sta.l SAME_BWRAM_SURFACE_BASE,x
-    rep #$20
-    .a16
     inx
-    iny
-    tya
-    cmp.l SAME_MODE3_WORK_LIMIT
-    bcc Same_Mode3_Retained_FillEdge__clear
+    dey
+    bne Same_Mode3_Retained_FillEdge__clear
 Same_Mode3_Retained_FillEdge__next:
+    rep #$20
     .a16
     lda.l MODE3_R_Y
     inc
@@ -1723,6 +1743,7 @@ Same_Mode3_Retained_FillEdge__next:
     brl Same_Mode3_Retained_FillEdge__row
 Same_Mode3_Retained_FillEdge__done:
     .a16
+    plb
     plp
     rtl
 
@@ -2058,7 +2079,10 @@ Same_Mode3_Retained_Fixture_Foreground__pixel:
     pla
     sep #$20
     .a8
+    phx
+    jsl Same_Mode3_MapSurfaceX_Far
     sta.l SAME_BWRAM_SURFACE_BASE,x
+    plx
     rep #$20
     .a16
     lda.l MODE3_RF_X
@@ -2123,7 +2147,10 @@ Same_Mode3_Retained_Fixture_Cursor__write:
     pla
     sep #$20
     .a8
+    phx
+    jsl Same_Mode3_MapSurfaceX_Far
     sta.l SAME_BWRAM_SURFACE_BASE,x
+    plx
     rep #$20
     .a16
     lda.l MODE3_RF_X

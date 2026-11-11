@@ -447,3 +447,18 @@ def decode_retained_mode3(vram: bytes, *, hofs: int) -> bytes:
             if entry & 0x8000: ty = 7 - ty
             pixels.append(tiles[tile][ty][tx])
     return bytes(pixels)
+
+
+def linearize_retained_index8(pixels: bytes, *, origin: int, scene_height: int = 192) -> bytes:
+    """Decode the existing circular scene backing; HUD stays screen-relative.
+
+    This is a storage transform, not a camera/reference-image approximation.
+    Generation fencing is the caller's responsibility, as for linear INDEX8.
+    """
+    if len(pixels) != 256 * 224 or not 0 <= origin < 256 or not 0 <= scene_height <= 224:
+        raise ValueError("invalid retained INDEX8 extent/origin")
+    out=bytearray(pixels)
+    for y in range(scene_height):
+        row=pixels[y*256:(y+1)*256]
+        out[y*256:(y+1)*256]=row[origin:]+row[:origin]
+    return bytes(out)

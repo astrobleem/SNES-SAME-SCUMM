@@ -268,9 +268,53 @@ Same_VideoSurface_CanWrite__no:
 ; destination backing and may change without any SCUMM caller change.
 Same_VideoSurface_WriteIndexedPixel_Far:
     php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    jsl Same_Mode3_MapSurfaceX_Far
     sep #$20
     .a8
     sta.l SAME_BWRAM_SURFACE_BASE,x
+    rep #$30
+    .a16
+    .i16
+    plx
+    pla
+    plp
+    rtl
+
+; Byte read preserves the caller's high accumulator byte and P/X/Y. These
+; synchronous pixel leaves do not publish or acquire a second surface owner.
+Same_VideoSurface_ReadIndexedPixel_Far:
+    php
+    rep #$10
+    .i16
+    phx
+    jsl Same_Mode3_MapSurfaceX_Far
+    sep #$20
+    .a8
+    lda.l SAME_BWRAM_SURFACE_BASE,x
+    plx
+    plp
+    rtl
+
+; A16 pair at logical X. Map separately: physical x=255 must wrap its second
+; byte within the same scene row, never overwrite the next row's first pixel.
+Same_VideoSurface_WriteIndexedPair_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
+    inx
+    xba
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
+    plx
+    pla
     plp
     rtl
 
@@ -426,7 +470,7 @@ Same_VideoSurface_FillIndexedRect__row:
     beq Same_VideoSurface_FillIndexedRect__odd
 Same_VideoSurface_FillIndexedRect__pair:
     lda.l SAME_VIDEO_SURFACE_DAMAGE_X1
-    sta.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPair_Far
     inx
     inx
     lda.l SAME_VIDEO_SURFACE_DP_PIXEL_COUNT
@@ -442,7 +486,7 @@ Same_VideoSurface_FillIndexedRect__odd:
     sep #$20
     .a8
     lda.l SAME_VIDEO_DRAW_RECT_COLOR
-    sta.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
     rep #$20
     .a16
 Same_VideoSurface_FillIndexedRect__row_done:
@@ -1476,7 +1520,7 @@ Same_VideoSurface_RestoreRect__row:
     beq Same_VideoSurface_RestoreRect__odd_only
 Same_VideoSurface_RestoreRect__pixel:
     lda [SAME_VIDEO_SURFACE_DP_SOURCE],y
-    sta.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPair_Far
     inx
     inx
     iny
@@ -1490,7 +1534,7 @@ Same_VideoSurface_RestoreRect__odd_only:
     and #$01
     beq Same_VideoSurface_RestoreRect__row_done
     lda [SAME_VIDEO_SURFACE_DP_SOURCE],y
-    sta.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
 Same_VideoSurface_RestoreRect__row_done:
     rep #$20
     .a16
@@ -1679,7 +1723,7 @@ Same_VideoSurface_Underlay_Restore__pixel:
     tax
     sep #$20
     .a8
-    lda.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x
+    jsl Same_VideoSurface_ReadIndexedPixel_Far
     plx
     sta.l SAME_SCUMM_LIVE_ROOM_STAGING_BASE,x
 Same_VideoSurface_Underlay_Restore__plain_copy:
@@ -1691,7 +1735,7 @@ Same_VideoSurface_Underlay_Restore__plain_copy:
     sep #$20
     .a8
     pla
-    sta.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
     rep #$20
     .a16
     lda.l SAME_VIDEO_ACTOR_UNDERLAY_RECORD_CURSOR
@@ -2225,7 +2269,7 @@ Same_VideoSurface_Underlay_Capture__pixel:
     tax
     sep #$20
     .a8
-    lda.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x
+    jsl Same_VideoSurface_ReadIndexedPixel_Far
     pha
     rep #$20
     .a16
@@ -3424,7 +3468,7 @@ Same_VideoSurface_BlitIndexedRect__pixel:
     .a8
     lda [SAME_VIDEO_SURFACE_DP_SOURCE],y
     beq Same_VideoSurface_BlitIndexedRect__transparent
-    sta.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
 Same_VideoSurface_BlitIndexedRect__transparent:
     inx
     iny

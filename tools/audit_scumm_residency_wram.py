@@ -262,9 +262,9 @@ def audit() -> dict[str, Any]:
     restore = video_surface_source.split("Same_VideoSurface_RestoreActorUnderlay_Far:", 1)[1].split(
         "Same_VideoSurface_BeginActorUnderlay_Far:", 1)[0]
     if ("jsr Same_VideoSurface_Underlay_Validate" not in restore
-            or "sta.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x" not in restore
+            or "jsl Same_VideoSurface_WriteIndexedPixel_Far" not in restore
             or restore.index("jsr Same_VideoSurface_Underlay_Validate")
-            > restore.index("sta.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x")):
+            > restore.index("jsl Same_VideoSurface_WriteIndexedPixel_Far")):
         raise ValueError("sparse underlay must validate the entire journal before pixel writes")
     consumed = restore.split("Same_VideoSurface_Underlay_Restore__record:", 1)[1].split(
         "Same_VideoSurface_Underlay_Restore__run:", 1)[0]
