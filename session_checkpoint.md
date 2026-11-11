@@ -4218,3 +4218,21 @@ ROM `/tmp/astra-camera-link-build.85nseceg/fate-authentic-room.sfc`,
 frame-polling immutable-generation fence and durable cost-event journal.
 Do not repeat unchanged failures or transfer old-ROM states/results.
 Whole task remains in progress until actual responsive gameplay is measured.
+
+## Column pass and next bounded cursor correction
+
+88b4118 published, hosted43088136942green. Column native132step proof passes.
+Cold authentic run timed out atsource192/error0; exact-ROM pre-camera
+continuation passes source/PPU at208,1,163input→captureframes,172.953seconds.
+Not continuous latest-build acceptance; do not splice observations.
+Profile isolates six-frame cursor/foreground composition and109code-cache
+evictions among five original program identities in the camera interval.
+Three2KiB windows cannot retain all five tags despite combined1,358bodybytes.
+Do not start a new cache architecture inside this camera mission.
+
+Row-mapped cursor exchange passes31focused tests and1536fullsuite/12skips;
+assembly/memoryauditpass. Final changed-ROM authentic run in progress:
+`/tmp/astra-cursor-row-authentic-20261111`, ROM build`fhzsa1w3`, source`d41hjwgf`.
+600second supervisor; capture caches repeated paused reads and polls quickly
+only when the actual visual target is committed, not merely the logical one.
+No new gameplay-state writes, no old-ROM restore, no7-action route.

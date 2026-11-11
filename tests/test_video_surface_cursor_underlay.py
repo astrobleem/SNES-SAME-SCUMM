@@ -28,7 +28,7 @@ class CursorMachine(ServiceMachine):
             self.code.append(line)
             op, _, arg = line.partition(' ')
             if op in ('rep', 'sep', 'bra', 'bcc', 'bcs', 'beq', 'bne'): size = 2
-            elif op in ('jmp', 'jsr'): size = 3
+            elif op in ('jmp', 'jsr', 'brl') or '.w' in op: size = 3
             elif op == 'jsl' or '.l' in op: size = 4
             elif arg.startswith('#'): size = 1 + width // 8
             else: size = 1
@@ -194,3 +194,30 @@ class CursorUnderlayTests(unittest.TestCase):
 
 
 if __name__=='__main__': unittest.main()
+
+
+class CursorRowCopyTests(unittest.TestCase):
+    def test_bounded_rows_wrap_physical_scene_but_not_hud(self):
+        for origin in (0,1,8,127,248,255):
+            for x,y,width,height in ((0,0,16,2),(240,190,16,4),(255,223,1,1),(251,191,5,3)):
+                with self.subTest(origin=origin,rectangle=(x,y,width,height)):
+                    m=CursorMachine();m.put('MODE3_R_ACTIVE',1,1);m.put('MODE3_R_INDEX_ORIGIN',origin)
+                    physical=lambda row,col:row*256+((col+origin)&255 if row<192 else col)
+                    before=bytes(m.ram[m.surface:m.surface+57344])
+                    self.assertFalse(m.capture(x,y,width,height))
+                    painted=bytearray(before)
+                    for row in range(y,y+height):
+                        for col in range(x,x+width):painted[physical(row,col)]=(row*17+col)&255
+                    m.ram[m.surface:m.surface+57344]=painted
+                    start=len(m.writes)
+                    self.assertFalse(m.call('ExchangeCursorUnderlay',p=0xff,db=0x7f))
+                    self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),before)
+                    allowed={m.surface+physical(row,col) for row in range(y,y+height) for col in range(x,x+width)}
+                    writes={a+i for a,n in m.writes[start:] for i in range(n) if m.surface<=a+i<m.surface+57344}
+                    self.assertEqual(writes,allowed)
+                    self.assertFalse(m.call('ExchangeCursorUnderlay'))
+                    self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),painted)
+                    self.assertFalse(m.call('RestoreCursorUnderlay'))
+                    self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),before)
+                    self.assertEqual(m.ram[m.header-16:m.header],bytes([0xd3])*16)
+                    self.assertEqual(m.ram[m.header+288:m.header+480],bytes([0xa7])*192)

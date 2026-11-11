@@ -629,3 +629,49 @@ fixture and full authentic configuration; ROM audits pass. The prior
 94a6c88hosted run43085838908passed both jobs; it does not certify this change.
 The synthetic command-to-commit interval includes its generated strip loop,
 so16–17frames is not asserted to be pure conversion/DMA time.
+
+## Column-layout authentic continuation and remaining working set
+
+The cold column-layout run was terminated by its600-second supervisor after
+source camera192/error0, before the final capture. Preserve that run as
+NOT_ACCEPTED. A separately labelled, exact-ROM pre-camera checkpoint
+continuation then passed in172.953seconds:
+`/tmp/astra-column-targeted-native-20261111/observations/action.json`.
+It is not spliced into a continuous acceptance claim. ROM
+`77600cd358447b527477a19a5db572cab4253fc669dc096d20bd3dd3cd321c47`,
+same full package70564585..., actor277,139 standing3, source crop208.
+Source background/costume/font/cursor, INDEX8, VRAM and PPU match exactly.
+Input8236→capture9399:1,163frames, versus1,908before retained presentation.
+Ordinary observed column intervals are about42frames;27tiles/1,728bytes/
+one DMA batch replaces896tiles/57,344bytes/full reconstruction. This is
+functional incremental rendering, **not smooth camera acceptance**.
+
+Read-only hooks show median tile encoder6,565Nexen counter units and retained
+composition approximately270,337units/six emulated frames. Cursor exchange
+mapped each pixel through two far helpers. The next bounded correction maps
+each validated row once and preserves within-row circular wrap, fixed HUD,
+transparent/opaque-zero pixels, and the existing damage/publication protocol.
+Host source-instruction tests cover all prior cursor cases plus wrap/guards/
+scene-HUD boundaries;1,536tests run,1,524passed,12skipped. Pinned assembly and
+33-region memory validation pass. New native integration evidence is pending.
+
+The same camera interval also recorded109executable-cache loads and109
+evictions,57,267provider bytes and135completed requests. Sampled request
+identities (bound to the matching full directory) repeatedly include:
+
+| Canonical source identity | Body bytes |
+| --- | ---: |
+| GlobalProgram(59) |787|
+| RoomLocalProgram(room=10,local=211) |120|
+| RoomLocalProgram(room=10,local=215) |107|
+| RoomLocalProgram(room=10,local=217) |163|
+| RoomLocalProgram(room=10,local=218) |181|
+
+These are integration observations, never production selection rules. Their
+combined1,358bytes fit within the physical6KiB cache, but the accepted cache
+has three independently tagged2KiB windows, each holding one ProgramUnit
+page. Five repeatedly scheduled identities exceed its descriptor working set.
+This is a separate measured cache-granularity limitation, not proof that
+rendering is free, nor permission to redesign the cache in a camera change.
+Provider request sampling can miss intermediate requests; counter deltas
+remain exact for the captured interval. Reports stay private with identities.

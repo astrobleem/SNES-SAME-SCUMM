@@ -19,6 +19,7 @@ SAME_VIDEO_CURSOR_MAGIC = $C9
 SAME_VIDEO_CURSOR_HEADER_SIZE = $0020
 SAME_VIDEO_CURSOR_PAYLOAD_SIZE = $0100
 SAME_VIDEO_CURSOR_PIXELS = SAME_VIDEO_CURSOR_UNDERLAY+$20
+SAME_VIDEO_CURSOR_PIXELS_LOW = SAME_VIDEO_CURSOR_PIXELS & $FFFF
 SAME_VIDEO_CURSOR_WORK_DEST = SAME_VIDEO_CURSOR_UNDERLAY+$10
 SAME_VIDEO_CURSOR_WORK_WIDTH = SAME_VIDEO_CURSOR_UNDERLAY+$12
 SAME_VIDEO_CURSOR_WORK_HEIGHT = SAME_VIDEO_CURSOR_UNDERLAY+$14
@@ -178,40 +179,70 @@ Same_VideoSurface_Cursor_Restore__valid:
 Same_VideoSurface_Cursor_Restore__writable:
     .a16
     jsr Same_VideoSurface_Cursor_StartCopy
-Same_VideoSurface_Cursor_Restore__pixel:
-    .a16
-    lda.l SAME_VIDEO_CURSOR_WORK_PIXEL
-    tax
+    ; The complete logical rectangle and journal were validated above.
+    ; Map once per row, then exchange bounded physical pixels directly.
+    ; The circular scene wraps within a row; fixed HUD rows never wrap.
+    ; DBR=$40 permits indexed-Y journal access without a long-Y instruction.
     sep #$20
     .a8
-    lda.l SAME_VIDEO_CURSOR_PIXELS,x
+    lda #$40
+    pha
+    plb
+    rep #$30
+    .a16
+    .i16
+    ldy #$0000
+Same_VideoSurface_Cursor_Restore__row:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    tax
+    jsl Same_Mode3_MapSurfaceX_Far
+    lda.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
+Same_VideoSurface_Cursor_Restore__pixel:
+    .a16
+    sep #$20
+    .a8
+    lda.w SAME_VIDEO_CURSOR_PIXELS_LOW,y
     pha
     lda.l MODE3_R_EXCHANGE
     beq Same_VideoSurface_Cursor_Restore__plain_copy
-    phx
-    rep #$20
-    .a16
-    lda.l SAME_VIDEO_CURSOR_WORK_SURFACE
-    tax
-    sep #$20
-    .a8
-    jsl Same_VideoSurface_ReadIndexedPixel_Far
-    plx
-    sta.l SAME_VIDEO_CURSOR_PIXELS,x
+    lda.l SAME_BWRAM_SURFACE_BASE,x
+    sta.w SAME_VIDEO_CURSOR_PIXELS_LOW,y
 Same_VideoSurface_Cursor_Restore__plain_copy:
     .a8
-    rep #$20
-    .a16
-    lda.l SAME_VIDEO_CURSOR_WORK_SURFACE
-    tax
-    sep #$20
-    .a8
     pla
-    jsl Same_VideoSurface_WriteIndexedPixel_Far
+    sta.l SAME_BWRAM_SURFACE_BASE,x
+    inx
+    iny
     rep #$20
     .a16
-    jsr Same_VideoSurface_Cursor_NextPixel
-    bcc Same_VideoSurface_Cursor_Restore__pixel
+    lda.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    dec
+    sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    beq Same_VideoSurface_Cursor_Restore__row_done
+    txa
+    and #$00FF
+    bne Same_VideoSurface_Cursor_Restore__pixel
+    ; Physical x=255 advances to x=0 in the SAME row, not the next row.
+    txa
+    sec
+    sbc #$0100
+    tax
+    bra Same_VideoSurface_Cursor_Restore__pixel
+Same_VideoSurface_Cursor_Restore__row_done:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_ROWS
+    dec
+    sta.l SAME_VIDEO_CURSOR_WORK_ROWS
+    beq Same_VideoSurface_Cursor_Restore__copied
+    lda.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    clc
+    adc #$0100
+    sta.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    brl Same_VideoSurface_Cursor_Restore__row
+Same_VideoSurface_Cursor_Restore__copied:
+    .a16
     jsr Same_VideoSurface_Cursor_UnionDamage
     sep #$20
     .a8

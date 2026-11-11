@@ -118,9 +118,10 @@ class ServiceMachine:
             value = address = None
             if arg.startswith('#'):
                 value = self.value(arg[1:])
-            elif '.l' in op:
-                expression = arg.removesuffix(',x')
-                address = self.value(expression) + (x if arg.endswith(',x') else 0)
+            elif '.l' in op or '.w' in op:
+                expression = arg.removesuffix(',x').removesuffix(',y')
+                address = self.value(expression) + (x if arg.endswith(',x') else y if arg.endswith(',y') else 0)
+                if '.w' in op: address = (db << 16) | (address & 65535)
                 value = self.get(address, width//8)
             result = None
             if op == 'php': push(p, 8)
@@ -140,8 +141,8 @@ class ServiceMachine:
             elif op == 'brl': pc = self.labels[arg]
             elif op == 'clc': p &= ~1
             elif op == 'sec': p |= 1
-            elif op in ('lda', 'lda.l'): result = value
-            elif op == 'sta.l':
+            elif op in ('lda', 'lda.l', 'lda.w'): result = value
+            elif op in ('sta.l','sta.w'):
                 self.put(address, a & mask, width//8)
                 self.writes.append((address, width//8))
             elif op == 'tax': x = a & (255 if p & 0x10 else 65535)
@@ -160,6 +161,8 @@ class ServiceMachine:
             elif op in ('cmp', 'cmp.l'):
                 v = ((a & mask)-value) & mask
                 p = (p & ~0x83) | int((a & mask) >= value) | (2 if v == 0 else 0) | (0x80 if v & (1 << (width-1)) else 0)
+            elif op == 'ldy': y = value & (255 if p & 0x10 else 65535)
+            elif op == 'iny': y = (y+1)&65535
             elif op == 'inx': x = (x+1)&65535
             elif op == 'inc': result = (a & mask)+1
             elif op == 'dec': result = (a & mask)-1
