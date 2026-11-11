@@ -528,7 +528,7 @@ brk_handler__capture_stack:
 .if SAME_BUILD_SCUMM_M23A || SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
 .include "generated/scumm_v5_rooms.inc.pasm"
 .endif
-.if SAME_BUILD_WINSTON_IO == 0
+.if SAME_BUILD_SCUMM_ENGINE
 .include "engines/scumm_v5.pasm"
 .endif
 .include "engines/agi_v2.pasm"

@@ -230,6 +230,7 @@ def main() -> int:
         f"SCUMM_V5_ACTOR_ANIMATION_MASK = ${1 << (args.scumm_actor_render_id % 8):02X}\n"
         f"SAME_SCUMM_MSU1_LIVE_ROOM_PCM_TEST_TRACK = ${args.scumm_msu1_live_room_pcm_track:04X}\n"
         f"SAME_BUILD_MSU1_TEST_FORCE_BUSY = ${1 if args.msu1_test_force_busy else 0:02X}\n"
+        f"SAME_BUILD_SCUMM_ENGINE = ${1 if args.engine == 'scumm_v5' else 0:02X}\n"
         f"SAME_BUILD_WINSTON_IO = ${1 if args.engine == 'winston_io' else 0:02X}\n"
         f"SAME_BUILD_MODE3_SURFACE_CONFORMANCE = ${1 if args.engine == 'mode3_surface_conformance' else 0:02X}\n"
         f"SAME_BUILD_SCUMM_M20 = ${1 if args.engine == 'scumm_v5' and args.scumm_m20 else 0:02X}\n"
