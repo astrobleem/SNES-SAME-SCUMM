@@ -100,6 +100,7 @@ class HudMachine:
             elif op in ('lda','lda.l'):result=value
             elif op=='sta.l':self.put(address,a&mask,width//8);self.writes.append((address,width//8,a&mask))
             elif op=='and':result=a&value
+            elif op=='ora':result=a|value
             elif op=='asl':p=(p&~1)|int(bool(a&(1<<(width-1))));result=(a&mask)<<1
             elif op=='clc':p &= ~1
             elif op=='sec':p |= 1

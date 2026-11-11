@@ -1,3 +1,33 @@
+# Active Milestone B — authored interface reached; provider handoff correction
+
+HEAD 2df00dd remains published; current additive source changes reconcile code
+completion before actor admission and retain actor ownership through checked
+chunk consumption. Source-instruction tests exercise the actual cache completion
+and both admission guards. Pinned assembly/ROM audit pass for private ROM
+b578503d90ac1e48c5e63166f4eafe8fb160c2d758520a0d1e3cb6cc038f5d31
+in `/tmp/astra-text-assembly-build.iajjeuae`; native validation is in progress.
+
+Original source startup restores active verbs through three normal X edges:
+room4 Local206, room4 Local221, room1 Local200. Observed rooms are
+0 -> 68 -> 0 -> 4 -> 1 -> 10. This is not the old seven-action replay.
+`/tmp/astra-authored-interface-20261110` preserves that exact-ROM evidence.
+The scene still lacked an actor: read-only captures show repeated completed
+code reads monopolizing provider ownership, not an interpreter deadlock.
+No object-action input was sent by the failed scene-fence diagnostic.
+
+Authentic costume1 is now included through the existing cooker alongside2/26;
+all2203 ProgramUnits remain present. Reference source for the intended next
+normal controller action is room10 object140 verb9, the original literal taxi
+response. Isolated host oracle lives at `/tmp/astra-taxi-host-oracle.json`.
+Do not inject gameplay state or force saved-away verbs. The bounded private
+controls retain every failed boundary and use matching ROM/package states.
+
+Continue toward the actual readable object action; no final milestone claim.
+Recovery worktree untouched. Latest successful source-font proof and earlier
+native results retain their own identities below.
+
+---
+
 # Active Milestone B — subtitle verified; actor request ownership repaired
 
 Continue toward original object/verb interaction. Commit 725fdb5 hosted CI

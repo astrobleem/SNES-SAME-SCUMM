@@ -150,3 +150,33 @@ Broad intro observation now distinguishes HAVE_MSG=$FF (a continuation exists)
 from an imminent expiry/acknowledgement boundary. It does not poll every frame
 for the entire visible lifetime merely because a continuation exists. This
 changes observation overhead, not input or SCUMM timing.
+
+## Provider handoff under a paging script workload
+
+Read-only room10 observations exposed a separate scheduling problem: recurring
+script cache misses left each completed read owned by the code cache until the
+next engine phase, which immediately started another request. Costume loading
+never acquired the provider. The late visual phase now reconciles completed
+code reads through the existing cache routine, preserving its completion pin
+and waiting activation. It does not execute scripts or change residency.
+
+Conversely, a code miss now waits while ACTOR owns the shared scratch ticket,
+including READ_OK before consumption. Cached executable hits remain available.
+Without this companion guard, the next code request could overwrite the actor's
+completed request descriptor. Room cancellation retains its existing priority.
+Source-instruction tests cover completion on all three pages, idempotence,
+waiter/pin retention, and blocked descriptor writes. All 1,409 local tests ran
+with 12 skips; validation, memory ownership, pinned assembly and ROM audit pass.
+
+The updated native original-source startup restores verbs through three normal
+cutscene-skip edges and enters the authored interactive scene. Costume1 is
+included from the external archive through the existing cooker; no substitute
+asset or story script is used. Native observations confirm actor composition,
+but the object-action and completed-image comparison remain in progress.
+The two short scene checks preserved advancing tile publication and an authored
+continued subtitle at their frame limits; neither is evidence of deadlock.
+Private evidence is `/tmp/astra-authored-interface-handoff-20261110` and
+`/tmp/astra-room10-completed-scene-action-20261110`. The matching ROM SHA256 is
+`b578503d90ac1e48c5e63166f4eafe8fb160c2d758520a0d1e3cb6cc038f5d31`;
+its isolated source snapshot predates this documentation commit. These narrow
+observations are not yet a completed Milestone B acceptance.

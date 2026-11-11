@@ -92,6 +92,15 @@ ScummV5_Visual_Frame_Far:
       .a8
       lda.l SAME_VIDEO_SURFACE_PENDING_VISUAL
       bne ScummV5_Visual_Frame__skip_actor
+      ; Storage advances after the script scheduler. A code page can therefore
+      ; finish during this frame while REQUEST_SLOT still owns READ_OK. Retire
+      ; that completed request through its cache owner before admitting an
+      ; actor read. Otherwise continuously paging scripts start another read
+      ; at every next engine phase and starve costume loading indefinitely.
+      ; ReconcileRead preserves the validated page's completion/waiter pin;
+      ; it does not resume scripts or release a live executable window.
+      jsl ScummV5_MsuProgram_ReconcileRead_Far
+      bcs ScummV5_Visual_Frame__skip_actor
       jsl Same_VideoSurface_CanWrite_Far
       bcs ScummV5_Visual_Frame__skip_actor
       jsl ScummV5_Controller_RenderActor_Far
