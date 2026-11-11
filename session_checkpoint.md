@@ -1,3 +1,22 @@
+# Active Milestone C — presentation backlog corrected; camera/UI remain pending
+
+Published successor draft PR15 targets preserved completed-B PR14. Last hosted
+checks green at eaad5d8; subsequent commits require their own hosted checks.
+Palette-only native walk:69 frames input-to-standing,13 queue-to-PPU; exact
+source/INDEX8/PPU comparison passes. Starts84,60 rather than prior82,59: not an
+identical A/B. Word-copy backend native fixture:6 exact generations pass,468
+frames versus651 prior. Full suite1438 run/12 skipped, validation27 regions pass.
+See PLAYABLE_PRESENTATION_LATENCY.md for exact ROM identities and limitations.
+No seven-action replay, no recovery-worktree changes, no gameplay-state writes.
+
+Continue: source-faithful camera, visible verbs/inventory, continuous persistent
+original action are NOT_VERIFIED. This performance tranche does not complete
+Milestone C. Camera source audit: current package stores only aspect-fit256x224
+pixels, so a true viewport needs checked access to original-resolution SC5VIS
+pixels. Use the existing service/surface; do not invent fallback room data.
+
+---
+
 # Milestone B — first readable authentic object interaction VERIFIED
 
 Runtime commit df8fd88c6f2cdfdcc47612eeeec119119e6ae112. Normal authored startup

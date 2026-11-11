@@ -119,6 +119,29 @@ class PalettePublicationMachine:
 
 
 class PaletteServicePublicationTests(unittest.TestCase):
+    def test_palette_only_preserves_pixels_and_emits_no_dirty_rectangle(self):
+        for flags in (0, 0x30, 0x39):
+            m=PalettePublicationMachine()
+            m.put('SAME_VIDEO_SURFACE_PALETTE_DIRTY',1,1)
+            before=bytes(m.ram[0x402000:0x406000])
+            self.assertFalse(m.run('PushPalettePresent_Far',p=flags))
+            self.assertEqual(m.opcodes(),[m.symbols['SAME_VIDEO_OP_PALETTE_WRITE'],
+                                          m.symbols['SAME_VIDEO_OP_PRESENT']])
+            self.assertEqual(bytes(m.ram[0x402000:0x406000]),before)
+            self.assertEqual(m.get('SAME_VIDEO_SURFACE_PALETTE_DIRTY',1),0)
+            packet=m.events[0]
+            offset=m.symbols['SAME_PKT_ARG0']+2
+            self.assertEqual(int.from_bytes(packet[offset:offset+2],'little'),256)
+
+    def test_palette_only_busy_or_queue_failure_retains_color_ownership(self):
+        for failure in ('capacity','palette','present'):
+            m=PalettePublicationMachine();m.put('SAME_VIDEO_SURFACE_PALETTE_DIRTY',1,1)
+            if failure=='capacity':m.put('SAME_EVENT_COUNT',15)
+            else:m.fail_opcode=m.symbols['SAME_VIDEO_OP_'+('PALETTE_WRITE' if failure=='palette' else 'PRESENT')]
+            self.assertTrue(m.run('PushPalettePresent_Far'))
+            self.assertEqual(m.get('SAME_VIDEO_SURFACE_PALETTE_DIRTY',1),1)
+            self.assertNotIn(m.symbols['SAME_VIDEO_OP_SURFACE_DIRTY'],m.opcodes())
+
     def test_install_marks_dirty_after_exact_copy_and_refuses_queued_owner(self):
         m = PalettePublicationMachine()
         self.assertFalse(m.run('InstallPalette_Far', p=0x39))

@@ -127,3 +127,57 @@ Focused bounds tests execute the production rectangle and clear leaves against
 independent clipping/guard oracles. The full host suite at this tranche ran
 1,433 tests with 12 skips; the subsequent observer regression adds one test.
 Native walking and the rest of Milestone C remain separate pending gates.
+
+
+The subsequent same-ROM walking after-measurement completed in 155.288 seconds:
+`/tmp/astra-bounded-text-walk-20261111/observations/action.json`. Normal inputs
+reach (96,60), standing chore 3, with zero source/INDEX8/PPU differences and no
+sentence submission. Input 13582, target standing PPU 13807: **225 frames**.
+This did not improve on the earlier 192-frame measurement and is not reported
+as a latency success. Generation 256 converted 896 unchanged tiles before the
+later small actor generations. The existing palette-only flush calls the
+full-screen dirty publisher; a palette-only service correction is being tested.
+
+Independent hosted checks for checkpoint `eaad5d89670b94813e3041a12ccc07c6847bfd81`
+passed: https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/42997383207.
+Draft successor PR #15 targets the preserved PR #14 branch. Hosted CI performs
+host tests and assembly/ROM audit, not Nexen execution. Later changes require
+their own results.
+
+## Palette-only publication and tile-shadow word copies
+
+A palette-only SCUMM flush now submits the existing checked palette/PRESENT
+transaction without a full-screen pixel-damage packet. Queue/ownership failures
+retain dirty palette intent. No color, authored timing, DMA budget, or buffer
+allocation changes. Actual-source tests cover success and each refusal boundary.
+
+The authentic after-measurement used ROM
+`288970a5c1f43fd5d8a995fa282c2382f1197c00ad5436992ebda206d0fac6bb`,
+build identity `8877128b5015086eb44d605dbbbf4f51869c7da8ecd52f58d220a8d862aae2cb`,
+and the same complete source package. It contains the palette correction but
+predates the word-copy optimization below. Evidence:
+`/tmp/astra-palette-only-startup-walk-20261111/observations/action.json`.
+Normal controller input walks from (84,60) to (96,60), with no sentence
+submission or gameplay-state writes. Input 12296, first sampled arrival12317,
+standing queued12352, matching PPU12365: **69 frames** input-to-standing,
+48 after sampled arrival,13 after queueing. Source costume/room/cursor,
+INDEX8 and PPU comparisons have zero differing pixels. This shorter walk starts
+at84 rather than the prior82; do not describe it as identical-input A/B.
+The combined startup/walk supervisor exited normally after296.947 seconds and
+left no test-owned emulator/display. This does not certify camera or UI work.
+
+The tile-shadow leaf now compares and copies32 words instead of64 bytes with
+repeated accumulator-width switches. It preserves DBR, stack, tile bounds,
+pending-bit ownership and counters. Actual-source tests cover all64 mismatch
+positions, invalid/valid cache, first/last tiles and adjacent guards.
+The independent six-generation native surface control passed exact PNG,
+INDEX8/VRAM/CGRAM and sparse DMA checks with ROM
+`571e1ead91278bb093eacd30e21996f113099e6a6c1e506ee078b056976d343c`:
+`/tmp/astra-mode3-word-shadow-native-20261111/observations/report.json`.
+468 emulator frames versus651 in the prior same fixture;46.384 supervised
+seconds,43 committed DMA descriptors,0 pending/rejected DMA,0 guest writes.
+Its deliberate locked-producer refusals remain1 each. This backend fixture
+is native evidence for word-copy correctness, not authentic gameplay timing.
+
+Full local suite:1,438 tests executed,1,426 passed,12 skipped. `make validate`
+and the27-region ownership audit pass. No skipped test is native acceptance.

@@ -1253,6 +1253,8 @@ Same_Mode3_ProcessTileCandidates__done:
 ; planes alias only backend-owned rectangle scratch ($18..$1F), which is dead
 ; after candidate construction. No actor/cache/surface allocation is borrowed.
 ; DBR=$41 makes absolute ROL legal (65816 has no absolute-long ROL).
+Same_Mode3_TileScratchLow = SAME_MODE3_TILE_SCRATCH & $FFFF
+Same_Mode3_TileShadowLow = SAME_BWRAM_TILE_SHADOW_BASE & $FFFF
 Same_Mode3_RowPlanes = SAME_MODE3_WORK_X0 & $FFFF
 Same_Mode3_EncodeTile:
     phb
@@ -1348,7 +1350,16 @@ Same_Mode3_EncodeTile__done:
     .i16
     rts
 
+; Compare/copy aligned words within the existing bank-$41 tile shadow. Both
+; regions are even-sized and bounded by the tile index; no speculative read
+; crosses the 64-byte tile. DBR is restored before the pending-bit helper.
 Same_Mode3_CommitEncodedTile:
+    phb
+    sep #$20
+    .a8
+    lda #$41
+    pha
+    plb
     rep #$30
     .a16
     .i16
@@ -1360,72 +1371,50 @@ Same_Mode3_CommitEncodedTile:
     asl
     asl
     sta.l SAME_MODE3_WORK_TEMP
+    tax
+    ldy #$0000
     sep #$20
     .a8
     lda.l SAME_BWRAM_CONTROL_TILE_VALID
     beq Same_Mode3_CommitEncodedTile__copy
     rep #$20
     .a16
-    lda #$0000
-    sta.l SAME_MODE3_WORK_INDEX
 Same_Mode3_CommitEncodedTile__compare:
-    lda.l SAME_MODE3_WORK_INDEX
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_MODE3_TILE_SCRATCH,x
-    sta.l SAME_MODE3_WORK_CHANGED
-    rep #$20
     .a16
-    txa
-    clc
-    adc.l SAME_MODE3_WORK_TEMP
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_BWRAM_TILE_SHADOW_BASE,x
-    cmp.l SAME_MODE3_WORK_CHANGED
+    .i16
+    lda.w Same_Mode3_TileScratchLow,y
+    cmp.w Same_Mode3_TileShadowLow,x
     bne Same_Mode3_CommitEncodedTile__copy
-    rep #$20
-    .a16
-    lda.l SAME_MODE3_WORK_INDEX
-    inc
-    sta.l SAME_MODE3_WORK_INDEX
-    cmp #$0040
+    inx
+    inx
+    iny
+    iny
+    cpy #$0040
     bcc Same_Mode3_CommitEncodedTile__compare
     lda.l SAME_MODE3_CONTROL_UNCHANGED_COUNT
     inc
     sta.l SAME_MODE3_CONTROL_UNCHANGED_COUNT
+    plb
     rts
 Same_Mode3_CommitEncodedTile__copy:
-    rep #$20
+    rep #$30
     .a16
-    lda #$0000
-    sta.l SAME_MODE3_WORK_INDEX
+    .i16
+    lda.l SAME_MODE3_WORK_TEMP
+    tax
+    ldy #$0000
 Same_Mode3_CommitEncodedTile__copy_loop:
-    lda.l SAME_MODE3_WORK_INDEX
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_MODE3_TILE_SCRATCH,x
-    sta.l SAME_MODE3_WORK_CHANGED
-    rep #$20
     .a16
-    txa
-    clc
-    adc.l SAME_MODE3_WORK_TEMP
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_MODE3_WORK_CHANGED
-    sta.l SAME_BWRAM_TILE_SHADOW_BASE,x
-    rep #$20
-    .a16
-    lda.l SAME_MODE3_WORK_INDEX
-    inc
-    sta.l SAME_MODE3_WORK_INDEX
-    cmp #$0040
+    .i16
+    lda.w Same_Mode3_TileScratchLow,y
+    sta.w Same_Mode3_TileShadowLow,x
+    inx
+    inx
+    iny
+    iny
+    cpy #$0040
     bcc Same_Mode3_CommitEncodedTile__copy_loop
+    plb
     lda.l SAME_MODE3_WORK_TILE
     jsr Same_Mode3_SetPendingTile
     rep #$20

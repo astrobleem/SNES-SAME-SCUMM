@@ -1114,6 +1114,24 @@ Same_VideoSurface_PushPendingPalette__clean:
     clc
     rts
 
+; Palette-only producer: the live INDEX8 pixels and tile shadow are unchanged.
+; Reuse the same checked queue capacity and palette/PRESENT transaction, without
+; manufacturing a full-screen SURFACE_DIRTY packet. Dirty colors are retained
+; on every failure, and only accepted PRESENT acknowledges publication.
+Same_VideoSurface_PushPalettePresent_Far:
+    php
+    jsr Same_VideoSurface_PreflightDirtyPresent
+    bcs Same_VideoSurface_PushPalettePresent__fail
+    jsr Same_VideoSurface_PushDirtyPresent__dirty_queued
+    bcs Same_VideoSurface_PushPalettePresent__fail
+    plp
+    clc
+    rtl
+Same_VideoSurface_PushPalettePresent__fail:
+    plp
+    sec
+    rtl
+
 ; Same-room camera reprojection retains the installed RGB8 palette and emits
 ; full-display dirty, any installed palette, then the next generation PRESENT.
 Same_VideoSurface_PushDirtyPresent:
