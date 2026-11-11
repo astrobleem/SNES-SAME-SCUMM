@@ -281,6 +281,7 @@ SAME_DMA_DEFERRED_BUDGET      = $7E2242 ; u16 vblank-budget deferrals
 SAME_DMA_REJECTED             = $7E2244 ; u16 invalid/full requests
 SAME_DMA_FRAME_BYTES          = $7E2246 ; u16 bytes committed this NMI
 SAME_VIDEO_DISPLAY_SHADOW     = $7E2248 ; u8 last INIDISP value requested
+SAME_DMA_PUBLISHING           = $7E224E ; u8 main-thread queue/fence transaction; NMI defers
 SAME_DMA_QUEUE                = $7E2260 ; 8 descriptors * 8 bytes
 SAME_DMA_QUEUE_SLOTS          = $0008
 SAME_DMA_QUEUE_SLOT_SIZE      = $0008

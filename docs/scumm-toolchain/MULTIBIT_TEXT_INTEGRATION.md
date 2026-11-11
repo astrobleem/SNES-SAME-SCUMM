@@ -180,3 +180,35 @@ Private evidence is `/tmp/astra-authored-interface-handoff-20261110` and
 `b578503d90ac1e48c5e63166f4eafe8fb160c2d758520a0d1e3cb6cc038f5d31`;
 its isolated source snapshot predates this documentation commit. These narrow
 observations are not yet a completed Milestone B acceptance.
+
+## Presentation observation and DMA publication interleaving
+
+Continuous cursor animation need not leave a globally idle scene. The observer
+now retains an immutable, locked queued INDEX8/palette generation and compares
+it to actual VRAM/CGRAM after that exact generation commits, before a following
+DMA. A later CPU-side conversion may be in progress, but a later queue/transfer
+cannot satisfy the fence. Source tests reject missed commits, changed room
+identity, unlocked/drifting snapshots and mismatched pixels. No counter alone
+constitutes visual acceptance.
+
+A room10 text-hide observation exposed a separate kernel defect: all eight DMA
+descriptors were inactive while pending remained1, committed341, expected342.
+The same values persisted over a read-only64-frame native capture. Enqueue
+published the active descriptor and then loaded/incremented/stored pending;
+NMI could decrement pending between that load and store. SEI does not mask NMI.
+
+The kernel now owns one explicit byte at `$7E224E` during descriptor/accounting
+publication. NMI defers queue processing while owned, without disabling NMI or
+input. The same bounded ownership protects the completion-fence snapshot used
+by Mode3 and legacy BG2. It prevents both phantom pending counts and torn
+committed-plus-pending snapshots. The byte is inside the existing audited
+kernel region, before TAD at `$7E2250`; no framebuffer/cache memory changes.
+
+`test_dma_publication_interleaving.py` interrupts the actual source publication
+instructions at every boundary, with zero through seven existing requests,
+reject exits and counter-wrap fence snapshots. A negative control removes the
+ownership writes and reproduces the lost update. These are source-instruction
+interleaving tests, not an emulator claim. Pinned assembly/ROM audit and the
+27-region memory audit pass; the corrected native startup is being checked
+separately. Local suite:1,416 tests run,12 skipped. Object interaction remains
+unverified until its original script and readable response are captured.

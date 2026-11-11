@@ -1,3 +1,37 @@
+# Active Milestone B — exact DMA wait defect corrected, native follow-up running
+
+Do not stop at this intermediate correction. Principal object interaction is
+still NOT_VERIFIED; no object action was submitted in the failed scene capture.
+The private room10 continuation stopped at generation78 with no active DMA
+slots, pending1, committed341 and expected342. A read-only64-frame comparison
+confirmed unchanged queue state. This is a kernel producer/NMI lost-update,
+not a guessed interpreter deadlock. Evidence:
+`/tmp/astra-dma-wait-boundary-20261110/observations/action.json`.
+
+The additive fix owns one byte `$7E224E` inside the existing kernel region
+while publishing a descriptor and updating pending; NMI defers only the DMA
+queue. A kernel fence snapshots committed+pending under the same ownership.
+Both Mode3 and legacyBG2 use it. Source-instruction interleaving tests cover
+all publication boundaries and reproduce the unfixed phantom count.
+Pinned assembly/ROM audit pass in `/tmp/astra-text-assembly-build.hust83ai`.
+The new ROM cannot restore older-ROM checkpoints. Its bounded authored startup
+control is `/tmp/astra-dma-fixed-authored-interface-20261110` (no seven-action
+replay, only the established source-owned intro skip edges).
+
+Observer correction retains immutable queued INDEX8/palette and compares the
+exact subsequently committed generation before any following DMA. An actual
+original room10 subtitle has zero font/INDEX8/VRAM/CGRAM differences on prior
+ROM b578503d; its full scene has18 missing cursor pixels because text restored
+the cursor before publication. Do not claim that frame proves visible cursor.
+Current scene acceptance additionally requires actual composed-cursor journal.
+A during talk is absorbed but does not currently acknowledge the original
+line. Use authored expiry, not injected state or a fictitious passing A ack.
+
+Recovery worktree untouched. Full suite and new native correction follow-up
+are in progress; user-visible readable object action remains the objective.
+
+---
+
 # Active Milestone B — authored interface reached; provider handoff correction
 
 HEAD 2df00dd remains published; current additive source changes reconcile code

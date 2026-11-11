@@ -32,6 +32,11 @@ Same_Dma_Reset:
     sta.l SAME_DMA_DEFERRED_BUDGET
     sta.l SAME_DMA_REJECTED
     sta.l SAME_DMA_FRAME_BYTES
+    sep #$20
+    .a8
+    sta.l SAME_DMA_PUBLISHING
+    rep #$20
+    .a16
     ldx #$0000
 Same_Dma_Reset__clear:
     rep #$30
@@ -47,11 +52,16 @@ Same_Dma_Reset__clear:
     rts
 
 ; Caller fills SAME_DMA_REQUEST_*.  Carry clear means queued; carry set means
-; invalid/full.  IRQ masking plus active-last publication prevents NMI from
-; observing a half-written descriptor.
+; invalid/full. SEI does not mask NMI: the explicit kernel publication byte
+; protects both the active-last descriptor and the pending read/modify/write.
+; NMI still runs input/video services, but defers this queue while owned.
 Same_Dma_Enqueue:
     php
     sei
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_DMA_PUBLISHING
     rep #$30
     .a16
     .i16
@@ -113,6 +123,10 @@ Same_Dma_Enqueue__found:
     lda.l SAME_DMA_PENDING
     inc
     sta.l SAME_DMA_PENDING
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_DMA_PUBLISHING
     plp
     clc
     rts
@@ -123,6 +137,10 @@ Same_Dma_Enqueue__reject:
     lda.l SAME_DMA_REJECTED
     inc
     sta.l SAME_DMA_REJECTED
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_DMA_PUBLISHING
     plp
     sec
     rts
@@ -130,6 +148,13 @@ Same_Dma_Enqueue__reject:
 ; Called only by Same_Video_Commit in NMI or reset-time forced blank.
 Same_Dma_ProcessQueue:
     php
+    sep #$20
+    .a8
+    lda.l SAME_DMA_PUBLISHING
+    beq Same_Dma_ProcessQueue__unowned
+    plp
+    rts
+Same_Dma_ProcessQueue__unowned:
     rep #$30
     .a16
     .i16
@@ -319,3 +344,28 @@ Same_Dma_TransferCgram:
     lda #$80
     sta MDMAEN
     rts
+
+; Snapshot the submitted completion fence atomically with respect to NMI.
+; Caller uses A16; preserve P/X/Y/DB. No queue lock escapes this short routine.
+; Using committed+pending without the ownership byte permits a torn snapshot.
+Same_Dma_GetFence_Far:
+    php
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_DMA_PUBLISHING
+    rep #$20
+    .a16
+    lda.l SAME_DMA_COMMITTED
+    clc
+    adc.l SAME_DMA_PENDING
+    pha
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_DMA_PUBLISHING
+    rep #$20
+    .a16
+    pla
+    plp
+    rtl
