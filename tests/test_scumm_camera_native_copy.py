@@ -131,6 +131,10 @@ class CameraTransactionMachine(StripMachine):
         super().__init__()
         self.symbols['SAME_VIDEO_SCENE_BOTTOM']=192
         self.symbols['SAME_VIDEO_CURSOR_UNDERLAY']=0x400620
+        self.symbols.update(SCUMM_LIVE_ROOM_STAGE_PIXELS=4,SCUMM_MSU_ROOM_REQUESTED=1)
+        self.put('SAME_SCUMM_VIEWPORT_ROOM_WIDTH',640)
+        self.put('SAME_SCUMM_VIEWPORT_WIDTH',256)
+        self.put('SAME_SCUMM_VIEWPORT_SOURCE_X',32)
         text=(ROOT/'runtime/snes/engines/scumm_v5_camera_stream.inc.pasm').read_text()
         text=text.split('ScummV5_Camera_ServicePending_Far:',1)[1].split('ScummV5_Camera_Invalid_Far:',1)[0]
         self.code=[];self.labels={};self.calls=[];self.service_writes=[];self.queue_busy=False
@@ -214,6 +218,48 @@ class CameraTransactionTests(unittest.TestCase):
             m.service=service;m.consume()
             self.assertEqual(m.get('SAME_VIDEO_SURFACE_PENDING_VISUAL',1),expected_request)
             self.assertEqual(m.get('SAME_SCUMM_MSU_ROOM_STATE',1),expected_request)
+
+    def test_superseded_checked_crop_never_enters_live_surface_or_video_queue(self):
+        for pending,staged,latest in ((176,56,208),(-100,56,0),(999,56,384)):
+            m=CameraTransactionMachine();m.put('SAME_SCUMM_VIEWPORT_STATE',2,1)
+            m.put('SAME_SCUMM_VIEWPORT_MODE',1,1)
+            m.put('SAME_SCUMM_VIEWPORT_SOURCE_X',staged)
+            m.put('SAME_VIDEO_SURFACE_PENDING_XSTART',pending & 65535)
+            m.put('SAME_VIDEO_SURFACE_SOURCE_X',32)
+            m.ram[0x402000:0x40E000]=bytes([37])*49152
+            m.ram[0x410000:0x41C000]=bytes([99])*49152
+            def prepare(name,p,a):
+                self.assertEqual(name,'ScummV5_Camera_Prepare_Far')
+                self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_STATE',1),0)
+                self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_TEMP'),max(0,pending+32))
+                m.calls.append(name)
+                m.put('SAME_SCUMM_VIEWPORT_SOURCE_X',latest)
+                m.put('SAME_SCUMM_VIEWPORT_STATE',1,1)
+                return p & ~1,a
+            m.service=prepare;failed,writes=m.consume()
+            self.assertFalse(failed)
+            self.assertEqual(m.calls,['ScummV5_Camera_Prepare_Far'])
+            self.assertEqual(m.get('SAME_SCUMM_MSU_ROOM_STATE',1),1)
+            self.assertEqual(m.get('SCUMM_LIVE_ROOM_STAGE',1),4)
+            self.assertEqual(m.get('SAME_VIDEO_SURFACE_SOURCE_X'),32)
+            self.assertEqual(m.ram[0x402000:0x40E000],bytes([37])*49152)
+            self.assertFalse(any(0x402000<=a<0x41E000 for a in writes))
+            # Only the later fully validated crop may reach the live surface.
+            m.put('SAME_SCUMM_VIEWPORT_STATE',2,1)
+            m.service=lambda name,p,a: CameraTransactionMachine.service(m,name,p,a)
+            m.consume()
+            self.assertEqual(m.ram[0x402000:0x40E000],bytes([99])*49152)
+            self.assertIn('Same_VideoSurface_PushDirtyPresent_Far',m.calls)
+
+    def test_coalescing_backpressure_preserves_exclusive_staging_ownership(self):
+        m=CameraTransactionMachine();m.put('SAME_SCUMM_VIEWPORT_STATE',2,1)
+        m.put('SAME_SCUMM_VIEWPORT_MODE',1,1)
+        m.put('SAME_VIDEO_SURFACE_PENDING_XSTART',176)
+        m.service=lambda name,p,a:(p & ~1,a)  # Prepare could not acquire video.
+        failed,writes=m.consume();self.assertFalse(failed)
+        self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_STATE',1),2)
+        self.assertEqual(m.get('SAME_SCUMM_MSU_ROOM_STATE',1),0)
+        self.assertFalse(any(0x402000<=a<0x41E000 for a in writes))
 
     def test_memory_audit_rejects_original_lifecycle_trace_alias(self):
         from unittest.mock import patch

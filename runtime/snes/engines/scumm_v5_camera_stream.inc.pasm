@@ -464,7 +464,7 @@ ScummV5_Camera_ServicePending__check_checked:
     rtl
 ScummV5_Camera_ServicePending__camera_owned:
     .a8
-    jmp ScummV5_Camera_ServicePending__commit
+    jmp ScummV5_Camera_ServicePending__coalesce
 ScummV5_Camera_ServicePending__not_ready:
     .a8
     cmp #$00
@@ -601,6 +601,64 @@ ScummV5_Camera_ServicePending__published:
     ; as the newest request. The idle comparison clears an unchanged request.
     lda #$01
     sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+    clc
+    rtl
+
+; A checked crop is still private staging, not a presentation obligation.
+; If the authored camera advanced during I/O, avoid installing and encoding
+; an obsolete full frame. Keep the old displayed geometry and restart through
+; the same checked-strip adapter. This never cancels an in-flight provider read.
+ScummV5_Camera_ServicePending__coalesce:
+    .a8
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_SURFACE_PENDING_XSTART
+    clc
+    adc #$0020
+    bpl ScummV5_Camera_ServicePending__latest_positive
+    lda #$0000
+ScummV5_Camera_ServicePending__latest_positive:
+    .a16
+    sta.l SAME_SCUMM_VIEWPORT_TEMP
+    lda.l SAME_SCUMM_VIEWPORT_ROOM_WIDTH
+    sec
+    sbc.l SAME_SCUMM_VIEWPORT_WIDTH
+    cmp.l SAME_SCUMM_VIEWPORT_TEMP
+    bcc ScummV5_Camera_ServicePending__latest_bounded
+    lda.l SAME_SCUMM_VIEWPORT_TEMP
+ScummV5_Camera_ServicePending__latest_bounded:
+    .a16
+    cmp.l SAME_SCUMM_VIEWPORT_SOURCE_X
+    bne ScummV5_Camera_ServicePending__superseded
+    sep #$20
+    .a8
+    jmp ScummV5_Camera_ServicePending__commit
+ScummV5_Camera_ServicePending__superseded:
+    .a16
+    sep #$20
+    .a8
+    ; Temporarily release only inside synchronous Prepare, which reacquires
+    ; the same staging alias before returning. No producer interleaves here.
+    lda #$00
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    jsl ScummV5_Camera_Prepare_Far
+    bcc ScummV5_Camera_ServicePending__reprepared
+    jml ScummV5_Camera_Invalid_Far
+ScummV5_Camera_ServicePending__reprepared:
+    .a8
+    lda.l SAME_SCUMM_VIEWPORT_STATE
+    bne ScummV5_Camera_ServicePending__restart_checked
+    ; Backpressure: keep exclusive ownership of the old unpublished stage.
+    lda #$02
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    clc
+    rtl
+ScummV5_Camera_ServicePending__restart_checked:
+    .a8
+    lda #SCUMM_LIVE_ROOM_STAGE_PIXELS
+    sta.l SCUMM_LIVE_ROOM_STAGE
+    lda #SCUMM_MSU_ROOM_REQUESTED
+    sta.l SAME_SCUMM_MSU_ROOM_STATE
     clc
     rtl
 
