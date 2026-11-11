@@ -74,6 +74,13 @@ class SnesVideoBackendTests(unittest.TestCase):
             self.assertIn("SAME_VIDEO_ACTIVE_CONVERT_TILE_BUDGET = $0004", constants)
             self.assertEqual(len((output / "video_backend_mode3_tilemap.bin").read_bytes()), 2048)
             self.assertEqual(result["carrier"], "sa1_bwram")
+            frame = (output / "video_backend_frame.inc.pasm").read_text()
+            self.assertIn("jsl Same_Mode3_Frame_Far", frame)
+            native = (ROOT / "runtime/snes/services/video_mode3.pasm").read_text()
+            hook = native.split("Same_Mode3_Frame_Far:", 1)[1].split("Same_Mode3_Step:", 1)[0]
+            self.assertEqual(hook.count("jsl Same_Mode3_Step_Far"), 4)
+            self.assertNotIn("bra ", hook)  # bounded, never a busy wait
+
 
     def test_surface_dirty_wire_and_clipping(self) -> None:
         packet = SurfaceDirtyPacket(250, 220, 20, 20)

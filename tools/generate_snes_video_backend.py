@@ -174,7 +174,7 @@ def generate(
     else:
         hooks = {
             "boot": "    jsl Same_Mode3_Boot_Realize_Far\n",
-            "frame": "    jsl Same_Mode3_Step_Far\n",
+            "frame": "    jsl Same_Mode3_Frame_Far\n",
             "reset": "    jsl Same_Mode3_Reset_Far\n",
             "service": "    jsl Same_Mode3_Handle_Far\n    plp\n    rts\n",
             "commit": (

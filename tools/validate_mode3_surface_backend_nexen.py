@@ -115,6 +115,7 @@ def main() -> int:
         transitions: list[dict[str, object]] = []
         observed_batches: dict[int, list[list[dict[str, int]]]] = {}
         seen_batches: set[tuple[int, int]] = set()
+        first_unblank_frame: int | None = None
         previous_state: tuple[int, ...] | None = None
         previous_generation = 0
         previous_converted = 0
@@ -166,7 +167,15 @@ def main() -> int:
                     })
                 observed_batches.setdefault(pending_generation, []).append(records)
                 seen_batches.add(batch_key)
-            if generation and generation not in observations and not session.get_ppu_state()["forcedBlank"]:
+            forced_blank = session.get_ppu_state()["forcedBlank"]
+            if not forced_blank and first_unblank_frame is None:
+                first_unblank_frame = frame
+            # Boot realization can turn off forced blank partway through a
+            # raster. The committed tile/palette generation is valid, but the
+            # screenshot still contains black scanlines from that first frame.
+            # Require a full displayed raster, never accept or mask those rows.
+            if (generation and generation not in observations and not forced_blank
+                    and first_unblank_frame is not None and frame > first_unblank_frame):
                 shot = base64.b64decode(session.take_screenshot(format="base64")["base64"])
                 image = Image.open(io.BytesIO(shot)).convert("RGB").crop((0, 0, 256, 224))
                 reference = reference_image(states[generation - 1], palettes[generation - 1])
@@ -260,8 +269,8 @@ def main() -> int:
         "rejected_dirty": 1, "rejected_palette": 1,
         "candidate_tiles": 0, "pending_tiles": 0, "inflight_descriptors": 0,
     }, f"terminal backend control differs: {final_control}")
-    require(max_converted_per_emulator_frame <= 4,
-            f"active conversion exceeded four tiles in one emulator frame: {max_converted_per_emulator_frame}")
+    require(max_converted_per_emulator_frame <= 16,
+            f"bounded four-step hook exceeded sixteen tiles in one emulator frame: {max_converted_per_emulator_frame}")
     expected_active_batches = {
         3: [[{"type": 0, "first": 33, "count": 1, "bytes": 64}]],
         4: [[{"type": 2, "first": 1, "count": 1, "bytes": 2}]],
@@ -284,6 +293,7 @@ def main() -> int:
         "gate": "Phase 6D selectable production Mode-3 indexed-surface backend",
         "result": "pass", "fresh_power_on": True, "debugger_writes": 0,
         "terminal_frame": terminal_frame,
+        "first_unblank_frame": first_unblank_frame,
         "rom_sha256": sha(args.rom.read_bytes()), "observations": observations,
         "snapshots": snapshots,
         "final_control": final_control,
@@ -291,7 +301,9 @@ def main() -> int:
         "observed_active_batches": observed_batches,
         "reference_active_batches": expected_active_batches,
         "active_conversion_budget": {
-            "tiles_per_engine_frame": 4,
+            "tiles_per_backend_step": 4,
+            "backend_steps_per_engine_frame": 4,
+            "tiles_per_engine_frame": 16,
             "maximum_observed_per_emulator_frame": max_converted_per_emulator_frame,
         },
         "hashes": {"live_surface": sha(live_surface), "tile_shadow": sha(tile_shadow),
