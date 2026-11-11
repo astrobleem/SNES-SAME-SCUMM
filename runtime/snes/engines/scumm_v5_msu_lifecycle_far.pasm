@@ -18,7 +18,15 @@ ScummV5_M23A_RunPendingLifecycleChild_FarEntry__has_child:
 ScummV5_M23A_RunPendingLifecycleChild_FarEntry__slot_valid:
     .a8
     sta.l SAME_SCUMM_C4_SCAN_SLOT
+    ; TAX into X16 copies the hidden accumulator B byte even in A8 mode.
+    ; A prior camera/message wait can leave a nonzero high byte here.
+    rep #$30
+    .a16
+    .i16
+    and #$00FF
     tax
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
     cmp.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM
     beq ScummV5_M23A_RunPendingLifecycleChild_FarEntry__identity_valid
@@ -45,7 +53,13 @@ ScummV5_M23A_RunPendingLifecycleChild_FarEntry__needs_service:
     ; lifecycle parent remains slot zero and is rehydrated on the next pass.
     lda.l SAME_SCUMM_C4_SCAN_SLOT
     sta.l SAME_SCUMM_C4_CURRENT_SLOT
+    rep #$30
+    .a16
+    .i16
+    and #$00FF
     tax
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
     sta.l SAME_SCUMM_STATUS
     lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x

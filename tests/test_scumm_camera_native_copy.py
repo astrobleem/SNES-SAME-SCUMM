@@ -30,7 +30,7 @@ class StripMachine(ServiceMachine):
         self.ram[0x410000:0x41E000]=bytes(57344)
 
     def consume(self):
-        a=x=y=pc=0;p=0;stack=[];written=[]
+        a=x=y=pc=0;p=0;stack=[];written=[];returns=[]
         cache={}
         def value(expr):
             if expr not in cache:cache[expr]=self.value(expr)
@@ -39,6 +39,12 @@ class StripMachine(ServiceMachine):
             op,_,arg=self.code[pc].partition(' ');pc+=1
             bits=8 if p&32 else 16;mask=(1<<bits)-1;v=addr=None;result=None
             if arg.startswith('#'):v=value(arg[1:])
+            elif arg.endswith(',s'):
+                flat=[]
+                for item,width in stack:
+                    if width==16:flat.append((item>>8)&255)
+                    flat.append(item&255)
+                n=int(arg[:-2]);v=flat[-n]|((flat[-n-1]<<8) if bits==16 else 0)
             elif '.l' in op:
                 addr=value(arg.removesuffix(',x'))+(x if arg.endswith(',x') else 0)
                 v=self.get(addr,bits//8)
@@ -56,12 +62,14 @@ class StripMachine(ServiceMachine):
                 delta=(a&mask)-v;p=(p&~0x83)|int(delta>=0)|(2 if delta==0 else 0)|(128 if delta&(1<<(bits-1)) else 0)
             elif op=='asl':result=(a&mask)<<1
             elif op=='eor':result=(a&mask)^v
+            elif op=='and':result=(a&mask)&v
             elif op=='inc':result=(a&mask)+1
             elif op=='dec':result=(a&mask)-1
             elif op=='xba':result=((a&255)<<8)|(a>>8)
             elif op=='ldx':x=v
             elif op=='cpx':
                 delta=x-v;p=(p&~0x83)|int(delta>=0)|(2 if delta==0 else 0)|(128 if delta&32768 else 0)
+            elif op=='txa':result=x
             elif op=='tax':x=a&65535
             elif op=='tay':y=a&65535
             elif op=='tyx':x=y
@@ -72,11 +80,13 @@ class StripMachine(ServiceMachine):
             elif op=='phx':stack.append((x,16))
             elif op=='plx':x,width=stack.pop();assert width==16
             elif op=='jsl':
-                p,a=self.service(arg,p,a);written.extend(self.service_writes);self.service_writes=[]
+                if arg in self.labels:returns.append(pc);pc=self.labels[arg]
+                else:p,a=self.service(arg,p,a);written.extend(self.service_writes);self.service_writes=[]
             elif op in ('beq','bne','bcc','bcs','bpl','bra','jmp'):
                 take={'beq':bool(p&2),'bne':not p&2,'bcc':not p&1,'bcs':bool(p&1),'bpl':not p&128,'bra':True,'jmp':True}[op]
                 if take:pc=self.labels[arg]
             elif op=='rtl':
+                if returns:pc=returns.pop();continue
                 assert not stack
                 return bool(p&1),written
             else:raise AssertionError((op,arg))
