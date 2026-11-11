@@ -200,3 +200,28 @@ Installation now derives limits from validated source width and starts at the
 left logical viewport. Same-room refresh never resets authored scroll limits.
 Synthetic tests cover narrow/wide rooms, entry ordering, and retained authored
 limits. Current-ROM camera presentation remains a separate native gate.
+
+### Camera request ownership correction
+
+With the corrected bounds, the original room script reached camera X=336
+(viewport start176), but the checked viewport request stayed unclaimed. The
+bounded trace retained the old displayed actor, pending visual intent, idle
+unlocked video backend, and continuing executable reads. This is not accepted
+scrolling presentation. The camera path waited for REQUEST_SLOT to clear,
+while the engine could consume a completed page and start its next read before
+the visual phase. Actor loading already reconciles this boundary; pending
+camera admission now uses the same cache-owned completion routine before
+checking provider availability. It neither publishes unchecked bytes nor
+changes cache identity, page limits, waiter pins, or scheduling semantics.
+Pending reads still wait, and failed reads preserve their explicit error.
+Source-instruction regressions reproduce the old refusal and exercise completed,
+pending, and failed admission. Current-image native validation is separate.
+
+The host room-load fix also preserves saved camera destinations and scroll
+bounds when rebuilding resources during restore. Full suite after correction:
+1,492 tests run, 12 skipped; 33-region ownership audit and pinned assembly pass.
+Hosted checks for3495344 pass at run43024771853; the later admission correction
+requires its own run. The native observer now requires a completed stable
+raster as well as committed indexed/PPU generations; an inventory image taken
+inside the first raster remains unaccepted. Neither a Python observer exception
+nor a timeout is reported as an engine deadlock.

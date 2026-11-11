@@ -518,6 +518,15 @@ ScummV5_Camera_ServicePending__changed:
     rtl
 ScummV5_Camera_ServicePending__actor_drained:
     .a8
+    ; Storage runs after scripts. Retire a completed executable read through
+    ; its cache owner before claiming the camera request; otherwise the next
+    ; engine turn can start another code read forever and starve this viewport.
+    ; READY/waiter pins and failure provenance remain owned by the code cache.
+    jsl ScummV5_MsuProgram_ReconcileRead_Far
+    bcc ScummV5_Camera_ServicePending__read_reconciled
+    rtl
+ScummV5_Camera_ServicePending__read_reconciled:
+    .a8
     lda.l SAME_MSU1_STATUS
     cmp #SAME_MSU1_STATE_READING
     beq ScummV5_Camera_ServicePending__wait

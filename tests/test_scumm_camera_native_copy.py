@@ -231,3 +231,58 @@ class CameraRoomPreemptionTests(unittest.TestCase):
         m=self.machine();m.put('SAME_MSU1_STATUS',255,1)
         waiting,writes=m.consume();self.assertTrue(waiting);self.assertEqual(writes,[])
         self.assertEqual(m.calls,['ScummV5_MsuRoom_Service_Far__fail'])
+
+
+class CameraCheckedReadAdmissionTests(unittest.TestCase):
+    def machine(self, status=5, failure=False, old=False):
+        m=CameraTransactionMachine()
+        m.symbols.update(SAME_MSU1_STATE_READING=4,SCUMM_LIVE_ROOM_STAGE_PIXELS=4,
+                         SCUMM_MSU_ROOM_REQUESTED=1)
+        if old:
+            # Reproduce the original end-of-frame READ_OK ownership starvation.
+            # Remove the entire new call/error branch, then rebuild labels.
+            source=(ROOT/'runtime/snes/engines/scumm_v5_camera_stream.inc.pasm').read_text()
+            source=source.split('ScummV5_Camera_ServicePending_Far:',1)[1].split('ScummV5_Camera_Invalid_Far:',1)[0]
+            start=source.index('    jsl ScummV5_MsuProgram_ReconcileRead_Far')
+            end=source.index('    lda.l SAME_MSU1_STATUS',start)
+            source=source[:start]+source[end:]
+            m.code=[];m.labels={}
+            for raw in source.splitlines():
+                line=raw.split(';')[0].strip()
+                if not line or line.startswith('.') :continue
+                if line.endswith(':'):m.labels[line[:-1]]=len(m.code)
+                else:m.code.append(line)
+        m.put('SAME_VIDEO_SURFACE_PENDING_XSTART',176)
+        m.put('SAME_VIDEO_SURFACE_WIDTH',640)
+        m.put('SAME_VIDEO_SURFACE_COPY_WIDTH',256)
+        m.put('SAME_VIDEO_SURFACE_SOURCE_X',32)
+        m.put('SAME_VIDEO_SURFACE_ROOM',17,1)
+        m.put('SAME_MSU1_STATUS',status,1)
+        m.put('SAME_SCUMM_MSU_CACHE_REQUEST_SLOT',1,1)
+        def service(name,p,a):
+            m.calls.append(name)
+            if name=='Same_VideoSurface_CanWrite_Far':return p&~1,a
+            if name=='ScummV5_MsuProgram_ReconcileRead_Far':
+                if failure:return p|1,a
+                if status==5:m.put('SAME_SCUMM_MSU_CACHE_REQUEST_SLOT',255,1)
+                return p&~1,a
+            raise AssertionError(name)
+        m.service=service
+        return m
+
+    def test_completed_code_read_admits_camera_before_another_scheduler_turn(self):
+        m=self.machine();failed,_=m.consume();self.assertFalse(failed)
+        self.assertEqual(m.calls,['Same_VideoSurface_CanWrite_Far','ScummV5_MsuProgram_ReconcileRead_Far'])
+        self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_MODE',1),1)
+        self.assertEqual(m.get('SAME_SCUMM_MSU_ROOM_STATE',1),1)
+        self.assertEqual(m.get('SAME_SCUMM_MSU_ROOM_ID',1),17)
+        old=self.machine(old=True);old_failed,_=old.consume();self.assertFalse(old_failed)
+        self.assertEqual(old.get('SAME_SCUMM_VIEWPORT_MODE',1),0)
+        self.assertEqual(old.get('SAME_SCUMM_MSU_CACHE_REQUEST_SLOT',1),1)
+
+    def test_pending_or_failed_read_does_not_claim_camera(self):
+        for status,failure in ((4,False),(3,False),(255,True)):
+            m=self.machine(status,failure);failed,_=m.consume()
+            self.assertEqual(failed,failure)
+            self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_MODE',1),0)
+            self.assertEqual(m.get('SAME_SCUMM_MSU_ROOM_STATE',1),0)

@@ -4023,3 +4023,17 @@ but limits stayed160/160; ordinary room installation omitted source bounds.
 Host/native commit correction and physical B/name-cache bounds fixes have
 focused tests and pinned assembly; current-image native camera proof pending.
 No emulator owned by these tests remains. Unrelated user Nexen7381 untouched.
+
+### Current Milestone C camera admission test
+
+3495344 is pushed and hosted CI43024771853 is green. Original current-ROM
+pickup/inventory/B-close passed, with owner1/state1, but the camera observer
+first failed on a missing import. Its corrected matching-state continuation
+proved the logical source pan but exposed real camera request starvation:
+video idle, pending visual, continuing executable reads, no viewport claim.
+The new camera path reconciles READ_OK through the existing cache owner.
+Focused admission regressions, full1492 tests/12skips, validation and pinned
+assembly pass. A fresh source-bound native session is running at
+/tmp/astra-camera-admission-continuous-20261111 (600sec supervisor, port7421).
+No old checkpoint crosses ROM identities. No accepted seven-action replay.
+Observer errors and incomplete rasters remain failures, with all data retained.
