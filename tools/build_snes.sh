@@ -1336,8 +1336,11 @@ else
         > runtime/snes/generated/msu1_package.inc.pasm
     printf '%s\n' '; Generated empty MSU-1 test vectors (diagnostic engine disabled).' \
         > runtime/snes/generated/msu1_read_cases.inc.pasm
-    # main.pasm includes the SCUMM ProgramUnit directory unconditionally;
-    # Poppy resolves include paths before evaluating the feature guards.
+fi
+# The provider-only client also needs an empty SCUMM include: Poppy opens
+# include paths before evaluating feature guards. Do not inherit stale output
+# from a previous streamed-SCUMM build, or overwrite an enabled directory.
+if [[ "${SAME_BUILD_SCUMM_MSU1_PROGRAMS:-0}" != "1" ]]; then
     printf '%s\n' '; Generated empty SCUMM ProgramUnit directory (MSU programs disabled).' \
         > runtime/snes/generated/scumm_v5_msu_programs.inc.pasm
 fi
