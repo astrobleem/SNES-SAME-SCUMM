@@ -4101,3 +4101,30 @@ Evidence: /tmp/astra-camera-script-position-listed-20261111 and
 /tmp/astra-camera-completed-fence-20261111. Storage read-loop batching is a
 separate uncommitted performance change; preserve its tests and validate
 natively before claiming performance. No new story replay required.
+
+
+### Published functional checkpoint; measured backend responsiveness boundary
+
+0bbd67b includes checked-read counter batching and clean provider-only build
+ownership. Hosted run43045634973 passed both jobs. Winston A/B same-package
+native control:257508bytes,2656→2144frames, medianReadStep80927→46770counterunits.
+Production256-byte full-directory boot reached authenticroom68,error0. These
+are separate identities; no performance result is transferred to the older
+continuous gameplay recording. Six-generation Mode3 pixel control passes;
+1835actualtileintervals median6565counterunits. Camera staging destroys the
+planarshadow, requiring896tileconversions+57344DMAbytes perpublication.
+Responsive scrolling remainsOPEN and needs retained/incremental viewport
+presentation, not another story replay or timeout increase.
+
+CRC fault control correctly rejected bad data but exposed Winston diagnostic
+u8→u16casecopy; allthreefailureexits nowzeroextend. CorrectednativeROM80b51214...
+rejectscase2/CRC6 atframe24,guardsintact,noassetpublication,5.304s normalcleanup.
+All97lateststorage/performancefiles preservedprivatelywithSHA256manifest under
+provider-and-renderer-cost-final. Separateprogressionworktreeuntouched.
+Do not call the current fullviewport backend responsive or MilestoneCcomplete.
+PR15 staysdraft, successor to14; no protectedmainmerge.
+
+Final source checks:1508tests run1496passed12skipped,makevalidate/33regions,
+Python/Bash/JSON/diffclean. CorrectedWinstonROM17nongeneratedassemblyinputs
+matchsource; privatebuildGitdiffers. No ownedNexen/Xvfbleft; unrelatedPID104488
+onport7381leftuntouched. Privateevidenceandseparateprogressiontreepreserved.

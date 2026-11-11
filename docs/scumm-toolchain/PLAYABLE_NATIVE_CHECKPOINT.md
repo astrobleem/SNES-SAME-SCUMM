@@ -124,3 +124,12 @@ The isolated assembly snapshot contains this camera correction but not later
 checked-read batching work. Full suite1502run,1490passed,12skipped; memory audit
 and pinned assembly/ROM audit pass. Forward/reverse presentation remains slow;
 this correction establishes semantics and fidelity, not a latency success.
+
+
+Observer qualification: execution hooks in the cold camera diagnostic were
+registered before power reset, which clears Nexen hooks. Their absence cannot
+establish whether the superseded-crop branch executed. Its actual-source host
+regression passes; branch-specific native coverage remains unverified. The
+completed forward/reverse indexed/PPU captures remain independently valid.
+See PLAYABLE_PRESENTATION_LATENCY.md for subsequent checked-read improvements,
+native failure coverage and the unresolved full-viewport presentation gate.

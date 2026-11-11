@@ -284,3 +284,81 @@ and execute; no result is transferred between their ROM identities.
 
 These changes reduce transfer CPU overhead. They do not remove the measured
 full-viewport conversion/publication cost or certify responsive scrolling.
+
+
+## Native cost boundary and explicit remaining gate
+
+The existing six-generation copyright-free Mode-3 control passed with the
+current renderer bytes: all indexed/PPU/palette comparisons, 43 DMA operations,
+terminal frame 468. Entry/exit hooks installed **after** cold reset recorded
+1,835 tile conversions, with median 6,565 Nexen cycle-counter units per tile.
+These units are reported as observed, not converted into device throughput or
+wall-clock time. The source hash of the actual renderer in this ROM matches
+this branch. A first profiling attempt installed hooks before reset: reset
+removed them. Its image control passed, but it supplied no CPU-cost evidence.
+
+- ROM: `571e1ead91278bb093eacd30e21996f113099e6a6c1e506ee078b056976d343c`
+- Map: `c6f73508bfeb53752ff3c15063e72f92f096ac7802c534708056d09a1b7c833c`
+- Renderer: `11f3b17a8a0cbea93747c3fbd2ed1179fb22ef1861e7356e8a21dbe348bc6529`
+- Local report: `astra-mode3-cost-after-reset-20261111/observations/cpu-profile.json`
+
+This isolates the remaining cost from SCUMM scripts and storage waits. Camera
+staging currently aliases the complete planar shadow. Preparing a checked
+crop clears that alias; publication must invalidate every tile, including
+zero tiles whose old VRAM contents are otherwise unknown. The 896 tiles then
+require conversion and 57,344 character bytes of DMA. At the existing 2,048-byte
+frame budget, character data alone requires at least 28 full payload budgets;
+queue/map/palette overhead and CPU conversion add to that. The authentic
+camera trace measured approximately 336 frames in conversion and another 96
+in queued publication. This is not an authored SCUMM delay.
+
+A few-frame full-viewport update is therefore not provided by this backend
+contract. The next required backend capability is retained/incremental camera
+presentation that preserves checked transaction semantics, actor restoration,
+HUD/cursor ownership, and NMI-owned transfers. It must avoid destroying and
+rebuilding the entire shadow on each pan. Simply removing invalidation would
+publish stale tiles; raising budgets cannot remove the measured total work.
+No alternate renderer, guessed memory allocation, or relaxed checksum was
+introduced to conceal this limitation. **Responsive scrolling remains OPEN;
+the functional continuous gameplay checkpoint is not full Milestone C acceptance.**
+
+## Native corrupt-read rejection and diagnostic field correction
+
+An isolated copy of the original Winston package had one byte flipped at
+32753, within case 2's 31-byte checked request. Trusted header, directory and
+tail remained unchanged. The provider correctly returned ERROR/CRC6 after the
+first two cases, without visual-resource publication. That first run also
+exposed a pre-existing diagnostic bug: three failure exits copied the byte
+CASE_INDEX as a word, incorporating the adjacent CASES_PASSED low byte. Case 2
+was reported as $0202. Preserve the failed assertion; it is not a failed CRC
+check or a successful original diagnostic result.
+
+All three exits now mask the case index to $00FF before storing the word
+FAILED_CASE. Actual-source host tests vary both case identity and adjacent
+counter, preserving the latter. The newly assembled control reports case 2,
+CRC6, both $A5 guards intact, zero completed visual reads and no CRC-success
+publication. It terminates at frame 24, normally, in 5.304 seconds including
+private display/process supervision. No retries of unchanged binaries, guest
+writes, commercial gameplay or silent ROM fallback were involved.
+
+- ROM: `80b512144a750a428395651cddb4e890da73e235ece850112b07c8d45bdb865f`
+- Map: `2752a705573c25a13c86819633d27df93c66cd3aece642066ba2d3a2ed1ff361`
+- Build identity: `891b7bc134d443fb8cb8fb00b0ba009b09d4ebfda8fa85605fab2f190102767a`
+- Fault package: `b35e5f29288b6fc29a4c48be2cce1e5f2813a9749e761433d119c04bfa51bb86`
+- Original package: `94c05cddcd1ad704b8cad9961e86bf12c275201a1aa880af0b0b39b75d4cfd6e`
+- Local report: `astra-quantum-crc-case-corrected-20261111/observations/report.json`
+
+These failure and performance records, including failed observer attempts,
+commands, build identities and cleanup results, are retained outside Git under
+`/home/chad/SAME-private-evidence/milestone-c-20261111/provider-and-renderer-cost-final`
+with a SHA-256 manifest. They do not replace the separate ROM-bound continuous
+pickup/inventory/camera evidence. Hosted CI does not run Nexen.
+
+
+Final local validation: 1,508 tests run, 1,496 passed, 12 skipped; `make validate`
+passes, including Poppy lint and the 33-region WRAM/BW-RAM ownership audit.
+Python compilation, 60 tracked JSON files, all 3 tracked Bash scripts, and
+`git diff --check` pass. Pinned assembly/ROM audit passes for the corrected
+Winston image; all 17 non-generated assembler inputs match this source tree.
+The private generated build Git identity is distinct from the public source
+checkpoint. Skips and hosted assembly are never counted as Nexen acceptance.

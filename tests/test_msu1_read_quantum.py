@@ -109,3 +109,22 @@ class CheckedReadQuantumTests(unittest.TestCase):
         self.verify(m,256)
         self.assertEqual(m.get('SAME_MSU1_STATUS',1),255)
         self.assertEqual(m.get('SAME_MSU1_READ_COUNT'),0)
+
+
+class WinstonFailureIdentityTests(unittest.TestCase):
+    def test_all_failure_exits_zero_extend_the_byte_case_index(self):
+        source = (ROOT/'runtime/snes/engines/winston_io.pasm').read_text()
+        copies = re.findall(r"    lda.l SAME_WINSTON_IO_CASE_INDEX\n(?:    and[^\n]*\n)?    sta.l SAME_WINSTON_IO_FAILED_CASE", source, re.S)
+        self.assertEqual(len(copies), 3)
+        m = StripMachine()
+        for copy in copies:
+            m.code = ['rep #$20'] + [line.strip() for line in copy.splitlines()] + ['rts']
+            m.code = [line.split(';')[0].strip() for line in m.code]
+            for case in (0, 2, 17, 255):
+                for completed in (0, 2, 255, 256, 65535):
+                    m.put('SAME_WINSTON_IO_CASE_INDEX', case, 1)
+                    m.put('SAME_WINSTON_IO_CASES_PASSED', completed)
+                    m.put('SAME_WINSTON_IO_FAILED_CASE', 65535)
+                    m.consume()
+                    self.assertEqual(m.get('SAME_WINSTON_IO_FAILED_CASE'), case)
+                    self.assertEqual(m.get('SAME_WINSTON_IO_CASES_PASSED'), completed)

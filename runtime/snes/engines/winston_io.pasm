@@ -176,6 +176,7 @@ Same_ActiveEngine_Frame__fail:
     rep #$20
     .a16
     lda.l SAME_WINSTON_IO_CASE_INDEX
+    and #$00FF ; case is u8; adjacent CASES_PASSED is not part of its identity
     sta.l SAME_WINSTON_IO_FAILED_CASE
 Same_ActiveEngine_Frame__done:
     rep #$30
@@ -334,6 +335,7 @@ Same_WinstonIO_BeginCase__failed:
     rep #$20
     .a16
     lda.l SAME_WINSTON_IO_CASE_INDEX
+    and #$00FF ; case is u8; adjacent CASES_PASSED is not part of its identity
     sta.l SAME_WINSTON_IO_FAILED_CASE
     plp
     rts
@@ -409,6 +411,7 @@ Same_WinstonIO_CheckCurrentCase__fail:
     rep #$20
     .a16
     lda.l SAME_WINSTON_IO_CASE_INDEX
+    and #$00FF ; case is u8; adjacent CASES_PASSED is not part of its identity
     sta.l SAME_WINSTON_IO_FAILED_CASE
 Same_WinstonIO_CheckCurrentCase__done:
     plp
