@@ -1,3 +1,35 @@
+# Milestone B — first readable authentic object interaction VERIFIED
+
+Runtime commit df8fd88c6f2cdfdcc47612eeeec119119e6ae112. Normal authored startup
+and three source-owned X skips reach room10; normal LEFT/A/Y/A selects Look at
+taxi and submits original object140/verb9 once. The visible source-font response
+is "It's a taxi." Room10 RUNNING/error0, Ego(82,59), zero guest writes. Caption,
+response and a later normal walk to(96,60)/standing3 have zero full source
+INDEX8/PPU differences. All native controls finished within their watchdogs.
+No further native run is needed for this bounded acceptance.
+
+Evidence: /tmp/astra-milestone-b-final-20261111/acceptance.json links the raw
+journals, offline source comparisons and exact ROM/map/package/build hashes.
+ROM bb12cd2092668a44330b31d3365a9714cc6f4f550773aad1e041cf880a3d8d0e.
+All356 runtime/src/tools files match the isolated assembled source; the
+original build identity retains its temporary Git identity, not a fabricated
+claim that this documentation commit was executed.
+
+1,420 local tests run (1,408 pass,12 skip); make validate, pinned assembly,
+ROM and27-region memory audits pass. Both hosted jobs green on df8fd88:
+https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/42972298471 .
+Current normal-walk input-to-standing presentation:192frames; semantic arrival
+observed within20. Different room/distance from old274 baseline, not controlled
+A/B. Action input-to-readable-response513frames. Latency still needs work.
+
+See docs/scumm-toolchain/MULTIBIT_TEXT_INTEGRATION.md for final acceptance.
+Keep PR14 draft for review; no automatic merge. Remaining limits include
+compact caption-only UI, whole-room aspect fit, single unscaled actor, general
+text pagination, audio and portable saves. Whole-game NOT_READY. Do not restart
+the seven-action route or touch the separate progression recovery worktree.
+
+## Historical checkpoint (superseded)
+
 # Active Milestone B — exact DMA wait defect corrected, native follow-up running
 
 Do not stop at this intermediate correction. Principal object interaction is

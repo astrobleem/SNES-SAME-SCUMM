@@ -1,7 +1,8 @@
-# Native multibit text integration — Milestone B in progress
+# Native multibit text integration — first readable object interaction
 
-The source-font rasterization gate passes. Authentic verb/object interaction
-remains unverified; this is not a completed gameplay milestone.
+The bounded authentic text-and-object interaction passes. See the completed
+2026-11-11 acceptance below for current identities, captures and limitations.
+Earlier sections retain the engineering history and narrower evidence.
 
 ## Implemented
 
@@ -260,3 +261,129 @@ whole-room aspect-fit into256pixels; it is not a source-faithful camera crop.
 Both hosted jobs pass for a6051da:
 https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/42970095323 .
 Hosted assembly is not Nexen execution. Commercial artifacts remain outside Git.
+
+## Completed readable interaction — 2026-11-11
+
+The principal Milestone B gate passes on runtime revision
+`df8fd88c6f2cdfdcc47612eeeec119119e6ae112`: normal controller input selects
+**Look at taxi**, executes the original object verb, and presents **It's a
+taxi.** with the original room, Indy and cursor still visible. The following
+acceptance supersedes the earlier in-progress status; earlier failed captures
+remain historical evidence, not passes transferred to this ROM.
+
+The full 2,203-ProgramUnit/2,376-page package follows authored startup through
+0 -> 68 -> 0 -> 4 -> 1 -> 10. Three ordinary X edges invoke the source cutscene
+skip mechanism and allow the scripts to restore their saved verbs. No forced
+verb enable, synthetic story, guest gameplay write or seven-action replay is
+used. Room 10 is the legitimate interactive state reached by this prefix.
+
+From the matching-ROM room10 checkpoint, seven LEFT edges move the cursor from
+(84,60) to (70,60). A selects the source taxi, Y cycles the active Use verb to
+Look at, and one A submits the action after the new caption is visibly
+presented. The sentence counter changes 64 -> 65 exactly once. Absolute
+initial diagnostic counter values are not assumed to be zero. The source
+object is 140, verb9, canonical ProgramUnit178, carrier-relative entry53.
+Its original instruction bytes hash to
+`b04a90d9e2ef30246283645ce33b94c6bf486a1ddc02800e4baad4be12618cbe`.
+The isolated host execution of these same bytes produces the exact encoded
+native response, including retained voice cues. This is a state-neutral Look
+operation; it does not prove inventory or puzzle progression.
+
+Ego approaches from (84,60) to (82,59), room10 remains lifecycle RUNNING and
+SCUMM error0. The caption uses original source charset1 (1bpp), the response
+charset2 (2bpp). Both independently decoded font comparisons report zero
+source/INDEX8/VRAM differences and zero screenshot RGB channel difference.
+Whole-scene comparisons also report zero INDEX8 and PPU differences, including
+original background, costume and cursor. Captures retain immutable queued
+pixels and require their exact presentation generation. REQUESTED text paired
+with an old surface cannot satisfy the observer.
+
+Private acceptance journals and captures:
+
+- `/tmp/astra-text-damage-authored-interface-20261111`
+- `/tmp/astra-text-damage-original-action-20261111/observations/action.json`
+- `selected-sentence.ppu.png` and `response.ppu.png` in that observation directory
+- `/tmp/astra-current-walk-latency-20261111/observations/action.json`
+- `/tmp/astra-milestone-b-final-20261111/acceptance.json` links the immutable raw
+  journals to the subsequent offline pixel results. Raw reports deliberately
+  retain their earlier `PENDING_PIXEL_COMPARISON` result; they are not rewritten.
+
+The shared font-comparison helper labels its output "subtitle"; the first
+image is specifically the C17 verb/object caption, while the second is actual
+object-script dialogue. Both contain source-derived text and source glyphs.
+
+### Generic corrections and latency
+
+The streamed name adapter now adds the logical terminator to the shared
+name-cache length contract. SC5LIVE raw name bytes exclude it; ROM names and
+SetName include it. This fixes the missing last character without changing
+resource payloads. Tests cover empty names, one byte, and the 31/32-byte bounds.
+
+Text no longer restores a distant, nonoverlapping cursor and unions its
+position with the bottom strip. It validates cursor journal identity and
+restores only an overlapping journal, retaining the existing damage and NMI
+publication path. Ordinary text damage is 128 tiles. The earlier DMA
+producer/NMI accounting race and fence snapshot are corrected independently;
+no framebuffer, selector or cache architecture is replaced.
+
+The final action starts at frame16013, is observed submitted at16017, and its
+response is presented at16526: 513 frames from input start, 509 from the
+observed action, or 504 after the input helper returns at16022. These are
+captured emulated-frame intervals, not raw storage throughput. The earlier
+1,596-frame response observation included a separate delayed observer
+continuation and is not a controlled latency baseline.
+
+A separate ordinary empty-floor click, after authored dialogue expiry,
+walks Ego from (82,59) to the source-host-adjusted (96,60), box1, and returns to
+standing chore3. No sentence is submitted. Input starts16951; arrival is
+captured by16971; the final standing surface is captured queued17087 and
+presented17143. Thus input-to-final-image is **192 frames**, with semantic
+arrival observed within20 frames and another172 frames until final presented
+standing. Queue observation to presented capture is56 frames. Source INDEX8,
+PPU and CGRAM comparisons are exact. The prior274-frame room4 measurement
+used a different room and distance: this is not an apples-to-apples speedup
+claim. Presentation remains too slow for a finished game experience.
+
+The three supervised controls exited normally after219.211,231.201 and98.395
+wall seconds respectively, each with one private Xvfb/MCP session and no
+retries. No test-owned emulator remains. The unrelated user's emulator was
+left untouched. The current run used authored message expiry: talk-owned A
+is absorbed safely but is not yet a demonstrated immediate line-dismissal.
+
+### Exact identities and validation
+
+| Artifact | SHA-256 |
+| --- | --- |
+| ROM | `bb12cd2092668a44330b31d3365a9714cc6f4f550773aad1e041cf880a3d8d0e` |
+| Map | `0d2ad1fcb0e72ffb7287b6b5d8cda1e404810951ff1780aec3283a6adc28f609` |
+| SAMEPKG | `5f4dfa58b58bbad5c654924380b8277929a6b2b67012a2042c2f3b4645162a16` |
+| Build identity | `fd7a5aab3d87d3d6488e0d29580cdba0ef9265225e8dc0cb1e7e70245cf6c260` |
+| External archive | `0f3fc396642c800069d31ab9a087b314f1bb1612d37accbe13b6013219ac94f0` |
+
+The ROM was assembled from isolated source directory
+`/tmp/astra-text-assembly-source.dxe7g20l`. Its build identity records that
+isolated temporary Git checkout, not df8fd88. A separate source-linkage audit
+compares all356 tracked runtime/src/tools files byte-for-byte against df8fd88:
+zero differences, zero missing files. Later tests/documentation are not
+misrepresented as having been part of that build. Generated inputs and their
+hashes remain in the original build identity; no build identity was patched.
+
+Local full suite: **1,420 run, 1,408 passed, 12 skipped**. `make validate`,
+Python/Bash/tracked-JSON/diff checks, pinned Poppy assembly, ROM audit and
+27-region WRAM/BW-RAM audit pass. Both hosted jobs pass for df8fd88:
+https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/42972298471 .
+Hosted SNES assembly is not native execution; the Nexen evidence above is
+local and ROM-bound. No commercial payload/capture or credentials enter Git.
+
+### Remaining scope
+
+This demonstrates a readable original player-controlled action, not whole-game
+playability. The interface is a compact selected verb/object caption, not the
+complete original verb-grid/inventory layout. The640-wide room is aspect-fit
+into256pixels (57rows), so Indy is small; source-faithful camera cropping is
+still needed. Only a single unscaled actor is compared here. Multi-actor
+occlusion/scaling, general text pagination beyond255 retained bytes, runtime
+charset-map mutation, full audio/iMUSE/speech, portable streamed saves and
+physical hardware remain incomplete or unverified. Native authentic1/2bpp
+fonts are demonstrated;4bpp has cooker/host evidence, not an authentic native
+FATE font sample. Whole-game readiness remains **NOT_READY**.
