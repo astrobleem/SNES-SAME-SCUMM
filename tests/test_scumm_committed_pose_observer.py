@@ -49,6 +49,9 @@ class Session:
     def get_ppu_state(self):
         return {'bgMode': 3, 'frameCount': 560}
 
+    def get_state(self):
+        return {'isPaused': True, 'frameCount': 560}
+
     def read_u8(self,address): return self.read_memory('snesMemory',address,1)[0]
     def read_u16(self,address): return int.from_bytes(self.read_memory('snesMemory',address,2),'little')
 
@@ -60,6 +63,44 @@ def observer(session, directory):
 
 
 class CommittedPoseObserverTests(unittest.TestCase):
+    def test_immutable_generation_survives_new_cursor_composition(self):
+        s = Session()
+        s.put(probe.MODE3_COMMITTED_GENERATION,64)
+        s.put(probe.MODE3_CONTROL_STATE,2,1)
+        s.put(probe.MODE3_SURFACE_LOCKED,1,1)
+        snapshot = probe.snapshot_locked_generation(s,cursor_base=CURSOR)
+        # Previous frame is now committed, but the CPU has already drawn the
+        # next cursor into INDEX8. Only the immutable old snapshot matches PPU.
+        s.put(probe.MODE3_COMMITTED_GENERATION,65)
+        s.put(probe.MODE3_PENDING_GENERATION,66)
+        s.put(probe.SURFACE_NEXT_GENERATION,66)
+        s.put(probe.SURFACE,7,1)
+        current = probe.read_committed_pose(s,cursor_base=CURSOR)
+        self.assertFalse(probe.committed_pose_is_presented(current))
+        self.assertTrue(probe.queued_generation_is_presented(snapshot,current))
+        with tempfile.TemporaryDirectory() as directory:
+            record = probe.capture_presented_generation(s,snapshot,Path(directory),'animation',cursor_base=CURSOR)
+            self.assertEqual(record['ppu_indexed_differences'],0)
+            self.assertEqual((Path(directory)/'animation.indexed.bin').read_bytes(),bytes(57344))
+        for change in (dict(backend_committed_generation=64), dict(backend_committed_generation=66),
+                       dict(mode3_state=3), dict(mode3_state=4), dict(mode3_inflight_count=1),
+                       dict(surface_room_generation=3), dict(room=5), dict(error=16),
+                       dict(backend_pending_generation_hi=1)):
+            with self.subTest(change=change):
+                self.assertFalse(probe.queued_generation_is_presented(snapshot,dict(current,**change)))
+
+    def test_queued_capture_requires_lock_and_rechecks_paused_identity(self):
+        s = Session()
+        with self.assertRaises(RuntimeError): probe.snapshot_locked_generation(s,cursor_base=CURSOR)
+        s.put(probe.MODE3_CONTROL_STATE,2,1)
+        s.put(probe.MODE3_SURFACE_LOCKED,1,1)
+        snapshot=probe.snapshot_locked_generation(s,cursor_base=CURSOR)
+        s.put(probe.MODE3_PENDING_GENERATION,66)
+        s.put(probe.SURFACE_NEXT_GENERATION,66)
+        s.drift=True
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(RuntimeError):
+            probe.capture_presented_generation(s,snapshot,Path(directory),'drift',cursor_base=CURSOR)
+
     def test_persistent_controller_addresses_match_memory_contract(self):
         memory = (Path(__file__).resolve().parents[1]/'runtime/snes/kernel/memory.pasm').read_text()
         session = Session()

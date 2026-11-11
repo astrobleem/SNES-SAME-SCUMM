@@ -347,6 +347,89 @@ def capture_committed_surface(session, directory: Path, label: str, *,
     return record
 
 
+def snapshot_locked_generation(session, *, cursor_base: int) -> dict:
+    """Retain the immutable input of one accepted PRESENT, without advancing.
+
+    Animated producers can queue the next frame immediately after completion.
+    Such scenes need not have a globally idle observation frame. This snapshot
+    is evidence of queued pixels only until its exact generation is committed.
+    """
+    require(session.get_state()['isPaused'], 'surface snapshot requires pause')
+    state = read_committed_pose(session, cursor_base=cursor_base)
+    require(state['error'] == 0 and state['lifecycle'] == 2
+            and state['mode3_surface_locked'] == 1
+            and state['mode3_state'] in (2, 3, 4)
+            and state['backend_pending_generation'] == state['surface_next_generation'] > 0
+            and state['backend_pending_generation_hi'] == 0
+            and not state['composition_active'] and not state['actor_render_retry']
+            and not state['event_count'] and not state['surface_packets_pending'],
+            'surface is not a complete immutable queued generation')
+    result = {'state': state, 'frame': session.get_state()['frameCount']}
+    for key, address, size in (('indexed', SURFACE, 57344), ('palette', PALETTE, 768),
+                               ('cursor', cursor_base, 64)):
+        result[key] = session.read_memory('snesMemory', address, size)
+        require(len(result[key]) == size, 'incomplete queued surface read')
+    require(read_committed_pose(session, cursor_base=cursor_base) == state,
+            'surface generation changed during paused snapshot')
+    return result
+
+
+def queued_generation_is_presented(snapshot: dict, current: dict) -> bool:
+    """Require exact commit and exclude any subsequent DMA to VRAM/CGRAM."""
+    old = snapshot['state']
+    generation = old['backend_pending_generation']
+    if not (generation > 0 and old['mode3_surface_locked'] == 1
+            and old['mode3_state'] in (2, 3, 4)
+            and current['error'] == 0 and current['lifecycle'] == 2
+            and current['room'] == old['room']
+            and current['surface_room_generation'] == old['surface_room_generation']
+            and current['backend_committed_generation'] == generation
+            and current['backend_committed_generation_hi'] == 0
+            and current['backend_pending_generation_hi'] == 0
+            and current['mode3_inflight_count'] == 0):
+        return False
+    if current['backend_pending_generation'] == generation:
+        return current['mode3_state'] == 1 and current['mode3_surface_locked'] == 0
+    # CONVERTING precedes QueueBatch: a newer surface can change CPU shadow
+    # buffers, but cannot yet have submitted DMA to the actual PPU memories.
+    return (current['backend_pending_generation'] > generation
+            and current['mode3_state'] == 2 and current['mode3_surface_locked'] == 1)
+
+
+def capture_presented_generation(session, snapshot: dict, directory: Path,
+                                 label: str, *, cursor_base: int) -> dict:
+    """Compare a retained locked INDEX8 image to its actual committed PPU."""
+    require(label and Path(label).name == label and label not in ('.', '..'),
+            'capture label must be a filename component')
+    require(session.get_state()['isPaused'], 'presentation capture requires pause')
+    state = read_committed_pose(session, cursor_base=cursor_base)
+    require(queued_generation_is_presented(snapshot, state),
+            'queued generation is not exclusively resident in the PPU')
+    vram = session.read_memory('snesVideoRam', 0, 65536)
+    cgram = session.read_memory('snesCgRam', 0, 512)
+    require(len(vram) == 65536 and len(cgram) == 512, 'incomplete PPU capture')
+    screenshot = base64.b64decode(session.take_screenshot(format='base64')['base64'], validate=True)
+    require(bool(screenshot), 'Nexen returned no actual PPU screenshot')
+    require(read_committed_pose(session, cursor_base=cursor_base) == state,
+            'presentation generation changed during paused capture')
+    pixels, palette = snapshot['indexed'], snapshot['palette']
+    ppu = decode_bundle_indexed(SnesIndexedSurfaceBundle(vram[:0xE000], vram[0xE000:0xE800], cgram))
+    colors = encode_cgram(tuple(tuple(palette[i:i+3]) for i in range(0,768,3)))
+    record = dict(label=label, queued_pose=snapshot['state'], presented_state=state,
+                  queued_frame=snapshot['frame'], presented_frame=session.get_state()['frameCount'],
+                  presentation_fence='immutable-queued-surface-exact-commit-before-next-DMA',
+                  indexed_surface_sha256=hashlib.sha256(pixels).hexdigest(),
+                  ppu_indexed_differences=sum(a != b for a,b in zip(pixels, ppu)),
+                  cgram_difference_bytes=sum(a != b for a,b in zip(colors, cgram)))
+    directory.mkdir(parents=True, exist_ok=True)
+    for suffix, data in (('indexed.bin', pixels), ('palette-rgb.bin', palette),
+                         ('cursor.bin', snapshot['cursor']), ('vram.bin', vram),
+                         ('cgram.bin', cgram), ('ppu.png', screenshot)):
+        (directory/f'{label}.{suffix}').write_bytes(data)
+    (directory/f'{label}.presented.json').write_text(json.dumps(record, indent=2)+'\n')
+    return record
+
+
 def eq_symbol(source: str, name: str) -> int:
     match = re.search(rf"^\s*{re.escape(name)}\s*=\s*\$([0-9A-Fa-f]+)\b",
                       source, re.MULTILINE)
