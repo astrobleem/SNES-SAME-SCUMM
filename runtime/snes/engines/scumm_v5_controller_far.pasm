@@ -484,8 +484,9 @@ ScummV5_Controller_Frame__select_secondary_submit:
     sta.l SAME_SCUMM_CONTROLLER_LAST_ACTION
     lda #$02
     sta.l SAME_SCUMM_CONTROLLER_MODE
-    lda #$01
-    sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    ; Submission changes sentence ownership, not the selected verb/name.
+    ; Retain any earlier dirty request, but do not redraw an unchanged caption
+    ; ahead of the original script's response (which owns its own generation).
     jmp ScummV5_Controller_Frame__hud
 ScummV5_Controller_Frame__mode_select_fallback:
     ; A resolves the cursor against the active room's source-backed CDHD
@@ -731,8 +732,9 @@ ScummV5_Controller_Frame__select_verb_a_pressed:
     sta.l SAME_SCUMM_CONTROLLER_LAST_ACTION
     lda #$02
     sta.l SAME_SCUMM_CONTROLLER_MODE
-    lda #$01
-    sta.l SAME_SCUMM_CONTROLLER_HUD_DIRTY
+    ; Submission changes sentence ownership, not the selected verb/name.
+    ; Retain any earlier dirty request, but do not redraw an unchanged caption
+    ; ahead of the original script's response (which owns its own generation).
     jmp ScummV5_Controller_Frame__hud
 
 ScummV5_Controller_Frame__action_pending:

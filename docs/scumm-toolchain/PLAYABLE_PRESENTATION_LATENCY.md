@@ -87,3 +87,43 @@ visible verbs/inventory, and a continuous persistent original-game action
 remain pending. Full-game readiness remains **NOT_READY**. Native evidence is
 Nexen evidence, not physical hardware acceptance. Commercial captures and
 packages stay outside Git.
+
+## Bounded text damage and request identity
+
+The indexed text producer now clears and dirties the union of the old and new
+clipped glyph bounds, within its existing bottom-32-row ownership. A no-ink
+request retains a 1x1 publication fence. Old bounds change only after accepted
+publication. No extra pixel buffer or memory allocation is introduced.
+Submitting an unchanged controller sentence preserves existing dirty intent
+without manufacturing another caption redraw ahead of authored dialogue.
+
+Native build on 2026-11-11 (source snapshot includes this tranche):
+
+- ROM: `67daa972622f1c5ee98875c7c9819c389fd7fd3b8790689090bf9e646dc09e64`.
+- Map: `e1d3df33aa4a3772edd18a2b52cbb79923b44904dbe35c0693ff64332984fa71`.
+- Identity: `796cc5035db59ebd236b155b8a0034a1daf0ef63965550b1cdd84368bcca8745`.
+- Same complete source package as above; no gameplay writes.
+- `/tmp/astra-bounded-text-action-20261111/observations/action.json`:
+  input 12891, original response first observed active 13068, immutable response
+  queued 13089, PPU committed 13109. Observed latency **218 frames**; 177 precede
+  observed response readiness, 21 precede queueing, 20 complete presentation.
+  This is an observed after-measurement, not identical CPU/scheduler phase.
+- Response font, room, actor, cursor, INDEX8, VRAM and screenshot comparisons
+  have zero differing pixels. Original script executed once, SCUMM error zero.
+
+The initial caption observation was **rejected**: 121 pixels differed because
+new request bytes were associated with the previous caption plus cursor
+publication. The renderer had displayed the previous caption correctly. An
+idle text producer can already be preflighting replacement bytes before its
+new generation is allocated. The observer now requires the immutable
+awaiting-commit phase, completed draw pass, and exact publication generation.
+Synthetic regression reproduces that association failure without game data.
+The matching-ROM caption checkpoint was restored without input or state writes:
+`/tmp/astra-text-caption-fence-20261111/observations/action.json`, 11.614 seconds,
+generation 237. The correct caption has zero source/INDEX8/PPU differences.
+This targeted observer correction did not replay startup or the action.
+
+Focused bounds tests execute the production rectangle and clear leaves against
+independent clipping/guard oracles. The full host suite at this tranche ran
+1,433 tests with 12 skips; the subsequent observer regression adds one test.
+Native walking and the rest of Milestone C remain separate pending gates.

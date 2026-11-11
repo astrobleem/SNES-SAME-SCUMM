@@ -354,20 +354,21 @@ def indexed_text_request_is_composed(text: bytes, raw: bytes, pose: dict,
     This is an association gate, not pixel evidence. The caller still compares
     the retained surface and actual PPU against an independent font oracle.
     after_generation is captured before the requested content was published.
+    Only the immutable awaiting-commit phase owns these retained request bytes.
+    In idle phase the producer can already be copying/preflighting a replacement
+    while CURRENT_GENERATION still names the previous caption.
     """
     if len(text) < 0x6C:
         return False
     word = lambda offset: int.from_bytes(text[offset:offset+2], 'little')
-    phase, generation, committed = word(0), word(2), word(4)
+    phase, generation = word(0), word(2)
     delta = (generation - after_generation) & 0xFFFF
-    if phase not in (0, 1) or not 0 < delta < 0x8000 or not word(0x68):
+    if phase != 1 or word(0x38) != 1 or not 0 < delta < 0x8000 or not word(0x68):
         return False
     if word(0x64) != pose['room'] or word(0x66) != pose['surface_room_generation']:
         return False
     pending = pose['backend_pending_generation']
-    if phase == 1 and generation != pending:
-        return False
-    if phase == 0 and (committed != generation or (pending-generation)&0xFFFF >= 0x8000):
+    if generation != pending:
         return False
     length = word(0x24)
     return length == len(expected) and len(raw) >= length and raw[:length] == expected

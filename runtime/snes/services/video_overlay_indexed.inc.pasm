@@ -28,6 +28,16 @@ SAME_TEXT_DX = SAME_VIDEO_TEXT_STATE+$34
 SAME_TEXT_DY = SAME_VIDEO_TEXT_STATE+$36
 SAME_TEXT_DRAW = SAME_VIDEO_TEXT_STATE+$38
 SAME_TEXT_SPACING = SAME_VIDEO_TEXT_STATE+$3A
+; Half-open glyph bounds: pending immutable layout and last published layout.
+; These words use the existing text producer's reserved state, not room/cache RAM.
+SAME_TEXT_NEW_LEFT = SAME_VIDEO_TEXT_STATE+$3C
+SAME_TEXT_NEW_TOP = SAME_VIDEO_TEXT_STATE+$3E
+SAME_TEXT_NEW_RIGHT = SAME_VIDEO_TEXT_STATE+$40
+SAME_TEXT_NEW_BOTTOM = SAME_VIDEO_TEXT_STATE+$42
+SAME_TEXT_OLD_LEFT = SAME_VIDEO_TEXT_STATE+$44
+SAME_TEXT_OLD_TOP = SAME_VIDEO_TEXT_STATE+$46
+SAME_TEXT_OLD_RIGHT = SAME_VIDEO_TEXT_STATE+$48
+SAME_TEXT_OLD_BOTTOM = SAME_VIDEO_TEXT_STATE+$4A
 SAME_TEXT_RAW = SAME_SCUMM_TEXT_PENDING_RAW
 SAME_TEXT_INITIAL_INK = SAME_VIDEO_TEXT_STATE+$60
 SAME_TEXT_INITIAL_CHARSET = SAME_VIDEO_TEXT_STATE+$62
@@ -418,6 +428,7 @@ Same_Text_Hide_capacity:
 Same_Text_Hide_ready:
     .a16
     .i16
+    jsr Same_Text_ResetBounds
     jsr Same_Text_SeedDamage
     jsl Same_VideoSurface_RestoreCursorOverlappingDamage_Far
     bcc Same_Text_Hide_cursor_ready
@@ -442,30 +453,162 @@ Same_Text_Clear:
     rep #$30
     .a16
     .i16
-    lda #$0000
-    ldx #(SAME_VIDEO_TEXT_TOP*256)
-Same_Text_Clear_loop:
+    ; Cursor restoration may have enlarged damage outside the text viewport.
+    ; Clear only old/new text bounds; publication merges cursor damage later.
+    jsr Same_Text_SeedDamage
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    xba
+    clc
+    adc.l SAME_VIDEO_SURFACE_DAMAGE_X
+    sta.l SAME_TEXT_DY
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    sta.l SAME_TEXT_ROW
+Same_Text_Clear_row:
     .a16
+    .i16
+    lda.l SAME_TEXT_DY
+    tax
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    tay
+    sep #$20
+    .a8
+    lda #$00
+Same_Text_Clear_pixel:
+    .a8
     .i16
     sta.l SAME_BWRAM_SURFACE_BASE,x
     inx
-    inx
-    cpx #(SAME_VIDEO_TEXT_BOTTOM*256)
-    bcc Same_Text_Clear_loop
+    dey
+    bne Same_Text_Clear_pixel
+    rep #$20
+    .a16
+    lda.l SAME_TEXT_DY
+    clc
+    adc #$0100
+    sta.l SAME_TEXT_DY
+    lda.l SAME_TEXT_ROW
+    dec
+    sta.l SAME_TEXT_ROW
+    bne Same_Text_Clear_row
     rts
 
+Same_Text_ResetBounds:
+    .a16
+    lda #$0100
+    sta.l SAME_TEXT_NEW_LEFT
+    lda #SAME_VIDEO_TEXT_BOTTOM
+    sta.l SAME_TEXT_NEW_TOP
+    lda #$0000
+    sta.l SAME_TEXT_NEW_RIGHT
+    sta.l SAME_TEXT_NEW_BOTTOM
+    rts
+
+; Union of clipped old and new glyph rectangles. Transparent margins may be
+; included, but distant empty UI tiles never need conversion. A no-ink request
+; still publishes a bounded 1x1 fence so message ownership can complete.
 Same_Text_SeedDamage:
     .a16
     .i16
     rep #$20
     .a16
-    lda #$0000
-    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
-    lda #SAME_VIDEO_TEXT_TOP
-    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y
     lda #$0100
+    sta.l SAME_TEXT_DX
+    lda #SAME_VIDEO_TEXT_BOTTOM
+    sta.l SAME_TEXT_DY
+    lda #$0000
+    sta.l SAME_TEXT_COL
+    sta.l SAME_TEXT_ROW
+    lda.l SAME_TEXT_NEW_RIGHT
+    cmp.l SAME_TEXT_NEW_LEFT
+    beq Same_Text_SeedDamage__new_done
+    bcc Same_Text_SeedDamage__new_done
+    lda.l SAME_TEXT_NEW_BOTTOM
+    cmp.l SAME_TEXT_NEW_TOP
+    beq Same_Text_SeedDamage__new_done
+    bcc Same_Text_SeedDamage__new_done
+    lda.l SAME_TEXT_NEW_LEFT
+    cmp.l SAME_TEXT_DX
+    bcs Same_Text_SeedDamage__new_left
+    sta.l SAME_TEXT_DX
+Same_Text_SeedDamage__new_left:
+    .a16
+    lda.l SAME_TEXT_NEW_TOP
+    cmp.l SAME_TEXT_DY
+    bcs Same_Text_SeedDamage__new_top
+    sta.l SAME_TEXT_DY
+Same_Text_SeedDamage__new_top:
+    .a16
+    lda.l SAME_TEXT_NEW_RIGHT
+    cmp.l SAME_TEXT_COL
+    bcc Same_Text_SeedDamage__new_right
+    sta.l SAME_TEXT_COL
+Same_Text_SeedDamage__new_right:
+    .a16
+    lda.l SAME_TEXT_NEW_BOTTOM
+    cmp.l SAME_TEXT_ROW
+    bcc Same_Text_SeedDamage__new_bottom
+    sta.l SAME_TEXT_ROW
+Same_Text_SeedDamage__new_bottom:
+    .a16
+Same_Text_SeedDamage__new_done:
+    .a16
+    lda.l SAME_TEXT_OLD_RIGHT
+    cmp.l SAME_TEXT_OLD_LEFT
+    beq Same_Text_SeedDamage__old_done
+    bcc Same_Text_SeedDamage__old_done
+    lda.l SAME_TEXT_OLD_BOTTOM
+    cmp.l SAME_TEXT_OLD_TOP
+    beq Same_Text_SeedDamage__old_done
+    bcc Same_Text_SeedDamage__old_done
+    lda.l SAME_TEXT_OLD_LEFT
+    cmp.l SAME_TEXT_DX
+    bcs Same_Text_SeedDamage__old_left
+    sta.l SAME_TEXT_DX
+Same_Text_SeedDamage__old_left:
+    .a16
+    lda.l SAME_TEXT_OLD_TOP
+    cmp.l SAME_TEXT_DY
+    bcs Same_Text_SeedDamage__old_top
+    sta.l SAME_TEXT_DY
+Same_Text_SeedDamage__old_top:
+    .a16
+    lda.l SAME_TEXT_OLD_RIGHT
+    cmp.l SAME_TEXT_COL
+    bcc Same_Text_SeedDamage__old_right
+    sta.l SAME_TEXT_COL
+Same_Text_SeedDamage__old_right:
+    .a16
+    lda.l SAME_TEXT_OLD_BOTTOM
+    cmp.l SAME_TEXT_ROW
+    bcc Same_Text_SeedDamage__old_bottom
+    sta.l SAME_TEXT_ROW
+Same_Text_SeedDamage__old_bottom:
+    .a16
+Same_Text_SeedDamage__old_done:
+    .a16
+    lda.l SAME_TEXT_COL
+    bne Same_Text_SeedDamage__nonempty
+    lda #$0000
+    sta.l SAME_TEXT_DX
+    lda #SAME_VIDEO_TEXT_TOP
+    sta.l SAME_TEXT_DY
+    inc
+    sta.l SAME_TEXT_ROW
+    lda #$0001
+    sta.l SAME_TEXT_COL
+Same_Text_SeedDamage__nonempty:
+    .a16
+    lda.l SAME_TEXT_DX
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
+    lda.l SAME_TEXT_DY
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    lda.l SAME_TEXT_COL
+    sec
+    sbc.l SAME_TEXT_DX
     sta.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
-    lda #(SAME_VIDEO_TEXT_BOTTOM-SAME_VIDEO_TEXT_TOP)
+    lda.l SAME_TEXT_ROW
+    sec
+    sbc.l SAME_TEXT_DY
     sta.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
     rts
 
@@ -484,6 +627,14 @@ Same_Text_Publish_cursor_retained:
     .a16
     jsl Same_VideoSurface_PushDamagePresent_Far
     bcs Same_Text_Publish_done
+    lda.l SAME_TEXT_NEW_LEFT
+    sta.l SAME_TEXT_OLD_LEFT
+    lda.l SAME_TEXT_NEW_TOP
+    sta.l SAME_TEXT_OLD_TOP
+    lda.l SAME_TEXT_NEW_RIGHT
+    sta.l SAME_TEXT_OLD_RIGHT
+    lda.l SAME_TEXT_NEW_BOTTOM
+    sta.l SAME_TEXT_OLD_BOTTOM
     lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION
     sta.l SAME_OVERLAY_CURRENT_GENERATION
     lda.l SAME_VIDEO_SURFACE_ROOM
@@ -505,6 +656,7 @@ Same_Text_Layout:
     rep #$30
     .a16
     .i16
+    jsr Same_Text_ResetBounds
     lda #$0000
     sta.l SAME_TEXT_INDEX
     lda #$0002
@@ -659,6 +811,7 @@ Same_Text_Layout_present:
 Same_Text_Layout_fits:
     .a16
     .i16
+    jsr Same_Text_GlyphBounds
     lda.l SAME_TEXT_DRAW
     beq Same_Text_Layout_advance
     jsr Same_Text_DrawGlyph
@@ -670,6 +823,109 @@ Same_Text_Layout_advance:
     adc.l SAME_TEXT_ADVANCE
     sta.l SAME_TEXT_PEN_X
     jmp Same_Text_Layout_next
+
+; Match DrawGlyph's signed bearings and clipping without reading pixels.
+; DX/DY and COL/ROW are scratch until actual glyph drawing begins.
+Same_Text_GlyphBounds:
+    .a16
+    .i16
+    lda.l SAME_TEXT_WIDTH
+    bne Same_Text_GlyphBounds__x_size
+    rts
+Same_Text_GlyphBounds__x_size:
+    .a16
+    lda.l SAME_TEXT_PEN_X
+    clc
+    adc.l SAME_TEXT_X
+    sta.l SAME_TEXT_DX
+    clc
+    adc.l SAME_TEXT_WIDTH
+    bpl Same_Text_GlyphBounds__x_end_positive
+    rts
+Same_Text_GlyphBounds__x_end_positive:
+    .a16
+    cmp #$0100
+    bcc Same_Text_GlyphBounds__x_end_clipped
+    lda #$0100
+Same_Text_GlyphBounds__x_end_clipped:
+    .a16
+    sta.l SAME_TEXT_COL
+    lda.l SAME_TEXT_DX
+    bmi Same_Text_GlyphBounds__x_start_clip
+    cmp #$0000
+    bcs Same_Text_GlyphBounds__x_start_clipped
+Same_Text_GlyphBounds__x_start_clip:
+    .a16
+    lda #$0000
+Same_Text_GlyphBounds__x_start_clipped:
+    .a16
+    cmp.l SAME_TEXT_COL
+    bcc Same_Text_GlyphBounds__x_nonempty
+    rts
+Same_Text_GlyphBounds__x_nonempty:
+    .a16
+    sta.l SAME_TEXT_DX
+    lda.l SAME_TEXT_HEIGHT
+    bne Same_Text_GlyphBounds__y_size
+    rts
+Same_Text_GlyphBounds__y_size:
+    .a16
+    lda.l SAME_TEXT_PEN_Y
+    clc
+    adc.l SAME_TEXT_Y
+    sta.l SAME_TEXT_DY
+    clc
+    adc.l SAME_TEXT_HEIGHT
+    bpl Same_Text_GlyphBounds__y_end_positive
+    rts
+Same_Text_GlyphBounds__y_end_positive:
+    .a16
+    cmp #SAME_VIDEO_TEXT_BOTTOM
+    bcc Same_Text_GlyphBounds__y_end_clipped
+    lda #SAME_VIDEO_TEXT_BOTTOM
+Same_Text_GlyphBounds__y_end_clipped:
+    .a16
+    sta.l SAME_TEXT_ROW
+    lda.l SAME_TEXT_DY
+    bmi Same_Text_GlyphBounds__y_start_clip
+    cmp #SAME_VIDEO_TEXT_TOP
+    bcs Same_Text_GlyphBounds__y_start_clipped
+Same_Text_GlyphBounds__y_start_clip:
+    .a16
+    lda #SAME_VIDEO_TEXT_TOP
+Same_Text_GlyphBounds__y_start_clipped:
+    .a16
+    cmp.l SAME_TEXT_ROW
+    bcc Same_Text_GlyphBounds__y_nonempty
+    rts
+Same_Text_GlyphBounds__y_nonempty:
+    .a16
+    sta.l SAME_TEXT_DY
+    lda.l SAME_TEXT_DX
+    cmp.l SAME_TEXT_NEW_LEFT
+    bcs Same_Text_GlyphBounds__left
+    sta.l SAME_TEXT_NEW_LEFT
+Same_Text_GlyphBounds__left:
+    .a16
+    lda.l SAME_TEXT_DY
+    cmp.l SAME_TEXT_NEW_TOP
+    bcs Same_Text_GlyphBounds__top
+    sta.l SAME_TEXT_NEW_TOP
+Same_Text_GlyphBounds__top:
+    .a16
+    lda.l SAME_TEXT_COL
+    cmp.l SAME_TEXT_NEW_RIGHT
+    bcc Same_Text_GlyphBounds__right
+    sta.l SAME_TEXT_NEW_RIGHT
+Same_Text_GlyphBounds__right:
+    .a16
+    lda.l SAME_TEXT_ROW
+    cmp.l SAME_TEXT_NEW_BOTTOM
+    bcc Same_Text_GlyphBounds__bottom
+    sta.l SAME_TEXT_NEW_BOTTOM
+Same_Text_GlyphBounds__bottom:
+    .a16
+    rts
 
 Same_Text_SignedByte:
     .a16

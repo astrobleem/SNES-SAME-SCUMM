@@ -68,7 +68,7 @@ class CommittedPoseObserverTests(unittest.TestCase):
             'surface_room_generation':2,'backend_pending_generation':65}
         def put(offset,value):text[offset:offset+2]=value.to_bytes(2,'little')
         for offset,value in ((0,2),(2,64),(4,64),(0x24,len(expected)),
-                             (0x64,4),(0x66,2),(0x68,1)):put(offset,value)
+                             (0x38,1),(0x64,4),(0x66,2),(0x68,1)):put(offset,value)
         check=lambda:probe.indexed_text_request_is_composed(
             text,expected,pose,expected,after_generation=64)
         self.assertFalse(check())  # new bytes, old displayed generation
@@ -76,10 +76,27 @@ class CommittedPoseObserverTests(unittest.TestCase):
         self.assertFalse(probe.indexed_text_request_is_composed(
             text,b'Use the lamp',pose,expected,after_generation=64))
         put(0,0);self.assertFalse(check()) # completion not acknowledged
-        put(4,65);self.assertTrue(check())
-        pose['backend_pending_generation']=66;self.assertTrue(check()) # cursor-only next frame
+        put(4,65);self.assertFalse(check()) # idle bytes may already belong to replacement
+        pose['backend_pending_generation']=66;self.assertFalse(check()) # unrelated cursor generation
         put(0,2);self.assertFalse(check()) # new request can replace retained bytes
         put(0,0);put(0x66,3);self.assertFalse(check())
+
+    def test_preflight_cannot_relabel_previous_caption_capture(self):
+        # Captured failure shape, using original synthetic text only: new raw
+        # bytes/preflight while the old caption and a cursor generation exist.
+        text=bytearray(128);raw=b'Look at lamp'
+        for offset,value in ((0,0),(2,235),(4,235),(0x24,len(raw)),
+                             (0x38,0),(0x64,4),(0x66,2),(0x68,1)):
+            text[offset:offset+2]=value.to_bytes(2,'little')
+        pose={'room':4,'surface_room_generation':2,'backend_pending_generation':236}
+        self.assertFalse(probe.indexed_text_request_is_composed(
+            text,raw,pose,raw,after_generation=234))
+        text[0:2]=(1).to_bytes(2,'little');text[2:4]=(236).to_bytes(2,'little')
+        self.assertFalse(probe.indexed_text_request_is_composed(
+            text,raw,pose,raw,after_generation=234)) # no completed draw pass
+        text[0x38:0x3a]=(1).to_bytes(2,'little')
+        self.assertTrue(probe.indexed_text_request_is_composed(
+            text,raw,pose,raw,after_generation=234))
 
     def test_immutable_generation_survives_new_cursor_composition(self):
         s = Session()
