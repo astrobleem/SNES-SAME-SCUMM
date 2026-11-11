@@ -133,7 +133,7 @@ class FontBindingTests(unittest.TestCase):
     def test_accepted_talk_executes_hud_retirement_before_publication(self):
         source = (ROOT / 'runtime/snes/engines/scumm_v5_matrix_far.pasm').read_text()
         block = source.split('ScummV5_Talk_Begin_Far__message_ready:', 1)[1]
-        prefix = block.split('lda.l SAME_SCUMM_TALK_ACTIVE', 1)[0]
+        prefix = block.split('ScummV5_Talk_Begin_Far__no_previous:', 1)[0]
         for old in (0, 1, 255):
             memory = {'SAME_VIDEO_TEXT_CONTROLLER_VALID': old}
             a, width = 0xABCD, 16

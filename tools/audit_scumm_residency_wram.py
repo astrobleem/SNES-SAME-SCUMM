@@ -21,6 +21,8 @@ MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 # Intervals are half-open. Their endpoints are ownership boundaries declared
 # in memory.pasm; unrelated ownership overlap fails closed.
 REGIONS = (
+    ("retained_text_and_pending_snapshot", "SAME_SCUMM_TEXT_STORAGE_START",
+     "SAME_SCUMM_TEXT_STORAGE_END"),
     ("mode3_backend_scratch", "SAME_MODE3_WORK_OWNER_START",
      "SAME_MODE3_WORK_OWNER_END"),
     ("program_cache_page2", "SAME_SCUMM_MSU_PROGRAM_CACHE2_OWNER_START",
@@ -134,6 +136,9 @@ def audit() -> dict[str, Any]:
             or [values["SAME_VIDEO_ACTOR_UNDERLAY_" + name]
                 for name in underlay_fields] != expected):
         raise ValueError("actor-underlay scratch must alias only nonconcurrent restore witnesses, never room readiness")
+    if (values["SAME_SCUMM_TEXT_STORAGE_START"] < values["SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK"] + values["SAME_SCUMM_PUT_ACTOR_BOX_STRIDE"]
+            or values["SAME_SCUMM_TEXT_STORAGE_END"] > values["SAME_SCUMM_PUT_ACTOR_WALKBOX"]):
+        raise ValueError("retained text overlaps active geometry or actor walkbox state")
     bwram = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json").read_text())
     # Share the carrier's exact nested ownership contract; do not audit only
     # the old 2-KiB parent reservation and overlook its palette residents.

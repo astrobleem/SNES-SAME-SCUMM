@@ -1,3 +1,28 @@
+# Active Milestone B — original authored subtitle now pixel-verified
+
+Continue toward a normal original object/verb action; no seven-action replay.
+Original room4 subtitle reaches the PPU with exact source-font/INDEX8/VRAM/CGRAM
+comparison (all differences zero). Read-only matching-ROM checkpoint diagnostic
+`/tmp/astra-authentic-dialogue-direct-20261110` completed in 25.060 seconds.
+ROM e47a904ed8c2c6e1540d359ee3f62ab1339f346a0da88a811889e89cc9285084.
+This is authored dialogue, not yet object-interaction acceptance. The broad
+scene observer was stopped intentionally; its RPC-heavy observations are not
+evidence of engine deadlock. Use the saved exact-ROM checkpoint, not startup.
+
+New fixes retain 255 encoded message bytes in bounded WRAM, retire the prior
+message before scanning the replacement, discard superseded queued text, and
+service text after backend completion before actor composition. Voice cues are
+preserved but audio realization remains explicitly unavailable. 1,406 tests
+ran (12 skipped), make validate passes with 27 ownership regions. The latest
+16-bit diagnostic PC arithmetic correction is source-tested but not in the
+accepted subtitle ROM; do not transfer identities.
+
+A bounded checkpoint continuation is inspecting original Local221's authored
+skip route to room1, only if its actual override owner/PC agrees with source.
+No saved-away verbs are enabled by the observer. Recovery worktree untouched.
+
+---
+
 # Active Milestone B — source-font native rasterization passes; interaction pending
 
 Continue autonomously toward authentic readable object interaction. Do not stop

@@ -1427,8 +1427,13 @@ SAME_SCUMM_TALK_STOP_COUNT                 = $7E7A2A
 SAME_SCUMM_TALK_COMPLETE_COUNT             = $7E7A2B
 SAME_SCUMM_TALK_STARTED_FRAME              = $7E7A2C ; u16
 SAME_SCUMM_TALK_COMPLETED_FRAME            = $7E7A2E ; u16
-SAME_SCUMM_TALK_RAW                        = $7E7A30 ; 32 encoded bytes
+.if SAME_VIDEO_OVERLAY_INDEXED
+SAME_SCUMM_TALK_RAW                        = $7FFB80 ; 255 retained encoded bytes
+SAME_SCUMM_TALK_MAX_RAW                    = $00FF
+.else
+SAME_SCUMM_TALK_RAW                        = $7E7A30 ; legacy 32-byte presentation
 SAME_SCUMM_TALK_MAX_RAW                    = $0020
+.endif
 SAME_SCUMM_TALK_EVENT_COUNT                = $7E7A50
 SAME_SCUMM_TALK_EVENTS                     = $7E7A51 ; 16 x 8-byte records
 SAME_SCUMM_TALK_EVENT_STRIDE               = $0008
@@ -2000,6 +2005,11 @@ SAME_SCUMM_PUT_ACTOR_BOX_CAPACITY         = $00FF
 SAME_SCUMM_PUT_ACTOR_BOX_STRIDE           = $0012 ; 8 x s16 coords + u16 scale
 SAME_SCUMM_PUT_ACTOR_BOXES                = $7FFB65 ; compatibility alias
 SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK        = $7FFB65 ; one fetched BOXD record
+; The geometry accessor uses only $7FFB65..$7FFB76 (one 18-byte record).
+; Reclaimed former BOXD-array tail has independent persistent text ownership.
+SAME_SCUMM_TEXT_STORAGE_START            = $7FFB80
+SAME_SCUMM_TEXT_PENDING_RAW              = $7FFC80 ; 256-byte immutable producer snapshot
+SAME_SCUMM_TEXT_STORAGE_END              = $7FFD80
 SAME_SCUMM_PUT_ACTOR_WALKBOX              = $7FFDA5 ; 32 x u8
 SAME_SCUMM_PUT_ACTOR_DESTBOX              = $7FFDC5 ; 32 x u8
 SAME_SCUMM_PUT_ACTOR_DEST_X               = $7FFDE5 ; 32 x s16; -1 cancels walk

@@ -120,7 +120,7 @@ class HudMachine:
             elif op=='ldy':y=value
             elif op=='inx':x=(x+1)&((1<<iw)-1)
             elif op=='iny':y=(y+1)&((1<<iw)-1)
-            elif op in ('cmp','cpy'):
+            elif op in ('cmp','cmp.l','cpy'):
                 v=y if op=='cpy' else a&mask;p=(p&~3)|int(v>=value)|(2 if v==value else 0)
             elif op in ('beq','bne','bcc','bcs','bra','brl','jmp'):
                 if {'beq':bool(p&2),'bne':not p&2,'bcc':not p&1,'bcs':bool(p&1)}.get(op,True):pc=self.labels[arg]

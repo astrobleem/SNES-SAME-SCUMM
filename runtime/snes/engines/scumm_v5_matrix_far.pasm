@@ -5868,9 +5868,13 @@ ScummV5_Talk_Begin_Far__length_nonzero:
     and #$80
     bne ScummV5_Talk_Begin_Far__length_valid
     lda.l SAME_SCUMM_C23_RAW_INDEX
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    bra ScummV5_Talk_Begin_Far__length_valid
+    .else
     cmp #(SAME_SCUMM_TALK_MAX_RAW + 1)
     bcc ScummV5_Talk_Begin_Far__length_valid
     jmp ScummV5_Talk_Begin_Far__error
+    .endif
 ScummV5_Talk_Begin_Far__length_valid:
     lda.l SAME_SCUMM_C23_RAW_INDEX
     sta.l SAME_SCUMM_TALK_RAW_LENGTH
@@ -5882,7 +5886,7 @@ ScummV5_Talk_Begin_Far__length_valid:
     tax
     sep #$20
     .a8
-    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && !SAME_VIDEO_OVERLAY_INDEXED
     lda.l SAME_SCUMM_TALK_RAW,x
     ; A headless fixture may decode a source string larger than the compact
     ; presentation buffer.  C23 has consumed the complete source stream, so
@@ -5921,7 +5925,22 @@ ScummV5_Talk_Begin_Far__actor_check:
     beq ScummV5_Talk_Begin_Far__actor_valid
     jmp ScummV5_Talk_Begin_Far__error
 ScummV5_Talk_Begin_Far__actor_valid:
+    .a8
+    pha
+    ; Retire prior ownership before computing the new segment. Stop clears
+    ; HAVE_MSG; doing this after scanning erased the replacement's wait state.
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    beq ScummV5_Talk_Begin_Far__previous_retired
+    lda #$01
+    sta.l SAME_SCUMM_TALK_KEEP_TEXT
+    jsr ScummV5_Talk_Stop_Far
+ScummV5_Talk_Begin_Far__previous_retired:
+    sep #$20
+    .a8
+    pla
     sta.l SAME_SCUMM_TALK_ACTOR
+    lda #$00
+    sta.l SAME_SCUMM_TALK_KEEP_TEXT
     ; Preserve exact instruction consumption for evidence and diagnostics.
     ; PC already names the byte following the encoded string terminator.
     rep #$20
@@ -5945,11 +5964,14 @@ ScummV5_Talk_Begin_Far__pc_ego:
     .a8
     lda #$02
 ScummV5_Talk_Begin_Far__pc_prefix_ready:
-    clc
-    adc.l SAME_SCUMM_TALK_RAW_LENGTH
     rep #$20
     .a16
     and #$00FF
+    sta.l SAME_SCUMM_PRODUCT
+    lda.l SAME_SCUMM_TALK_RAW_LENGTH
+    and #$00FF
+    clc
+    adc.l SAME_SCUMM_PRODUCT
     sta.l SAME_SCUMM_PRODUCT
     lda.l SAME_SCUMM_TALK_PC_AFTER
     sec
@@ -6013,7 +6035,7 @@ ScummV5_Talk_Begin_Far__truncated_ready:
     sta.l SAME_SCUMM_TALK_VISUAL_STATUS
     brl ScummV5_Talk_Begin_Far__message_ready
 ScummV5_Talk_Begin_Far__not_truncated:
-    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
+    .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && !SAME_VIDEO_OVERLAY_INDEXED
     lda.l SAME_SCUMM_TALK_KEEP_TEXT
     bne ScummV5_Talk_Begin_Far__keep_text
     brl ScummV5_Talk_Begin_Far__scan_setup
@@ -6206,13 +6228,6 @@ ScummV5_Talk_Begin_Far__message_ready:
     ; with no controller sentence dispatch to retire a previously pending HUD.
     lda #$00
     sta.l SAME_VIDEO_TEXT_CONTROLLER_VALID
-    lda.l SAME_SCUMM_TALK_ACTIVE
-    beq ScummV5_Talk_Begin_Far__no_previous
-    lda #$01
-    sta.l SAME_SCUMM_TALK_KEEP_TEXT
-    jsr ScummV5_Talk_Stop_Far
-    lda #$00
-    sta.l SAME_SCUMM_TALK_KEEP_TEXT
 ScummV5_Talk_Begin_Far__no_previous:
     rep #$30
     .a16

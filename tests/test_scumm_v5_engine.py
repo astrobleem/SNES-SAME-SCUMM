@@ -1081,6 +1081,23 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(host.engine.state.talk.raw, bytearray(raw))
         self.assertEqual(host.engine.state.talk.events[0].kind, "start")
 
+    def test_retained_speech_metadata_does_not_become_glyphs_or_replace_wait_state(self):
+        font = (ROOT / "examples/resources/scumm_v5/s3_font.char").read_bytes()
+        cue = b"\xff\x0a\x01\0" * 4
+        raw = cue + b"A" * 90 + b"\xff\x03B\0"
+        host = self._host(bytes((0x14, 1, 0x0F, 65, 0, 0)),
+                          resources={"charset.0": font})
+        host.engine.state.actors[1] = ActorState(room=0, visible=True)
+        host.tick()
+        host.engine.state.variables[37] = 4
+        visible = host.engine._begin_actor_talk(1, bytearray(raw))
+        self.assertEqual(host.engine.state.talk.have_msg, 255)
+        self.assertEqual(host.engine.state.talk.raw, raw)
+        self.assertEqual(visible, cue + b"A" * 90 + b"\0")
+        self.assertEqual(host.engine._talk_glyph_count(visible), 90)
+        self.assertEqual(host.engine.state.talk.delay, 60 + 90 * 4)
+        self.assertEqual([e.kind for e in host.engine.state.talk.events], ["start", "stop", "start"])
+
     def test_load_room_with_ego_places_ego_before_yielded_entry_resumes(self) -> None:
         entry = bytes((
             0x9A, 15, 0, 38, 0,  # preserve VAR_WALKTO_OBJ for assertion

@@ -86,11 +86,13 @@ class NativeTalkScannerTests(unittest.TestCase):
         source = (ROOT/'runtime/snes/engines/scumm_v5_matrix_far.pasm').read_text()
         block = source.split('ScummV5_Talk_Begin_Far__scan_setup:',1)[1]
         block = block.split('ScummV5_Talk_Begin_Far__message_ready:',1)[0]
-        for raw in (b'AB\0', b'A\xff\x01B\0',
+        for raw in (b'AB\0', b'A'*254+b'\0', b'A'*90+b'\xff\x03B\0',
+                    b'\xff\x0a\x01\0'*4+b'Original speech cue\0', b'A\xff\x01B\0',
                     b'A\xff\x0c\xf0\0B\xff\x0e\x02\0C\0',
                     b'A\xff\x0c\xf0\0B\xff\x03C\0'):
             with self.subTest(raw=raw):
                 m = HudMachine(1,1)
+                m.symbols["SAME_SCUMM_TALK_RAW"] = 0x7FFB80
                 m.code=[('php','')];m.labels={};enabled=True
                 for line in block.splitlines():
                     line=line.split(';',1)[0].strip()
@@ -111,5 +113,63 @@ class NativeTalkScannerTests(unittest.TestCase):
                 self.assertEqual(m.get('SAME_SCUMM_TALK_SEGMENT_LENGTH',1),len(segment)-1)
                 self.assertEqual(m.get('SAME_SCUMM_TALK_SEGMENT_GLYPHS',1),ScummV5Engine._talk_glyph_count(segment))
                 self.assertEqual(m.get('SAME_SCUMM_TALK_HAVE_MSG',1),1 if final else 255)
+
+class TextOwnershipTests(unittest.TestCase):
+    def test_superseded_queued_message_is_discarded_before_surface_access(self):
+        from test_scumm_controller_hud_text import HudMachine
+        source=(ROOT/'runtime/snes/services/video_overlay_indexed.inc.pasm').read_text()
+        block=source.split('Same_Text_ProcessPending_Far:',1)[1].split('Same_Text_Process_owner_ready:',1)[0]
+        block += """
+Same_Text_Process_owner_ready:
+    lda #$00A5
+    sta.l SAME_TEST_ADMITTED
+Same_Text_busy:
+    ply
+    plx
+    pla
+    plp
+    rtl
+"""
+        for active,current,queued,expected in ((1,2,1,False),(1,2,2,True),(0,2,1,True),(1,0,65535,False)):
+            with self.subTest(active=active,current=current,queued=queued):
+                m=HudMachine(1,1)
+                m.symbols.update(SAME_OVERLAY_STATE=0x400780,SAME_TEXT_TALK_GENERATION=0x4007EA,SAME_TEST_ADMITTED=0x4007F4)
+                m.put('SAME_OVERLAY_STATE',2);m.put('SAME_SCUMM_TALK_ACTIVE',active,1)
+                m.put('SAME_SCUMM_TALK_GENERATION',current);m.put('SAME_TEXT_TALK_GENERATION',queued)
+                m.code=[];m.labels={};m.writes=[]
+                for line in block.splitlines():
+                    line=line.split(';',1)[0].strip()
+                    if not line or line.startswith('.'):continue
+                    if line.endswith(':'):m.labels[line[:-1]]=len(m.code)
+                    else:op,_,arg=line.partition(' ');m.code.append((op,arg))
+                m.run()
+                self.assertEqual(m.get('SAME_TEST_ADMITTED'),0xA5 if expected else 0)
+                self.assertEqual(m.get('SAME_OVERLAY_STATE'),2 if expected else 0)
+                self.assertTrue(all(a in (0x400780,0x4007F4) for a,n,v in m.writes))
+
+    def test_long_retained_message_source_pc_does_not_wrap_at_256(self):
+        from test_scumm_controller_hud_text import HudMachine
+        source=(ROOT/'runtime/snes/engines/scumm_v5_matrix_far.pasm').read_text()
+        block=source.split('ScummV5_Talk_Begin_Far__pc_prefix_ready:',1)[1].split('lda.l SAME_SCUMM_C23_TEXT_TRUNCATED',1)[0]
+        for prefix in (2,3,4):
+            for length in (1,32,90,252,253,254,255):
+                m=HudMachine(1,1)
+                m.put('SAME_SCUMM_TALK_RAW_LENGTH',length,1)
+                m.put('SAME_SCUMM_TALK_PC_AFTER',2048)
+                m.code=[('php',''),('sep','#$20'),('lda',f'#${prefix:02X}')];m.labels={}
+                for line in block.splitlines():
+                    line=line.split(';',1)[0].strip()
+                    if not line or line.startswith('.'):continue
+                    op,_,arg=line.partition(' ');m.code.append((op,arg))
+                m.code += [('plp',''),('rtl','')]
+                m.run()
+                self.assertEqual(m.get('SAME_SCUMM_TALK_PC_BEFORE'),2048-prefix-length)
+
+    def test_indexed_producer_gets_backend_unlock_before_actor_turn(self):
+        source=(ROOT/'runtime/snes/kernel/frame.pasm').read_text()
+        backend=source.index('.include "../generated/video_backend_frame.inc.pasm"')
+        text=source.index('jsl Same_VideoOverlay_Frame_Far',backend)
+        actor=source.index('jsl ScummV5_Visual_Frame_Far',backend)
+        self.assertLess(backend,text);self.assertLess(text,actor)
 
 if __name__=='__main__':unittest.main()

@@ -24,6 +24,7 @@ DEFAULT_NEXEN = Path(
 ACTIVE_DYNAMIC_RESIDENCY = False
 ACTIVE_MSU_PROGRAMS = False
 ACTIVE_LIVE_ROOM_RESOURCES = False
+ACTIVE_INDEXED_TEXT = False
 LIVE_ROOM_CONTROL_ADDRESS = 0x401400
 ACTIVE_PROGRAM_DIRECTORY: dict[int, dict[str, Any]] = {}
 RESIDENCY_EVENTS: list[dict[str, Any]] = []
@@ -252,7 +253,8 @@ def _snapshot(session: Any, *, include_live_room: bool = False) -> dict[str, Any
     c19_slot_depth = session.read_memory("snesMemory", 0x7FD363, 25)
     talk_raw_length = session.read_u8(0x7E7A28)
     talk_raw = session.read_memory(
-        "snesMemory", 0x7E7A30, min(talk_raw_length, 32)
+        "snesMemory", 0x7FFB80 if ACTIVE_INDEXED_TEXT else 0x7E7A30,
+        min(talk_raw_length, 255 if ACTIVE_INDEXED_TEXT else 32)
     )
     bit69_byte = session.read_u8(0x7E2BA0 + (69 >> 3))
     bit35_byte = session.read_u8(0x7E2BA0 + (35 >> 3))
@@ -1810,7 +1812,8 @@ def _talk_bytes(state: dict[str, Any]) -> bytes:
 
 
 def _finish_room4_intro(session: Any, *, max_frames: int,
-                        rom: Path, symbol_banks: dict[str, int]) -> dict[str, Any]:
+                        rom: Path, symbol_banks: dict[str, int],
+                        progress_callback: Any | None = None) -> dict[str, Any]:
     """Follow the bounded authored room-4 intro to its replay checkpoint."""
     from fate_replay import (
         advance_bounded, room4_message_ready,
@@ -1824,8 +1827,12 @@ def _finish_room4_intro(session: Any, *, max_frames: int,
     acknowledgements: list[dict[str, Any]] = []
     acked: set[int] = set()
     previous_generation: int | None = None
+    previous_progress_frame = -120
     while int(session.get_state()["frameCount"]) - start_frame < max_frames:
         state = _snapshot(session)
+        if progress_callback is not None and state["frame"] - previous_progress_frame >= 60:
+            progress_callback(state)
+            previous_progress_frame = state["frame"]
         if state["error"]:
             raise RuntimeError(f"SCUMM error during room-4 intro dialogue: {state!r}")
         if state["room"] != 4:
@@ -1873,7 +1880,7 @@ def _finish_room4_intro(session: Any, *, max_frames: int,
         remaining = max_frames - (state["frame"] - start_frame)
         step = min(1 if (state["talk_active"] and
                          (state["talk_have_msg"] == 0xFF or state["talk_delay"] <= 1))
-                   else 4, remaining)
+                   else 16, remaining)
         advanced = advance_bounded(session, step)
         if advanced["frames_advanced"] != step:
             raise RuntimeError(f"room-4 intro frame advancement drifted: {advanced!r}")
@@ -3090,6 +3097,8 @@ def main() -> int:
     global LIVE_ROOM_CONTROL_ADDRESS
     global RESIDENCY_PINNED_PEAK
     global RESIDENCY_OBSERVER_READY, RESIDENCY_PREINIT_UNKNOWN_ROWS
+    global ACTIVE_INDEXED_TEXT
+    ACTIVE_INDEXED_TEXT = build_identity.get("explicit_environment", {}).get("SAME_SNES_VIDEO_OVERLAY") == "surface_index8"
     ACTIVE_DYNAMIC_RESIDENCY = (
         build_identity.get("explicit_environment", {}).get(
             "SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY"
@@ -3736,8 +3745,42 @@ def main() -> int:
                 session,
             )
             cutscene_state_before_intro = room4_controller_snapshot(session)
+            def preserve_intro_text(state: dict[str, Any]) -> None:
+                # Durable read-only evidence at the failing text boundary,
+                # independent of completing the subsequent gameplay observer.
+                raw = session.read_memory("snesMemory", 0x400780, 128)
+                sample = {"frame": state["frame"], "talk_active": state["talk_active"],
+                          "talk_generation": state["talk_generation"], "talk_delay": state["talk_delay"],
+                          "text_state": raw.hex(), "text_status": session.read_u8(0x7E7AC7),
+                          "retained_text": session.read_memory("snesMemory", 0x7FFB80, 255).hex(),
+                          "pending_text": session.read_memory("snesMemory", 0x7FFC80, 256).hex(),
+                          "backend_committed": _u16(session, 0x401010)}
+                report.setdefault("intro_text_observations", []).append(sample)
+                if (int.from_bytes(raw[0:2], "little") == 0
+                        and raw[2:4] == raw[4:6] and raw[4:6] != b"\0\0"
+                        and int.from_bytes(raw[0x68:0x6a], "little") != 0
+                        and state["talk_active"]):
+                    label = f"authentic-text-{state['talk_generation']}"
+                    image = args.output.parent / (label + ".ppu.png")
+                    if not image.exists():
+                        import base64
+                        image.write_bytes(base64.b64decode(session.take_screenshot(format="base64")["base64"]))
+                        for suffix, memory, address, length in (("indexed.bin", "snesMemory", 0x402000, 57344),
+                                ("vram.bin", "snesVideoRam", 0, 65536), ("cgram.bin", "snesCgRam", 0, 512)):
+                            (args.output.parent / (label + "." + suffix)).write_bytes(session.read_memory(memory, address, length))
+                        sample["capture"] = str(image)
+                args.output.write_text(json.dumps(report, indent=2) + "\n")
+
+            if args.capture_room4_playable_scene:
+                checkpoint = args.output.parent / "before-intro-text.state"
+                report["before_intro_checkpoint"] = {
+                    "rom_sha256": rom_sha, "build_identity_sha256": report["build_identity_sha256"],
+                    "path": str(checkpoint), "save_result": session.save_state(checkpoint),
+                    "restoration_status": "NOT_VERIFIED"}
+                args.output.write_text(json.dumps(report, indent=2) + "\n")
             report["room4_intro"] = _finish_room4_intro(
-                session, max_frames=2400, rom=rom, symbol_banks=symbols
+                session, max_frames=2400, rom=rom, symbol_banks=symbols,
+                progress_callback=preserve_intro_text if args.capture_room4_playable_scene else None,
             )
             report["room4_intro_source_probe"] = _room4_source_probe(
                 session, variable_base=variable_layout["base"],

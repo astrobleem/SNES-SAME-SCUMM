@@ -28,12 +28,13 @@ SAME_TEXT_DX = SAME_VIDEO_TEXT_STATE+$34
 SAME_TEXT_DY = SAME_VIDEO_TEXT_STATE+$36
 SAME_TEXT_DRAW = SAME_VIDEO_TEXT_STATE+$38
 SAME_TEXT_SPACING = SAME_VIDEO_TEXT_STATE+$3A
-SAME_TEXT_RAW = SAME_VIDEO_TEXT_STATE+$40
+SAME_TEXT_RAW = SAME_SCUMM_TEXT_PENDING_RAW
 SAME_TEXT_INITIAL_INK = SAME_VIDEO_TEXT_STATE+$60
 SAME_TEXT_INITIAL_CHARSET = SAME_VIDEO_TEXT_STATE+$62
 SAME_TEXT_ROOM = SAME_VIDEO_TEXT_STATE+$64
 SAME_TEXT_ROOM_GENERATION = SAME_VIDEO_TEXT_STATE+$66
 SAME_TEXT_VISIBLE = SAME_VIDEO_TEXT_STATE+$68
+SAME_TEXT_TALK_GENERATION = SAME_VIDEO_TEXT_STATE+$6A
 
 Same_VideoOverlay_Reset_Far:
     .a16
@@ -209,7 +210,7 @@ Same_Text_Show_talk:
     txa
     clc
     adc.l SAME_TEXT_LENGTH
-    cmp #$0021
+    cmp #$0100
     bcc Same_Text_Show_talk_ok
     jmp Same_Text_unsupported
 Same_Text_Show_talk_ok:
@@ -219,7 +220,7 @@ Same_Text_Show_talk_ok:
 Same_Text_Show_talk_copy:
     .a16
     .i16
-    cpy #$0020
+    cpy #$00FF
     bcs Same_Text_Show_validate
     sep #$20
     .a8
@@ -249,6 +250,8 @@ Same_Text_Show_validate:
 Same_Text_Show_valid:
     .a16
     .i16
+    lda.l SAME_SCUMM_TALK_GENERATION
+    sta.l SAME_TEXT_TALK_GENERATION
     lda.l SAME_VIDEO_SURFACE_ROOM
     sta.l SAME_TEXT_ROOM
     lda.l SAME_VIDEO_SURFACE_ROOM_GENERATION
@@ -268,6 +271,21 @@ Same_Text_ProcessPending_Far:
     phx
     phy
     cld
+    ; An older queued subtitle/HUD must not complete a replacement message.
+    ; Keep the request immutable; discard it before writes and let the new
+    ; talk owner retry with its own raw bytes/style/generation.
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    and #$00FF
+    beq Same_Text_Process_owner_ready
+    lda.l SAME_SCUMM_TALK_GENERATION
+    cmp.l SAME_TEXT_TALK_GENERATION
+    beq Same_Text_Process_owner_ready
+    lda #$0000
+    sta.l SAME_OVERLAY_STATE
+    jmp Same_Text_busy
+Same_Text_Process_owner_ready:
+    .a16
+    .i16
     lda.l SAME_VIDEO_SURFACE_ROOM
     cmp.l SAME_TEXT_ROOM
     bne Same_Text_Process_stale
@@ -513,6 +531,10 @@ Same_Text_Layout_nonzero:
     beq Same_Text_Layout_color
     cmp #$000E
     beq Same_Text_Layout_font
+    cmp #$000A
+    beq Same_Text_Layout_speech_word
+    cmp #$0008
+    beq Same_Text_Layout_next
     ; Wait/continuation belongs to the SCUMM message sequencer. Unknown
     ; unresolved substitutions must not be silently skipped by presentation.
 Same_Text_Layout_fail:
@@ -524,7 +546,7 @@ Same_Text_Layout_newline:
     .a16
     .i16
     jsr Same_Text_Newline
-    bra Same_Text_Layout_next
+    brl Same_Text_Layout_next
 Same_Text_Layout_color:
     .a16
     .i16
@@ -535,7 +557,19 @@ Same_Text_Layout_color:
     bcs Same_Text_Layout_fail
     cmp #$0000
     bne Same_Text_Layout_fail
-    bra Same_Text_Layout_next
+    brl Same_Text_Layout_next
+; Talkie cue words carry no pixels. Preserve their bytes in TALK_RAW and
+; expose unavailable voice realization independently of subtitle rendering.
+Same_Text_Layout_speech_word:
+    .a16
+    .i16
+    jsr Same_Text_GetByte
+    bcs Same_Text_Layout_fail
+    jsr Same_Text_GetByte
+    bcs Same_Text_Layout_fail
+    lda #$0001
+    sta.l SAME_VIDEO_TEXT_STATE+$72 ; speech cue present, audio NOT_IMPLEMENTED
+    brl Same_Text_Layout_next
 Same_Text_Layout_font:
     .a16
     .i16
@@ -548,7 +582,7 @@ Same_Text_Layout_font:
     bne Same_Text_Layout_fail
     jsr Same_Text_SelectFont
     bcs Same_Text_Layout_fail
-    bra Same_Text_Layout_next
+    brl Same_Text_Layout_next
 Same_Text_Layout_glyph:
     .a16
     .i16

@@ -22,7 +22,7 @@ as in classic prepareDraw/getCharWidth; no adjacent font or fabricated advance
 is substituted. The synthetic scene golden hashes change for its absent space
 because the former renderer invented a four-pixel gap.
 
-128 bytes at $40:0780–07FF hold the queued text, raster scratch and generation
+128 bytes at $40:0780–07FF hold raster scratch, request ownership and generation
 fence, with mechanical ownership validation. No new framebuffer is allocated.
 The old BG2 configuration at $41:F000 is rejected when live SC5LIVE metadata
 owns that range. Text bytes/style are captured before a busy surface can delay
@@ -70,10 +70,46 @@ lint and WRAM/BW-RAM ownership. The native diagnostic and authentic build use
 the pinned Poppy DLL and pass ROM/map audits. Hosted CI is separate pending
 publication evidence; no hosted Nexen claim.
 
-The native producer still retains at most 32 encoded bytes per request. Full
-long-message delivery, continuation across that prefix, runtime charset-map
+The indexed native producer retains at most 255 encoded bytes per request.
+Longer-message delivery, runtime charset-map
 mutation, multiple distinct UI regions, inventory presentation and general
 style layout remain incomplete. The current small UI raster supports newline,
 inline color and charset, with clipping/wrapping; it does not certify every
 SCUMM inline control or every glyph/font natively. Do not force verbs active to
 conceal authored startup behavior. Whole-game readiness remains NOT_READY.
+
+## Authored subtitle and replacement ownership correction
+
+The indexed path now reserves $7F:FB80–FC7F for retained encoded message bytes
+and $7F:FC80–FD7F for the immutable queued copy. These follow the one-record
+18-byte geometry work area and precede actor walkbox state; the mechanical
+ownership audit checks the boundaries. The legacy 32-byte path is unchanged.
+
+Replacement retires the old talk owner before scanning the new message so
+Stop cannot erase the new HAVE_MSG value. An outstanding text request retains
+its message generation and is discarded before writes when superseded. Text
+service observes backend completion before actor composition can claim the
+newly writable surface. The lifetime starts after its own presentation fence.
+Speech-cue words remain encoded, do not rasterize, and set a separate unavailable
+voice-realization witness. This does not claim speech playback.
+
+A read-only native checkpoint control captured the original authored room4
+subtitle, without synthetic bytecode, gameplay writes, or controller input.
+Original font2 interpretation, active INDEX8, decoded VRAM and actual screenshot
+RGB against CGRAM all agree exactly. Local evidence is
+`/tmp/astra-authentic-dialogue-direct-20261110/observations`; runtime 25.060s,
+normal process-tree cleanup. It is dialogue evidence, not an object interaction.
+
+ROM SHA256: `e47a904ed8c2c6e1540d359ee3f62ab1339f346a0da88a811889e89cc9285084`.
+Build identity SHA256: `af46470237b28d9d1c6bada4eccda3ae792ec57db6909fb3ef830e05a7d67873`.
+The private build is an isolated dirty-source snapshot. The subsequent widened
+PC-before diagnostic arithmetic fix has source-instruction tests but is not
+part of this ROM. Earlier broad-observer timeouts/stops are not engine deadlock
+or graphics-failure evidence and remain preserved.
+
+Current local suite: 1,406 tests, 12 skipped; make validate passes, 27 bounded
+ownership regions. Public source-instruction tests exercise long strings,
+control operands, replacement state, request generations and frame ordering.
+Object-name substitution, distinct UI responsibilities, runtime font-map
+mutation, complete long-message pagination and actual object-action acceptance
+remain open. Whole-game readiness remains NOT_READY.

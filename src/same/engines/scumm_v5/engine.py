@@ -1782,6 +1782,11 @@ class ScummV5Engine(Engine):
             elif token.code == 1:
                 lines.append([])
                 heights.append(font.line_height)
+            elif token.code in (8, 10):
+                # Spoken-text break hint / retained talkie cue words have no
+                # raster pixels. Speech realization is a separate audio gap;
+                # the original cue remains in TalkState.raw, never fabricated.
+                continue
             elif token.code in (12, 14):
                 value = int.from_bytes(bytes(token.arguments), 'little')
                 if value > 255:
@@ -1872,7 +1877,7 @@ class ScummV5Engine(Engine):
             if control == 3:
                 segment.append(0)
                 return segment, index, False
-            if control not in (1, 12, 14):
+            if control not in (1, 8, 10, 12, 14):
                 raise EngineExecutionError(
                     f"SCUMM actor-talk control {control} is unsupported"
                 )
