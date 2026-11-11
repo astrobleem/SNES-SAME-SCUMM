@@ -1,8 +1,101 @@
 # Playable presentation latency — work in progress
 
 Milestone C starts at `41305d9d32cf02907dc887d3f76e449c01d57389`.
-This is a performance checkpoint, not camera, complete UI, or persistent-action
-acceptance. The separate progression recovery worktree is untouched.
+The sections below retain the history of each separately identified experiment.
+The latest result takes precedence over their earlier pending statuses. The
+separate progression recovery worktree is untouched.
+
+## Current result: retained rendering works; responsiveness gate remains open
+
+Native source commit `cc04e1ed662a4b1093dff15dd35e4b9ce7536d5d` passed one
+continuous cold authentic session: original newspaper pickup, readable inventory,
+inventory close, walking through the camera trigger, and subsequent controller
+input. No gameplay-state writes, synthetic story, checkpoint restore or
+seven-action replay were used. Original object ownership changed 15 to 1 and
+state 0 to 1. Room 10 remained RUNNING with error zero. Final actor position
+was (273,139), standing chore 3; source viewport origin was 208.
+
+The complete source/INDEX8/VRAM/PPU comparison has zero differing pixels, and
+CGRAM has zero differing bytes. Capture used immutable generation 220, after
+its exact commit and a completed raster, before a later DMA could alter it.
+The test exited normally in 477.831 seconds under its private-Xvfb 600-second
+process-tree supervisor. These are emulator results, not physical SNES results.
+
+A separate matching-ROM continuation restored the captured post-forward state
+(`ee18e52b2b233ed966033513e47897fb6831140f3bf6d68a1a1c688529ffdc76`)
+and used normal controller walking to reverse the camera. It passed complete
+source/INDEX8/PPU equality, persistent newspaper state and error zero at source
+crop 32, actor (239,138). Input frame 9392 to captured frame 10338 was 946
+frames. The private 240-second supervisor exited normally after 119.952 seconds.
+It is explicitly separate from the continuous cold-session proof. Both owned
+emulator trees were cleaned up; an unrelated user's emulator was not touched.
+
+| Measurement | Previous full reconstruction | Current retained camera |
+| --- | ---: | ---: |
+| Typical publication tile conversions | 896 | 27 |
+| Typical character upload bytes | 57,344 | 1,728 |
+| DMA batches per typical publication | at least 28 | 1 |
+| Input to final captured image, emulated frames | 1,908 | 1,061 |
+| Typical observed tile-step commit interval | full crop transactions | 40 frames |
+
+This removes the full-screen rebuild and reduces the recorded total by about
+44%, but **does not meet the smooth-scrolling definition of done**. The normal
+controller sequence and camera range are the same; sampled cursor release
+produced a two-source-pixel difference in the final walk endpoint versus the
+older recording. Do not describe the timing as an identical-cycle benchmark.
+On this run input was frame 8043, sampled semantic arrival 8180, logical camera
+target 8268, final camera commit observed 9092, and final actor/cursor image
+captured 9104. Ordinary columns retained existing tiles; some sampled counters
+were already reset for a subsequent generation and are not zero-work proofs.
+
+Row-mapped cursor exchange reduced the measured retained composition span from
+median 270,337 Nexen counter units/six frames to 115,615 units/three frames.
+The tile encoder remains 6,565 counter units per tile. The copyright-free
+132-step retained control passes full raster equality, reversal, both ring
+wraps, foreground/HUD preservation, DMA refusal, stale-generation rejection
+and cold replacement. Its new-column command-to-commit time is 16–17 frames
+and cached-column time nine frames, including fixture source generation.
+Neither figure is a claimed hardware lower bound or pure DMA time.
+
+### Remaining measured limit
+
+The authentic interval independently recorded 103 executable-cache loads and
+102 evictions. Five recurring canonical program identities total 1,358 body
+bytes, but the accepted cache has only three independently tagged 2 KiB page
+windows. Its existing three-way LRU cannot keep five identities resident.
+There were 56,536 provider bytes and 128 completed requests across all clients;
+not all those bytes are code. This is a demonstrated descriptor-working-set
+capacity problem, not the former tile-shadow alias and not proof that all
+remaining latency is caused by the cache. Rendering and serialized service
+work still have measured costs. No cache architecture, selector ABI, script
+timing, storage format or transfer/conversion budget was changed to conceal it.
+
+Removing that working-set pressure requires a separately scoped cache-capacity
+or packing policy with instruction/page identity, pinning and integrity proof.
+That redesign is outside this camera mission's explicit constraints. Further
+renderer optimization may also help; the present measurements do not certify
+an irreducible minimum. Keep PR #15 draft and Milestone C incomplete.
+
+### Exact current identities and evidence
+
+- ROM: `369e1fb8d9522d23634134103ab84c22332391d64a31f9aec6ad1a11d0e746ff`
+- Map: `be6a13e99c4d7a30b9447979ccad9211046cc77e0c6c91823917d59de1b101f1`
+- Package: `70564585c15538ed04b7f614b5b4d929a07eedf7a8545b510ff0ed66e9ad29d0`
+- Build identity: `0e606ca7af7b49aa791ea062820283a86f0ee8fc654dfb20b4ccf5f4d39cb1d6`
+
+All 40 non-generated assembler inputs match cc04e1e. The isolated generated
+build has its own Git/source manifest; its Git SHA is not substituted for the
+public source SHA. The unchanged full package contains 2,203 ProgramUnits.
+Private evidence, including failed predecessors, exact builds, commands,
+profiles, captures and SHA-256 manifests, is retained under
+`/home/chad/SAME-private-evidence/milestone-c-retained-20261111/column-and-cursor`.
+No commercial payloads or captures are tracked in Git.
+
+Local validation: 1,536 tests run, 1,524 passed, 12 skipped; `make validate`,
+33-region memory audit, pinned Poppy assembly/ROM audit, Python compilation,
+Bash syntax, tracked JSON and diff checks pass. Both hosted jobs passed on
+cc04e1e: https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43091042731.
+Hosted assembly is not Nexen execution. No automatic merge is authorized.
 
 ## Verified first tranche
 

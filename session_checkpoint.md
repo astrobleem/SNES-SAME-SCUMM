@@ -1,3 +1,37 @@
+## Current checkpoint — retained camera verified, Milestone C responsiveness incomplete
+
+Runtime source: cc04e1ed662a4b1093dff15dd35e4b9ce7536d5d, published on
+scumm-fate-playable-adventure / draft PR #15, still stacked on PR #14.
+The full continuous authentic newspaper/inventory/walk/camera/control session
+passes with zero source/INDEX8/VRAM/CGRAM differences, error zero, actor273,139,
+standing3 and source crop208. No guest gameplay writes or seven-action replay.
+Current exact-ROM reverse continuation also passes full pixels and persistent
+inventory, source crop32/actor239,138. It is separate, not spliced continuity.
+
+Measured forward response:1908→1061 emulated frames, reverse946. Typical
+camera publication:27tiles/1728B/one DMA batch rather than896/57344/28+.
+Synthetic132-step ring/foreground/HUD/refusal/stale/cold proof passes.
+Current cursor composition median3frames versus6 before row mapping.
+**Do not claim smooth scrolling or Milestone C complete.** Further work must
+address measured service/CPU costs. Five recurrent source programs (1358bytes)
+exceed the three separately tagged page windows; current forward interval
+records103cache loads/102evictions. Removing this pressure requires a scoped
+cache capacity/packing change, expressly outside the camera-only task. It is
+not proven to explain all remaining latency. Do not redesign it speculatively.
+
+Local1536tests run:1524pass/12skip; validate/33-region audit/pinnedassembly/ROM
+checks pass. Hosted run43091042731 passed both jobs on cc04e1e (not Nexen).
+Authentic ROM369e1fb8..., package70564585... unchanged/full2203units; all40
+nongenerated assembly inputs match cc04. Exact hashes and observations are in
+PLAYABLE_PRESENTATION_LATENCY.md. Private durable evidence:
+/home/chad/SAME-private-evidence/milestone-c-retained-20261111/column-and-cursor
+includes commands, identities, failed predecessors and SHA256 manifests.
+Forward477.831s and reverse119.952s exited normally with owned cleanup.
+No current test-owned emulator remains. Unrelated PID104488 and the separate
+progression recovery worktree remain untouched. No automatic merge.
+
+--- Historical checkpoints below retain their original scopes/statuses ---
+
 ## Active camera repair — retained backend native proof, integration pending
 
 HEAD before this tranche: 80719edf. Do not stop at this intermediate checkpoint.
