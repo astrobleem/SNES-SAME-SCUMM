@@ -374,6 +374,20 @@ def indexed_text_request_is_composed(text: bytes, raw: bytes, pose: dict,
     return length == len(expected) and len(raw) >= length and raw[:length] == expected
 
 
+def indexed_contrast_pixels(indexed: bytes, cgram: bytes, *, background_index: int = 0) -> int:
+    """Count visible contrast, separately from exact glyph/palette fidelity.
+
+    A correctly rendered black glyph on black is not readable UI acceptance.
+    Palette index zero can still be opaque and visible on another background.
+    This check does not change rendering or certify glyph shape by itself.
+    """
+    if len(cgram) != 512 or not 0 <= background_index < 256:
+        raise ValueError('expected complete SNES CGRAM and valid background index')
+    colors = [int.from_bytes(cgram[i:i+2], 'little') & 0x7FFF
+              for i in range(0, 512, 2)]
+    return sum(colors[index] != colors[background_index] for index in indexed)
+
+
 def indexed_text_committed_candidate(text: bytes, raw: bytes, pose: dict,
                                      expected: bytes, *, after_generation: int) -> bool:
     """Candidate for independent pixel validation after the queue fence passed.

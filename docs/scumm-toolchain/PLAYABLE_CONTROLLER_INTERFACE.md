@@ -225,3 +225,25 @@ requires its own run. The native observer now requires a completed stable
 raster as well as committed indexed/PPU generations; an inventory image taken
 inside the first raster remains unaccepted. Neither a Python observer exception
 nor a timeout is reported as an engine deadlock.
+
+## Inventory style ownership and readable-image checks
+
+The31dfbe5 native image completed the original pickup owner15->1/state0->1,
+but its inventory capture is **NOT_READABLE**. C17_RECORD_OFFSET is shared
+opcode scratch. MenuText preserved that scratch instead of resolving a verb,
+and ShowHud subsequently used an unrelated record's black foreground. Source
+glyph/INDEX8/PPU equality all agreed on invisible black-on-black output. Those
+equalities remain valid pixel observations, not usable interface acceptance.
+The run was stopped; its captures and correction note are retained privately.
+
+ShowHud now resolves the current enabled, named verb through the existing C17
+lookup. A verb page uses its selected verb; an inventory page uses the current
+verb. No source color is substituted, masked or invented. Unavailable/disabled
+styles remain unavailable. Script-owned C23 state is restored on every exit.
+Focused actual-source tests use stale offsets, full palette indices, hidden
+records and all accumulator/index entry widths. Native validation is separate.
+
+The visual observer exposes a separate palette-aware contrast count. A match
+to an invisible source-colored glyph is not accepted as readable UI. Index0
+remains a valid opaque pixel on a differently colored background; this is an
+acceptance check, not a changed transparency or rendering rule.

@@ -4647,12 +4647,37 @@ ScummV5_Controller_ShowHud_Far:
     jsl ScummV5_Controller_BuildHudText_Far
     lda.l SAME_SCUMM_TALK_VISUAL_STATUS
     bne ScummV5_Controller_ShowHud__dynamic_unusable
-    ; BuildHudText resolved the selected C17 record, including high verb IDs.
+    ; C17_RECORD_OFFSET is opcode scratch, not retained UI ownership.
+    ; MenuText preserves it and object/inventory names do not resolve a verb.
+    ; Resolve the active source style afresh after building immutable text.
     rep #$30
     .a16
     .i16
-    lda.l SAME_SCUMM_C17_RECORD_OFFSET
-    tax
+    lda.l SAME_SCUMM_PLAY_UI_MODE
+    and #$00FF
+    cmp #$0001
+    bne ScummV5_Controller_ShowHud__current_verb_style
+    lda.l SAME_SCUMM_PLAY_UI_SELECTION
+    bra ScummV5_Controller_ShowHud__resolve_style
+ScummV5_Controller_ShowHud__current_verb_style:
+    .a16
+    lda.l SAME_SCUMM_CONTROLLER_VERB
+    and #$00FF
+ScummV5_Controller_ShowHud__resolve_style:
+    .a16
+    jsl ScummV5_Controller_MenuVerbEnabled_Far
+    bcs ScummV5_Controller_ShowHud__style_ready
+    sep #$20
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_TALK_VISUAL_STATUS
+    jmp ScummV5_Controller_ShowHud__dynamic_unusable
+ScummV5_Controller_ShowHud__style_ready:
+    .a16
+    .i16
+    ; MenuVerbEnabled returns the validated record offset in X16.
+    txa
+    sta.l SAME_SCUMM_C17_RECORD_OFFSET
     sep #$20
     .a8
     ; SNES prompt adaptation: mode 1 highlights the selected verb. This is

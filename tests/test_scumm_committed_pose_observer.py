@@ -63,6 +63,17 @@ def observer(session, directory):
 
 
 class CommittedPoseObserverTests(unittest.TestCase):
+    def test_visible_contrast_is_separate_from_pixel_equality_and_slot_zero(self):
+        cgram=bytearray(512)
+        self.assertEqual(probe.indexed_contrast_pixels(bytes((0,1,178)),cgram),0)
+        cgram[356:358]=(0x7FFF).to_bytes(2,'little')
+        self.assertEqual(probe.indexed_contrast_pixels(bytes((0,1,178)),cgram),1)
+        self.assertEqual(probe.indexed_contrast_pixels(bytes((0,1,178)),cgram,background_index=178),2)
+        for bad in (b'',bytes(511),bytes(513)):
+            with self.assertRaises(ValueError):probe.indexed_contrast_pixels(b'abc',bad)
+        with self.assertRaises(ValueError):probe.indexed_contrast_pixels(b'abc',cgram,background_index=256)
+
+
     def test_requested_text_cannot_borrow_old_caption_pixels(self):
         text=bytearray(128);expected=b'Look at lamp';pose={'room':4,
             'surface_room_generation':2,'backend_pending_generation':65}

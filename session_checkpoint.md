@@ -4050,3 +4050,15 @@ and ROM audit pass. New native session uses fresh ROM under
 with source hashes and first-failure captures. It uses the existing original
 startup/pickup/inventory/camera sequence, not the seven-action route. No old
 savestate crosses ROM identities. Continue the actual native gates.
+
+### Readability defect found by inspecting the actual capture
+
+31dfbe5 CI43029280756 passed. Its native session completed the original pickup,
+but inventory ink0/background0 was invisible despite exact pixel equality.
+Stopped the owned session at391.349sec; no camera completion claimed. The
+first failed readability boundary is preserved with an explicit correction
+note. C17 style now resolves the current UI verb independently of opcode
+scratch. Focused tests pass and pinned assembly/ROM audit pass. The observer
+now separately requires visible palette contrast. A changed-image continuous
+session is running under600sec atport7423 with fresh source startup; no old
+savestate or seven-action replay. Full suite1,496run/12skipped passes; make validate and33-region audit pass.
