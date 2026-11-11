@@ -3926,3 +3926,23 @@ exceed rectangular-underlay capacity. The source compiler represents these
 poses. Do not relax the capacity guard or claim them rendered without a
 correct bounded restoration path. Original full-source reanalysis remains
 NOT_READY; report is local at /tmp/astra-authentic-room-capabilities-20261109.
+
+
+### Milestone C responsiveness — 2026-11-11 (in progress)
+
+Branch `scumm-fate-playable-adventure` preserves completed Milestone B/PR #14
+at `41305d9`. Recovery worktree remains untouched. Commits `f205e45`,
+`199b036`, `fc71f44`, `dfa8f13` repair room cursor width/engine linkage and
+reduce tile conversion/scanning and text damage. Exact native evidence and
+rejected observations are recorded in
+`docs/scumm-toolchain/PLAYABLE_PRESENTATION_LATENCY.md`.
+
+Copyright-free six-generation Mode-3 control passes. Original text response
+now observed at 218 frames versus baseline 513, with zero source/INDEX8/PPU
+pixel differences; substantial script/resource and remaining presentation
+waits still exist. Caption association regression is fixed and independently
+checked using an existing matching-ROM checkpoint, not another story replay.
+A changed-code walking measurement is in progress. Camera crop, complete
+verbs/inventory and persistent original-game interaction are NOT complete.
+Do not stop at this performance checkpoint or claim Milestone C acceptance.
+No full seven-action replay is authorized/needed for this work.
