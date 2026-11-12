@@ -2454,6 +2454,11 @@ ScummV5_ActorPose_Ensure__provider_room_not_requested:
     jml ScummV5_ActorPose_Ensure__pending
 ScummV5_ActorPose_Ensure__provider_room_not_reading:
     .a8
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    ; Foreground costume reads have priority over completed speculation.
+    ; The provider state above still excludes any in-flight destination.
+    jsl ScummV5_Camera_AheadRelease_Far
+    .endif
     lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
     beq ScummV5_ActorPose_Ensure__provider_page_unpinned
     jml ScummV5_ActorPose_Ensure__pending

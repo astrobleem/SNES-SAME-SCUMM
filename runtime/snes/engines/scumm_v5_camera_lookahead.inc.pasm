@@ -1,7 +1,7 @@
 ; One checked strip of camera lookahead. Pixel storage is the existing shared
 ; pending prefix, borrowed only AFTER the current conversion has finished.
-; No speculative character/map/scroll writes: BeginScroll still proves the
-; physical slot is unreferenced before the next real publication uses it.
+; No speculative display writes: BeginScroll still proves the
+; destination is unreferenced before the next real publication uses it.
 ; The immutable ticket is 24 audited bytes at $7E2EE8..$7E2EFF.
 
 ScummV5_Camera_AheadReconcile_Far:
@@ -112,15 +112,13 @@ ScummV5_Camera_AheadConsume__ready:
     lda.l SAME_SCUMM_CAMERA_AHEAD_LENGTH
     cmp.l SAME_SCUMM_VIEWPORT_STRIP_BYTES
     bne ScummV5_Camera_AheadConsume__miss
-    lda.l SAME_SCUMM_CAMERA_AHEAD_ORIGIN
-    cmp.l MODE3_R_CURRENT
-    bne ScummV5_Camera_AheadConsume__miss
-    lda.l SAME_SCUMM_CAMERA_AHEAD_GENERATION
-    cmp.l MODE3_R_GENERATION
-    bne ScummV5_Camera_AheadConsume__miss
     lda.l SAME_SCUMM_CAMERA_AHEAD_GENERATION+2
-    cmp.l MODE3_R_GENERATION_HI
-    bne ScummV5_Camera_AheadConsume__miss
+    tay
+    lda.l SAME_SCUMM_CAMERA_AHEAD_GENERATION
+    tax
+    lda.l SAME_SCUMM_CAMERA_AHEAD_ORIGIN
+    jsl Same_VideoSurface_LookaheadMatches_Far
+    bcs ScummV5_Camera_AheadConsume__miss
     sep #$20
     .a8
     lda #$00
@@ -134,7 +132,14 @@ ScummV5_Camera_AheadConsume__ready:
     sta.l SAME_SCUMM_CAMERA_AHEAD_HITS
     ; Provider fields may now describe another completed client. The immutable
     ; accepted ticket above, not that mutable descriptor, supplies the length.
-    jml ScummV5_Camera_ConsumeStrip__length_ok
+    jsl ScummV5_Camera_ConsumeStrip__length_ok
+    bcc ScummV5_Camera_AheadConsume__installed
+    ; A checked ticket hit with invalid installation geometry is a failure,
+    ; not a cache miss that may silently issue another read.
+    jml ScummV5_Camera_Invalid_Far
+ScummV5_Camera_AheadConsume__installed:
+    clc
+    rtl
 ScummV5_Camera_AheadConsume__miss:
     .a8
     sep #$20
@@ -166,72 +171,15 @@ ScummV5_Camera_AheadService__idle:
     jmp ScummV5_Camera_AheadService__done
 ScummV5_Camera_AheadService__publication:
     .a8
-    lda.l SAME_MODE3_CONTROL_STATE
-    cmp #SAME_MODE3_STATE_QUEUEING
-    bcs ScummV5_Camera_AheadService__conversion_done
-    jmp ScummV5_Camera_AheadService__done
-ScummV5_Camera_AheadService__conversion_done:
-    .a8
-    ; The locked generation can no longer read MODE3_R_INPUT once every
-    ; candidate is converted. Its character DMA reads only the planar shadow.
-    rep #$20
-    .a16
-    lda.l SAME_MODE3_CONTROL_CANDIDATE_COUNT
-    beq ScummV5_Camera_AheadService__no_candidates
-    jmp ScummV5_Camera_AheadService__done
-ScummV5_Camera_AheadService__no_candidates:
-    .a16
-    lda.l MODE3_R_NEXT
-    and #$0007
-    beq ScummV5_Camera_AheadService__aligned
-    jmp ScummV5_Camera_AheadService__done
-ScummV5_Camera_AheadService__aligned:
-    .a16
-    lda.l SAME_VIDEO_SURFACE_PENDING_XSTART
-    clc
-    adc #$0020
-    cmp.l MODE3_R_NEXT
-    bne ScummV5_Camera_AheadService__direction
-    jmp ScummV5_Camera_AheadService__done
-ScummV5_Camera_AheadService__direction:
-    .a16
-    bcc ScummV5_Camera_AheadService__left
-    lda.l MODE3_R_NEXT
-    cmp.l MODE3_R_MAX
-    bcc ScummV5_Camera_AheadService__right
-    jmp ScummV5_Camera_AheadService__done
-ScummV5_Camera_AheadService__right:
-    .a16
-    lsr
-    lsr
-    lsr
-    clc
-    adc #$0020
-    bra ScummV5_Camera_AheadService__column
-ScummV5_Camera_AheadService__left:
-    .a16
-    lda.l MODE3_R_NEXT
-    bne ScummV5_Camera_AheadService__left_nonzero
-    jmp ScummV5_Camera_AheadService__done
-ScummV5_Camera_AheadService__left_nonzero:
-    .a16
-    lsr
-    lsr
-    lsr
-    dec
-ScummV5_Camera_AheadService__column:
-    .a16
-    ; A retained checked column needs no read. FIRST/LAST may still describe
-    ; the preceding committed window; preparing a redundant immutable strip
-    ; is harmless, but never overwrite a useful cached hit on reversal.
-    cmp.l MODE3_R_FIRST
+    ; The surface service owns conversion lifetime and off-screen geometry.
+    jsl Same_VideoSurface_PlanLookahead_Far
     bcc ScummV5_Camera_AheadService__missing
-    cmp.l MODE3_R_LAST
-    bcc ScummV5_Camera_AheadService__done
-    beq ScummV5_Camera_AheadService__done
+    jmp ScummV5_Camera_AheadService__done
 ScummV5_Camera_AheadService__missing:
     .a16
     sta.l SAME_SCUMM_CAMERA_AHEAD_COLUMN
+    txa
+    sta.l SAME_SCUMM_CAMERA_AHEAD_ORIGIN
     sep #$20
     .a8
     lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
@@ -287,8 +235,6 @@ ScummV5_Camera_AheadBegin_Far:
     sta.l SAME_SCUMM_CAMERA_AHEAD_GENERATION
     lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION+2
     sta.l SAME_SCUMM_CAMERA_AHEAD_GENERATION+2
-    lda.l MODE3_R_NEXT
-    sta.l SAME_SCUMM_CAMERA_AHEAD_ORIGIN
     sep #$20
     .a8
     lda.l SAME_VIDEO_SURFACE_ROOM

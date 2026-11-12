@@ -254,6 +254,9 @@ ScummV5_MsuProgram_Reset_Far__pending:
     sta.l SAME_SCUMM_MSU_ROOM_STATE
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     lda #$00
+    sta.l SAME_SCUMM_CAMERA_AHEAD_STATE
+    sta.l SAME_SCUMM_CAMERA_AHEAD_HITS
+    sta.l SAME_SCUMM_CAMERA_AHEAD_HITS+1
     sta.l SAME_SCUMM_VIEWPORT_STATE
     sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
     sta.l SAME_SCUMM_VIEWPORT_MODE
@@ -299,6 +302,15 @@ ScummV5_MsuProgram_Reset_Far__failed:
 ; its resource waiter; already verified code and actor movement remain runnable.
 ; Room installation above this gate retains its separate transactional barrier.
 ScummV5_MsuProgram_FrameReady_Far:
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER && SCUMM_MSU1_CAMERA_VIEWPORT
+    ; Retire speculative READ_OK before any foreground client may reuse the
+    ; provider descriptor. This never stalls already resident scripts.
+    jsl ScummV5_Camera_AheadReconcile_Far
+    bcc ScummV5_MsuProgram_FrameReady_Far__ahead_ready
+    jml ScummV5_MsuProgram_FrameReady_Far__failed
+ScummV5_MsuProgram_FrameReady_Far__ahead_ready:
+    .a8
+.endif
     ; The SAME provider has one serialized checked-read cursor. Reconcile a
     ; completed executable page before the room state machine can start its
     ; next metadata/palette/pixel read; otherwise a room read could inherit
@@ -666,6 +678,17 @@ ScummV5_MsuRoom_Request_Far:
     php
     sep #$20
     .a8
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && SCUMM_MSU1_CAMERA_VIEWPORT
+    ; A real incoming room outranks a camera request, but cannot erase its
+    ; ownership before YieldToRoom drains the provider and publication fence.
+    lda.l SAME_SCUMM_VIEWPORT_MODE
+    beq ScummV5_MsuRoom_Request_Far__camera_idle
+    plp
+    clc
+    rtl
+ScummV5_MsuRoom_Request_Far__camera_idle:
+    .a8
+.endif
     lda.l SAME_SCUMM_MSU_ROOM_STATE
     cmp #SCUMM_MSU_ROOM_REQUESTED
     beq ScummV5_MsuRoom_Request_Far__coalesced

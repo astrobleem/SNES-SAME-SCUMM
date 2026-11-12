@@ -146,6 +146,9 @@ ScummV5_MsuProgram_ReconcileRead_Far__error:
     sec
     rtl
 ''' + touch
+        ahead_release = (ROOT/'runtime/snes/engines/scumm_v5_camera_lookahead.inc.pasm').read_text().split('ScummV5_Camera_AheadRelease_Far:',1)[1].split('; C clear is a hit.',1)[0]
+        ahead_release = '\nScummV5_Camera_AheadRelease_Far:\n' + ahead_release
+        code += ahead_release
         for page, status, room, owner in itertools.product(range(3), (4, 5), (0, 1, 2, 3), (0, 1, 2)):
             with self.subTest(page=page, status=status, room=room, owner=owner):
                 m = HudMachine(1, 1)
@@ -200,6 +203,9 @@ ScummV5_ActorPose_Ensure__pending:
     plp
     rtl
 """
+        ahead_release = (ROOT/'runtime/snes/engines/scumm_v5_camera_lookahead.inc.pasm').read_text().split('ScummV5_Camera_AheadRelease_Far:',1)[1].split('; C clear is a hit.',1)[0]
+        ahead_release = '\nScummV5_Camera_AheadRelease_Far:\n' + ahead_release
+        block += ahead_release
         for provider, code_slot, room, owner in itertools.product(
                 (0, 1, 2, 3, 4, 5, 255), (0, 2, 255), (0, 1, 2, 3, 255), (0, 1, 2)):
             with self.subTest(provider=provider, code=code_slot, room=room, owner=owner):

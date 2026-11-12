@@ -38,6 +38,32 @@ ScummV5_Camera_StartStrip__needs_read:
     jml ScummV5_Camera_Invalid_Far
 ScummV5_Camera_StartStrip__state_ok:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    jsl ScummV5_Camera_AheadConsume_Far
+    bcs ScummV5_Camera_StartStrip__ahead_miss
+    clc
+    rtl
+ScummV5_Camera_StartStrip__ahead_miss:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    beq ScummV5_Camera_StartStrip__ahead_retry
+    sec
+    rtl
+ScummV5_Camera_StartStrip__ahead_retry:
+    .a8
+    .endif
+    jsl ScummV5_Camera_BuildStripRequest_Far
+    bcc ScummV5_Camera_StartStrip__descriptor_ready
+    rtl
+ScummV5_Camera_StartStrip__descriptor_ready:
+    .a8
+    jml ScummV5_MsuLiveRoom_Start_Far__read
+
+; Build only the checked descriptor. Admission and scratch ownership belong
+; to the caller. Shared by required strips and the speculative request.
+ScummV5_Camera_BuildStripRequest_Far:
+    .a8
     rep #$30
     .a16
     .i16
@@ -119,7 +145,8 @@ ScummV5_Camera_StartStrip__crc_ok:
     sta.l SAME_MSU1_DESTINATION+1
     lda #$40
     sta.l SAME_MSU1_DESTINATION+2
-    jml ScummV5_MsuLiveRoom_Start_Far__read
+    clc
+    rtl
 
 ScummV5_Camera_Prepare_Far:
     .a8
@@ -257,6 +284,10 @@ ScummV5_Camera_Prepare__retained_step:
     bne ScummV5_Camera_Prepare__retained_read
     sep #$20
     .a8
+    ; Admission has drained any provider write. A cached reverse step reuses
+    ; the pending prefix, so abandon its previous speculative identity first.
+    lda #$00
+    sta.l SAME_SCUMM_CAMERA_AHEAD_STATE
     lda #$02
     sta.l SAME_SCUMM_VIEWPORT_STATE
     lda #SAME_SCUMM_ACTOR_SCRATCH_OWNER_ROOM
@@ -769,9 +800,13 @@ ScummV5_Camera_ServicePending__retained_wait:
     .a8
     lda #$00
     sta.l SAME_SCUMM_VIEWPORT_STATE
+    sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
+    lda.l SAME_SCUMM_CAMERA_AHEAD_STATE
+    bne ScummV5_Camera_ServicePending__keep_ahead
     sta.l SAME_SCUMM_VIEWPORT_MODE
     sta.l SAME_SCUMM_ACTOR_SCRATCH_OWNER
-    sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
+ScummV5_Camera_ServicePending__keep_ahead:
+    .a8
     lda #$01
     sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
     ; The exact PPU generation has committed. Reconsider the latest target
@@ -941,6 +976,8 @@ ScummV5_Camera_YieldToRoom__verified_or_idle:
     rtl
 ScummV5_Camera_YieldToRoom__aborted:
     .a8
+    lda #$00
+    sta.l SAME_SCUMM_CAMERA_AHEAD_STATE
     .else
     jsl Same_VideoSurface_InvalidateTileCache_Far
     .endif
@@ -955,3 +992,7 @@ ScummV5_Camera_YieldToRoom__idle:
     .a8
     clc
     rtl
+
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+.include "scumm_v5_camera_lookahead.inc.pasm"
+.endif

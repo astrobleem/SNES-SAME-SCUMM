@@ -174,6 +174,22 @@ SAME_SCUMM_MSU_REQUEST_PROGRAM          = $7E2EE2 ; u16 immutable read owner
 SAME_SCUMM_MSU_REQUEST_PC               = $7E2EE4 ; u16 immutable read source PC
 SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH       = $7E2EE6 ; u16 complete body, not page/group extent
 SAME_SCUMM_MSU_LOGICAL_END              = $7E2EE8
+; Camera lookahead ticket, in the audited gap before the provider at $2F00.
+; Pixel bytes remain in the existing shared 2 KiB pending prefix. No extra
+; executable cache, pixel buffer, or VRAM allocation.
+SAME_SCUMM_CAMERA_AHEAD_BASE = $7E2EE8
+SAME_SCUMM_CAMERA_AHEAD_STATE = $7E2EE8 ; 0 empty, 1 reading, 2 CRC accepted
+SAME_SCUMM_CAMERA_AHEAD_ROOM = $7E2EE9
+SAME_SCUMM_CAMERA_AHEAD_EPOCH = $7E2EEA ; room epoch
+SAME_SCUMM_CAMERA_AHEAD_COLUMN = $7E2EEC
+SAME_SCUMM_CAMERA_AHEAD_LENGTH = $7E2EEE
+SAME_SCUMM_CAMERA_AHEAD_OFFSET = $7E2EF0 ; u32 immutable provider ticket
+SAME_SCUMM_CAMERA_AHEAD_CRC = $7E2EF4 ; u32
+SAME_SCUMM_CAMERA_AHEAD_GENERATION = $7E2EF8 ; full u32 retained publication
+SAME_SCUMM_CAMERA_AHEAD_ORIGIN = $7E2EFC ; origin after that publication
+SAME_SCUMM_CAMERA_AHEAD_HITS = $7E2EFE ; u16 diagnostic accepted prefetches
+SAME_SCUMM_CAMERA_AHEAD_END = $7E2F00
+
 ; Cache metadata stays in the provider's audited WRAM gap.
 SAME_SCUMM_MSU_CACHE_STATE0              = $7E2F48
 SAME_SCUMM_MSU_CACHE_STATE1              = $7E2F49

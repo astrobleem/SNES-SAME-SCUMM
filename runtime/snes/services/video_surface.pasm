@@ -1880,6 +1880,114 @@ Same_VideoSurface_CanPublishRetained__wait:
     sec
     rtl
 
+; A speculative source-strip request may reuse the pending prefix only once
+; the immutable current publication has finished all conversion. This returns
+; A16=next missing source column, X16=origin it follows, C clear. It does not
+; claim pixels or physical character slots. The latter remain owned by the
+; committed map until BeginScroll proves safe reuse after the NMI commit.
+Same_VideoSurface_PlanLookahead_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    lda.l MODE3_R_ACTIVE
+    and #$00FF
+    cmp #$0001
+    bne Same_VideoSurface_PlanLookahead__no
+    lda.l SAME_MODE3_CONTROL_STATE
+    and #$00FF
+    cmp #SAME_MODE3_STATE_QUEUEING
+    bcc Same_VideoSurface_PlanLookahead__no
+    cmp #(SAME_MODE3_STATE_COMPLETE+1)
+    bcs Same_VideoSurface_PlanLookahead__no
+    lda.l SAME_MODE3_CONTROL_CANDIDATE_COUNT
+    bne Same_VideoSurface_PlanLookahead__no
+    lda.l MODE3_R_NEXT
+    and #$0007
+    bne Same_VideoSurface_PlanLookahead__no
+    lda.l SAME_VIDEO_SURFACE_PENDING_XSTART
+    clc
+    adc #$0020
+    bpl Same_VideoSurface_PlanLookahead__positive
+    lda #$0000
+Same_VideoSurface_PlanLookahead__positive:
+    .a16
+    cmp.l MODE3_R_MAX
+    bcc Same_VideoSurface_PlanLookahead__bounded
+    lda.l MODE3_R_MAX
+Same_VideoSurface_PlanLookahead__bounded:
+    .a16
+    cmp.l MODE3_R_NEXT
+    beq Same_VideoSurface_PlanLookahead__no
+    bcc Same_VideoSurface_PlanLookahead__left
+    lda.l MODE3_R_NEXT
+    cmp.l MODE3_R_MAX
+    bcs Same_VideoSurface_PlanLookahead__no
+    tax
+    lsr
+    lsr
+    lsr
+    clc
+    adc #$0020
+    bra Same_VideoSurface_PlanLookahead__column
+Same_VideoSurface_PlanLookahead__left:
+    .a16
+    lda.l MODE3_R_NEXT
+    beq Same_VideoSurface_PlanLookahead__no
+    tax
+    lsr
+    lsr
+    lsr
+    dec
+Same_VideoSurface_PlanLookahead__column:
+    .a16
+    cmp.l MODE3_R_FIRST
+    bcc Same_VideoSurface_PlanLookahead__yes
+    cmp.l MODE3_R_LAST
+    bcc Same_VideoSurface_PlanLookahead__no
+    beq Same_VideoSurface_PlanLookahead__no
+Same_VideoSurface_PlanLookahead__yes:
+    .a16
+    plp
+    rep #$30
+    .a16
+    .i16
+    clc
+    rtl
+Same_VideoSurface_PlanLookahead__no:
+    plp
+    sec
+    rtl
+
+; Match the camera publication that a source-strip ticket follows. A16 is
+; the committed origin, X/Y the low/high generation words. Actor-only images
+; do not invalidate this retained source identity. A camera reversal/room
+; retirement is rejected; resource room/epoch validation remains the caller's.
+Same_VideoSurface_LookaheadMatches_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    cmp.l MODE3_R_CURRENT
+    bne Same_VideoSurface_LookaheadMatches__no
+    txa
+    cmp.l MODE3_R_GENERATION
+    bne Same_VideoSurface_LookaheadMatches__no
+    tya
+    cmp.l MODE3_R_GENERATION_HI
+    bne Same_VideoSurface_LookaheadMatches__no
+    lda.l MODE3_R_ACTIVE
+    and #$00FF
+    cmp #$0001
+    bne Same_VideoSurface_LookaheadMatches__no
+    plp
+    clc
+    rtl
+Same_VideoSurface_LookaheadMatches__no:
+    plp
+    sec
+    rtl
+
 Same_VideoSurface_ComposeRetainedScroll_Far:
     php
     jsl Same_VideoSurface_CanWrite_Far
