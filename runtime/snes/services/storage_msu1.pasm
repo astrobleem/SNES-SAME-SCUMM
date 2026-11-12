@@ -1,7 +1,7 @@
 ; SAME checked package reads on the MSU-1. This module is the sole owner of
 ; MSU data registers. A client fills SAME_MSU1_REQUEST_* and calls
 ; Same_Msu1_ReadBegin; Same_Storage_Process transfers a bounded quantum each
-; logical frame and publishes READ_OK only after per-request CRC32 succeeds.
+; NMI epoch and publishes READ_OK only after per-request CRC32 succeeds.
 
 SAME_MSU1_STATE_OFF          = $00
 SAME_MSU1_ERROR_NONE         = $00
@@ -50,6 +50,8 @@ Same_Msu1_Reset__clear:
     inx
     cpx #$0048
     bcc Same_Msu1_Reset__clear
+    lda #$FFFF
+    sta.l SAME_MSU1_LAST_SERVICE_FRAME
     sep #$20
     .a8
     lda #SAME_MSU1_STATE_RESET
@@ -120,6 +122,25 @@ Same_Msu1_Process:
     .a8
     lda.l SAME_MSU1_STATUS
     cmp #SAME_MSU1_STATE_INITIALIZING
+    beq Same_Msu1_Process__due
+    cmp #SAME_MSU1_STATE_TAIL_CHECK
+    beq Same_Msu1_Process__due
+    cmp #SAME_MSU1_STATE_READING
+    bne Same_Msu1_Process__done
+Same_Msu1_Process__due:
+    ; An interpreter turn can span several NMIs. The kernel may offer service
+    ; between phases, but at most one bounded quantum starts in any NMI epoch.
+    ; Never loop to catch up, borrow a future budget, or run storage in NMI.
+    rep #$20
+    .a16
+    lda.l SAME_FRAME_COUNTER
+    cmp.l SAME_MSU1_LAST_SERVICE_FRAME
+    beq Same_Msu1_Process__done
+    sta.l SAME_MSU1_LAST_SERVICE_FRAME
+    sep #$20
+    .a8
+    lda.l SAME_MSU1_STATUS
+    cmp #SAME_MSU1_STATE_INITIALIZING
     beq Same_Msu1_Process__prefix
     cmp #SAME_MSU1_STATE_TAIL_CHECK
     beq Same_Msu1_Process__tail
@@ -135,8 +156,8 @@ Same_Msu1_Process__tail:
 Same_Msu1_Process__read:
     jsr Same_Msu1_ReadStep
 Same_Msu1_Process__done:
-    ; All status dispatch reaches this label in M=8, while the entry saved A,
-    ; X, and Y under M=X=16. Restore those widths before balancing the stack.
+    ; Status dispatch returns in M=8; the epoch gate can return in M=16.
+    ; Entry saved A, X, and Y under M=X=16. Restore before balancing the stack.
     rep #$30
     .a16
     .i16

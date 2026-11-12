@@ -82,8 +82,9 @@ SAME_MSU1_BYTE_SCRATCH         = $7E2F21 ; u8 data byte
 SAME_MSU1_TIMEOUT              = $7E2F22 ; u8 bounded status poll budget
 SAME_MSU1_PREFIX_INDEX         = $7E2F23 ; u16 trusted metadata cursor
 SAME_MSU1_END_OFFSET           = $7E2F25 ; u32 overflow-checked exclusive end
-SAME_MSU1_CRC_LSB              = $7E2F29 ; u8 CRC polynomial scratch
-SAME_MSU1_CRC_BITS             = $7E2F2A ; u8 CRC bit count
+; The table CRC no longer needs the former bit-loop scratch bytes. Reuse
+; those provider-owned bytes; do not enlarge or overlap the cache metadata.
+SAME_MSU1_LAST_SERVICE_FRAME   = $7E2F29 ; u16 NMI epoch of last bounded quantum
 SAME_MSU1_SEEK_COUNT           = $7E2F2B ; u16 diagnostic seeks
 SAME_MSU1_BYTES_READ           = $7E2F2D ; u32 diagnostic transfer count
 SAME_MSU1_READ_COUNT           = $7E2F31 ; u16 completed/failed request count

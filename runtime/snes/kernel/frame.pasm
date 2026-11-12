@@ -117,6 +117,9 @@ Same_Frame_Run__sp_ok_02:
     ; frame, interleaved with existing work. NMI can complete a queued DMA
     ; while storage/engine phases execute, rather than four adjacent polls
     ; all observing the same uncompleted batch. Legacy slices emit no code.
+ .if SAME_BUILD_MSU1_STORAGE
+    jsr Same_Storage_Process
+ .endif
     jsr Same_Video_Slice
     jsr Same_Engine_Frame
 .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
@@ -296,6 +299,11 @@ Same_Frame_Run__sp_ok_08:
     .if SAME_BUILD_SCUMM_ROOM_VISUAL && !SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE
     jsl ScummV5_Visual_Frame_Far
     .endif
+ .if SAME_BUILD_MSU1_STORAGE
+    ; A checked request may have been admitted by the late visual phase.
+    ; Service it now only if an NMI epoch has passed since the last quantum.
+    jsr Same_Storage_Process
+ .endif
     .if SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE == 0
     jsr Same_Audio_Process
 .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP

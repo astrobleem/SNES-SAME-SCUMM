@@ -23,8 +23,9 @@ Same_Storage_Reset:
 .endif
     rts
 
-; Called once per logical frame by the kernel storage phase. Work is bounded
-; inside Same_Msu1_Process; no client spins on the hardware data-ready bit.
+; Offered between kernel phases. Same_Msu1_Process admits at most one bounded
+; quantum per NMI epoch; a slow interpreter turn no longer withholds service
+; for all the intervening video frames. No storage work occurs inside NMI.
 Same_Storage_Process:
 .if SAME_BUILD_MSU1_STORAGE
 .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
