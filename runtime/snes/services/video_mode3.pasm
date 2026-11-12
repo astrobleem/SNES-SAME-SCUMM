@@ -329,12 +329,27 @@ Same_Mode3_Step__converting:
     .a8
     lda #SAME_MODE3_STATE_QUEUEING
     sta.l SAME_MODE3_CONTROL_STATE
-    rts
+    ; Conversion has met its dependency fence. Queue in this same bounded
+    ; slice, rather than making the next script turn delay ready character
+    ; data. This does not perform another conversion or raise the DMA budget.
 Same_Mode3_Step__queueing:
     jsr Same_Mode3_QueueBatch
+    sep #$20
+    .a8
+    lda.l SAME_MODE3_CONTROL_STATE
+    cmp #SAME_MODE3_STATE_COMPLETE
+    beq Same_Mode3_Step__complete
     rts
 Same_Mode3_Step__waiting:
     jsr Same_Mode3_ObserveBatch
+    sep #$20
+    .a8
+    lda.l SAME_MODE3_CONTROL_STATE
+    cmp #SAME_MODE3_STATE_QUEUEING
+    ; ObserveBatch has retired the completed descriptors. Exactly one queue
+    ; attempt may follow, including the empty tail that arms the NMI scroll
+    ; ticket. Refusal or an unfinished DMA returns without spinning.
+    beq Same_Mode3_Step__queueing
     rts
 Same_Mode3_Step__complete:
     jsr Same_Mode3_Retained_Complete
