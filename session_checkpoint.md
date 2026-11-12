@@ -4291,3 +4291,21 @@ observations: authentic-matrix-continuous/observations. One private-Xvfb MCP
 client, port7478,600-second watchdog. Do not repeat unchanged failures or
 reuse old-ROM states. Milestone C remains incomplete until measured authentic
 camera and final fidelity acceptance. Progression recovery worktree untouched.
+
+## Active-size shortcut and ongoing bounded acceptance
+
+fd6f744 is published; both CI checks pass on run43136837660. Local suite ran
+1549 tests (1537 pass,12skip), validation37-region audit passed. The corrected
+packed authentic run has zero code loads/evictions in its camera interval but
+1109frames and supervisor timeout after final camera capture; not accepted as
+complete gameplay. No retry of unchanged code.
+
+64-frame matching-ROM profile isolates 13% CPU cost in per-byte canonical
+program-size resolution. Active binding now retains the immutable body length,
+without removing any checked fetch/generation/member bounds. Focused native
+packed/matrix/large-page control passes at frame1920 vs2016, physical6KiBsame.
+Current changed-ROM continuous run: auth-build-nqrpcbcs/fate-authentic-room.sfc;
+root/authentic-bound-size-continuous, privateMCP7483,600-secondwatchdog. Wait
+for observed outcome; no acceptance inferred from elapsed time or process exit.
+No heavy local suite concurrent with this native run. Separate progression
+recovery and user's unrelated emulator remain untouched.

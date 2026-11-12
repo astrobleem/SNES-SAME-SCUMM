@@ -19497,6 +19497,10 @@ ScummV5_GetProgramSize:
     sep #$20
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_GetActiveSize_Far
+    bcs ScummV5_GetProgramSize__m23a
+    .endif
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsr ScummV5_M23A_GetProgramSize
     bcs ScummV5_GetProgramSize__m23a

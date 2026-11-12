@@ -171,7 +171,8 @@ SAME_SCUMM_MSU_CACHE_HITS               = $7E2EDE ; u16 READY admissions
 SAME_SCUMM_MSU_LOOKUP_PROGRAM           = $7E2EE0 ; u16 current logical lookup
 SAME_SCUMM_MSU_REQUEST_PROGRAM          = $7E2EE2 ; u16 immutable read owner
 SAME_SCUMM_MSU_REQUEST_PC               = $7E2EE4 ; u16 immutable read source PC
-SAME_SCUMM_MSU_LOGICAL_END              = $7E2EE6
+SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH       = $7E2EE6 ; u16 complete body, not page/group extent
+SAME_SCUMM_MSU_LOGICAL_END              = $7E2EE8
 ; Cache metadata stays in the provider's audited WRAM gap.
 SAME_SCUMM_MSU_CACHE_STATE0              = $7E2F48
 SAME_SCUMM_MSU_CACHE_STATE1              = $7E2F49

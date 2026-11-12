@@ -7,6 +7,7 @@ class CacheMachine(StripMachine):
     def __init__(self, entry, *, selector=0xff, pc=0):
         super().__init__()
         self.symbols.update(ScummV5_MsuProgramRecords=0x68000,
+                            SAME_SCUMM_MSU_CACHE_HAS_PAGE2=1,
                             ScummV5_MsuProgramPageIndex=0x69000,
                             ScummV5_MsuProgramPageRecords=0x6a000,
                             SCUMM_MSU1_PROGRAM_PAGE_INDEX_COUNT=3,
@@ -32,6 +33,7 @@ rtl
             if line.endswith(':'):self.labels[line[:-1]]=len(self.code)
             else:self.code.append(line.replace('jml ', 'jmp '))
         self.put('SAME_SCUMM_MSU_ACTIVE_SELECTOR',selector,1)
+        self.put('SAME_SCUMM_PROGRAM_SELECT',selector,1)
         self.put('SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT',0,1)
         self.put('SAME_SCUMM_MSU_CACHE_ACTIVE_ID',0)
         self.put('SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION',7)
@@ -60,6 +62,50 @@ rtl
 
 
 class PackedNativeBounds(unittest.TestCase):
+    def test_bound_body_size_is_not_group_or_page_size(self):
+        for body_size in (3,787,2048,21002,65535):
+            m=CacheMachine('ScummV5_MsuProgram_BindLogical_Far')
+            m.put(0x68000+10+4,body_size)
+            m.consume()
+            self.assertEqual(m.get('SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH'),body_size)
+            m=CacheMachine('ScummV5_MsuProgram_GetActiveSize_Far',pc=0x1234)
+            m.put('SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH',body_size)
+            hit,_=m.consume()
+            self.assertTrue(hit)
+            self.assertEqual(m.get(0x70000),body_size)
+
+    def test_size_fast_path_only_applies_to_current_execution(self):
+        for selector,active,slot,hit in ((255,255,0,True),(254,255,0,False),
+                (255,255,2,True),(255,255,3,False),(255,255,255,False),
+                (0,0,0,False)):
+            m=CacheMachine('ScummV5_MsuProgram_GetActiveSize_Far',selector=selector)
+            m.put('SAME_SCUMM_MSU_ACTIVE_SELECTOR',active,1)
+            m.put('SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT',slot,1)
+            m.put('SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH',21002)
+            accepted,_=m.consume()
+            self.assertEqual(accepted,hit)
+            self.assertEqual(m.get(0x70000,2 if hit else 1),21002 if hit else selector)
+
+    def test_large_page_size_and_complete_body_size_stay_independent(self):
+        m=CacheMachine('ScummV5_MsuProgram_BindLogical_Far')
+        m.put(0x69006,11)  # ordinary page count, not a packed member
+        m.put(0x68000+10+4,21002)
+        m.put('SAME_SCUMM_MSU_CACHE_PAGE_START0',2048)
+        m.put('SAME_SCUMM_MSU_CACHE_SIZE0',2047)
+        m.consume()
+        self.assertEqual(m.get('SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH'),21002)
+        self.assertEqual(m.get('SAME_SCUMM_MSU_ACTIVE_START'),2048)
+        self.assertEqual(m.get('SAME_SCUMM_MSU_ACTIVE_LENGTH'),2047)
+        self.assertEqual(m.get('SAME_SCUMM_MSU_ACTIVE_OFFSET'),0)
+
+    def test_two_window_configuration_rejects_third_window_size_shortcut(self):
+        m=CacheMachine('ScummV5_MsuProgram_GetActiveSize_Far')
+        m.symbols['SAME_SCUMM_MSU_CACHE_HAS_PAGE2']=0
+        m.put('SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT',2,1)
+        accepted,_=m.consume()
+        self.assertFalse(accepted)
+        self.assertEqual(m.get(0x70000,1),255)
+
     def test_nested_child_directory_does_not_destroy_frame_stride(self):
         source=(ROOT/'runtime/snes/engines/scumm_v5_m24rb_far.pasm').read_text()
         start=source.index('    ; LAST_ALLOCATED is shared scratch')

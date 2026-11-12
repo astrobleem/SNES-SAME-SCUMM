@@ -5,6 +5,41 @@ The sections below retain the history of each separately identified experiment.
 The latest result takes precedence over their earlier pending statuses. The
 separate progression recovery worktree is untouched.
 
+## Active packed-cache follow-up: measured churn removed, latency still under test
+
+The newer packed build `fd6f744` removes the observed executable churn: its
+captured authentic camera interval has zero additional cache loads or evictions,
+versus the old 103 loads/102 evictions. That does **not** establish responsive
+camera acceptance. The captured input-to-camera image interval is 1,109 frames;
+the 600-second supervisor stopped before the final continued-control report.
+Keep that run incomplete, with its collected image/state evidence intact.
+
+A short matching-ROM checkpoint profile counted 1,703 program-size queries in
+64 frames. Their paired execution spans total 381,461 of 2,945,183 observed
+Nexen CPU counter units (about 13%). Each operand byte was resolving canonical
+size metadata again. The active execution binding now retains the immutable
+complete body length separately from its member/page extent. Enter, resume and
+nested parent restoration refresh this field; mismatched/inactive selectors
+use the existing directory lookup. Every actual byte fetch still checks READY,
+physical identity/generation, member boundaries and physical boundaries.
+Two bytes at $7E2EE6..$7E2EE7 extend the audited metadata allocation; the three
+physical executable buffers remain unchanged.
+
+Host instruction tests distinguish complete large-body size from page/group
+size and cover inactive, foreign, zero and unavailable-window selectors. The
+copyright-free packed/native matrix fixture passes with the shortcut, finishing
+at frame 1,920 versus 2,016 before it. Both builds preserve the steady working
+set without reloads and complete nested and >21-KiB paged execution. This is
+not a claimed authentic-camera speedup. That integrated comparison is pending.
+
+The separate phase profile establishes a substantial engine cost (about 43–45%
+of its captured intervals), in addition to conversion and foreground work.
+Do not attribute all remaining delay to MSU traffic or infer an irreducible
+hardware limit. Private journals and exact ROM/map/package/build identities
+remain under `milestone-c-packed-20261111` in the persistent evidence root.
+
+The historical sections below retain their original results and scope.
+
 ## Current result: retained rendering works; responsiveness gate remains open
 
 Native source commit `cc04e1ed662a4b1093dff15dd35e4b9ce7536d5d` passed one

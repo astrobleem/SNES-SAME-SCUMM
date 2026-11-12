@@ -149,6 +149,7 @@ ScummV5_MsuProgram_Reset_Far:
     sta.l SAME_SCUMM_MSU_ACTIVE_OFFSET
     sta.l SAME_SCUMM_MSU_ACTIVE_START
     sta.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    sta.l SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH
     sta.l SAME_SCUMM_MSU_CACHE_HITS
     sta.l SAME_SCUMM_MSU_REQUEST_PC
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
@@ -2981,6 +2982,7 @@ ScummV5_MsuProgram_BindLogical_Far:
     lda #$0000
     sta.l SAME_SCUMM_MSU_ACTIVE_OFFSET
     sta.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    sta.l SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH
     sep #$20
     .a8
     lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
@@ -3003,6 +3005,24 @@ ScummV5_MsuProgram_BindLogical__valid:
     bcc ScummV5_MsuProgram_BindLogical__index_ok
     jml ScummV5_MsuProgram_BindLogical__done
 ScummV5_MsuProgram_BindLogical__index_ok:
+    ; Canonical directory metadata is immutable. Bind the complete body size
+    ; once per activation, including nested parent restoration. Operand fetch
+    ; must not repeat selector/directory resolution for every byte. Physical
+    ; readiness, generation and member/page bounds remain checked by FetchByte.
+    asl
+    sta.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    tax
+    inx
+    inx
+    inx
+    inx
+    lda.l ScummV5_MsuProgramRecords,x
+    sta.l SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH
+    lda.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
     asl
     asl
     tax
@@ -3066,4 +3086,28 @@ ScummV5_MsuProgram_BindLogical__done:
     plx
     pla
     plp
+    rtl
+
+; A8 selector -> A16 complete size/C=1 for the current bound execution only.
+; C=0 leaves A8 selector for the ordinary ROM/directory path. Preserve X/Y:
+; FetchByte holds its logical PC in X. This is metadata, not fetch permission;
+; the existing checked-byte path still validates every physical access.
+ScummV5_MsuProgram_GetActiveSize_Far:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_GetActiveSize__miss
+    cmp.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
+    bne ScummV5_MsuProgram_GetActiveSize__miss
+    lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    cmp #(2+SAME_SCUMM_MSU_CACHE_HAS_PAGE2)
+    bcs ScummV5_MsuProgram_GetActiveSize__miss
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH
+    sec
+    rtl
+ScummV5_MsuProgram_GetActiveSize__miss:
+    .a8
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    clc
     rtl
