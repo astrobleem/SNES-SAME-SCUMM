@@ -2129,6 +2129,7 @@ ScummV5_Engine_RunSelected__msu_select0:
     lda.l SAME_SCUMM_MSU_CACHE_GENERATION0
     sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
 ScummV5_Engine_RunSelected__msu_enter:
+    jsl ScummV5_MsuProgram_BindLogical_Far
     sep #$20
     .a8
     lda #$00

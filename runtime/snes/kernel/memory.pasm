@@ -160,6 +160,18 @@ SAME_SCUMM_MSU_CACHE_WAITER_SLOT1       = $7E2ED3
 SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR2   = $7E2ED4
 SAME_SCUMM_MSU_CACHE_WAITER_SLOT2       = $7E2ED5
 SAME_SCUMM_MSU_CACHE_WAITER_END         = $7E2ED6
+; Logical activation view of a shared physical checked allocation. This
+; previously unclaimed gap is separately audited; cache payload remains 6KiB.
+SAME_SCUMM_MSU_LOGICAL_BASE             = $7E2ED6
+SAME_SCUMM_MSU_ACTIVE_OFFSET            = $7E2ED6 ; u16 physical member offset
+SAME_SCUMM_MSU_ACTIVE_START             = $7E2ED8 ; u16 logical page start
+SAME_SCUMM_MSU_ACTIVE_LENGTH            = $7E2EDA ; u16 logical member/page length
+SAME_SCUMM_MSU_ACTIVE_PROGRAM           = $7E2EDC ; u16 independent canonical identity
+SAME_SCUMM_MSU_CACHE_HITS               = $7E2EDE ; u16 READY admissions
+SAME_SCUMM_MSU_LOOKUP_PROGRAM           = $7E2EE0 ; u16 current logical lookup
+SAME_SCUMM_MSU_REQUEST_PROGRAM          = $7E2EE2 ; u16 immutable read owner
+SAME_SCUMM_MSU_REQUEST_PC               = $7E2EE4 ; u16 immutable read source PC
+SAME_SCUMM_MSU_LOGICAL_END              = $7E2EE6
 ; Cache metadata stays in the provider's audited WRAM gap.
 SAME_SCUMM_MSU_CACHE_STATE0              = $7E2F48
 SAME_SCUMM_MSU_CACHE_STATE1              = $7E2F49
@@ -2032,12 +2044,20 @@ SAME_SCUMM_MATRIX_TRACE_STRIDE            = $0008
 SAME_SCUMM_MATRIX_TRACE_CAPACITY          = $0004
 SAME_SCUMM_MATRIX_STATE_END               = $7FFB65
 SAME_SCUMM_MATRIX_STATE_SIZE              = $0125
-; SCUMM v5 createBoxMatrix uses a 64-box routing domain. Keep its two 64x64
-; byte tables in the audited gap after object-name storage and before C10.
+; SCUMM v5 createBoxMatrix uses an undirected 64-box portal graph. Distances
+; retain only the 2016 off-diagonal pairs; diagonal zero is implicit. The
+; directed next-hop table remains 64x64. Neither may alias executable pages.
 ; The C10 state tail byte at $34FA is outside all named fields/parameters and
 ; holds only the active-room validity flag; room commit/reset owns its lifetime.
-SAME_SCUMM_MATRIX_DISTANCE                 = $7F1000 ; 64 x 64 u8 distances
+SAME_SCUMM_MATRIX_DISTANCE                 = $7F1800 ; 64*63/2 symmetric u8 distances
+SAME_SCUMM_MATRIX_DISTANCE_END             = $7F1FE0
+SAME_SCUMM_MATRIX_DISTANCE_SCRATCH         = $7F1FE0 ; synchronous indexing only
+SAME_SCUMM_MATRIX_DISTANCE_ROW             = $7F1FE0 ; u16 smaller vertex
+SAME_SCUMM_MATRIX_DISTANCE_COLUMN          = $7F1FE2 ; u16 larger vertex
+SAME_SCUMM_MATRIX_DISTANCE_VALUE           = $7F1FE4 ; u8 store value
+SAME_SCUMM_MATRIX_DISTANCE_SCRATCH_END     = $7F1FE5
 SAME_SCUMM_MATRIX_DYNAMIC_ROUTES           = $7F2000 ; 64 x 64 u8 next hops
+SAME_SCUMM_MATRIX_DYNAMIC_ROUTES_END       = $7F3000
 SAME_SCUMM_MATRIX_DYNAMIC_VALID            = $7F34FA ; C10 free tail, active-room validity
 SAME_SCUMM_MATRIX_BUILD_I                   = SAME_SCUMM_C10_PARAM0 ; u16 scratch
 SAME_SCUMM_MATRIX_BUILD_J                   = SAME_SCUMM_C10_PARAM1 ; u16 scratch

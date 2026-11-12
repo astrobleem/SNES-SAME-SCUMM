@@ -26,7 +26,7 @@ from same.package import build_package, inspect_package
 from same.profile import load_profile
 from same.resources import MemoryResourceProvider
 from same.services import HostServices
-from tools.build_scumm_native_residency_fixture import large_program_body, raw_room
+from tools.build_scumm_native_residency_fixture import large_program_body, packed_working_room, raw_room
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -595,11 +595,18 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
 
     def test_host_reference_runs_large_yielding_msu_body_and_room_scripts(self) -> None:
         """Large body branches/yields preserve the host-visible route markers."""
+        self.check_host_fixture(packed=False)
+
+    def test_host_reference_runs_packed_working_set_and_nested_child(self) -> None:
+        self.check_host_fixture(packed=True)
+
+    def check_host_fixture(self, *, packed: bool) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             fixture = Path(temporary) / "fixture"
             subprocess.run(
                 [sys.executable, str(ROOT / "tools/build_scumm_native_residency_fixture.py"),
-                 "--output-dir", str(fixture), "--large-program-body"],
+                 "--output-dir", str(fixture),
+                 "--packed-working-set" if packed else "--large-program-body"],
                 cwd=ROOT, check=True, capture_output=True, text=True,
             )
             source = json.loads((fixture / "manifest.json").read_text())
@@ -607,6 +614,7 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
             profile = load_profile(profile_path)
             profile = replace(profile, options={
                 **profile.options,
+                "num_global_scripts": int(source["num_global_scripts"]),
                 "title_start_action": {
                     "action": "menu", "from_room": 0, "target_room": 1,
                 },
@@ -630,6 +638,8 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
                 kinds[key] = "SCRP"
             for room in range(1, 5):
                 raw = raw_room(room)
+                if packed:
+                    raw = packed_working_room(raw)
                 compiled = compile_room_payload(
                     raw, room_number=room, game_name="synthetic-msu-host-conformance",
                     resource_key=f"room.{room}", source_member=f"fixture/room-{room}.lflf",
@@ -667,13 +677,17 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
 
             state = host.engine.inspect_state()
             self.assertEqual(host.lifecycle.value, "stopped")
-            self.assertEqual(state["room"], 4)
+            self.assertEqual(state["room"], 1 if packed else 4)
             self.assertEqual(state.get("error"), None)
             expected = {
                 "5": 1, "6": 2, "7": 192, "8": 3, "9": 3,
                 "10": 10, "15": 1, "20": 4, "21": 5, "22": 6, "24": 4,
                 "25": 1, "50": 1, "51": 0, "53": 4000, "54": 2,
             }
+            if packed:
+                expected = {"6": 2, "50": 1, "51": 0, "53": 4000, "54": 2, "110": 0x1234}
+                self.assertTrue(all(state["variables"].get(str(v), 0) >= 150
+                                    for v in range(100, 105)))
             self.assertEqual(
                 {key: state["variables"].get(key, 0) for key in expected}, expected,
             )
@@ -682,7 +696,7 @@ class ScummMsu1ProgramStorageTests(unittest.TestCase):
                 for event in host.engine._room_lifecycle
                 if event["phase"] == "new_room_activated"
             ]
-            self.assertEqual(activated_rooms, [0, 1, 2, 3, 4])
+            self.assertEqual(activated_rooms, [0, 1] if packed else [0, 1, 2, 3, 4])
 
 
 if __name__ == "__main__":

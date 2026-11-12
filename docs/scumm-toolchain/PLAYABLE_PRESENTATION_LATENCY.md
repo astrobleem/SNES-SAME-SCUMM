@@ -768,3 +768,63 @@ This is a separate measured cache-granularity limitation, not proof that
 rendering is free, nor permission to redesign the cache in a camera change.
 Provider request sampling can miss intermediate requests; counter deltas
 remain exact for the captured interval. Reports stay private with identities.
+
+
+## Packed executable working set (in progress)
+
+The subsequent cache mission explicitly authorizes a bounded packing policy.
+`SAME_SCUMM_MSU1_PACK_SMALL_PROGRAMS=1` groups single-page bodies no larger
+than half a page by room/bundle and executable role, then by size and canonical
+ID. Groups fit the existing 2 KiB checked allocation. Physical cache capacity
+remains 6 KiB; the 178-selector ABI and canonical IDs do not change.
+
+The existing four-byte page-index record uses its count high bit to distinguish
+a group; the remaining bits carry the member offset. Its shared eight-byte
+page descriptor carries the anchor ID, total length, and whole-group CRC.
+The original per-body identity, length, CRC, source PC and verb dispatch remain
+independent. Ordinary instruction-aligned pages retain their old encoding.
+A checked group becomes READY atomically. Fetches first enforce the logical
+member extent, then the physical allocation extent and generation. Nested
+returns rebind the parent's logical view; errors name the requesting member.
+No costume/resource scratch borrows executable pages.
+
+Native copyright-free evidence includes five repeatedly scheduled bodies of
+787/120/107/163/181 bytes, a nested child, and a 21,271-byte yielding/branching
+body. During the measured steady interval the five bodies coexist in two
+groups without reloads or eviction. A corrupt sibling in the boot group causes
+CRC rejection before any member executes. These are executable-cache tests,
+not authentic gameplay performance acceptance.
+
+The first packed authentic run stopped with a variable error in room 10.
+Offline extraction of the captured state found checked executable bytes had
+been overwritten by `createBoxMatrix`: the distance table and third cache
+window both started at $7F1000. The old ownership inventory omitted the
+matrix. A previously green audit therefore did not establish their separation.
+The correction retains 2,016 symmetric off-diagonal distances at
+$7F1800..$7F1FDF, bounded indexing scratch at $7F1FE0..$7F1FE4, and the
+unchanged directed next-hop table at $7F2000..$7F2FFF. Diagonal distance is
+implicitly zero. Both directed next hops are updated when a symmetric distance
+improves, preserving the strict-shorter Floyd tie rule. No extra physical cache
+or BW-RAM is allocated. The ownership audit now includes these three regions
+and rejects the historical overlap.
+
+Production-instruction tests cover every distance index, cache guards, random
+undirected graphs against an independent full directed Floyd oracle, logical
+member limits, stale bindings, nested parent restoration and continuation-frame
+strides. Native ROM
+`f1bd8a2f99d32525ee8852e0bf454a1edbc6e742d1aa891bf111017c8e22df05`
+executes route rebuilding from a third-window program, continues past it,
+completes the steady working set and large script, and ends with error zero,
+stack $0FFF and no live pins/stale/exhaustion failures. Its steady interval has
+three initial loads (including the independent matrix helper) and no evictions.
+The initial corrupt-group ROM/evidence remains separately identity-bound.
+
+Two independent full-source generations produce identical complete storage
+artifact sets: all 2,203 canonical IDs, body hashes, lengths and verb dispatch
+match the prior directory. 286 groups reduce checked records from 2,376 to
+675 without duplicating or omitting any of the 1,000,867 executable bytes.
+Package SHA-256:
+`e6cf5c28f36f20c10cb9ef7819a1b278b1067ed3014462cee53d9a63d9772afd`.
+Private evidence: `/home/chad/SAME-private-evidence/milestone-c-packed-20261111`.
+Authentic camera latency on this correction is still pending; do not transfer
+synthetic steady-state results into a Milestone C PASS.

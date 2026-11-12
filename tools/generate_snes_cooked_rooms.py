@@ -537,6 +537,8 @@ def main() -> int:
     parser.add_argument("--msu1-program-directory-bank", type=int, default=10)
     parser.add_argument("--msu1-projection-directory-bank", type=int, default=19,
                         help="reserved LoROM bank for room projection lookup tables")
+    parser.add_argument("--msu1-pack-small-programs", action="store_true",
+                        help="Pack small executable bodies by compiler locality into shared checked pages")
     parser.add_argument(
         "--msu1-program-page-directory-bank", type=int,
         help="ROM bank for compiler-proven bytecode page index/CRC records",
@@ -1803,6 +1805,7 @@ def main() -> int:
         program_storage = build_program_storage(
             native_directory.document, storage_bodies, args.msu1_program_storage_dir,
             max_cached_body_bytes=args.msu1_program_cache_bytes,
+            pack_small=args.msu1_pack_small_programs,
             page_metadata=storage_page_metadata,
             prefix_sections=prefix_sections,
             room_resources=room_resources,

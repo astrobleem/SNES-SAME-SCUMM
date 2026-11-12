@@ -137,6 +137,77 @@ def plan_program_pages(
     return tuple(pages)
 
 
+def pack_small_programs(entries, bodies, rows, page_indices, page_records, *, page_size):
+    """Pack single-page small bodies by room and role, retaining every identity.
+
+    Native page-index high bit denotes a shared checked group; its low bits
+    are the member offset. The referenced 8-byte page record contains the
+    anchor canonical ID, group length and group CRC. No new package section,
+    duplicated body bytes or permanent selector is introduced.
+    """
+    if not 0 < page_size <= 0x800:
+        raise ValueError("packed native allocation must be at most 2048 bytes")
+    buckets = {}
+    for entry, row in zip(entries, rows):
+        if row["length"] > page_size // 2:
+            continue
+        # Globals share global locality; room lifecycle/locals share their
+        # room. Object carriers retain a separate locality within that room.
+        role = "object" if entry.get("kind") in ("OBJECT", "OBCD") or entry.get("dispatch", {}).get("verbs") else "script"
+        key = (str(entry.get("room") if entry.get("room") is not None else entry.get("bundle", "global")), role)
+        if entry.get("kind") == "GLOBAL":
+            key = ("global", role)
+        buckets.setdefault(key, []).append(int(row["program_unit_id"]))
+    groups = []
+    for key in sorted(buckets):
+        members, size = [], 0
+        for unit in sorted(buckets[key], key=lambda i: (rows[i]["length"], i)):
+            length = int(rows[unit]["length"])
+            if size + length > page_size:
+                if len(members) > 1:
+                    groups.append(members)
+                members, size = [], 0
+            members.append(unit)
+            size += length
+        if len(members) > 1:
+            groups.append(members)
+    membership = {unit: group for group in groups for unit in group}
+    payload = bytearray()
+    new_pages, new_indices, emitted = [], [None] * len(rows), set()
+    for unit, row in enumerate(rows):
+        if unit in emitted:
+            continue
+        members = membership.get(unit, [unit])
+        anchor = members[0]
+        group_start = len(payload)
+        first = len(new_pages)
+        for member in members:
+            r = rows[member]
+            r["section_relative_offset"] = len(payload)
+            payload.extend(bodies[str(r["identity"])])
+            emitted.add(member)
+        if len(members) > 1:
+            data = bytes(payload[group_start:])
+            new_pages.append({"program_unit_id": anchor, "start_pc": 0,
+                              "storage_anchor_id": anchor, "length": len(data),
+                              "crc32": f"{zlib.crc32(data) & 0xffffffff:08x}",
+                              "sha256": hashlib.sha256(data).hexdigest(),
+                              "members": members})
+            for member in members:
+                r = rows[member]
+                offset = int(r["section_relative_offset"]) - group_start
+                r.update(first_page=first, page_count=1, storage_anchor_id=anchor,
+                         group_offset=offset, group_length=len(data))
+                new_indices[member] = {"program_unit_id": member, "first_page": first,
+                                      "page_count": 1, "encoded_count": 0x8000 | offset}
+        else:
+            old = page_indices[unit]
+            new_pages.extend(page_records[old["first_page"]:old["first_page"] + old["page_count"]])
+            row["first_page"] = first
+            new_indices[unit] = {**old, "first_page": first}
+    return payload, new_indices, new_pages, groups
+
+
 def read_package_prefix_sections(
     package_path: Path, section_names: tuple[str, ...] | None,
 ) -> tuple[tuple[str, str, bytes, int], ...]:
@@ -497,13 +568,13 @@ def _record_include(
         raw = bytearray()
         for row in page_indices:
             raw += int(row["first_page"]).to_bytes(2, "little")
-            raw += int(row["page_count"]).to_bytes(2, "little")
+            raw += int(row.get("encoded_count", row["page_count"])).to_bytes(2, "little")
         for start in range(0, len(raw), 16):
             lines.append("    .byte " + ",".join(f"${value:02X}" for value in raw[start:start + 16]))
         lines.append("ScummV5_MsuProgramPageRecords:")
         raw = bytearray()
         for row in page_records:
-            raw += int(row["start_pc"]).to_bytes(2, "little")
+            raw += int(row.get("storage_anchor_id", row["start_pc"])).to_bytes(2, "little")
             raw += int(row["length"]).to_bytes(2, "little")
             raw += int(str(row["crc32"]), 16).to_bytes(4, "little")
         for start in range(0, len(raw), 16):
@@ -517,6 +588,7 @@ def build_program_storage(
     output_dir: Path,
     *,
     max_cached_body_bytes: int = 0x0800,
+    pack_small: bool = False,
     page_metadata: Mapping[str, Mapping[str, object]] | None = None,
     prefix_sections: tuple[tuple[str, str, bytes, int], ...] = (),
     room_resources: Mapping[int, bytes] | None = None,
@@ -566,6 +638,8 @@ def build_program_storage(
         body = bytes(bodies[identity])
         metadata = None if page_metadata is None else page_metadata.get(identity)
         pages = plan_program_pages(body, metadata, page_size=max_cached_body_bytes)
+        if len(pages) >= 0x8000:
+            raise ValueError("ordinary page count collides with checked-group tag")
         first_page = len(page_records)
         for page_start, page_length in pages:
             page = body[page_start:page_start + page_length]
@@ -606,6 +680,11 @@ def build_program_storage(
                 )
             ),
         })
+    groups = []
+    if pack_small:
+        payload, page_indices, page_records, groups = pack_small_programs(
+            ordered, bodies, rows, page_indices, page_records, page_size=max_cached_body_bytes,
+        )
     body_file.write_bytes(payload)
     package_manifest = output_dir / "same-package.json"
     package_sections: list[dict[str, object]] = []
@@ -933,7 +1012,10 @@ def build_program_storage(
 
     directory_bytes = _canonical_json(directory)
     result: dict[str, object] = {
-        "schema": PROGRAM_STORAGE_SCHEMA,
+        "schema": "same_scumm_v5_msu1_program_storage_v5" if pack_small else PROGRAM_STORAGE_SCHEMA,
+        "packed_small_programs": pack_small,
+        "checked_storage_groups": groups,
+        "page_index_contract": "high bit: shared group, low15: member offset; otherwise page count",
         "id_width_bits": 16,
         "selector_values_emitted": False,
         "source_directory_sha256": hashlib.sha256(directory_bytes).hexdigest(),

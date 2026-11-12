@@ -4270,3 +4270,24 @@ assembly/memoryauditpass. Final changed-ROM authentic run in progress:
 600second supervisor; capture caches repeated paused reads and polls quickly
 only when the actual visual target is committed, not merely the logical one.
 No new gameplay-state writes, no old-ROM restore, no7-action route.
+
+
+## Packed groups and movement/cache collision — active work
+
+Private evidence root: /home/chad/SAME-private-evidence/milestone-c-packed-20261111.
+Packed compiler and three-window native adapter implemented; physical cache
+still 6 KiB. Native steady-set and corrupt-group tests pass. Full-source two
+independent storage generations match all files and all 2,203 prior body IDs,
+hashes, sizes and dispatch metadata. No FATE payload is staged for Git.
+
+First authentic run preserved a room-10 variable error. Offline saved-state
+inspection proves MATRIX_DISTANCE at $7F1000 overwrote cache page2. Fixed by
+symmetric distance storage in the adjacent 2 KiB gap, preserving directed
+next hops; audit now includes matrix regions. Native matrix-from-cache test
+passes at ROM f1bd8a2f..., including nested and large paged programs. Full
+local suite/validation and corrected authentic continuous acceptance running.
+Current authentic ROM: auth-build-6o9kqlk0/fate-authentic-room.sfc under root;
+observations: authentic-matrix-continuous/observations. One private-Xvfb MCP
+client, port7478,600-second watchdog. Do not repeat unchanged failures or
+reuse old-ROM states. Milestone C remains incomplete until measured authentic
+camera and final fidelity acceptance. Progression recovery worktree untouched.

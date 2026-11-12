@@ -3,7 +3,7 @@
 ; The 8-bit VM selector remains an ephemeral resident handle. This layer maps
 ; it to the canonical 16-bit ProgramUnit ID, requests a complete CRC-checked
 ; body from SAME storage, and only then enters the unchanged interpreter.
-; Two 2-KiB WRAM windows plus an optional third 2-KiB SA-1 BW-RAM window are
+; Two 2-KiB WRAM windows plus an optional third 2-KiB WRAM window are
 ; bounded and instruction-page validated. Active nested executions pin their
 ; windows until the interpreter returns. Yielded C4 activations keep their
 ; canonical selector ownership and refetch on resume.
@@ -139,10 +139,18 @@ ScummV5_MsuProgram_Reset_Far:
     sta.l SAME_SCUMM_MSU_CACHE_ID0
     sta.l SAME_SCUMM_MSU_CACHE_ID1
     sta.l SAME_SCUMM_MSU_CACHE_ID2
+    sta.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
+    sta.l SAME_SCUMM_MSU_LOOKUP_PROGRAM
+    sta.l SAME_SCUMM_MSU_REQUEST_PROGRAM
     lda #$0000
     sta.l SAME_SCUMM_MSU_CACHE_SIZE0
     sta.l SAME_SCUMM_MSU_CACHE_SIZE1
     sta.l SAME_SCUMM_MSU_CACHE_SIZE2
+    sta.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    sta.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    sta.l SAME_SCUMM_MSU_CACHE_HITS
+    sta.l SAME_SCUMM_MSU_REQUEST_PC
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_START
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_LENGTH
@@ -1208,6 +1216,10 @@ ScummV5_MsuProgram_FindPage_Far__id_ok:
     inx
     lda.l ScummV5_MsuProgramPageIndex,x
     sta.l SAME_SCUMM_MSU_PAGE_SCAN_COUNT
+    bpl ScummV5_MsuProgram_FindPage_Far__ordinary
+    jml ScummV5_MsuProgram_FindGroup_Far
+ScummV5_MsuProgram_FindPage_Far__ordinary:
+    .a16
     bne ScummV5_MsuProgram_FindPage_Far__scan
     jmp ScummV5_MsuProgram_FindPage_Far__not_found
 ScummV5_MsuProgram_FindPage_Far__scan:
@@ -1334,11 +1346,11 @@ ScummV5_MsuProgram_ActivePageContainsPC_Far__slot0_id_ok:
     cmp.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
     bne ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     lda.l SAME_SCUMM_PC
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START0
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START0
-    cmp.l SAME_SCUMM_MSU_CACHE_SIZE0
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__hit
     bra ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
 ScummV5_MsuProgram_ActivePageContainsPC_Far__slot1:
@@ -1355,11 +1367,11 @@ ScummV5_MsuProgram_ActivePageContainsPC_Far__slot1:
     cmp.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
     bne ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     lda.l SAME_SCUMM_PC
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START1
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START1
-    cmp.l SAME_SCUMM_MSU_CACHE_SIZE1
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__hit
     bra ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
 .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
@@ -1377,11 +1389,11 @@ ScummV5_MsuProgram_ActivePageContainsPC_Far__slot2:
     cmp.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
     bne ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     lda.l SAME_SCUMM_PC
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START2
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START2
-    cmp.l SAME_SCUMM_MSU_CACHE_SIZE2
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__hit
 .endif
 ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16:
@@ -1414,6 +1426,7 @@ ScummV5_MsuProgram_EnsureSelected_Far__selector_valid:
     rep #$20
     .a16
     lda.l SAME_SCUMM_RESIDENT_EXPECTED_ID
+    sta.l SAME_SCUMM_MSU_LOOKUP_PROGRAM
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
     lda.l SAME_SCUMM_PC
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
@@ -1531,6 +1544,12 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot2_pending:
     jmp ScummV5_MsuProgram_EnsureSelected_Far__pending
     .endif
 ScummV5_MsuProgram_EnsureSelected_Far__slot0_ready:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_HITS
+    inc
+    sta.l SAME_SCUMM_MSU_CACHE_HITS
+    sep #$20
     .a8
     lda #$00
     jsl ScummV5_MsuProgram_ReleasePageWaiter_Far
@@ -1541,6 +1560,12 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot0_ready:
     sec
     rtl
 ScummV5_MsuProgram_EnsureSelected_Far__slot1_ready:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_HITS
+    inc
+    sta.l SAME_SCUMM_MSU_CACHE_HITS
+    sep #$20
     .a8
     lda #$01
     jsl ScummV5_MsuProgram_ReleasePageWaiter_Far
@@ -1552,6 +1577,12 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot1_ready:
     rtl
     .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
 ScummV5_MsuProgram_EnsureSelected_Far__slot2_ready:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_HITS
+    inc
+    sta.l SAME_SCUMM_MSU_CACHE_HITS
+    sep #$20
     .a8
     lda #$02
     jsl ScummV5_MsuProgram_ReleasePageWaiter_Far
@@ -1771,6 +1802,10 @@ ScummV5_MsuProgram_EnsureSelected_Far__chosen:
     .a16
     lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
     sta.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
+    lda.l SAME_SCUMM_MSU_LOOKUP_PROGRAM
+    sta.l SAME_SCUMM_MSU_REQUEST_PROGRAM
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
+    sta.l SAME_SCUMM_MSU_REQUEST_PC
     ; Validate the indexed generated record and enforce the exact WRAM bound.
     lda.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
     cmp #SCUMM_MSU1_PROGRAM_COUNT
@@ -1844,6 +1879,12 @@ ScummV5_MsuProgram_EnsureSelected_Far__body_length_high_zero:
     jmp ScummV5_MsuProgram_EnsureSelected_Far__bad_length
 ScummV5_MsuProgram_EnsureSelected_Far__body_length_nonzero:
     sta.l SAME_SCUMM_MSU_PAGE_BODY_LENGTH
+    lda.l SAME_SCUMM_MSU_PAGE_SCAN_COUNT
+    bpl ScummV5_MsuProgram_EnsureSelected_Far__ordinary_extent
+    ; FindGroup has checked member extent and whole-group capacity.
+    jml ScummV5_MsuProgram_EnsureSelected_Far__page_body_bounds_ok
+ScummV5_MsuProgram_EnsureSelected_Far__ordinary_extent:
+    .a16
     lda.l SAME_SCUMM_MSU_PAGE_REQUEST_LENGTH
     bne ScummV5_MsuProgram_EnsureSelected_Far__page_length_nonzero
     sep #$20
@@ -2196,7 +2237,7 @@ ScummV5_MsuProgram_EnsureSelected_Far__report_error:
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     rep #$20
     .a16
-    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
+    lda.l SAME_SCUMM_MSU_LOOKUP_PROGRAM
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_ID
     lda.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_PC
@@ -2341,6 +2382,7 @@ ScummV5_MsuProgram_ResumeActive_Far__pin0:
     lda.l SAME_SCUMM_MSU_CACHE_GENERATION0
     sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
 ScummV5_MsuProgram_ResumeActive_Far__ready:
+    jsl ScummV5_MsuProgram_BindLogical_Far
     sep #$20
     .a8
     lda #$01
@@ -2510,9 +2552,9 @@ ScummV5_MsuProgram_ReconcileRead_Far__failed_count:
     ; identity/PC captured when this page was selected.
     rep #$20
     .a16
-    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
+    lda.l SAME_SCUMM_MSU_REQUEST_PROGRAM
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_ID
-    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
+    lda.l SAME_SCUMM_MSU_REQUEST_PC
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_PC
     sep #$20
     .a8
@@ -2588,16 +2630,27 @@ ScummV5_MsuProgram_FetchByte_Far__slot1_id_ok:
 ScummV5_MsuProgram_FetchByte_Far__slot1_generation_ok:
     .a16
     txa
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START1
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcs ScummV5_MsuProgram_FetchByte_Far__slot1_min_ok
     jml ScummV5_MsuProgram_FetchByte_Far__range16
 ScummV5_MsuProgram_FetchByte_Far__slot1_min_ok:
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START1
-    cmp.l SAME_SCUMM_MSU_CACHE_SIZE1
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
     bcc ScummV5_MsuProgram_FetchByte_Far__slot1_range_ok
     jml ScummV5_MsuProgram_FetchByte_Far__range16
 ScummV5_MsuProgram_FetchByte_Far__slot1_range_ok:
+    clc
+    adc.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    bcc ScummV5_MsuProgram_FetchByte_Far__slot1_offset_ok
+    jml ScummV5_MsuProgram_FetchByte_Far__range16
+ScummV5_MsuProgram_FetchByte_Far__slot1_offset_ok:
+    .a16
+    cmp.l SAME_SCUMM_MSU_CACHE_SIZE1
+    bcc ScummV5_MsuProgram_FetchByte_Far__slot1_physical_ok
+    jml ScummV5_MsuProgram_FetchByte_Far__range16
+ScummV5_MsuProgram_FetchByte_Far__slot1_physical_ok:
+    .a16
     tax
     sep #$20
     .a8
@@ -2630,10 +2683,15 @@ ScummV5_MsuProgram_FetchByte_Far__slot2_id_ok:
 ScummV5_MsuProgram_FetchByte_Far__slot2_generation_ok:
     .a16
     txa
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START2
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcc ScummV5_MsuProgram_FetchByte_Far__range16
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START2
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    bcs ScummV5_MsuProgram_FetchByte_Far__range16
+    clc
+    adc.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    bcs ScummV5_MsuProgram_FetchByte_Far__range16
     cmp.l SAME_SCUMM_MSU_CACHE_SIZE2
     bcs ScummV5_MsuProgram_FetchByte_Far__range16
     tax
@@ -2668,10 +2726,15 @@ ScummV5_MsuProgram_FetchByte_Far__slot0_id_ok:
 ScummV5_MsuProgram_FetchByte_Far__slot0_generation_ok:
     .a16
     txa
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START0
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcc ScummV5_MsuProgram_FetchByte_Far__range16
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START0
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    bcs ScummV5_MsuProgram_FetchByte_Far__range16
+    clc
+    adc.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    bcs ScummV5_MsuProgram_FetchByte_Far__range16
     cmp.l SAME_SCUMM_MSU_CACHE_SIZE0
     bcs ScummV5_MsuProgram_FetchByte_Far__range16
     tax
@@ -2688,14 +2751,15 @@ ScummV5_MsuProgram_FetchByte_Far__range16:
 ScummV5_MsuProgram_FetchByte_Far__stale:
     .a8
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
-    ; X is still the logical source PC and the active cache ID is canonical.
+    ; X is still the logical source PC; ACTIVE_PROGRAM is the member identity,
+    ; while CACHE_ACTIVE_ID may name the shared physical allocation's anchor.
     ; Record them before returning the explicit resource error; selector or
     ; page-generation failures must not lose their source-bound diagnosis.
     lda.l SAME_SCUMM_STREAM_ERROR_SITE
     bne ScummV5_MsuProgram_FetchByte_Far__stale_site_recorded
     rep #$20
     .a16
-    lda.l SAME_SCUMM_MSU_CACHE_ACTIVE_ID
+    lda.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_ID
     txa
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_PC
@@ -2779,9 +2843,10 @@ ScummV5_MsuProgram_Leave_Far__restore:
     sta.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
     lda.l SAME_SCUMM_MSU_EXEC_PREV_SELECTOR,x
     sta.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
+    lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
     cmp #$FF
     beq ScummV5_MsuProgram_Leave_Far__no_parent
-    lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    cmp #$00
     beq ScummV5_MsuProgram_Leave_Far__parent0
     cmp #$01
     beq ScummV5_MsuProgram_Leave_Far__parent1
@@ -2828,10 +2893,177 @@ ScummV5_MsuProgram_Leave_Far__no_parent:
     lda #$FF
     sta.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
 ScummV5_MsuProgram_Leave_Far__done:
+    jsl ScummV5_MsuProgram_BindLogical_Far
     rep #$30
     .a16
     .i16
     ply
     plx
+    plp
+    rtl
+
+; Tagged page-index alternative. Tail-entered with FindPage's saved P/X on
+; stack. No bytes execute before the whole physical group passes CRC.
+ScummV5_MsuProgram_FindGroup_Far:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
+    asl
+    sta.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    tax
+    inx
+    inx
+    inx
+    inx
+    lda.l ScummV5_MsuProgramRecords,x
+    sta.l SAME_SCUMM_MSU_PAGE_BODY_LENGTH
+    beq ScummV5_MsuProgram_FindGroup__bad
+    cmp.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
+    bcc ScummV5_MsuProgram_FindGroup__bad
+    lda.l SAME_SCUMM_MSU_PAGE_SCAN_INDEX
+    cmp #SCUMM_MSU1_PROGRAM_PAGE_RECORD_COUNT
+    bcs ScummV5_MsuProgram_FindGroup__bad
+    asl
+    asl
+    asl
+    tax
+    lda.l ScummV5_MsuProgramPageRecords,x
+    cmp #SCUMM_MSU1_PROGRAM_COUNT
+    bcs ScummV5_MsuProgram_FindGroup__bad
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
+    inx
+    inx
+    lda.l ScummV5_MsuProgramPageRecords,x
+    beq ScummV5_MsuProgram_FindGroup__bad
+    cmp #SAME_SCUMM_MSU_PROGRAM_CACHE_SLOT_SIZE+1
+    bcs ScummV5_MsuProgram_FindGroup__bad
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_LENGTH
+    lda.l SAME_SCUMM_MSU_PAGE_SCAN_COUNT
+    and #$7FFF
+    clc
+    adc.l SAME_SCUMM_MSU_PAGE_BODY_LENGTH
+    bcs ScummV5_MsuProgram_FindGroup__bad
+    cmp.l SAME_SCUMM_MSU_PAGE_REQUEST_LENGTH
+    beq ScummV5_MsuProgram_FindGroup__extent_ok
+    bcs ScummV5_MsuProgram_FindGroup__bad
+ScummV5_MsuProgram_FindGroup__extent_ok:
+    .a16
+    inx
+    inx
+    lda.l ScummV5_MsuProgramPageRecords,x
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_CRC
+    inx
+    inx
+    lda.l ScummV5_MsuProgramPageRecords,x
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_CRC+2
+    lda #$0000
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_START
+    jml ScummV5_MsuProgram_FindPage_Far__found
+ScummV5_MsuProgram_FindGroup__bad:
+    jml ScummV5_MsuProgram_FindPage_Far__not_found
+
+; Reconstruct the immutable logical view on enter/resume/parent return. The
+; existing continuation stack saves selector and physical window; source PC
+; remains with C4. A nested sibling can share the pinned allocation without
+; inheriting its parent's logical bounds. No released scratch pointer survives.
+ScummV5_MsuProgram_BindLogical_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    lda #$0000
+    sta.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    sta.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    cmp #$FF
+    bne ScummV5_MsuProgram_BindLogical__resolve
+    jml ScummV5_MsuProgram_BindLogical__done
+ScummV5_MsuProgram_BindLogical__resolve:
+    .a8
+    lda.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
+    jsl ScummV5_Resident_ProgramUnitForSelector_Far
+    bcs ScummV5_MsuProgram_BindLogical__valid
+    jml ScummV5_MsuProgram_BindLogical__done
+ScummV5_MsuProgram_BindLogical__valid:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_RESIDENT_EXPECTED_ID
+    sta.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
+    cmp #SCUMM_MSU1_PROGRAM_PAGE_INDEX_COUNT
+    bcc ScummV5_MsuProgram_BindLogical__index_ok
+    jml ScummV5_MsuProgram_BindLogical__done
+ScummV5_MsuProgram_BindLogical__index_ok:
+    asl
+    asl
+    tax
+    inx
+    inx
+    lda.l ScummV5_MsuProgramPageIndex,x
+    bmi ScummV5_MsuProgram_BindLogical__group
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    beq ScummV5_MsuProgram_BindLogical__slot0
+    cmp #$01
+    beq ScummV5_MsuProgram_BindLogical__slot1
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_PAGE_START2
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    lda.l SAME_SCUMM_MSU_CACHE_SIZE2
+    bra ScummV5_MsuProgram_BindLogical__length
+ScummV5_MsuProgram_BindLogical__slot1:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_PAGE_START1
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    lda.l SAME_SCUMM_MSU_CACHE_SIZE1
+    bra ScummV5_MsuProgram_BindLogical__length
+ScummV5_MsuProgram_BindLogical__slot0:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_PAGE_START0
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    lda.l SAME_SCUMM_MSU_CACHE_SIZE0
+    bra ScummV5_MsuProgram_BindLogical__length
+ScummV5_MsuProgram_BindLogical__group:
+    .a16
+    and #$7FFF
+    sta.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    lda #$0000
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    lda.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
+    asl
+    sta.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    tax
+    inx
+    inx
+    inx
+    inx
+    lda.l ScummV5_MsuProgramRecords,x
+ScummV5_MsuProgram_BindLogical__length:
+    .a16
+    sta.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+ScummV5_MsuProgram_BindLogical__done:
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
     plp
     rtl
