@@ -1286,6 +1286,15 @@ ScummV5_Resident_RunAcceptanceControl_Far__stale_count_ok:
     rep #$20
     .a16
     jsr ScummV5_Resident_RefreshDiagnostics
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_RunBindingControl_Far
+    bcs ScummV5_Resident_RunAcceptanceControl_Far__cache_checked
+    sep #$20
+    .a8
+    lda #$21
+    jmp ScummV5_Resident_RunAcceptanceControl_Far__failed
+ScummV5_Resident_RunAcceptanceControl_Far__cache_checked:
+    .endif
     sep #$20
     .a8
     lda #$01

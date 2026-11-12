@@ -4146,6 +4146,15 @@ def run_exhaustion(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[str
         final_stats = stats(session)
         pin_census = owned_pin_census(session)
         sp = cpu_sp(session)
+        cache_binding = None
+        if inputs.get("program_storage") is not None:
+            cache_binding = {
+                "assertions_completed": u16(diagnostic, 12),
+                "guarded_member_hex": session.read_memory(
+                    "snesMemory", 0x7E100B, 5).hex(),
+                "error": session.read_u8(ERROR),
+                "scope": "synthetic binding leaf; checked MSU transfers tested separately",
+            }
     report = {
         "format": "same-scumm-native-residency-exhaustion-v1",
         "mode": "pinned-exhaustion-and-stale-generation",
@@ -4164,11 +4173,20 @@ def run_exhaustion(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[str
         "peak_stats": final_stats,
         "owned_pin_census": pin_census,
         "stack_pointer": sp,
-        "result": "PASS",
+        "cache_binding_control": cache_binding,
+        "result": "NOT_VERIFIED",
     }
+    # Preserve measured fields even when a subsequent safety assertion fails.
+    args.output.with_suffix(".observations.json").write_text(
+        json.dumps(report, indent=2) + "\n", encoding="utf-8")
     require(report["diagnostic"]["status"] == 1,
             f"native exhaustion control did not pass: {report['diagnostic']}; "
             f"stats={final_stats}; resident_count={len(bindings)}; SP=${sp:04X}")
+    if cache_binding is not None:
+        require(cache_binding["assertions_completed"] == 8
+                and cache_binding["guarded_member_hex"] == "a5313233a5"
+                and cache_binding["error"] == 0x10,
+                f"packed byte-fetch binding safety control failed: {cache_binding}")
     require(report["diagnostic"]["exhaustion_error"] == 0x20,
             "179th pinned binding did not report RESIDENCY_EXHAUSTED")
     require(report["diagnostic"]["stale_rejected"] == 1
@@ -4186,6 +4204,7 @@ def run_exhaustion(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[str
             "all 178 selectors were not simultaneously pinned")
     require(final_stats["exhaustions"] == 1 and final_stats["stale_rejections"] == 1,
             "native failure counters do not match expected single events")
+    report["result"] = "PASS"
     return report
 
 

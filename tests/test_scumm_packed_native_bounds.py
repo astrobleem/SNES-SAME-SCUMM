@@ -62,6 +62,13 @@ rtl
 
 
 class PackedNativeBounds(unittest.TestCase):
+    def test_native_binding_control_reaches_all_eight_assertions(self):
+        m=CacheMachine('ScummV5_MsuProgram_RunBindingControl_Far')
+        accepted,_=m.consume()
+        self.assertTrue(accepted)
+        self.assertEqual(m.get('SAME_SCUMM_RESIDENT_DIAG_SCRATCH'),8)
+        self.assertEqual(m.ram[0x7e100b:0x7e1010],b'\xa5\x31\x32\x33\xa5')
+
     def test_bound_body_size_is_not_group_or_page_size(self):
         for body_size in (3,787,2048,21002,65535):
             m=CacheMachine('ScummV5_MsuProgram_BindLogical_Far')

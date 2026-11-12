@@ -3111,3 +3111,290 @@ ScummV5_MsuProgram_GetActiveSize__miss:
     lda.l SAME_SCUMM_PROGRAM_SELECT
     clc
     rtl
+
+.if SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC
+; Deterministic native leaf control in the existing residency safety harness.
+; It constructs a synthetic checked-binding view, not an MSU integrity proof
+; (the packed working-set/corrupt-group controls exercise real provider I/O).
+; No debugger timing or gameplay writes are involved. Scratch counts completed
+; assertions; the ordinary resolver diagnostic owns this memory until halt.
+ScummV5_MsuProgram_RunBindingControl_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    lda #$0000
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    sta.l SAME_SCUMM_MSU_CACHE_ID0
+    sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_ID
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    lda #$0007
+    sta.l SAME_SCUMM_MSU_CACHE_GENERATION0
+    sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
+    lda #$0020
+    sta.l SAME_SCUMM_MSU_CACHE_SIZE0
+    lda #$000C
+    sta.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    lda #$0003
+    sta.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    sta.l SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH
+    lda #$0001
+    sta.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
+    sep #$20
+    .a8
+    lda #$D0
+    sta.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
+    lda #$00
+    sta.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    lda #SCUMM_MSU_CACHE_READY
+    sta.l SAME_SCUMM_MSU_CACHE_STATE0
+    lda #$01
+    sta.l SAME_SCUMM_MSU_CACHE_PINS0
+    lda #$A5
+    sta.l SAME_SCUMM_MSU_PROGRAM_CACHE0+11
+    sta.l SAME_SCUMM_MSU_PROGRAM_CACHE0+15
+    lda #$31
+    sta.l SAME_SCUMM_MSU_PROGRAM_CACHE0+12
+    lda #$32
+    sta.l SAME_SCUMM_MSU_PROGRAM_CACHE0+13
+    lda #$33
+    sta.l SAME_SCUMM_MSU_PROGRAM_CACHE0+14
+    rep #$10
+    .i16
+    ldx #$0000
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcc ScummV5_MsuProgram_BindingControl__carry0
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry0:
+    .a8
+    cmp #$31
+    beq ScummV5_MsuProgram_BindingControl__value0
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value0:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__error0
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error0:
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$10
+    .i16
+    ldx #$0002
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcc ScummV5_MsuProgram_BindingControl__carry1
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry1:
+    .a8
+    cmp #$33
+    beq ScummV5_MsuProgram_BindingControl__value1
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value1:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__error1
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error1:
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$10
+    .i16
+    ldx #$0003
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcs ScummV5_MsuProgram_BindingControl__carry2
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry2:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__value2
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value2:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$10
+    beq ScummV5_MsuProgram_BindingControl__error2
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error2:
+    .a8
+    lda #$03
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$20
+    .a16
+    lda #$0008
+    sta.l SAME_SCUMM_MSU_CACHE_GENERATION0
+    rep #$10
+    .i16
+    ldx #$0000
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcs ScummV5_MsuProgram_BindingControl__carry3
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry3:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__value3
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value3:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$10
+    beq ScummV5_MsuProgram_BindingControl__error3
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error3:
+    .a8
+    lda #$04
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$20
+    .a16
+    lda #$0007
+    sta.l SAME_SCUMM_MSU_CACHE_GENERATION0
+    rep #$10
+    .i16
+    ldx #$0000
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D1
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcs ScummV5_MsuProgram_BindingControl__carry4
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry4:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__value4
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value4:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$10
+    beq ScummV5_MsuProgram_BindingControl__error4
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error4:
+    .a8
+    lda #$05
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$20
+    .a16
+    lda #$0002
+    sta.l SAME_SCUMM_MSU_CACHE_ID0
+    rep #$10
+    .i16
+    ldx #$0000
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcs ScummV5_MsuProgram_BindingControl__carry5
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry5:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__value5
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value5:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$10
+    beq ScummV5_MsuProgram_BindingControl__error5
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error5:
+    .a8
+    lda #$06
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_MSU_CACHE_ID0
+    sep #$20
+    .a8
+    lda #$0001
+    sta.l SAME_SCUMM_MSU_CACHE_STATE0
+    rep #$10
+    .i16
+    ldx #$0000
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcs ScummV5_MsuProgram_BindingControl__carry6
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry6:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__value6
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value6:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$10
+    beq ScummV5_MsuProgram_BindingControl__error6
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error6:
+    .a8
+    lda #$07
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    lda.l SAME_SCUMM_MSU_PROGRAM_CACHE0+11
+    cmp #$A5
+    bne ScummV5_MsuProgram_BindingControl__failed
+    lda.l SAME_SCUMM_MSU_PROGRAM_CACHE0+15
+    cmp #$A5
+    bne ScummV5_MsuProgram_BindingControl__failed
+    lda #$08
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    plp
+    sec
+    rtl
+ScummV5_MsuProgram_BindingControl__failed:
+    plp
+    clc
+    rtl
+.endif
