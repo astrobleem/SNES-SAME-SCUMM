@@ -4356,3 +4356,18 @@ root/authentic-bound-size-continuous, privateMCP7483,600-secondwatchdog. Wait
 for observed outcome; no acceptance inferred from elapsed time or process exit.
 No heavy local suite concurrent with this native run. Separate progression
 recovery and user's unrelated emulator remain untouched.
+
+## Camera pipeline — 2026-11-12 active correction
+
+Worktree `/tmp/same-scumm-authentic-room`, PR15 branch unchanged; recovery
+worktree untouched. `babed27` and `bd558dc` preserve the bounded handoffs and
+checked lookahead implementation. A subsequent measured correction moves
+lookahead admission from conversion-complete to composition-complete: the
+pending prefix is dead once INDEX8 owns the column. See CAMERA_PIPELINE.md.
+
+Synthetic bidirectional source/PPU equality, in-flight reversal and corrupt
+lookahead rejection pass. First authentic implementation preserved all gameplay
+but did not improve latency; it is not Milestone C acceptance. Corrected full
+continuous run is supervised under `authentic-overlap-continuous` in the private
+pipeline evidence root. No old-ROM state transfer, desktop display, or seven-
+action route. Do not repeat an unchanged failed run or infer a performance PASS.

@@ -1,5 +1,7 @@
 ; One checked strip of camera lookahead. Pixel storage is the existing shared
-; pending prefix, borrowed only AFTER the current conversion has finished.
+; pending prefix, borrowed only AFTER composition has copied the current strip
+; into the locked INDEX8 surface at an aligned origin. The facade rejects
+; partial edges whose conversion still needs the prefix.
 ; No speculative display writes: BeginScroll still proves the
 ; destination is unreferenced before the next real publication uses it.
 ; The immutable ticket is 24 audited bytes at $7E2EE8..$7E2EFF.

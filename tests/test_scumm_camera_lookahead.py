@@ -11,7 +11,8 @@ class AheadMachine(StripMachine):
         self.symbols.update(SAME_BWRAM_RETAINED_VIEWPORT=0x401084,
                             SAME_MODE3_CONTROL_STATE=0x40100e,
                             SAME_MODE3_CONTROL_CANDIDATE_COUNT=0x401022,
-                            SAME_MODE3_STATE_QUEUEING=3, SAME_MODE3_STATE_COMPLETE=5)
+                            SAME_MODE3_STATE_CONVERTING=2, SAME_MODE3_STATE_QUEUEING=3, SAME_MODE3_STATE_COMPLETE=5,
+                            SAME_MODE3_CONTROL_SURFACE_LOCKED=0x401013)
         for file in ('runtime/snes/services/video_mode3_retained.inc.pasm','runtime/snes/services/storage_msu1.pasm'):
             p=ROOT/file
             if p.exists():
@@ -31,7 +32,7 @@ class AheadMachine(StripMachine):
             else:self.code.append(line)
         self.put('SAME_SCUMM_VIEWPORT_STATE',4,1);self.put('SAME_SCUMM_VIEWPORT_MODE',1,1)
         self.put('MODE3_R_ACTIVE',1,1)
-        self.put('SAME_MODE3_CONTROL_STATE',3,1)
+        self.put('SAME_MODE3_CONTROL_STATE',3,1);self.put('SAME_MODE3_CONTROL_SURFACE_LOCKED',1,1)
         self.put('MODE3_R_NEXT',40);self.put('MODE3_R_CURRENT',32)
         self.put('MODE3_R_MAX',384);self.put('MODE3_R_FIRST',4);self.put('MODE3_R_LAST',35)
         self.put('SAME_VIDEO_SURFACE_PENDING_XSTART',24)
@@ -75,8 +76,23 @@ class AheadTests(unittest.TestCase):
         self.assertEqual(m.get('MODE3_R_CURRENT'),32)
         self.assertNotIn('ScummV5_Camera_ConsumeStrip__length_ok',m.calls)
 
-    def test_no_speculation_while_conversion_or_foreground_owns_data(self):
-        for key,v,size in [('SAME_MODE3_CONTROL_STATE',2,1),('SAME_MODE3_CONTROL_STATE',255,1),('SAME_MODE3_CONTROL_CANDIDATE_COUNT',1,2),('SAME_SCUMM_M23A_PHASE',4,1),('SAME_SCUMM_MSU_CACHE_REQUEST_SLOT',0,1),('SAME_MSU1_STATUS',4,1),('SAME_SCUMM_ACTOR_SCRATCH_OWNER',1,1),('SAME_SCUMM_ACTOR_POSE_STATE',1,1),('MODE3_R_NEXT',41,2)]:
+    def test_prefetch_overlaps_conversion_of_already_copied_strip(self):
+        m=AheadMachine();m.put('SAME_MODE3_CONTROL_STATE',2,1)
+        m.put('SAME_MODE3_CONTROL_CANDIDATE_COUNT',27)
+        m.run('AheadService')
+        self.assertEqual(m.get('SAME_SCUMM_CAMERA_AHEAD_STATE',1),1)
+        self.assertEqual(m.get('SAME_MODE3_CONTROL_CANDIDATE_COUNT'),27)
+        self.assertFalse(m.accepted)
+
+    def test_visual_hook_runs_after_composition_and_before_actor_admission(self):
+        source=(ROOT/'runtime/snes/engines/scumm_v5_visual.pasm').read_text().split('ScummV5_Visual_Frame_Far:',1)[1]
+        self.assertLess(source.index('jsl Same_VideoSurface_ServicePending_Far'),source.index('jsl ScummV5_Camera_AheadService_Far'))
+        self.assertLess(source.index('jsl ScummV5_Camera_AheadService_Far'),source.index('jsl ScummV5_Controller_RenderActor_Far'))
+        compose=(ROOT/'runtime/snes/services/video_surface.pasm').read_text().split('Same_VideoSurface_ComposeRetainedScroll_Far:',1)[1]
+        self.assertLess(compose.index('jsl Same_Mode3_Retained_FillEdge_Far'),compose.index('jsr Same_VideoSurface_PushDirtyPresent__dirty_queued'))
+
+    def test_no_speculation_before_composition_or_while_foreground_owns_data(self):
+        for key,v,size in [('SAME_MODE3_CONTROL_STATE',1,1),('SAME_MODE3_CONTROL_STATE',255,1),('SAME_MODE3_CONTROL_SURFACE_LOCKED',0,1),('SAME_SCUMM_M23A_PHASE',4,1),('SAME_SCUMM_MSU_CACHE_REQUEST_SLOT',0,1),('SAME_MSU1_STATUS',4,1),('SAME_SCUMM_ACTOR_SCRATCH_OWNER',1,1),('SAME_SCUMM_ACTOR_POSE_STATE',1,1),('MODE3_R_NEXT',41,2)]:
             with self.subTest(key=key):
                 m=AheadMachine();m.put(key,v,size);m.run('AheadService')
                 self.assertNotIn('Same_Msu1_ReadBegin_FarEntry',m.calls)

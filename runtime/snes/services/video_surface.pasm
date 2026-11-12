@@ -1881,7 +1881,11 @@ Same_VideoSurface_CanPublishRetained__wait:
     rtl
 
 ; A speculative source-strip request may reuse the pending prefix only once
-; the immutable current publication has finished all conversion. This returns
+; composition has copied the strip into INDEX8 and queued its immutable
+; publication. For an aligned viewport every newly exposed pixel is now in
+; INDEX8. Nonaligned edge conversion still reads the prefix, so the NEXT&7
+; rejection below is a lifetime fence, not merely a prediction preference.
+; Waiting for aligned conversion to finish needlessly serializes I/O. Returns
 ; A16=next missing source column, X16=origin it follows, C clear. It does not
 ; claim pixels or physical character slots. The latter remain owned by the
 ; committed map until BeginScroll proves safe reuse after the NMI commit.
@@ -1896,11 +1900,13 @@ Same_VideoSurface_PlanLookahead_Far:
     bne Same_VideoSurface_PlanLookahead__no
     lda.l SAME_MODE3_CONTROL_STATE
     and #$00FF
-    cmp #SAME_MODE3_STATE_QUEUEING
+    cmp #SAME_MODE3_STATE_CONVERTING
     bcc Same_VideoSurface_PlanLookahead__no
     cmp #(SAME_MODE3_STATE_COMPLETE+1)
     bcs Same_VideoSurface_PlanLookahead__no
-    lda.l SAME_MODE3_CONTROL_CANDIDATE_COUNT
+    lda.l SAME_MODE3_CONTROL_SURFACE_LOCKED
+    and #$00FF
+    cmp #$0001
     bne Same_VideoSurface_PlanLookahead__no
     lda.l MODE3_R_NEXT
     and #$0007
