@@ -404,11 +404,16 @@ class RetainedCameraTransactionMachine(CameraTransactionMachine):
         self.put('SAME_SCUMM_ACTOR_SCRATCH_OWNER',1,1)
         self.put('SAME_VIDEO_SURFACE_SOURCE_X',32)
         self.put('SAME_SCUMM_VIEWPORT_SOURCE_X',40)
+        self.put('SAME_VIDEO_SURFACE_WIDTH',640)
+        self.put('SAME_VIDEO_SURFACE_COPY_WIDTH',256)
+        self.put('SAME_VIDEO_SURFACE_PENDING_XSTART',8)
+        self.labels['ScummV5_Camera_ServicePending_Far']=0
         self.put('SAME_VIDEO_SURFACE_NEXT_GENERATION',11)
         self.put('SAME_BWRAM_CONTROL_COMMITTED_GENERATION',10)
 
     def service(self,name,p,a):
         self.calls.append(name)
+        if name=='Same_VideoSurface_CanWrite_Far':return p&~1,a
         if name=='Same_VideoSurface_CanPublishRetained_Far':
             return (p&~1)|int(self.queue_busy),a
         if name=='Same_VideoSurface_ComposeRetainedScroll_Far':
@@ -453,11 +458,23 @@ class RetainedCameraTransactionTests(unittest.TestCase):
             self.assertEqual(m.get('SAME_VIDEO_SURFACE_SOURCE_X'),32)
         m.put('SAME_MODE3_CONTROL_COMMITTED_GENERATION_HI',0)
         m.calls=[];failed,_=m.consume();self.assertFalse(failed)
-        self.assertEqual(m.calls,['Same_VideoSurface_ScrollPresented_Far','ScummV5_Camera_InstallGeometry_Far'])
+        self.assertEqual(m.calls,['Same_VideoSurface_ScrollPresented_Far','ScummV5_Camera_InstallGeometry_Far','Same_VideoSurface_CanWrite_Far'])
         self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_STATE',1),0)
         self.assertEqual(m.get('SAME_SCUMM_ACTOR_SCRATCH_OWNER',1),0)
         self.assertEqual(m.get('SAME_VIDEO_SURFACE_SOURCE_X'),40)
-        self.assertEqual(m.get('SAME_VIDEO_SURFACE_PENDING_VISUAL',1),1)
+        self.assertEqual(m.get('SAME_VIDEO_SURFACE_PENDING_VISUAL',1),0)
+
+    def test_committed_column_requests_next_foreground_without_idle_turn(self):
+        m=RetainedCameraTransactionMachine()
+        m.put('SAME_SCUMM_VIEWPORT_STATE',4,1)
+        m.put('SAME_BWRAM_CONTROL_COMMITTED_GENERATION',11)
+        m.put('SAME_VIDEO_SURFACE_PENDING_XSTART',176)
+        failed,_=m.consume()
+        self.assertFalse(failed)
+        self.assertEqual(m.get('SAME_VIDEO_SURFACE_SOURCE_X'),40)
+        self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_ACTOR_SERVED',1),2)
+        self.assertEqual(m.get('SAME_SCUMM_MSU_ROOM_STATE',1),0)
+        self.assertEqual(m.get('SAME_SCUMM_ACTOR_SCRATCH_OWNER',1),0)
 
 class CameraForegroundFairnessTests(unittest.TestCase):
     def test_same_room_pan_does_not_cancel_actor_and_yields_only_one_turn(self):
@@ -491,6 +508,7 @@ class CameraForegroundFairnessTests(unittest.TestCase):
         m.put('SAME_SCUMM_ACTOR_POSE_STATE',0,1)
         m.put('SAME_SCUMM_ACTOR_SCRATCH_OWNER',0,1)
         m.consume();self.assertEqual(m.get('SAME_SCUMM_VIEWPORT_ACTOR_SERVED',1),1)
+        self.assertEqual(m.get('SAME_SCUMM_MSU_ROOM_STATE',1),1)
         self.assertNotIn('ScummV5_Cursor_Frame_Far',m.calls)
         # A previously deferred cursor publication/restoration must drain
         # before actor composition. It never becomes a new blink-only pass.

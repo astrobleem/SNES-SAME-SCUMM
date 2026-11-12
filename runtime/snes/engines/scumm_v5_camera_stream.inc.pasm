@@ -724,6 +724,11 @@ ScummV5_Camera_ServiceForeground__actor:
     bne ScummV5_Camera_ServiceForeground__done
     lda #$01
     sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
+    ; Foreground work is complete in the only phase permitted to compose it.
+    ; Admit the next checked camera request now instead of spending an entire
+    ; engine turn waiting for the same acknowledgment. ServicePending still
+    ; checks the surface, lifecycle, scratch owner and serialized provider.
+    jsl ScummV5_Camera_ServicePending_Far
 ScummV5_Camera_ServiceForeground__done:
     plp
     rtl
@@ -769,8 +774,11 @@ ScummV5_Camera_ServicePending__retained_wait:
     sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
     lda #$01
     sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
-    clc
-    rtl
+    ; The exact PPU generation has committed. Reconsider the latest target
+    ; immediately; this only requests foreground service, never composes an
+    ; actor from an opcode. No extra idle scheduler turn is needed between
+    ; retiring one column and requesting the next one.
+    jmp ScummV5_Camera_ServicePending__new
 ScummV5_Camera_ServicePending__retained_pending:
     .a8
     clc
