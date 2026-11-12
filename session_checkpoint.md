@@ -1,4 +1,45 @@
-# Milestone C packed-cache checkpoint — native integrated acceptance
+# Milestone C camera pipeline — integrated native acceptance
+
+Runtime: 16592b90cbc04bdf6bd325fc772805f3396b8eb4 on
+scumm-fate-playable-adventure / draft PR15, still stacked on PR14. No merge.
+Recovery worktree untouched. Final publication changes only evidence docs.
+
+Checked strip lookahead now overlaps immutable tile conversion; ready DMA/NMI
+handoffs advance in the same bounded slice. Cursor source-coverage masks fix
+transparent-hole corruption and text-overlap restore mode. No new renderer,
+cache, image buffer, script timing, or DMA budget. All runtime changes committed.
+
+Continuous authentic startup/newspaper/inventory/walk/camera/continued input
+PASS: owner/state1/1, error0, seven full source/INDEX8/VRAM/CGRAM comparisons
+equal, actor273,139 standing3/crop208. Separate exact-ROM reverse PASS:
+actor233,138/crop32, inventory persistent. No synthetic story, gameplay writes,
+or seven-action replay. Forward919->808frames; reverse801->643. Median sampled
+columns32->24. Exact prepared-new composition->PPU21frames; cached16. Fixture
+targets16-17/9 NOT fully reached; do not claim60Hz or hardware minimum.
+
+Final read-only bounded timing probe accounts for conversion, next-strip
+checked reads, foreground composition and actual scheduler work. See
+docs/scumm-toolchain/CAMERA_PIPELINE.md for non-double-counted costs and limits.
+Forward21lookaheadhits, one isolated Global33 load/eviction before scrolling;
+reverse0loads/evictions. No recurrence of the five-program eviction cycle.
+
+Private root: /home/chad/SAME-private-evidence/milestone-c-camera-pipeline-20261112
+authentic-pipeline-final and authentic-pipeline-reverse hold actual continuous
+and separate reverse reports/captures; final-column-profile holds timing only.
+ROMc244c4ba..., map0eac10eb..., packagee6cf5c28..., identityd3a14f3a... .
+All59nongenerated runtime files byte-match16592b9. Full hashes/linkage in docs.
+Supervisor deadlines obeyed; no owned Nexen/Xvfb left. Unrelated userMCP7381
+and preexisting zombie603102 must not be touched. No extra replay for docs.
+
+Local1586tests:1574passed/12skipped. makevalidate,41-region audit,pinnedPoppy,
+ROM/Python/Bash/JSON/diffchecks pass. Runtime hostedCI43178831917 bothgreen.
+Final docs-head hosted run must be checked separately. HostedCI is not Nexen.
+Public source audit finds no commercial payload/binary or credential pattern.
+Full-game semantics, audio, portable saves and hardware remain unqualified.
+
+--- Historical checkpoints below retain their original scope ---
+
+## Milestone C packed-cache checkpoint — native integrated acceptance
 
 Current runtime: e3e77ad32270a086408f55d9ce408cf63bb4f6e7, published to
 scumm-fate-playable-adventure / draft PR15, still stacked on PR14.

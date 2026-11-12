@@ -120,7 +120,117 @@ No ROM, package, image, savestate, or commercial source payload belongs in Git.
   directory/expected CRC are unchanged. The provider and SCUMM report explicit
   failure, the ticket is cleared, and the bad column is not published.
 
-The authentic continuous and reverse results, exact artifact identities and
-final performance accounting will be added after their observations complete.
-Assembly and host tests are not substitutes for those observations. Hosted CI
-assembles native code but does not run Nexen or use commercial resources.
+## Final authentic acceptance
+
+Runtime source `16592b90cbc04bdf6bd325fc772805f3396b8eb4` passes one continuous
+cold session: original startup, newspaper pickup through its original script,
+owner/state 15/0 to 1/1, readable inventory open/close, walking through the
+camera trigger, and subsequent controller input. No synthetic story, guest
+gameplay-state write, or checkpoint restore occurs in that session. Seven
+completed scene/text captures have zero source/INDEX8/PPU/CGRAM differences.
+The final actor is (273,139), standing chore 3, source crop 208, error zero.
+The private supervised Nexen MCP session exits normally in 493.09 seconds.
+
+A **separate matching-ROM** post-forward checkpoint control reverses using
+normal controller input. It retains newspaper owner/state 1/1 and error zero,
+and passes full source/INDEX8/PPU/CGRAM comparison at crop 32, actor (233,138).
+It exits normally in 76.55 seconds. It is not spliced into the continuous run.
+
+| Measurement | Packed-cache baseline | Pipeline result |
+| --- | ---: | ---: |
+| Forward input to final image | 919 frames | 808 frames |
+| Separate reverse input to final image | 801 frames | 643 frames |
+| Median sampled steady column interval | 32 frames | 24 frames |
+| Final logical camera target to final crop commit | 632 frames | 528 frames |
+
+The forward boundaries are input 6999, sampled semantic arrival 7158, final
+logical camera target 7278, final crop commit 7806, final image 7807.
+The reverse boundaries are 8119 and 8762. The source camera range and input
+sequence are equivalent to the baseline; observer sampling phases and initial
+cache warmth are not cycle-identical. Eight-frame polling gives mostly 24-frame
+and occasional 32-frame column intervals; it is not an exact per-step timer.
+
+Forward uses 21 checked lookahead hits. It also loads/evicts **one** executable
+before retained scrolling: GlobalProgram(33) displaces ObjectProgram(10,147).
+There is no repeated five-program eviction cycle. Reverse has zero additional
+code loads/evictions; that observer did not capture the lookahead hit counter.
+Do not transfer the baseline's zero-load claim to this differently warmed run.
+
+## Exact phase timing and remaining cost
+
+One bounded, read-only timing diagnostic restores the matching pre-camera and
+post-forward checkpoints as separate continuations. It does not replay startup
+or inject gameplay state. Its 1,531 durable events identify actual engine frame
+boundaries, independent of MCP wall-clock observation overhead:
+
+| Prepared new column | Frame |
+| --- | ---: |
+| Consume previously verified source strip / compose | 7266 |
+| Composition complete | 7268 |
+| Request following strip while current conversion runs | 7269 |
+| Following strip CRC accepted / ticket reconciled | 7279 / 7280 |
+| Queue current character DMA | 7284 |
+| Observe completed DMA | 7286 |
+| NMI commits current tilemap/scroll | 7287 |
+
+This is **21 frames composition-to-PPU**; the preceding commit is at 7264,
+giving an exact 23-frame column interval. A cached reverse column composes at
+8226, reconstructs its indexed strip at 8227–8231, queues at 8236, observes DMA
+at 8240, and commits at 8242: **16 frames composition-to-PPU**.
+
+The 16–17-frame new-column and approximately 9-frame cached fixture targets
+are **not fully reached in authentic gameplay**. Remaining measured CPU work
+is explicit, rather than attributed to an unexplained resource wait:
+
+| Complete-call CPU counter cost | Prepared new | Cached reverse |
+| --- | ---: | ---: |
+| Composition, including cursor/edge work | 110,636 | 299,063 |
+| Conversion/scan | 291,709 | 79,444 |
+| Checked transfers for the following strip | 195,185 | 130,178 |
+| Complete SCUMM scheduler calls inside the interval | 165,434 | 90,701 |
+| Total interval | 941,199 | 711,181 |
+
+Cached composition includes 184,578 counter units reconstructing INDEX8 from
+retained planar data. New-column conversion includes 33 encoder attempts
+(217,485 units), but only **25 changed/uploaded tiles, 1,600 bytes, one DMA**.
+The cached sample attempts eight encodes and uploads five tiles/320 bytes in
+one DMA. Encoder, edge and cursor costs are nested and must not be added twice.
+Scheduler calls crossing interval endpoints are excluded from the call totals.
+These are Nexen CPU counters, not raw MSU throughput, elapsed observer time,
+or a demonstrated hardware minimum. No script cadence or DMA budget changed.
+
+The checked-read serialization and cursor corruption identified in this pass
+are corrected and the integrated pipeline is accepted for review. This does
+not certify smooth 60 Hz scrolling or prove all remaining CPU work optimal.
+Further performance work would have to reduce measured conversion/composition
+or service cost, not repeat the same gameplay to search for another wait.
+
+## Identities and validation
+
+Private build: `auth-build-wcu3bm0o/fate-authentic-room` under the evidence root.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| ROM | `c244c4ba509f94fe219ef03257cbd4e39ec782158298b5dfeb5a7832aa641aac` |
+| Map | `0eac10ebc08a5bf27a8123e623109bde52c2f144ed03e53ec4b9f21087a50745` |
+| Full-source package | `e6cf5c28f36f20c10cb9ef7819a1b278b1067ed3014462cee53d9a63d9772afd` |
+| Build identity JSON | `d3a14f3a59f5bdc30334f38d99ccbdfb86e2d1984cc5fc40bd8dfadb167b4f5d` |
+
+The isolated build has its own recorded source-snapshot identity. All 59
+non-generated runtime files byte-match `16592b9`; the linkage manifest records
+that comparison, rather than claiming the ROM was rebuilt from a later docs
+commit. The 2,203-unit package hash is unchanged from the packed-cache baseline.
+
+Evidence: `authentic-pipeline-final/observations/action.json`,
+`authentic-pipeline-reverse/observations/action.json`, their
+`pipeline-performance.json`, `final-column-profile/observations/phase-costs.json`,
+and `final-source-build-linkage.json`. Images and checkpoint states remain local.
+Failed predecessors and the interrupted startup remain separately labeled.
+
+Local suite: **1,574 passed, 12 skipped** (1,586 run). `make validate`, the
+41-region WRAM ownership audit, pinned Poppy assembly, 4 MiB ROM audits,
+Python/Bash/JSON and diff checks pass. The runtime commit's two hosted jobs pass:
+https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43178831917 .
+Hosted CI assembles native code but does not run Nexen or use commercial data.
+No physical hardware, complete game semantics/audio, or portable streamed-save
+acceptance is claimed. PR #15 remains stacked on #14 and is not auto-merged.

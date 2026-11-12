@@ -1,4 +1,27 @@
-# Playable presentation latency — work in progress
+# Playable presentation latency — measured integration results
+
+## Latest: checked camera pipeline (2026-11-12)
+
+Runtime `16592b90cbc04bdf6bd325fc772805f3396b8eb4` passes continuous authentic
+newspaper/inventory/walk/camera/control acceptance and a separate matching-ROM
+reverse control, with full source/INDEX8/VRAM/CGRAM fidelity and error zero.
+Forward improves 919 to **808 frames**, reverse 801 to **643**. Median sampled
+steady column interval improves 32 to **24 frames**. Exact read-only hooks
+measure a prepared new column at **21 frames composition-to-PPU**, cached
+reverse at **16**. The 16–17/9-frame fixture targets are not fully met.
+
+Checked next-column reads overlap immutable current-column conversion;
+ready publication phases advance in the same bounded slice. Cursor exchanges
+now preserve transparent holes instead of transporting stale backgrounds.
+There is no cache-capacity, ring-layout, script-cadence or DMA-budget change.
+Forward has 21 lookahead hits and one isolated executable load/eviction before
+scrolling; reverse has zero. No recurrent cache thrash or full-screen rebuild.
+
+See [CAMERA_PIPELINE.md](CAMERA_PIPELINE.md) for exact frame boundaries, CPU
+costs, artifacts, failed-predecessor distinctions, tests and scope. The pipeline
+is native-accepted for review, not certified as 60 Hz scrolling or optimal
+hardware performance. All source identities and earlier evidence below remain
+historical; their old pending statuses do not supersede this result.
 
 Milestone C starts at `41305d9d32cf02907dc887d3f76e449c01d57389`.
 The sections below retain the history of each separately identified experiment.
