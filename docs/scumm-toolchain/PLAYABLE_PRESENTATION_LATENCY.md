@@ -5,40 +5,143 @@ The sections below retain the history of each separately identified experiment.
 The latest result takes precedence over their earlier pending statuses. The
 separate progression recovery worktree is untouched.
 
-## Active packed-cache follow-up: measured churn removed, latency still under test
+## Packed cache and integrated gameplay acceptance (2026-11-11)
 
-The newer packed build `fd6f744` removes the observed executable churn: its
-captured authentic camera interval has zero additional cache loads or evictions,
-versus the old 103 loads/102 evictions. That does **not** establish responsive
-camera acceptance. The captured input-to-camera image interval is 1,109 frames;
-the 600-second supervisor stopped before the final continued-control report.
-Keep that run incomplete, with its collected image/state evidence intact.
+Runtime `e3e77ad32270a086408f55d9ce408cf63bb4f6e7` passes a continuous
+cold authentic session: original newspaper pickup, persistent owner/state,
+readable inventory, inventory close, walking through the retained camera,
+and subsequent controller input. Error remains zero. All seven completed
+text/scene captures have zero INDEX8/PPU pixels and CGRAM bytes differing;
+the original source room, costume and font comparisons also pass. Final actor
+is (273,139), standing chore 3, with committed source crop 208. No synthetic
+story, gameplay-state writes, checkpoint restore or seven-action replay is
+used in this session. The private supervisor exits normally in 541.942 seconds.
 
-A short matching-ROM checkpoint profile counted 1,703 program-size queries in
-64 frames. Their paired execution spans total 381,461 of 2,945,183 observed
-Nexen CPU counter units (about 13%). Each operand byte was resolving canonical
-size metadata again. The active execution binding now retains the immutable
-complete body length separately from its member/page extent. Enter, resume and
-nested parent restoration refresh this field; mismatched/inactive selectors
-use the existing directory lookup. Every actual byte fetch still checks READY,
-physical identity/generation, member boundaries and physical boundaries.
-Two bytes at $7E2EE6..$7E2EE7 extend the audited metadata allocation; the three
-physical executable buffers remain unchanged.
+A **separate**, matching-ROM post-forward checkpoint control reverses the
+camera using controller input, preserves newspaper owner/state 1/1 and passes
+full source/INDEX8/PPU equality at crop 32, actor (233,138), error zero.
+It exits normally in 110.039 seconds. It is not spliced into the continuous run.
 
-Host instruction tests distinguish complete large-body size from page/group
-size and cover inactive, foreign, zero and unavailable-window selectors. The
-copyright-free packed/native matrix fixture passes with the shortcut, finishing
-at frame 1,920 versus 2,016 before it. Both builds preserve the steady working
-set without reloads and complete nested and >21-KiB paged execution. This is
-not a claimed authentic-camera speedup. That integrated comparison is pending.
+| Measured camera interval | Before packed follow-up | Current |
+| --- | ---: | ---: |
+| Executable loads during observed forward scrolling | 103 | 0 |
+| Executable evictions during observed forward scrolling | 102 | 0 |
+| Forward input to final completed image | 1,061 frames | 919 frames |
+| Reverse input to final completed image (separate control) | 946 frames | 801 frames |
+| Typical sampled column commit interval | 40 frames | 24–32 frames |
+| Typical converted tiles / character bytes / DMA batches | 27 / 1,728 / 1 | unchanged |
 
-The separate phase profile establishes a substantial engine cost (about 43–45%
-of its captured intervals), in addition to conversion and foreground work.
-Do not attribute all remaining delay to MSU traffic or infer an irreducible
-hardware limit. Private journals and exact ROM/map/package/build identities
-remain under `milestone-c-packed-20261111` in the persistent evidence root.
+Packing alone is **not** credited with every saved frame. Its first incomplete
+run measured 1,109 frames, with zero churn. Caching immutable body size in the
+active execution binding produced 1,049; removing idle camera handoff turns
+produced 992; NMI-epoch-bounded storage service opportunities produced 919.
+All builds retain the same logical source and source camera range, but sampled
+controller release yields a few pixels of endpoint variation. These are
+controlled equivalent interactions, not identical-cycle recordings.
 
-The historical sections below retain their original results and scope.
+For the final forward control: input 7418, sampled semantic arrival 7581,
+final logical camera target 7693, final source crop observed committed 8325,
+and completed actor/cursor image 8337. Target-to-camera-commit is 632 frames;
+input-to-final-image is 919. The observed interval transfers 27,818 bytes in
+27 requests across all resource clients; code load/eviction counters remain
+48/45 throughout. The 120-frame early column interval includes a changed
+actor pose/position. Steady samples are mostly 24/32 frames (eight-frame
+sampling), not uniformly 24. No full-screen reconstruction occurs.
+
+The 16–17-frame synthetic resident-source target is **not met** by authentic
+play. Remaining measured work includes checked source strips, the unchanged
+five-tile conversion slices, cursor/foreground composition, and actual SCUMM
+scheduler execution. A typical sampled 32-frame interval contains seven/eight
+logical engine turns, 33 tile encodes (27 changed/uploaded tiles), five/six
+read quanta and one foreground composition. Median leaf spans are 6,565 Nexen
+CPU counter units per tile, 43,206 per read quantum, 115,335 per foreground
+composition and 53,889 per exposed-edge fill. Counter units and whole-session
+averages are not raw device throughput or a proven hardware lower bound.
+These measurements establish removal of pathological executable thrashing and
+full-screen camera rebuilds, **not** 60 Hz scrolling or full-game readiness.
+
+### Changes and safety
+
+- Compiler-owned small-body groups keep independent canonical identities,
+  body bounds, entry PCs and provenance within unchanged three 2 KiB buffers.
+  Group CRC validation precedes READY; physical eviction invalidates every
+  member. Large bodies retain instruction-safe paging.
+- The real movement-distance/cache alias is removed with bounded triangular
+  symmetric distances; directed next-hop semantics and Floyd tie behavior
+  remain intact. The ownership audit now covers the previously omitted table.
+- The active binding caches complete body length independently of page/member
+  extent. Enter, resume and nested restoration refresh it. Every byte fetch
+  retains selector, READY, generation, member and physical bounds checks.
+- Completed camera/foreground ownership handoffs admit the next safe request
+  immediately instead of spending idle engine turns.
+- Checked storage receives three bounded service opportunities per logical
+  turn, at most one quantum **start** per NMI epoch. The 64/256-byte quantum,
+  CRC, serialized cursor, DMA budget and NMI ownership remain unchanged.
+  Obsolete CRC scratch supplies the two epoch bytes; provider allocation stays
+  72 bytes. No catch-up loop or storage execution occurs inside NMI.
+
+### Native and host evidence
+
+The copyright-free five-body working set (787/120/107/163/181 bytes) coexists
+in two checked groups. It executes alongside a third-window matrix helper,
+nested child and 21,271-byte paged body. Steady-state loads/evictions/reads do
+not increase. Final error is zero, stack $0FFF, and pins are released. Current
+completion is frame 1,632 versus 1,920 before the cadence change. Corrupt packed
+bytes reject with CRC error before any body executes. A separate native
+residency safety control passes eight member-boundary/stale/unready/guard
+assertions plus selector exhaustion/reuse checks. Its synthetic READY setup
+is a leaf fault control, not evidence of a successful MSU transfer.
+
+Instruction-level host tests separately cover all-pinned back-pressure and
+valid retry, loading-window exclusion, actor/provider completion ownership,
+member/page bounds, nested restoration, and NMI epoch admission/wraparound.
+These are labeled host instruction evidence, not emulator execution.
+
+The original Winston PCM control passes while the packed programs and room
+resources load: 27.170 seconds captured, no silent 20 ms windows after track
+start, no track errors, and the same native semantic result. This is one MSU
+track in Nexen, not FATE audio, mixing or physical FXPAK qualification.
+
+Two independent full-source artifact sets match: 2,203 canonical bodies,
+1,000,867 code bytes, 286 groups, 675 checked records instead of 2,376.
+The full package is unchanged across the final runtime builds. Source bodies,
+hashes, lengths and object-verb offsets remain complete and independent.
+
+### Exact final runtime identities
+
+- Authentic ROM: `b2a60d3649ea4c1bdd18d8ad681b4ad1ee0768bcda1d1a142e23965f3840368f`
+- Map: `aa4263ce51e47d813908bad23973b0d3171e77a5b5dc249b77235a739c2d3efd`
+- Package: `e6cf5c28f36f20c10cb9ef7819a1b278b1067ed3014462cee53d9a63d9772afd`
+- Build identity: `080947f98f6c14a9bfbef7681cfd00867a613de46d95221e41a0ce0402c85251`
+- Synthetic packed ROM: `dc26bea67721c619e84cac6cedea4596dfffba154e531f7c9e598cfa91bc1208`
+- Native binding control ROM: `6f192653634e8445a721c3045e0dbf28b9ee44e0be450cbebaceaa37c0cdfdef`
+- PCM control ROM: `fdbc6af4b4ec890c27a3f8210eb31659b31ad8552bd07de965a2e426371d3e80`
+
+All 51 non-generated native source files in the authentic isolated build match
+runtime commit e3e77ad. Its private build Git identity is recorded separately,
+not substituted for the public commit. Evidence, commands, snapshots, failed
+predecessors and native images remain outside Git under
+`/home/chad/SAME-private-evidence/milestone-c-packed-20261111`.
+Use `authentic-cadence-continuous`, `authentic-cadence-reverse`,
+`native-nmi-service-cadence`, `native-cadence-corruption`,
+`native-cache-binding-safety` and `native-cadence-pcm` there.
+
+Final local suite: 1,563 tests run, 1,551 passed and 12 skipped (221.815 s).
+`make validate`, the 37-region memory audit, pinned Poppy/ROM audit, 467 Python
+compilation checks, three Bash syntax checks, 60 tracked JSON parses and
+`git diff --check` pass. Skips are not counted as native acceptance.
+
+Both hosted checks passed on e3e77ad:
+https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43154691340.
+Hosted assembly/ROM audit is distinct from the private Nexen results above.
+PR #15 remains draft, stacked on #14, with no automatic merge. Whole-game
+execution, portable streamed saves, complete audio/resource support and
+physical hardware acceptance remain unproven.
+
+## Historical retained-renderer evidence
+
+The sections below preserve their original checkpoints and limitations; the
+current evidence above supersedes their pending status and cache-only scope.
 
 ## Current result: retained rendering works; responsiveness gate remains open
 

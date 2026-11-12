@@ -29,7 +29,9 @@ The transfer is resumable across frame processing. Ordinary checked-read
 clients retain a 64-byte per-service-turn budget. The live-room diagnostic
 personality uses a bounded 256-byte quantum, validated with its input/NMI/audio
 controls, so the 57-KiB indexed room surface does not take thousands of frames
-to stage. These are emulator-observed service budgets, not a claim about
+to stage. Service is offered between kernel phases and admits at most one
+quantum start per NMI epoch; it does not wait for an entire slow interpreter
+turn. CRC completion and single-provider ownership are unchanged. These are emulator-observed service budgets, not a claim about
 physical-hardware throughput.
 
 ## Bounded cache and ownership

@@ -19,13 +19,21 @@ The native storage service is implemented in
 `runtime/snes/services/storage_msu1.pasm` and is reached through
 `Same_Storage_Process`. The service is the sole owner of MSU data-port
 registers. A client fills the `SAME_MSU1_REQUEST_*` descriptor and invokes
-`Same_Msu1_ReadBegin`; the frame storage phase transfers at most 64 bytes in
-one logical frame, with a bounded data-busy poll. Completion is exposed as
+`Same_Msu1_ReadBegin`. A service quantum transfers at most 64 bytes by default
+(or 256 with the live-room feature), with a bounded data-busy poll. The kernel
+offers service between three existing phases. At most one quantum **starts**
+in each NMI epoch; a slow interpreter turn can therefore receive service
+without waiting for another complete logical engine turn. A quantum can span
+an NMI, so this is not a strict byte ceiling for every physical frame. There
+is no catch-up loop, storage work in NMI, or concurrent cursor owner.
+Completion is exposed as
 `READ_OK` only after the request CRC matches. Clients must wait for completion
 before submitting the next request: the physical data cursor and request
 descriptor are singular and service-owned, not a multi-request queue.
 
-The native provider occupies `$7E2F00-$7E2F47` (72 bytes). The diagnostic
+The native provider occupies `$7E2F00-$7E2F47` (72 bytes). Its last-service
+epoch reuses the obsolete bit-loop CRC scratch at `$7E2F29-$7E2F2A`; the
+table-based CRC needs neither byte. No allocation grows. The diagnostic
 client owns `$7E6000-$7EAFFF` (20,480-byte staging), `$7EB000-$7EB0FF`
 (256-byte rolling ring), and `$7EB100-$7EB1FF` (guard/results). These ranges
 are feature-gated and the Winston personality is rejected alongside the SCUMM

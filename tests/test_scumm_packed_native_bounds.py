@@ -62,6 +62,63 @@ rtl
 
 
 class PackedNativeBounds(unittest.TestCase):
+    def victim_machine(self):
+        """Execute the real admission policy, stopping before descriptor I/O."""
+        m = StripMachine()
+        m.symbols.update(SAME_MSU1_STATE_READING=4, SCUMM_MSU_CACHE_LOADING=1)
+        source = (ROOT/'runtime/snes/engines/scumm_v5_msu_programs.pasm').read_text()
+        start = 'ScummV5_MsuProgram_EnsureSelected_Far__find_slot:'
+        chosen = 'ScummV5_MsuProgram_EnsureSelected_Far__chosen:'
+        exhausted = 'ScummV5_MsuProgram_EnsureSelected_Far__exhausted:'
+        tail = source[source.index(exhausted):source.index('; A nested SCUMM call')]
+        body = 'php\n' + source[source.index(start):source.index(chosen)]
+        body += chosen + '\nplp\nsec\nrtl\n' + tail
+        m.code, m.labels, m.service_writes = [], {}, []
+        for raw in body.splitlines():
+            line = raw.split(';')[0].strip()
+            if not line or line.startswith('.'): continue
+            if line.endswith(':'): m.labels[line[:-1]] = len(m.code)
+            else: m.code.append(line.replace('jml ', 'jmp '))
+        for slot in range(3):
+            m.put(f'SAME_SCUMM_MSU_CACHE_STATE{slot}', 2, 1)
+            m.put(f'SAME_SCUMM_MSU_CACHE_LRU{slot}', slot, 1)
+            m.put(f'SAME_SCUMM_MSU_CACHE_PINS{slot}', 1, 1)
+        m.put('SAME_MSU1_STATUS', 5, 1)
+        return m
+
+    def test_all_pinned_is_backpressure_and_release_permits_retry(self):
+        m = self.victim_machine()
+        before = bytes(m.ram)
+        accepted, writes = m.consume()
+        self.assertFalse(accepted)
+        self.assertEqual(m.get('SAME_SCUMM_ERROR', 1), 0)
+        permitted = {m.symbols[n] for n in ('SAME_SCUMM_MSU_CACHE_RETURN_P',
+                                            'SAME_SCUMM_MSU_CACHE_TEMP')}
+        self.assertTrue(set(writes) <= permitted)
+        self.assertEqual(m.ram[0x7e1000:0x7e2000], before[0x7e1000:0x7e2000])
+        m.put('SAME_SCUMM_MSU_CACHE_PINS1', 0, 1)
+        self.assertTrue(m.consume()[0])
+        self.assertEqual(m.get('SAME_SCUMM_MSU_CACHE_RETURN_P', 1), 1)
+
+    def test_other_provider_clients_retain_read_and_completion_ownership(self):
+        for provider, actor in ((4, 0), (5, 1)):
+            m = self.victim_machine()
+            m.put('SAME_SCUMM_MSU_CACHE_STATE0', 0, 1)
+            m.put('SAME_MSU1_STATUS', provider, 1)
+            m.put('SAME_SCUMM_ACTOR_SCRATCH_OWNER', actor, 1)
+            accepted, writes = m.consume()
+            self.assertFalse(accepted)
+            self.assertEqual(writes, [])
+
+    def test_loading_group_cannot_be_evicted_even_without_transient_pin(self):
+        m = self.victim_machine()
+        m.put('SAME_SCUMM_MSU_CACHE_PINS0', 0, 1)
+        m.put('SAME_SCUMM_MSU_CACHE_STATE0', 1, 1)
+        self.assertFalse(m.consume()[0])
+        m.put('SAME_SCUMM_MSU_CACHE_STATE0', 2, 1)
+        self.assertTrue(m.consume()[0])
+        self.assertEqual(m.get('SAME_SCUMM_MSU_CACHE_RETURN_P', 1), 0)
+
     def test_native_binding_control_reaches_all_eight_assertions(self):
         m=CacheMachine('ScummV5_MsuProgram_RunBindingControl_Far')
         accepted,_=m.consume()

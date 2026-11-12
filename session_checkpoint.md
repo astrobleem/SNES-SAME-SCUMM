@@ -1,3 +1,50 @@
+# Milestone C packed-cache checkpoint — native integrated acceptance
+
+Current runtime: e3e77ad32270a086408f55d9ce408cf63bb4f6e7, published to
+scumm-fate-playable-adventure / draft PR15, still stacked on PR14.
+No automatic merge. Separate progression recovery worktree untouched.
+
+Completed one continuous authentic source session: original newspaper pickup,
+owner/state1/1, readable inventory open/close, normal walk/camera and continued
+input. Source/INDEX8/VRAM/CGRAM differences zero, error0, actor273,139 standing3,
+sourcecrop208. Separate exact-ROM post-forward checkpoint reverse also passes,
+actor233,138/crop32, persistent newspaper. No game-state writes or7-actionroute.
+Forward1061→919frames; reverse946→801. Column intervals24–32/median32 versus40.
+Target16–17fixture is NOT reached; do not claim60Hz scrolling or a hardware
+minimum. Typical work remains27tiles/1728bytes/1DMA, not full-screen repaint.
+
+Executable thrashing is removed: zero forward/reverse additional code loads
+or evictions. Physical cache remains6KiB,178selectors unchanged. Small bodies
+share fully checked groups with independent logical bounds. Full2203body
+package unchanged, SHAe6cf5c28... . Native working set/nested/large-page/matrix
+control passes; CRC corruption rejects before execution. Native binding leaf
+passes8boundary/generation/guard assertions plus selector safety. Host tests
+separately cover all-pinned retry and other-client provider ownership.
+
+Storage cadence now offers3bounded opportunities per engine turn, with at most
+one quantum start per NMI epoch, unchanged64/256byte quantum and DMA budgets.
+Synthetic completion1920→1632frames. PCM/read control captures27.17s with zero
+silent20ms windows after track start; no FATEaudio or hardware claim.
+
+Private evidence root:
+/home/chad/SAME-private-evidence/milestone-c-packed-20261111
+Authentic final ROMb2a60d36..., mapaa4263ce..., build080947f9... . All51native
+source files match e3e77ad; exact hashes are in PLAYABLE_PRESENTATION_LATENCY.md.
+Continuous supervisor541.942s, reverse110.039s, PCM35.675s, all exit0/cleaned.
+Read actual pixel reports, not exitcode alone. Built-in MCP7381 is an unrelated
+user SuperMonkeyIsland session; never touch it. Native tests used one private
+Xvfb/MCP process tree each, no desktop or CLI experiments.
+
+Hosted run43154691340 green both jobs on e3e77ad. Final local1563tests run:
+1551passed/12skipped (221.815s). Focused14cachebounds tests pass. makevalidate,
+37-region audit, pinnedPoppy/ROMaudit,467Python/3Bash/60JSON anddiffchecks pass.
+All34new reachable blobs across5runtime/test commits have no binary/media or
+credential-pattern findings; documentation/test publication is additive. Check
+PR15 for the exact final docs/test-head CI result. No need for another
+authentic replay to test reports. No merge is authorized.
+
+--- Older entries retain their historical scope ---
+
 ## Current checkpoint — retained camera verified, Milestone C responsiveness incomplete
 
 Runtime source: cc04e1ed662a4b1093dff15dd35e4b9ce7536d5d, published on
