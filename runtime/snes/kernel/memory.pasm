@@ -2153,3 +2153,11 @@ SAME_SA1_MAILBOX_PENDING     = $01
 SAME_SA1_MAILBOX_RUNNING     = $02
 SAME_SA1_MAILBOX_COMPLETE    = $03
 SAME_SA1_MAILBOX_FAULT       = $FF
+
+; Cursor coverage is independent of INDEX8 color (zero may be opaque).
+; Two eight-row bitsets occupy audited gaps after VM control and actor-query
+; scratch; neither aliases incoming room staging or the pixel journals.
+SAME_VIDEO_CURSOR_COVERAGE_LO = $7E2370
+SAME_VIDEO_CURSOR_COVERAGE_LO_END = $7E2380
+SAME_VIDEO_CURSOR_COVERAGE_HI = $7F3EF0
+SAME_VIDEO_CURSOR_COVERAGE_HI_END = $7F3F00

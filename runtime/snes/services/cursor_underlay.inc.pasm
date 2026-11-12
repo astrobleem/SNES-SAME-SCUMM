@@ -1,4 +1,4 @@
-; Independent dense cursor underlay. No glyph, controller, ROM or PPU policy.
+; Independent cursor underlay with explicit source coverage. No glyph, controller, ROM or PPU policy.
 ; Generated owner: $40:0620..073F (32-byte header/work + 256 saved pixels).
 ; +00 magic C9 commits LAST, +01 retained-damage-valid, +02 room u16,
 ; +04 installed generation, +06 packed destination, +08 width, +0A height,
@@ -80,6 +80,19 @@ Same_VideoSurface_Cursor_Capture__writable:
     sta.l SAME_VIDEO_CURSOR_UNDERLAY+$0A
     lda.l SAME_VIDEO_CURSOR_WORK_AREA
     sta.l SAME_VIDEO_CURSOR_UNDERLAY+$0C
+    ; Dense compatibility default; the producer may narrow each row before
+    ; drawing. Coverage is not inferred by comparing colors to the background.
+    ldx #$0000
+    lda #$FFFF
+Same_VideoSurface_Cursor_Capture__coverage:
+    .a16
+    .i16
+    sta.l SAME_VIDEO_CURSOR_COVERAGE_LO,x
+    sta.l SAME_VIDEO_CURSOR_COVERAGE_HI,x
+    inx
+    inx
+    cpx #$0010
+    bcc Same_VideoSurface_Cursor_Capture__coverage
     jsr Same_VideoSurface_Cursor_StartCopy
 Same_VideoSurface_Cursor_Capture__pixel:
     .a16
@@ -109,6 +122,51 @@ Same_VideoSurface_Cursor_Capture__pixel:
     lda #SAME_VIDEO_CURSOR_MAGIC
     sta.l SAME_VIDEO_CURSOR_UNDERLAY
     jmp Same_VideoSurface_Cursor_Success
+
+ ; A16: left-aligned opaque bits; X16: row relative to clipped journal.
+; Called after Capture and before drawing. Color zero remains fully opaque.
+Same_VideoSurface_SetCursorCoverageRow_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    phb
+    cld
+    sta.l SAME_VIDEO_CURSOR_WORK_AREA
+    txa
+    cmp #$0010
+    bcs Same_VideoSurface_Cursor_Coverage__bad
+    cmp.l SAME_VIDEO_CURSOR_UNDERLAY+$0A
+    bcs Same_VideoSurface_Cursor_Coverage__bad
+    lda.l SAME_VIDEO_CURSOR_UNDERLAY
+    and #$00FF
+    cmp #SAME_VIDEO_CURSOR_MAGIC
+    bne Same_VideoSurface_Cursor_Coverage__bad
+    jsl Same_VideoSurface_CanWrite_Far
+    bcs Same_VideoSurface_Cursor_Coverage__bad
+    rep #$20
+    .a16
+    txa
+    asl
+    cmp #$0010
+    bcc Same_VideoSurface_Cursor_Coverage__low
+    sec
+    sbc #$0010
+    tax
+    lda.l SAME_VIDEO_CURSOR_WORK_AREA
+    sta.l SAME_VIDEO_CURSOR_COVERAGE_HI,x
+    jmp Same_VideoSurface_Cursor_Success
+Same_VideoSurface_Cursor_Coverage__low:
+    .a16
+    tax
+    lda.l SAME_VIDEO_CURSOR_WORK_AREA
+    sta.l SAME_VIDEO_CURSOR_COVERAGE_LO,x
+    jmp Same_VideoSurface_Cursor_Success
+Same_VideoSurface_Cursor_Coverage__bad:
+    jmp Same_VideoSurface_Cursor_Failure
 
 Same_VideoSurface_ExchangeCursorUnderlay_Far:
     php
@@ -194,12 +252,41 @@ Same_VideoSurface_Cursor_Restore__writable:
     ldy #$0000
 Same_VideoSurface_Cursor_Restore__row:
     .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    sec
+    sbc.l SAME_VIDEO_CURSOR_WORK_ROWS
+    asl
+    cmp #$0010
+    bcc Same_VideoSurface_Cursor_Restore__coverage_low
+    sec
+    sbc #$0010
+    tax
+    lda.l SAME_VIDEO_CURSOR_COVERAGE_HI,x
+    bra Same_VideoSurface_Cursor_Restore__coverage_ready
+Same_VideoSurface_Cursor_Restore__coverage_low:
+    .a16
+    tax
+    lda.l SAME_VIDEO_CURSOR_COVERAGE_LO,x
+Same_VideoSurface_Cursor_Restore__coverage_ready:
+    .a16
+    sta.l SAME_VIDEO_CURSOR_WORK_AREA
     lda.l SAME_VIDEO_CURSOR_WORK_SURFACE
     tax
     jsl Same_Mode3_MapSurfaceX_Far
     lda.l SAME_VIDEO_CURSOR_WORK_WIDTH
     sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
 Same_VideoSurface_Cursor_Restore__pixel:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_AREA
+    asl
+    sta.l SAME_VIDEO_CURSOR_WORK_AREA
+    bcs Same_VideoSurface_Cursor_Restore__opaque
+    ; No color/pixel transaction for transparent holes, including Restore.
+    ; Their dense payload bytes are deliberately unused while coverage lives.
+    sep #$20
+    .a8
+    bra Same_VideoSurface_Cursor_Restore__advance
+Same_VideoSurface_Cursor_Restore__opaque:
     .a16
     sep #$20
     .a8
@@ -213,6 +300,8 @@ Same_VideoSurface_Cursor_Restore__plain_copy:
     .a8
     pla
     sta.l SAME_BWRAM_SURFACE_BASE,x
+Same_VideoSurface_Cursor_Restore__advance:
+    .a8
     inx
     iny
     rep #$20
@@ -321,6 +410,14 @@ Same_VideoSurface_Cursor_Overlap__valid:
     cmp.l SAME_VIDEO_CURSOR_WORK_COLUMN
     bcc Same_VideoSurface_Cursor_Overlap__outside
     beq Same_VideoSurface_Cursor_Overlap__outside
+    ; A previous retained exchange must not turn an ordinary text restore
+    ; into a new exchange. This entry consumes the journal, like Restore.
+    sep #$20
+    .a8
+    lda #$00
+    sta.l MODE3_R_EXCHANGE
+    rep #$20
+    .a16
     jmp Same_VideoSurface_Cursor_Restore__valid
 Same_VideoSurface_Cursor_Overlap__outside:
     jmp Same_VideoSurface_Cursor_Success

@@ -161,9 +161,16 @@ class ServiceMachine:
             elif op in ('cmp', 'cmp.l'):
                 v = ((a & mask)-value) & mask
                 p = (p & ~0x83) | int((a & mask) >= value) | (2 if v == 0 else 0) | (0x80 if v & (1 << (width-1)) else 0)
+            elif op == 'ldx': x = value & (255 if p & 0x10 else 65535)
             elif op == 'ldy': y = value & (255 if p & 0x10 else 65535)
             elif op == 'iny': y = (y+1)&65535
             elif op == 'inx': x = (x+1)&65535
+            elif op == 'asl':
+                result = (a & mask) << 1
+                p = (p & ~1) | int(result > mask)
+            elif op == 'cpx':
+                v = (x-value)&65535
+                p = (p & ~0x83) | int(x>=value) | (2 if v==0 else 0) | (0x80 if v&32768 else 0)
             elif op == 'inc': result = (a & mask)+1
             elif op == 'dec': result = (a & mask)-1
             elif op == 'xba':

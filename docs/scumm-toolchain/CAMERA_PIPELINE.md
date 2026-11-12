@@ -43,6 +43,30 @@ prefetching. Native gameplay remained correct, but its forward sequence took
 preserved as insufficient performance evidence. Source inspection and its
 read-only trace established the earlier lifetime boundary used above.
 
+## Cursor transparency during retained scrolling
+
+A faster publication exposed a real cursor defect: the dense underlay exchange
+transported background pixels through the cursor's transparent holes. The final
+image had 232 incorrect source pixels although INDEX8 and PPU agreed. That run
+remains failed evidence, not an observer exception.
+
+The cursor producer now supplies each clipped source coverage row explicitly.
+Capture defaults to dense coverage for existing service clients; SCUMM narrows
+it before drawing. Exchange/restore never read or write transparent pixels.
+Opaque index zero is still copied. Two audited 16-byte bitsets at `$7E2370` and
+`$7F3EF0` fit between existing owners; the 288-byte pixel journal is unchanged.
+No room staging, code-cache, actor, or NMI allocation is borrowed. A separate
+correction makes overlapping text restoration consume the journal even after
+an earlier retained exchange left the shared exchange-mode scratch set.
+
+Source-instruction regressions cover changed backgrounds, opaque zero, ring
+wrap, clipped rows, busy refusal, bounds, preserved registers, guards, and text
+restoration after a camera exchange. The native source-driven fixture moves
+its real controller cursor onto the textured background before both pans.
+`native-cursor-coverage-final` passes full source/INDEX8/PPU/palette/screenshot
+comparison in both directions. The interrupted authentic startup was stopped
+when the text-restore regression was discovered; it is not acceptance evidence.
+
 ## Reproducible original-source control
 
 Generate the source archive with:

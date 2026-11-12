@@ -107,6 +107,10 @@ with m.McpSession(rom=rom,mesen=Path('/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/
    raise RuntimeError('no exclusive queued generation committed within100frames')
   s.pause();s.tool('reset_emulator',{'power':True});s.pause();advance(32)
   wait(None,6000);r['cold_completed_frame']=s.get_state()['frameCount'];r['initial_hits']=w(rd(0x7e2efe,2));save()
+  # Move the real cursor off the black letterbox onto textured source pixels.
+  # Transparent holes must follow the new background during retained exchange.
+  s.set_input(s.BTN_RIGHT|s.BTN_DOWN,60,port=0);advance(64);s.set_input(0,1,port=0);advance(8)
+  r['textured_cursor']=rd(0x400740,64).hex();save()
   s.write_memory('snesMemory',0x7e088c,(400).to_bytes(2,'little').hex());r['forward_input']=s.get_state()['frameCount'];wait(272,1800);capture('forward')
   assert ((r['captures'][-1]['hits']-r['initial_hits'])&65535)>0,'speculative path never consumed'
   s.write_memory('snesMemory',0x7e088c,(160).to_bytes(2,'little').hex());r['reverse_input']=s.get_state()['frameCount'];wait(32,1800);capture('reverse')

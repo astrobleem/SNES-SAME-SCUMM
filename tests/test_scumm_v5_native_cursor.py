@@ -53,6 +53,7 @@ class CursorMachine(ControllerMachine):
         self.mem.update(SAME_VIDEO_SURFACE_WIDTH=source_size[0],
                         SAME_VIDEO_SURFACE_COPY_WIDTH=min(256,source_size[0]))
         self.journal = None
+        self.coverage = {}
         self.retained = None
         service_source = (ROOT / 'runtime/snes/services/cursor_underlay.inc.pasm').read_text()
         self.magic = int(re.search(r'SAME_VIDEO_CURSOR_MAGIC\s*=\s*\$([0-9A-Fa-f]+)', service_source)[1], 16)
@@ -96,9 +97,16 @@ class CursorMachine(ControllerMachine):
             box = (x,y,x+w,y+h)
             saved = [(r*256+x,bytes(self.surface[r*256+x:r*256+x+w])) for r in range(y,y+h)]
             self.journal = box, saved
+            self.coverage = {}
             self.retained = box
             self.mem['SAME_VIDEO_CURSOR_UNDERLAY'] = self.magic
             self.union(box)
+        elif name == 'Same_VideoSurface_SetCursorCoverageRow_Far':
+            assert self.journal
+            left,top,right,bottom=self.journal[0]
+            assert 0<=self.x<bottom-top
+            self.coverage[self.x]=self.a
+            self.c=False
         elif name == 'Same_VideoSurface_RestoreCursorUnderlay_Far':
             self.c = self.restore_fail
             if self.c:
@@ -120,6 +128,7 @@ class CursorMachine(ControllerMachine):
             x,y = self.x % 256,self.x // 256
             left,top,right,bottom = self.journal[0]
             assert left <= x < right and top <= y < bottom, 'pixel outside captured bounds'
+            assert self.coverage[y-top] & (0x8000>>(x-left)), 'opaque write outside source coverage'
             self.surface[self.x] = self.a & 255
             self.pixel_calls += 1
             if self.pixel_hook:

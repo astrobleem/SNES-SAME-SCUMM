@@ -393,6 +393,17 @@ ScummV5_Cursor_Draw__shift:
 ScummV5_Cursor_Draw__mask_ready:
     .a16
     .i16
+    lda.l SAME_SCUMM_CURSOR_ROW
+    sec
+    sbc.l SAME_SCUMM_CURSOR_CLIP_Y
+    tax
+    lda.l SAME_SCUMM_CURSOR_MASK
+    jsl Same_VideoSurface_SetCursorCoverageRow_Far
+    bcc ScummV5_Cursor_Draw__coverage_ready
+    jml ScummV5_Cursor_Draw__failure
+ScummV5_Cursor_Draw__coverage_ready:
+    .a16
+    .i16
     lda.l SAME_SCUMM_CURSOR_CLIP_X
     sta.l SAME_SCUMM_CURSOR_COLUMN
 ScummV5_Cursor_Draw__pixel:
@@ -424,7 +435,8 @@ ScummV5_Cursor_Draw__transparent:
     sec
     sbc.l SAME_SCUMM_CURSOR_CLIP_Y
     cmp.l SAME_SCUMM_CURSOR_HEIGHT
-    bcc ScummV5_Cursor_Draw__row
+    bcs ScummV5_Cursor_Draw__commit
+    brl ScummV5_Cursor_Draw__row
 ScummV5_Cursor_Draw__commit:
     .a16
     .i16
