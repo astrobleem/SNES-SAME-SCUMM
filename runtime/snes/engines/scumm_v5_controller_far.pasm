@@ -5070,5 +5070,3 @@ ScummV5_Controller_AcknowledgeTalk__none16:
 ScummV5_Controller_AcknowledgeTalk__none:
     clc
     rtl
-
-.include "scumm_v5_input_script.inc.pasm"

@@ -206,6 +206,18 @@ ScummV5_Engine_Boot__clear_c4:
     inx
     cpx #SAME_SCUMM_C4_STATE_SIZE
     bcc ScummV5_Engine_Boot__clear_c4
+    .if SAME_BUILD_SCUMM_CONTROLLER
+    lda #$0000
+    ldx #$0000
+ScummV5_Input_Reset__loop:
+    .a16
+    .i16
+    sta.l SAME_SCUMM_INPUT_BASE,x
+    inx
+    inx
+    cpx #(SAME_SCUMM_INPUT_END-SAME_SCUMM_INPUT_BASE)
+    bcc ScummV5_Input_Reset__loop
+    .endif
     sep #$20
     .a8
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
@@ -345,14 +357,6 @@ ScummV5_Engine_Boot__clear_scenario:
     .a16
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_X
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_Y
-    lda #$0000
-    ldx #$0000
-ScummV5_Input_Reset__loop:
-    sta.l SAME_SCUMM_INPUT_BASE,x
-    inx
-    inx
-    cpx #(SAME_SCUMM_INPUT_END-SAME_SCUMM_INPUT_BASE)
-    bcc ScummV5_Input_Reset__loop
     .endif
     ; A standalone scenario is a fresh semantic session even when the
     ; emulator preserves WRAM across power/reset.  Do not let an old API
@@ -11864,6 +11868,20 @@ ScummV5_Op_FindObject__x_ok:
 ScummV5_Op_FindObject__y_ok:
     .a16
     sta.l SAME_SCUMM_C30_Y
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    ; Live/ROM room-service builds already install authoritative object rows
+    ; for the controller. The opcode must query those same room records,
+    ; not the isolated C21 conformance fixture's three dummy objects.
+    sta.l SAME_SCUMM_INTERACTION_Y
+    lda.l SAME_SCUMM_C30_X
+    sta.l SAME_SCUMM_INTERACTION_X
+    jsl ScummV5_Generic_Object_HitTest_Far
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_INTERACTION_OBJECT
+    jsr ScummV5_WriteResultValue
+    jmp ScummV5_Engine_Frame__next
+    .endif
     lda #$0000
     sta.l SAME_SCUMM_C30_RECORD_OFFSET
 ScummV5_Op_FindObject__scan:
@@ -18341,6 +18359,14 @@ ScummV5_Op_CursorCommand__color_store:
 ScummV5_Op_CursorCommand__error:
     jmp ScummV5_Op__error
 ScummV5_Op_CursorCommand__done:
+    ; v5 publishes these script-visible values after every cursor command.
+    ; Hover/input scripts read them, independently of the rendered cursor.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C7_CURSOR_STATE
+    sta.l SAME_SCUMM_VARIABLES+(52 * 2)
+    lda.l SAME_SCUMM_C7_USERPUT_STATE
+    sta.l SAME_SCUMM_VARIABLES+(53 * 2)
     sep #$20
     .a8
     lda #$2C

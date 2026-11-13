@@ -629,6 +629,11 @@ Same_Tad_BlankSong:
 .include "engines/scumm_v5_msu_live_room.pasm"
 .endif
 .include "engines/scumm_v5_camera_far.pasm"
+.if SAME_BUILD_SCUMM_CONTROLLER
+; Cold input allocation shares the existing far service bank, rather than
+; expanding the bank-9 controller/resolver closure beyond a LoROM window.
+.include "engines/scumm_v5_input_script.inc.pasm"
+.endif
 .if SAME_VIDEO_BACKEND_LEGACY
 .include "services/video_k1_far.pasm"
 .endif

@@ -12,7 +12,7 @@ import struct
 import zipfile
 
 from .camera_pipeline_fixture import source_files as camera_source_files, _costume
-from .game_analysis_fixture import _chunk as ch, _directory as directory
+from .game_analysis_fixture import _chunk as ch, _directory as directory, _data_only_object
 
 
 def move(result: int, value: int, *, local: bool = False) -> bytes:
@@ -25,8 +25,13 @@ def source_files() -> dict[str, bytes]:
     # Existing public camera fixture's first LFLF starts at offset 30.
     size = int.from_bytes(data[34:38], 'big')
     room = data[38:30 + size]
+    room = room.replace(ch(b'RMHD', struct.pack('<HHH', 640, 144, 0)),
+                        ch(b'RMHD', struct.pack('<HHH', 640, 144, 1)), 1)
+    room += _data_only_object(77, 0)
     callback = (move(100, 0x4000, local=True) + move(101, 0x4001, local=True)
                 + move(102, 0x4002, local=True) + b'\x46\x67\x00'
+                + b'\x35\x6f\x00\x0c\x0c'
+                + move(112, 52, local=True) + move(113, 53, local=True)
                 + move(32, 2) + b'\x00')
     room += ch(b'LSCR', bytes((204,)) + callback)
     # No synthetic input injection: normal controller A/B edges are the driver.

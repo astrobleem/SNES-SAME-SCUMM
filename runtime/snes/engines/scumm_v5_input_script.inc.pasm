@@ -4,7 +4,9 @@
 ; Process allocates one ordinary C4 activation. The scheduler/cache, not
 ; the controller, fetches and executes its code and retains resource waits.
 ScummV5_Input_Queue_Far:
-    .if SAME_BUILD_SCUMM_M23B
+    .a16
+    .i16
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     rep #$30
     .a16
     .i16
@@ -15,6 +17,8 @@ ScummV5_Input_Queue_Far:
     clc
     rtl
 ScummV5_Input_Queue__installed:
+    .a16
+    .i16
     cmp #$0100
     bcc ScummV5_Input_Queue__number_valid
     pla
@@ -22,9 +26,22 @@ ScummV5_Input_Queue__installed:
     .a8
     lda #SCUMM_ERR_SCRIPT
     jsl ScummV5_Camera_FarCall_SetError
+    rep #$20
+    .a16
     sec
     rtl
 ScummV5_Input_Queue__number_valid:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_M23A_PHASE
+    and #$00FF
+    beq ScummV5_Input_Queue__stable_room
+    cmp #$0002
+    beq ScummV5_Input_Queue__stable_room
+    jmp ScummV5_Input_Queue__ignored
+ScummV5_Input_Queue__stable_room:
+    .a16
+    .i16
     .a16
     lda.l SAME_SCUMM_C7_USERPUT_STATE
     beq ScummV5_Input_Queue__ignored
@@ -36,6 +53,8 @@ ScummV5_Input_Queue__number_valid:
     cmp.l SAME_SCUMM_INPUT_EDGE
     beq ScummV5_Input_Queue__ignored
 ScummV5_Input_Queue__new_edge:
+    .a16
+    .i16
     lda.l SAME_SCUMM_INPUT_PENDING
     and #$00FF
     bne ScummV5_Input_Queue__ignored
@@ -62,6 +81,8 @@ ScummV5_Input_Queue__new_edge:
     sta.l SAME_SCUMM_INPUT_SCRIPT
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
     sta.l SAME_SCUMM_INPUT_ROOM
+    lda.l SAME_SCUMM_M23A_REQUEST_COUNT
+    sta.l SAME_SCUMM_INPUT_ROOM_REQUEST
     lda #$01
     sta.l SAME_SCUMM_INPUT_PENDING
     sta.l SAME_SCUMM_INPUT_EDGE_VALID
@@ -71,10 +92,14 @@ ScummV5_Input_Queue__new_edge:
     rtl
 ScummV5_Input_Queue__ignored:
     .a16
+    .i16
+    .a16
     pla
     sec
     rtl
 ScummV5_Input_Queue__bad:
+    .a16
+    .i16
     sep #$20
     .a8
     lda #SCUMM_ERR_SCRIPT
@@ -89,26 +114,41 @@ ScummV5_Input_Queue__bad:
     .endif
 
 ScummV5_Input_Process_Far:
+    .a8
+    .i16
     php
     rep #$10
     .i16
     sep #$20
     .a8
-    .if SAME_BUILD_SCUMM_M23B
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda.l SAME_SCUMM_INPUT_PENDING
     bne ScummV5_Input_Process__pending
     jmp ScummV5_Input_Process__done
 ScummV5_Input_Process__pending:
+    .a8
+    .i16
     lda.l SAME_SCUMM_INPUT_ROOM
     cmp.l SAME_SCUMM_M23A_ACTIVE_ROOM
     beq ScummV5_Input_Process__same_room
     jmp ScummV5_Input_Process__consume
 ScummV5_Input_Process__same_room:
+    .a8
+    .i16
+    lda.l SAME_SCUMM_INPUT_ROOM_REQUEST
+    cmp.l SAME_SCUMM_M23A_REQUEST_COUNT
+    beq ScummV5_Input_Process__request_current
+    jmp ScummV5_Input_Process__consume
+ScummV5_Input_Process__request_current:
+    .a8
+    .i16
     ; Normal nonrecursive runScript semantics, never a direct bytecode call.
     lda.l SAME_SCUMM_INPUT_SCRIPT
     jsl ScummV5_Camera_FarCall_StopNumber
     ldx #$0001
 ScummV5_Input_Process__scan:
+    .a8
+    .i16
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
     beq ScummV5_Input_Process__slot
     cmp #SCUMM_VM_STOPPED
@@ -119,6 +159,8 @@ ScummV5_Input_Process__scan:
     lda #SCUMM_ERR_SLOT_CAPACITY
     jmp ScummV5_Input_Process__error
 ScummV5_Input_Process__slot:
+    .a8
+    .i16
     txa
     sta.l SAME_SCUMM_C4_SCAN_SLOT
     lda.l SAME_SCUMM_INPUT_SCRIPT
@@ -127,12 +169,18 @@ ScummV5_Input_Process__slot:
     jsl ScummV5_Camera_FarCall_ResolveLocal
     bra ScummV5_Input_Process__resolved
 ScummV5_Input_Process__global:
+    .a8
+    .i16
     jsl ScummV5_Camera_FarCall_ResolveGlobal
 ScummV5_Input_Process__resolved:
+    .a8
+    .i16
     bcs ScummV5_Input_Process__program
     lda #SCUMM_ERR_SCRIPT
     jmp ScummV5_Input_Process__error
 ScummV5_Input_Process__program:
+    .a8
+    .i16
     sta.l SAME_SCUMM_INPUT_SELECTOR
     lda.l SAME_SCUMM_INPUT_SCRIPT
     sta.l SAME_SCUMM_CONDITION
@@ -181,6 +229,8 @@ ScummV5_Input_Process__program:
     lda #$0000
     ldy #$0000
 ScummV5_Input_Process__locals:
+    .a16
+    .i16
     sta.l SAME_SCUMM_C4_SLOT_LOCALS,x
     inx
     inx
@@ -215,14 +265,20 @@ ScummV5_Input_Process__locals:
     inc
     sta.l SAME_SCUMM_C4_ACTIVE_COUNT
 ScummV5_Input_Process__consume:
+    .a8
+    .i16
     lda #$00
     sta.l SAME_SCUMM_INPUT_PENDING
 ScummV5_Input_Process__done:
+    .a8
+    .i16
     .endif
     plp
     rtl
-    .if SAME_BUILD_SCUMM_M23B
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
 ScummV5_Input_Process__error:
+    .a8
+    .i16
     jsl ScummV5_Camera_FarCall_SetError
     jmp ScummV5_Input_Process__consume
     .endif
@@ -230,10 +286,12 @@ ScummV5_Input_Process__error:
 ; Controller scene coordinates are virtual-screen logical pixels. Publish
 ; original v5 mouse globals before the next ordinary hover/callback pass.
 ScummV5_Input_Scene_Far:
+    .a16
+    .i16
     rep #$30
     .a16
     .i16
-    .if SAME_BUILD_SCUMM_M23B
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
     lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
     sta.l SAME_SCUMM_M23B_VARIABLES+(44 * 2)
     clc
@@ -254,6 +312,8 @@ ScummV5_Input_Scene_Far:
     bne ScummV5_Input_Scene__button
     ldy #$0002
 ScummV5_Input_Scene__button:
+    .a16
+    .i16
     lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
     cmp.l SAME_SCUMM_C10_SCREEN_TOP
     bcc ScummV5_Input_Scene__verb_screen
@@ -262,11 +322,17 @@ ScummV5_Input_Scene__button:
     lda #$0002
     bra ScummV5_Input_Scene__queue
 ScummV5_Input_Scene__verb_screen:
+    .a16
+    .i16
     lda #$0001
 ScummV5_Input_Scene__queue:
+    .a16
+    .i16
     ldx #$0000
     jml ScummV5_Input_Queue_Far
     .endif
 ScummV5_Input_Scene__none:
+    .a16
+    .i16
     clc
     rtl

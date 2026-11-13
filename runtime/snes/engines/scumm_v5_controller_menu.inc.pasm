@@ -37,18 +37,6 @@ ScummV5_Controller_MenuFrame__open_inventory:
     ; Inventory starts with an authored enabled verb, never an uninitialized
     ; action ID. Opening this page does not submit or change object ownership.
     lda.l SAME_SCUMM_PLAY_UI_SELECTION
-    tax
-    lda #$0001
-    ldy #$0001
-    jsl ScummV5_Input_Queue_Far
-    bcc ScummV5_Controller_MenuFrame__verb_without_callback
-    sep #$20
-    .a8
-    jmp ScummV5_Controller_MenuFrame__chosen
-ScummV5_Controller_MenuFrame__verb_without_callback:
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_PLAY_UI_SELECTION
     sep #$20
     .a8
     sta.l SAME_SCUMM_CONTROLLER_VERB
@@ -122,11 +110,23 @@ ScummV5_Controller_MenuFrame__accept_pressed:
     .a16
     lda.l SAME_SCUMM_PLAY_UI_SELECTION
     cmp #$FFFF
-    beq ScummV5_Controller_MenuFrame__owned
+    bne ScummV5_Controller_MenuFrame__selection_valid
+    jmp ScummV5_Controller_MenuFrame__owned
+ScummV5_Controller_MenuFrame__selection_valid:
+    .a16
     lda.l SAME_SCUMM_PLAY_UI_MODE
     and #$00FF
     cmp #$0001
     bne ScummV5_Controller_MenuFrame__inventory
+    lda.l SAME_SCUMM_PLAY_UI_SELECTION
+    tax
+    lda #$0001
+    ldy #$0001
+    jsl ScummV5_Input_Queue_Far
+    ; UI selection remains visible while the authored callback runs. This
+    ; mirrors the chosen menu item; it does not create a second C20 action.
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_PLAY_UI_SELECTION
     sep #$20
     .a8
@@ -164,11 +164,8 @@ ScummV5_Controller_MenuFrame__inventory_owned:
     lda #$0003
     ldy #$0001
     jsl ScummV5_Input_Queue_Far
-    bcc ScummV5_Controller_MenuFrame__inventory_without_callback
-    sep #$20
-    .a8
-    jmp ScummV5_Controller_MenuFrame__chosen
-ScummV5_Controller_MenuFrame__inventory_without_callback:
+    ; UI selection remains visible while the authored callback runs. This
+    ; mirrors the chosen menu item; it does not create a second C20 action.
     rep #$20
     .a16
     lda.l SAME_SCUMM_PLAY_UI_SELECTION

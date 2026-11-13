@@ -90,8 +90,8 @@ class StripMachine(ServiceMachine):
             elif op=='xba':result=((a&255)<<8)|(a>>8)
             elif op=='ldx':x=v
             elif op=='ldy':y=v
-            elif op=='cpx':
-                delta=x-v;p=(p&~0x83)|int(delta>=0)|(2 if delta==0 else 0)|(128 if delta&32768 else 0)
+            elif op in ('cpx','cpy'):
+                delta=(x if op=='cpx' else y)-v;p=(p&~0x83)|int(delta>=0)|(2 if delta==0 else 0)|(128 if delta&32768 else 0)
             elif op=='txa':result=x
             elif op=='tya':result=y
             elif op=='tax':x=a&65535

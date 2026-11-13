@@ -18,7 +18,7 @@ from ...capabilities import EngineCapability
 from ...engine import Engine, EngineContext, EngineDescriptor, FrameResult, ProbeResult
 from ...errors import EngineExecutionError, ProfileValidationError, ResourceError, SaveFormatError
 from ...profile import EngineProfile
-from ...services import InputEvent
+from ...services import InputEvent, InputEventType
 from ...video import IndexedSurface, Rect
 from .audio import ScummV5AudioAdapter
 from .costume import ScummV5Costume
@@ -980,6 +980,14 @@ class ScummV5Engine(Engine):
                         if self.state.room_ops.screen_top <= logical.cursor_y
                         < self.state.room_ops.screen_bottom else ClickArea.VERB)
                 self.queue_input_event(area, 0, mode)
+        if event.type is InputEventType.TEXT and event.text:
+            # A keyboard event is a key value, not a scene-click mode.
+            if len(event.text) == 1:
+                self.queue_input_event(ClickArea.KEY, ord(event.text), 1)
+        self.state.variables[20] = logical.cursor_x + self.state.virtual_screen_xstart
+        self.state.variables[21] = logical.cursor_y - self.state.room_ops.screen_top
+        self.state.variables[44] = logical.cursor_x
+        self.state.variables[45] = logical.cursor_y
         if "skip" in logical.commands:
             self._abort_cutscene()
         # Profiles may describe a title/game-start command that is consumed by
@@ -4546,6 +4554,8 @@ class ScummV5Engine(Engine):
         context.services.debug.marker("scumm_v5.room", room)
 
     def save_state(self, context: EngineContext) -> bytes:
+        if self._input_request is not None:
+            raise SaveFormatError("SCUMM pending raw input must activate before saving")
         del context
         room_ops = self.state.room_ops
         data = {

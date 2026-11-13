@@ -333,7 +333,8 @@ SAME_SCUMM_INPUT_ALLOCATED     = $7E22AC ; u16 allocated activations
 SAME_SCUMM_INPUT_SELECTOR      = $7E22AE ; u8 transient resolver result
 SAME_SCUMM_INPUT_EDGE_VALID    = $7E22AF ; u8 edge token survives publication waits
 SAME_SCUMM_INPUT_EDGE          = $7E22B0 ; u16 physical input sequence
-SAME_SCUMM_INPUT_END           = $7E22B2
+SAME_SCUMM_INPUT_ROOM_REQUEST  = $7E22B2 ; u8 accepted room-request epoch
+SAME_SCUMM_INPUT_END           = $7E22B4
 
 ; Copyright-free SCUMM v5 conformance lane.  This is engine state, not a game
 ; profile and not donor state.  Sixteen signed 16-bit variables are sufficient

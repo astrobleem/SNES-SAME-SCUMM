@@ -5,7 +5,7 @@ import unittest
 
 import test_scumm_v5_engine as fixtures
 from same.engines.scumm_v5.input import ClickArea
-from same.errors import EngineExecutionError, ResourceError
+from same.errors import EngineExecutionError, ResourceError, SaveFormatError
 from same.services import InputEvent, InputEventType
 
 
@@ -125,6 +125,26 @@ class InputScriptTests(unittest.TestCase):
             ))
             h.tick()
         self.assertEqual(e.state.variables[103], 1)
+
+    def test_keyboard_uses_key_area_and_logical_pointer_is_published(self):
+        h = self.host(); e = h.engine; e.state.variables[32] = 2
+        e.state.virtual_screen_xstart = 80
+        e.state.room_ops.screen_top = 10
+        e.handle_event(e._context, InputEvent(
+            type=InputEventType.POINTER_MOVE, frame=0, x=20, y=30,
+        ))
+        self.assertEqual([e.state.variables[i] for i in (20, 21, 44, 45)], [100, 20, 20, 30])
+        e.handle_event(e._context, InputEvent(type=InputEventType.TEXT, frame=0, text='a'))
+        h.tick()
+        self.assertEqual(e.state.variables[100:103], [4, 97, 1])
+
+    def test_pending_input_cannot_silently_disappear_in_a_portable_save(self):
+        h = self.host(); e = h.engine; e.state.variables[32] = 2
+        e.queue_input_event(2, 0, 1)
+        with self.assertRaisesRegex(SaveFormatError, 'pending raw input'):
+            e.save_state(e._context)
+        h.tick()
+        self.assertTrue(e.save_state(e._context))
 
 
 if __name__ == '__main__':
