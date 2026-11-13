@@ -32,7 +32,9 @@ class Reads:
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
     for key in ('rom','directory','archive','profile','nexen','native-core','mcp-python','output'):ap.add_argument('--'+key,type=Path,required=True)
-    ap.add_argument('--port',type=int,required=True);args=ap.parse_args()
+    ap.add_argument('--port',type=int,required=True)
+    ap.add_argument('--scenario',choices=('scaling','camera-exposure'),default='scaling')
+    args=ap.parse_args()
     if not re.fullmatch(r':\d+',os.environ.get('DISPLAY','')) or not Path(os.environ.get('XAUTHORITY','/missing')).is_file():
         ap.error('canonical private Xvfb supervisor required')
     sys.path.insert(0,str(args.mcp_python))
@@ -40,7 +42,8 @@ def main():
     from fate_replay import advance_bounded
     from validate_scumm_startup42_nexen import verified_symbol_map_for_rom
     from validate_scumm_actor_visual_probe_nexen import read_committed_pose,committed_pose_is_presented,capture_committed_surface,selector_index
-    from examples.resources.scumm_v5.actor_scaling_fixture import source_files,STAGES
+    from examples.resources.scumm_v5.actor_scaling_fixture import source_files,STAGES,CAMERA_STAGES
+    stages = STAGES if args.scenario == 'scaling' else CAMERA_STAGES
     from tools.generate_snes_scumm_actor_sprite import source_bytes
     from same.engines.scumm_v5.resources import LucasartsScummV5ResourceProvider
     from same.engines.scumm_v5.policy import parse_game_policy
@@ -64,7 +67,7 @@ def main():
     assert symbols['SAME_SCUMM_C4_STATE_END'] >= symbols['SAME_SCUMM_C4_SLOT_LOCALS']+25*64
     native=json.loads(args.directory.read_text());boot=next(e for e in native['entries'] if e['identity']=='GlobalProgram(1)')
     source=source_bytes(args.archive)
-    fixture=source_files()
+    fixture=source_files(args.scenario)
     assert source=={'game.index':fixture['ATLANTIS/ATLANTIS.000'],'game.data':fixture['ATLANTIS/ATLANTIS.001']},'diagnostic acknowledges only its exact public synthetic source'
     provider=LucasartsScummV5ResourceProvider(MemoryResourceProvider(source),parse_game_policy(load_profile(args.profile,verify_resources=False)))
     assert hashlib.sha256(provider.read('script.1')).hexdigest()==boot['sha256']
@@ -76,6 +79,9 @@ def main():
     adapter.logical_surface=IndexedSurface(room.width,room.height)
     args.output.mkdir(parents=True,exist_ok=False)
     report=dict(result='NOT_VERIFIED',hypothesis='Ordered checked cels reproduce source phase scaling at255,231,asymmetric,mirrored and clipped poses; multichunk publication is complete and old pixels restore.',expected='8 acknowledged stages; 9 source/INDEX8/VRAM/CGRAM matches including two animation steps; error0',exit_condition='first failed boundary or all captures;540sec internal/600sec supervisor',kind='COPYRIGHT_FREE_NATIVE_SCALING',identities={ext:sha(args.rom.with_suffix(ext)) for ext in ('.sfc','.map','.msu','.build_identity.json')},archive_sha256=sha(args.archive),boot_identity=boot,samples=[],captures=[],acknowledgements=[])
+    report['scenario'] = args.scenario
+    if args.scenario == 'camera-exposure':
+        report.update(hypothesis='A stationary scaled actor outside the viewport becomes visible through camera-only input, including partial exposure and reversal; retained pixels alone cannot supply clipped source coverage.',expected='7 complete source/INDEX8/PPU/CGRAM matches; no actor-state changes after stage1')
     def save():
         p=args.output/'report.pending.json';p.write_text(json.dumps(report,indent=2)+'\n');p.replace(args.output/'report.json')
     started=time.monotonic()
@@ -90,7 +96,7 @@ def main():
                 if r.read_u16(sym('SAME_SCUMM_RESIDENT_UNIT_IDS')+2*selector_index(selector))==boot['program_unit_id']:
                     assert slot is None;slot=i
         stage=0 if slot is None else r.read_u16(sym('SAME_SCUMM_C4_SLOT_LOCALS')+slot*64+2)
-        row=dict(frame=r.state['frameCount'],slot=slot,stage=stage,pose=pose,cel=r.read_memory('snesMemory',sym('SAME_SCUMM_CEL_STATE_BASE'),68).hex(),actor=r.read_memory('snesMemory',sym('SAME_SCUMM_ACTOR_POSE_STATE_BASE'),128).hex(),provider=r.read_memory('snesMemory',0x7e2f00,72).hex())
+        row=dict(frame=r.state['frameCount'],slot=slot,stage=stage,pose=pose,cel=r.read_memory('snesMemory',sym('SAME_SCUMM_CEL_STATE_BASE'),72).hex(),actor=r.read_memory('snesMemory',sym('SAME_SCUMM_ACTOR_POSE_STATE_BASE'),128).hex(),provider=r.read_memory('snesMemory',0x7e2f00,72).hex())
         report['samples'].append(row);save()
         if len(report['samples']) > 1:
             previous = report['samples'][-2]
@@ -131,17 +137,19 @@ def main():
     try:
         with ms.McpSession(rom=args.rom,mesen=args.nexen,cwd=args.rom.parent,port=args.port,boot_wait=2,socket_timeout=12,stderr_log=args.output/'nexen.stderr.log') as session:
             session.pause();session.set_input(0,1)
-            for stage,expected in enumerate(STAGES,1):
+            for stage,expected in enumerate(stages,1):
                 seen=set();first=None
                 while True:
                     r,row=sample(session);pose=row['pose']
                     if first is None:first=row['frame']
                     scale=r.read_u16(sym('SAME_SCUMM_CEL_RENDER_SCALE'))
                     ready=(row['stage']==stage and committed_pose_is_presented(pose,expected_room=1,expected_x=expected['x'],expected_y=expected['y'],expected_frame=expected['frame']) and pose['actor_render_facing']==expected['facing'] and scale==expected['scale'][0]|expected['scale'][1]<<8)
+                    if 'camera' in expected:
+                        ready = ready and r.read_u16(sym('SAME_VIDEO_SURFACE_SOURCE_X')) == expected['camera']-128
                     if ready and pose['actor_render_pose_step'] not in seen:
                         compare(session,r,row,expected,f'stage-{stage}-step-{pose["actor_render_pose_step"]}')
                         seen.add(pose['actor_render_pose_step'])
-                        if stage!=7 or len(seen)==2:
+                        if expected['frame']!=2 or len(seen)==2:
                             address=sym('SAME_SCUMM_C4_SLOT_LOCALS')+row['slot']*64
                             session.write_u16(address,stage)
                             report['acknowledgements'].append(dict(stage=stage,frame=row['frame'],slot=row['slot'],local_address=address));save();break

@@ -22,6 +22,8 @@ STAGES = (
     dict(scale=(231,231), facing=180, frame=2, x=130,y=125),
     dict(scale=(231,231), facing=180, frame=1, x=190,y=120),
 )
+CAMERA_STAGES = tuple(dict(scale=(231,231), facing=180, frame=1, x=330, y=125,
+                          camera=camera) for camera in (160,224,160,216,224,200,224))
 
 def costume() -> bytes:
     # Two independently anchored limbs, transparent holes and color slot 1
@@ -49,20 +51,28 @@ def costume() -> bytes:
     return bytes(data)
 
 
-def source_files() -> dict[str,bytes]:
+def source_files(scenario: str = 'scaling') -> dict[str,bytes]:
+    if scenario not in ('scaling', 'camera-exposure'):
+        raise ValueError('unknown original fixture scenario')
+    stages = STAGES if scenario == 'scaling' else CAMERA_STAGES
     original=camera_source_files();decoded=bytes(v^0x69 for v in original['ATLANTIS/ATLANTIS.001'])
     size=int.from_bytes(decoded[34:38],'big');room=decoded[38:30+size]
     p=Program();p.move(0x4000,0);p.move(0x4001,0)
     p.emit('loadRoom',b'\x72\x01')
     p.emit('actor defaults/costume/ignoreBoxes/speed',b'\x13\x01\x08\x01\x01\x14\x16\x08\xff')
     p.emit('putActorInRoom',b'\x2d\x01\x01')
-    for n,stage in enumerate(STAGES,1):
-        p.emit('actor scale',bytes((0x13,1,0x11,*stage['scale'],0xff)))
-        p.emit('putActor',b'\x01\x01'+struct.pack('<hh',stage['x'],stage['y']))
-        p.emit('face',bytes((0x11,1,{180:250,90:249,270:248}[stage['facing']])))
-        p.emit('animate',bytes((0x11,1,stage['frame'])))
+    for n,stage in enumerate(stages,1):
+        # Camera-only stages must not reset an animation or actor key: that
+        # could conceal the missing exposure invalidation being exercised.
+        if scenario == 'scaling' or n == 1:
+            p.emit('actor scale',bytes((0x13,1,0x11,*stage['scale'],0xff)))
+            p.emit('putActor',b'\x01\x01'+struct.pack('<hh',stage['x'],stage['y']))
+            p.emit('face',bytes((0x11,1,{180:250,90:249,270:248}[stage['facing']])))
+            p.emit('animate',bytes((0x11,1,stage['frame'])))
+        if 'camera' in stage:
+            p.emit('setCameraAt', b'\x32'+struct.pack('<H',stage['camera']))
         p.wait_ack(n,f'scaled pose {n}')
-    p.move(0x4001,9);p.emit('stop',b'\0')
+    p.move(0x4001,len(stages)+1);p.emit('stop',b'\0')
     body=bytes(p.data)
     container=bytearray(ch(b'ROOM',room));script=len(container);container+=ch(b'SCRP',body)
     cost=len(container);container+=ch(b'COST',costume())
@@ -74,12 +84,13 @@ def source_files() -> dict[str,bytes]:
     return {f'ATLANTIS/ATLANTIS.{n:03}':bytes(v^0x69 for v in payload) for n,payload in enumerate((index,data))}
 
 
-def write_archive(path:Path)->None:
+def write_archive(path:Path, scenario: str = 'scaling')->None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as out:
-        for name,data in source_files().items():
+        for name,data in source_files(scenario).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             out.writestr(info,data)
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('output',type=Path)
-    write_archive(parser.parse_args().output)
+    parser.add_argument('--scenario',choices=('scaling','camera-exposure'),default='scaling')
+    args=parser.parse_args();write_archive(args.output,args.scenario)

@@ -639,6 +639,10 @@ ScummV5_Cel_Compose__writable:
 ScummV5_Cel_Compose__first:
     .a16
     .i16
+    lda #$7FFF
+    sta.l SAME_SCUMM_CEL_BOUND_LEFT
+    lda #$8000
+    sta.l SAME_SCUMM_CEL_BOUND_RIGHT
     lda #$0000
     sta.l SAME_SCUMM_CEL_PASS
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
@@ -901,6 +905,33 @@ ScummV5_Cel_Compose__capture_left:
 ScummV5_Cel_Compose__capture_clip:
     .a16
     .i16
+    ; Preserve full coverage before clipping. A retained scroll can only
+    ; shift previously drawn pixels, not recover a formerly clipped cel.
+    sta.l SAME_SCUMM_ACTOR_CLIP_RIGHT
+    eor #$8000
+    sta.l SAME_SCUMM_CEL_TEMP
+    lda.l SAME_SCUMM_CEL_BOUND_RIGHT
+    eor #$8000
+    cmp.l SAME_SCUMM_CEL_TEMP
+    bcs ScummV5_Cel_Compose__bound_right
+    lda.l SAME_SCUMM_ACTOR_CLIP_RIGHT
+    sta.l SAME_SCUMM_CEL_BOUND_RIGHT
+ScummV5_Cel_Compose__bound_right:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_ACTOR_CLIP_LEFT
+    eor #$8000
+    sta.l SAME_SCUMM_CEL_TEMP
+    lda.l SAME_SCUMM_CEL_BOUND_LEFT
+    eor #$8000
+    cmp.l SAME_SCUMM_CEL_TEMP
+    bcc ScummV5_Cel_Compose__bound_left
+    lda.l SAME_SCUMM_ACTOR_CLIP_LEFT
+    sta.l SAME_SCUMM_CEL_BOUND_LEFT
+ScummV5_Cel_Compose__bound_left:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_ACTOR_CLIP_RIGHT
     bpl ScummV5_Cel_Compose__capture_nonnegative
     jml ScummV5_Cel_Compose__next_span
 ScummV5_Cel_Compose__capture_nonnegative:
@@ -1161,6 +1192,74 @@ ScummV5_Cel_Compose__retry:
     pla
     plp
     sec
+    rtl
+
+ ; Called after the retained camera generation commits and geometry changes.
+; Shift complete pose coverage with the viewport. Only newly exposed coverage
+; invalidates the visual key; an in-view pose remains in the retained ring.
+ScummV5_Cel_CameraCommitted_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    and #$00FF
+    beq ScummV5_Cel_Camera__done
+    lda.l SAME_SCUMM_CONTROLLER_RENDER_VISIBLE
+    and #$00FF
+    beq ScummV5_Cel_Camera__done
+    lda.l SAME_SCUMM_CEL_BOUND_LEFT
+    cmp #$7FFF
+    beq ScummV5_Cel_Camera__done
+    sta.l SAME_SCUMM_CEL_TEMP
+    sec
+    sbc.l MODE3_R_DELTA
+    bvs ScummV5_Cel_Camera__invalidate
+    sta.l SAME_SCUMM_CEL_BOUND_LEFT
+    lda.l SAME_SCUMM_CEL_BOUND_RIGHT
+    sta.l SAME_SCUMM_CEL_LOOP
+    sec
+    sbc.l MODE3_R_DELTA
+    bvs ScummV5_Cel_Camera__invalidate
+    sta.l SAME_SCUMM_CEL_BOUND_RIGHT
+    lda.l MODE3_R_DELTA
+    bmi ScummV5_Cel_Camera__expose_left
+    beq ScummV5_Cel_Camera__done
+    lda.l SAME_SCUMM_CEL_LOOP ; previous exclusive right edge
+    bmi ScummV5_Cel_Camera__done
+    cmp #$0101
+    bcc ScummV5_Cel_Camera__done
+    lda.l SAME_SCUMM_CEL_BOUND_LEFT
+    bmi ScummV5_Cel_Camera__invalidate
+    cmp #$0100
+    bcs ScummV5_Cel_Camera__done
+    bra ScummV5_Cel_Camera__invalidate
+ScummV5_Cel_Camera__expose_left:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CEL_TEMP ; previous inclusive left edge
+    bpl ScummV5_Cel_Camera__done
+    lda.l SAME_SCUMM_CEL_BOUND_RIGHT
+    bmi ScummV5_Cel_Camera__done
+    beq ScummV5_Cel_Camera__done
+ScummV5_Cel_Camera__invalidate:
+    .a16
+    .i16
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+ScummV5_Cel_Camera__done:
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
+    plp
     rtl
 
 ; Bind source cel and checked chunk directories before issuing any transfer.

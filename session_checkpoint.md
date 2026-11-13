@@ -1,3 +1,28 @@
+# Active continuation — scaled camera exposure
+
+00c1329 is pushed; hosted run43388407765 passes. Current additive correction
+retains unclipped pose bounds and blocks camera admission between checked actor
+chunks. Synthetic native-camera-exposure-fenced PASSED7 full-image captures,
+260.475sec; failed preceding partial-publication trace preserved. State now72B.
+Focused31tests, memory44regions, pinned full/synthetic assembly andROM audits
+pass. Fullsuite:1656 run,12 skipped,OK (1644 executed). make validate PASS.
+
+Authentic00c1329 trip10→75→2 reached RUNNING,error0,newspaper1/1; camera completed
+in read-only matching-ROM continuation. Source comparison exposed missing41
+Indy pixels from offscreen cached pose, plus178 additional actor5 pixels.
+The new camera correction is synthetic-native verified, not yet authentic.
+Fresh source auth-source-qwd_c4zm / build auth-build-n1iphkww;
+ROM2cd18ce9781f10687d26f157560904eda8c1bcd6ac549f5e811c9672a24961a7.
+Private cold-scaled-exposure was INTERRUPTED after17.029sec, exit130, atroom68
+frame672/error0. Supervisor recorded interrupted=true, not timeout; signal source
+NOT_CAPTURED. No owned processes remain. No matching new-ROM checkpoint exists.
+Do not repeat unchanged. No old ROM state reuse or gameplay writes.
+Remaining full-scene blocker: generic multiple-actor composition and checked
+z-mask consumption. Do not report whole-scene or Barnett interaction acceptance.
+Recovery untouched; no changes to PR14/15, no automatic merge.
+
+--- Previous checkpoint (historical status) ---
+
 # Milestone D — source-cel scaling integration in progress
 
 Branch scumm-fate-input-callback, base b7f194d. PR16 remains stacked on PR15.

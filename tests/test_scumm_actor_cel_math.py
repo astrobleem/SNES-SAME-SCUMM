@@ -26,6 +26,46 @@ class CelMachine(ControllerMachine):
 
 
 class CelMath(unittest.TestCase):
+    def test_retained_camera_exposes_clipped_cels_without_invalidating_in_view_poses(self):
+        cases = ((390,410,8,False), (258,280,8,True), (-12,20,-8,True),
+                 (40,80,8,False), (40,80,-8,False), (-30,-12,-8,False),
+                 (-30,-4,-8,True), (-12,20,8,False), (248,270,-8,False),
+                 (0x7fff,0x8000,8,False))
+        for left,right,delta,invalidate in cases:
+            m=CelMachine();m.mem.update({C+'BOUND_LEFT':left&65535,
+                C+'BOUND_RIGHT':right&65535,'MODE3_R_DELTA':delta&65535,
+                'SAME_SCUMM_CONTROLLER_RENDER_VALID':1,
+                'SAME_SCUMM_CONTROLLER_RENDER_VISIBLE':1})
+            m.run('ScummV5_Cel_CameraCommitted_Far')
+            self.assertEqual(m.mem['SAME_SCUMM_CONTROLLER_RENDER_VALID'],int(not invalidate),
+                             (left,right,delta))
+            if left!=0x7fff:
+                self.assertEqual(m.mem[C+'BOUND_LEFT'],(left-delta)&65535)
+                self.assertEqual(m.mem[C+'BOUND_RIGHT'],(right-delta)&65535)
+
+    def test_camera_cannot_publish_between_checked_actor_chunks(self):
+        from test_scumm_v5_actor_damage_boundaries import camera_source
+        text=(ROOT/'runtime/snes/engines/scumm_v5_camera_stream.inc.pasm').read_text()
+        text=text.split('ScummV5_Camera_ServiceForeground_Far:',1)[1].split('ScummV5_Camera_ServicePending__retained_commit:',1)[0]
+        text=camera_source(text,True,True)
+        class ForegroundMachine(CelMachine):
+            def service(self,name):
+                self.calls.append(name)
+                self.c=False
+        for incomplete in (0,1):
+            m=ForegroundMachine();m.code=[];m.labels={'entry':0};m.calls=[]
+            for raw in text.splitlines():
+                line=raw.split(';',1)[0].strip()
+                if not line or line.startswith('.'):continue
+                if line.endswith(':'):m.labels[line[:-1]]=len(m.code)
+                else:m.code.append(line)
+            m.mem.update({'SAME_SCUMM_VIEWPORT_ACTOR_SERVED':2,C+'VALID':incomplete,
+                          'SAME_SCUMM_ACTOR_POSE_STATE':0})
+            m.run('entry',preserve_a=False)
+            self.assertIn('ScummV5_Controller_RenderActor_Far',m.calls)
+            self.assertEqual('ScummV5_Camera_ServicePending_Far' in m.calls,not incomplete)
+            self.assertEqual(m.mem['SAME_SCUMM_VIEWPORT_ACTOR_SERVED'],2 if incomplete else 1)
+
     def test_phase_table_matches_source_reference(self):
         s=(ROOT/'runtime/snes/engines/scumm_v5_actor_cels.inc.pasm').read_text()
         rows=s.split('ScummV5_Cel_ScaleTable:\n')[1].split('; Read')[0]

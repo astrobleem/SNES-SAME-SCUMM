@@ -36,7 +36,7 @@ foreground service resumes the actor transaction. Only the completed pose is
 presented. Simulation continues without rewriting the outstanding pose key.
 Room cancellation restores the captured background and drains provider ownership.
 
-Additional state is68bytes at `$7E22B4..$7E22F7`, initialized at cold boot.
+Additional state is72bytes at `$7E22B4..$7E22FB`, initialized at cold boot.
 No new pixel buffer, executable-cache lease or DMA budget. Active SC5LIVE's
 unused tail remains the existing bounded underlay allocation; it is not free
 BW-RAM. Pose payload offsets remainu16 (maximum65535opaque source bytes),
@@ -127,3 +127,58 @@ publication, not inferred from these focused controls.
 No new production FATE hooks. No commercial payloads or captures in Git.
 Barnett College rendering, additional actors, required occlusion, resumed
 control and destination interaction remain NOT_VERIFIED. Whole-game NOT_READY.
+
+## Camera exposure and whole-pose publication
+
+The first authentic scaled trip reaches room2, lifecycle RUNNING, error0,
+newspaper owner/state1/1. Authored entry movement changes Indy from231/231 to
+50/50 at(435,110). The matching-ROM `college-presentation` capture is not a
+whole-scene pass: source comparison found41 missing Indy pixels. His pose had
+been composed completely outside the incoming camera. Retained scrolling
+shifted an empty journal, while the unchanged actor key suppressed composition
+when the camera finally revealed him.
+
+The compositor now retains signed, unclipped horizontal coverage (four bytes).
+A committed camera transform invalidates the actor key only when previously
+clipped source coverage becomes visible. Fully retained poses keep their path.
+The source-neutral camera fixture changes only camera position after its initial
+actor setup, including partial exposure, complete exposure and reversals.
+
+That regression also exposed a real ownership gap: between checked pose chunks,
+POSE_STATE is idle while CEL_VALID still owns incomplete INDEX8 pixels. Camera
+foreground completion formerly admitted a room-strip request in this gap.
+The same pose generation4 was captured with CEL_VALID1 at frames809 and825,
+while presentation advanced8→9 and room I/O claimed scratch. This is preserved
+in `native-camera-exposure`; it is a failed native control, not an observer pass.
+Foreground completion now checks the whole-pose owner before admitting camera
+work. The focused source-instruction regression checks both incomplete and
+released ownership, with otherwise idle resource state.
+
+`native-camera-exposure-fenced` completed seven captures in260.475seconds,
+with zero source/INDEX8, VRAM/PPU and CGRAM differences, no intermediate pose
+publication observed, and normal supervised cleanup. ROM
+`69e16d93bfc4dd4e72d3046258d5729834221bf01b8e7d770d8a697d092cedfe`,
+map `47fa2c23cf218a14a05eeabd2a15431e2b18b2a646057152bb37f2935cf156fa`,
+package `d3038f0853201ef322dceaee981ddd10ba0c2f55515f7f0d6a42ea46a56139a1`,
+build identity `1e01506f88c2c8db1382d7327f47bf7dbafdb92f7d6d00258a9ccd7a4fe39b69`.
+
+This does not qualify Barnett's complete scene. Its captured actor table also
+contains visible actor5/costume78. The source compositor requires another178
+visible pixels and masks four more with the original room z-plane (secondary
+facing/frame were source-inferred in that offline comparison, not native pose
+captures). Native presentation still has a single actor binding, one combined
+underlay journal, and no checked z-mask consumer. Do not hide that actor,
+substitute Indy's costume, or count the background-only image as acceptance.
+
+The corrected full-source image assembles and passes the ROM audit:
+ROM `2cd18ce9781f10687d26f157560904eda8c1bcd6ac549f5e811c9672a24961a7`,
+build identity `65c4fc4251f0a1f0cc2968037aa1a3c459f81fcf36f7ef66031b62073bcb1e9e`.
+Its new cold control `cold-scaled-exposure` was interrupted after17.029seconds
+(exit130, interrupted=true, timeout=false), last captured room68/frame672/error0.
+The signal origin was NOT_CAPTURED. Cleanup completed. This is not an engine
+failure, a valid destination checkpoint, or authentic acceptance of the fix;
+no unchanged retry was performed. Older checkpoints belong to different ROMs.
+
+Latest local validation:1656 tests run,12 skipped,OK (1644 executed);31 focused
+scaling/camera tests; make validate;44-region memory audit; pinned Poppy full
+and synthetic assemblies and4MiB ROM audits. Hosted results are commit-bound.

@@ -3,7 +3,7 @@ from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
-from examples.resources.scumm_v5.actor_scaling_fixture import source_files, costume, STAGES, write_archive
+from examples.resources.scumm_v5.actor_scaling_fixture import source_files, costume, STAGES, CAMERA_STAGES, write_archive
 from same.engine import EngineHost
 from same.engines import default_registry
 from same.engines.scumm_v5.costume import ScummV5Costume
@@ -35,13 +35,19 @@ class ScalingFixture(unittest.TestCase):
             self.assertEqual(a.read_bytes(),b.read_bytes())
 
     def test_host_executes_source_stages_with_authored_scales(self):
+        self.exercise_host_stages('scaling', STAGES)
+
+    def test_host_camera_only_exposure_and_reversal_preserve_actor_state(self):
+        self.exercise_host_stages('camera-exposure', CAMERA_STAGES)
+
+    def exercise_host_stages(self, scenario, stages):
         p=load_profile(ROOT/'examples/profiles/scumm_v5_game_analysis_fixture.json',verify_resources=False)
         p=replace(p,options={**p.options,'headless_presentation':True})
-        files=source_files()
+        files=source_files(scenario)
         raw=MemoryResourceProvider({'game.index':files['ATLANTIS/ATLANTIS.000'],'game.data':files['ATLANTIS/ATLANTIS.001']})
         provider=LucasartsScummV5ResourceProvider(raw,parse_game_policy(p))
         h=EngineHost(p,default_registry(),services=HostServices.create(p,resources=provider));h.boot()
-        for n,stage in enumerate(STAGES,1):
+        for n,stage in enumerate(stages,1):
             for _ in range(20):
                 h.tick()
                 scripts=[slot for slot in h.engine.state.scripts if slot.number==1]

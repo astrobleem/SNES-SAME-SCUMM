@@ -375,7 +375,11 @@ SAME_SCUMM_CEL_CHUNK_OFFSET    = $7E22F0
 SAME_SCUMM_CEL_ROW_PHASE       = $7E22F2
 SAME_SCUMM_CEL_SCALE_X         = $7E22F4
 SAME_SCUMM_CEL_SCALE_Y         = $7E22F6
-SAME_SCUMM_CEL_STATE_END       = $7E22F8
+; Complete, unclipped horizontal coverage of the committed scaled pose.
+; Retained pixels cannot supply source pixels that were previously offscreen.
+SAME_SCUMM_CEL_BOUND_LEFT      = $7E22F8
+SAME_SCUMM_CEL_BOUND_RIGHT     = $7E22FA
+SAME_SCUMM_CEL_STATE_END       = $7E22FC
 
 ; Copyright-free SCUMM v5 conformance lane.  This is engine state, not a game
 ; profile and not donor state.  Sixteen signed 16-bit variables are sufficient
