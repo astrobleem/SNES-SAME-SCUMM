@@ -24,6 +24,7 @@ def main() -> int:
     parser.add_argument('--mcp-python', type=Path, required=True)
     parser.add_argument('--port', type=int, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--nested-object-wait', action='store_true')
     args = parser.parse_args()
     if not re.fullmatch(r':\d+', os.environ.get('DISPLAY', '')):
         parser.error('a supervised private Xvfb DISPLAY is required')
@@ -128,6 +129,12 @@ def main() -> int:
                 s.set_input(0, 1); replay.advance_bounded(s, 8)
             q = sample(s)
             assert q['values'] == [2, 0, 1, 1, 2, 0, 2, 1, 1, 42, 1, 77, 1, 1], q
+            if args.nested_object_wait:
+                base=symbols['SAME_SCUMM_VARIABLES']
+                wait(s, lambda q: s.read_u16(base+230)==42 and s.read_u16(base+236)==1, frames=512)
+                report['nested_object_values']=[s.read_u16(base+2*i) for i in (114,115,116)]
+                assert report['nested_object_values']==[42,42,1], report
+                report['nested_freeze_resume']=s.read_u16(base+236)
             report['result'] = 'PASS'
             save()
     except BaseException as exc:

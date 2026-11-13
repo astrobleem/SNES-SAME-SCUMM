@@ -191,6 +191,33 @@ class PackedNativeBounds(unittest.TestCase):
             self.assertEqual(m.ram[base:base+72],expected)
             self.assertEqual(m.get(m.symbols['SAME_SCUMM_M23B_NEST_CHILD_SLOTS']+depth,1),9)
 
+    def test_nested_wait_ticket_writes_only_exact_parent_bytes(self):
+        source = (ROOT/'runtime/snes/engines/scumm_v5_m24rb_far.pasm').read_text()
+        begin = source.index('    lda.l SAME_SCUMM_M23B_NEST_DEPTH', source.index('; Remember whether the child'))
+        end = source.index('    bra ScummV5_M25A_RunNestedChild__msu_child_state_saved', begin)
+        helper = source[source.index('ScummV5_M25A_NestFrameX:'):source.index('ScummV5_M23B_RunNestedChild_FarEntry:')]
+        for depth, parent, child in ((0, 4, 1), (1, 7, 2), (23, 24, 8)):
+            m = CacheMachine('ScummV5_MsuProgram_Leave_Far')
+            m.code=[]; m.labels={}
+            for line in ('sep #$20\n'+source[begin:end]+'rtl\n'+helper).splitlines():
+                line=line.split(';')[0].strip()
+                if not line or line.startswith('.'): continue
+                if line.endswith(':'): m.labels[line[:-1]]=len(m.code)
+                else: m.code.append(line)
+            m.put('SAME_SCUMM_M23B_NEST_DEPTH', depth+1, 1)
+            m.put(m.symbols['SAME_SCUMM_M23B_NEST_CHILD_SLOTS']+depth, child, 1)
+            m.put(m.symbols['SAME_SCUMM_C4_SLOT_PROGRAM']+child, 0xef, 1)
+            m.put(m.symbols['SAME_SCUMM_M23B_NEST_FRAMES']+depth*3, 0x5a00|0x80|parent)
+            for name in ('SAME_SCUMM_MSU_PENDING_CHILD_SLOT', 'SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM'):
+                base=m.symbols[name]; m.ram[base:base+25]=bytes([0xa5])*25
+            m.put('SAME_SCUMM_MSU_CACHE_RETURN_P', 0x5a00)
+            m.consume()
+            for name, value in (('SAME_SCUMM_MSU_PENDING_CHILD_SLOT', child+1), ('SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM',0xef)):
+                expected=bytearray([0xa5])*25; expected[parent]=value
+                base=m.symbols[name]
+                self.assertEqual(m.ram[base:base+25], expected)
+            self.assertEqual(m.get('SAME_SCUMM_MSU_CACHE_RETURN_P'), 0x5a01)
+
     def test_nested_wait_result_is_byte_sized_after_pc_restore(self):
         source=(ROOT/'runtime/snes/engines/scumm_v5_m24rb_far.pasm').read_text()
         begin=source.index('    ; CACHE_RETURN_P is a byte.')

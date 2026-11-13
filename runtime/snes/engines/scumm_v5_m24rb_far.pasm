@@ -2030,6 +2030,10 @@ ScummV5_M25A_RunNestedChild__parent_mode_packed:
     lda.l SAME_SCUMM_M23B_NEST_DEPTH
     dec
     jsr ScummV5_M25A_NestFrameX
+    ; NestFrameX returns A16/X16. Tickets and selectors are bytes: a word
+    ; store here overwrites the next parent's ticket with the child selector.
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_M23B_NEST_FRAMES,x
     and #$7F
     tax

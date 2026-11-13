@@ -3626,6 +3626,13 @@ ScummV5_C4_Scheduler_Frame__remaining_slots:
     jmp ScummV5_C4_Scheduler_Frame__complete
 ScummV5_C4_Scheduler_Frame__slot_in_range:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_NestedAdmission_Far
+    bcc ScummV5_C4_Scheduler_Frame__nested_admitted
+    jmp ScummV5_C4_Scheduler_Frame__advance
+ScummV5_C4_Scheduler_Frame__nested_admitted:
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    .endif
     ; The preceding slot may have loaded a word-indexed PC into X.  The
     ; scheduler index is a byte slot number here; clear the index high byte
     ; before every byte-table lookup, not only on the first pass.

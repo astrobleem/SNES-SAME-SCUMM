@@ -142,6 +142,29 @@ ScummV5_Input_Process__same_room:
 ScummV5_Input_Process__request_current:
     .a8
     .i16
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; Accept the physical edge into the mailbox, but do not run a new input
+    ; script over a synchronous child that is still awaiting executable IO.
+    ; The pending event keeps its immutable room/request identity until the
+    ; original invocation reaches a source scheduling boundary.
+    ldx #$0000
+ScummV5_Input_Process__nested_wait_scan:
+    .a8
+    .i16
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    beq ScummV5_Input_Process__nested_wait_next
+    cmp #SCUMM_VM_STOPPED
+    beq ScummV5_Input_Process__nested_wait_next
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    beq ScummV5_Input_Process__nested_wait_next
+    jmp ScummV5_Input_Process__done
+ScummV5_Input_Process__nested_wait_next:
+    .a8
+    .i16
+    inx
+    cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcc ScummV5_Input_Process__nested_wait_scan
+.endif
     ; Normal nonrecursive runScript semantics, never a direct bytecode call.
     lda.l SAME_SCUMM_INPUT_SCRIPT
     jsl ScummV5_Camera_FarCall_StopNumber

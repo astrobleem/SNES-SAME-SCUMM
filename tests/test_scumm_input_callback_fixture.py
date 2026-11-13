@@ -17,10 +17,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class InputCallbackFixtureTests(unittest.TestCase):
-    def host(self):
+    def host(self, **fixture_options):
         p = load_profile(ROOT / 'examples/profiles/scumm_v5_game_analysis_fixture.json', verify_resources=False)
         p = replace(p, options={**p.options, 'headless_presentation': True})
-        files = source_files()
+        files = source_files(**fixture_options)
         resources = MemoryResourceProvider({
             'game.index': files['ATLANTIS/ATLANTIS.000'],
             'game.data': files['ATLANTIS/ATLANTIS.001'],
@@ -42,6 +42,14 @@ class InputCallbackFixtureTests(unittest.TestCase):
         self.assertEqual(e.state.variables[100:111], [2, 0, 1, 1, 2, 0, 2, 1, 1, 42, 1])
         self.assertEqual(e.state.variables[111:114], [77, 1, 1])
         self.assertEqual(e.state.sentences, [])
+
+    def test_nested_object_and_hover_share_carrier_without_losing_action(self):
+        h=self.host(nested_object_wait=True);e=h.engine;h.tick()
+        e.queue_input_event(2,0,1);h.tick()
+        e.queue_input_event(2,0,2)
+        for _ in range(8):h.tick()
+        self.assertEqual(e.state.variables[114:117],[42,42,1])
+        self.assertEqual(e.state.variables[118],1)
 
     def test_archive_is_reproducible_and_refuses_overwrite(self):
         with tempfile.TemporaryDirectory() as d:

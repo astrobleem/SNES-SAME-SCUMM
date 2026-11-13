@@ -12,7 +12,7 @@ def machine(entry, prefix=''):
     text=(ROOT/'runtime/snes/engines/scumm_v5_input_script.inc.pasm').read_text()
     for raw in (prefix+'\n'+text).splitlines():
         line=raw.split(';')[0].strip()
-        if line=='.if SAME_BUILD_SCUMM_ROOM_SERVICE':
+        if line in ('.if SAME_BUILD_SCUMM_ROOM_SERVICE','.if SAME_BUILD_SCUMM_MSU1_PROGRAMS'):
             arms.append(True);active.append(active[-1]);continue
         if line=='.else':active[-1]=active[-2] and not arms[-1];continue
         if line=='.endif':active.pop();arms.pop();continue
@@ -78,6 +78,17 @@ class InputNativeMailboxTests(unittest.TestCase):
             self.assertEqual(bytes(m.ram[base-2:base]),b'\xcc\xcc')
             self.assertEqual(bytes(m.ram[base+64:base+66]),b'\xcc\xcc')
             m.consume();self.assertEqual(m.get('SAME_SCUMM_INPUT_ALLOCATED'),1)
+
+    def test_accepted_input_waits_for_nested_storage_then_allocates_once(self):
+        m=machine('ScummV5_Input_Process_Far')
+        m.put('SAME_SCUMM_INPUT_PENDING',1,1);m.put('SAME_SCUMM_INPUT_SCRIPT',204,1)
+        m.put(m.symbols['SAME_SCUMM_C4_SLOT_STATUS']+4,5,1)
+        m.put(m.symbols['SAME_SCUMM_MSU_PENDING_CHILD_SLOT']+4,2,1)
+        m.consume();self.assertEqual(m.calls,[])
+        self.assertEqual(m.get('SAME_SCUMM_INPUT_PENDING',1),1)
+        m.put(m.symbols['SAME_SCUMM_MSU_PENDING_CHILD_SLOT']+4,0,1)
+        m.consume();self.assertEqual(m.get('SAME_SCUMM_INPUT_ALLOCATED'),1)
+        self.assertEqual(m.get('SAME_SCUMM_INPUT_PENDING',1),0)
 
     def test_room_change_cancels_pending_event_before_resolve(self):
         m=machine('ScummV5_Input_Process_Far')

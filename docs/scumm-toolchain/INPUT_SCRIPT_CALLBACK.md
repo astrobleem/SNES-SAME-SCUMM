@@ -80,3 +80,30 @@ timeout and SIGTERM. Process-only regressions verify those contracts. A process
 exit is never treated as native or pixel acceptance. The validator remains the
 only MCP client. Unrelated user emulator sessions are neither connected nor
 terminated.
+
+## Nested execution and checked-code waits
+
+The authentic source trace reached object141's pickup entry PC60 in
+WAIT_RESOURCE, then replaced it with its hover entry PC175 before the pickup
+executed. This is a storage scheduling boundary, not an authored no-op.
+
+The far nested-call helper also returned from its frame-index calculation in
+A16 and wrote words into byte-sized pending-child tickets. An instruction-level
+regression reproduced the adjacent-ticket overwrite; explicit A8 restores the
+contract. C4 now follows its existing pending-child tickets to admit the
+synchronous child before unrelated activations. Once the child reaches an
+ordinary yield/stop/error, the parent continues through the existing handling.
+Frozen callers release satisfied tickets so the child's later unfreeze can
+run. New raw-input events remain accepted in their room-bound mailbox while a
+nested storage continuation owns execution. Provider service and NMI remain
+resumable; independently waiting activations with no nested call retain normal
+admission. No executable-cache allocation or selector ABI changes are made.
+
+The public callback fixture's optional `--nested-object-wait` case places
+an action and a competing hover loop on separate checked pages of one carrier.
+The action writes42; its caller must observe42. A freeze/yield/unfreeze also
+checks release of the satisfied parent ticket. These are original test scripts,
+not edits to the commercial game's story. Instruction-runner tests cover exact
+byte writes, neighboring guards, deep waits, replacement, frozen parents,
+bounded invalid tickets and deferred input ownership. They are host evidence;
+actual Nexen results are recorded separately against their ROM identity.

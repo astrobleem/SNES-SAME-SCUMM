@@ -130,6 +130,120 @@ ScummV5_MsuProgram_ServiceDelay__runnable:
     clc
     rtl
 
+; Preserve synchronous StartScript/StartObject ordering across storage waits.
+; A child that has not reached a source yield is not an independent thread yet:
+; unrelated object starts must not cancel it while its checked page is loading.
+; Follow the existing bounded parent->child tickets; allow the deepest waiting
+; child, then its parent after yield/stop/error. No cache pins or extra memory.
+; C=1 defers this scheduler slot. Provider, NMI and input sampling still run.
+ScummV5_MsuProgram_NestedAdmission_Far:
+    php
+    rep #$10
+    .i16
+    phx
+    phy
+    sep #$30
+    .a8
+    .i8
+    ldx #$00
+ScummV5_MsuProgram_NestedAdmission__scan:
+    .a8
+    .i8
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    beq ScummV5_MsuProgram_NestedAdmission__next
+    cmp #SCUMM_VM_STOPPED
+    beq ScummV5_MsuProgram_NestedAdmission__next
+    cmp #SCUMM_VM_ERROR
+    beq ScummV5_MsuProgram_NestedAdmission__next
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    bne ScummV5_MsuProgram_NestedAdmission__root
+ScummV5_MsuProgram_NestedAdmission__next:
+    .a8
+    .i8
+    inx
+    cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcc ScummV5_MsuProgram_NestedAdmission__scan
+    bra ScummV5_MsuProgram_NestedAdmission__allow
+ScummV5_MsuProgram_NestedAdmission__root:
+    .a8
+    .i8
+    ldy #SCUMM_V5_MAX_SCRIPT_SLOTS
+ScummV5_MsuProgram_NestedAdmission__descend:
+    .a8
+    .i8
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    beq ScummV5_MsuProgram_NestedAdmission__chosen
+    dec
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_MsuProgram_NestedAdmission__invalid
+    phx
+    pha
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    pha
+    ; Child index and selector are byte-sized stack values.
+    lda 2,s
+    tax
+    pla
+    cmp.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    bne ScummV5_MsuProgram_NestedAdmission__parent
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    cmp #SCUMM_VM_WAIT_RESOURCE
+    bne ScummV5_MsuProgram_NestedAdmission__parent
+    pla
+    pla ; discard parent index, retain child in X
+    dey
+    bne ScummV5_MsuProgram_NestedAdmission__descend
+    ; A cyclic ticket is an explicit failure, never an unbounded traversal.
+    lda #SCUMM_ERR_RESOURCE
+    sta.l SAME_SCUMM_ERROR
+    bra ScummV5_MsuProgram_NestedAdmission__defer
+ScummV5_MsuProgram_NestedAdmission__parent:
+    .a8
+    .i8
+    pla
+    plx
+    ; The child reached a source boundary (or was replaced). A cutscene may
+    ; have frozen its caller; that caller must not hold unrelated work behind
+    ; an already-satisfied storage ticket until an external unfreeze.
+    lda.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
+    beq ScummV5_MsuProgram_NestedAdmission__chosen
+    lda #$00
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    jmp ScummV5_MsuProgram_NestedAdmission__next
+ScummV5_MsuProgram_NestedAdmission__invalid:
+    .a8
+    .i8
+    lda #SCUMM_ERR_RESOURCE
+    sta.l SAME_SCUMM_ERROR
+    bra ScummV5_MsuProgram_NestedAdmission__defer
+ScummV5_MsuProgram_NestedAdmission__chosen:
+    .a8
+    .i8
+    txa
+    cmp.l SAME_SCUMM_C4_SCHED_SLOT
+    bne ScummV5_MsuProgram_NestedAdmission__defer
+ScummV5_MsuProgram_NestedAdmission__allow:
+    .a8
+    .i8
+    rep #$10
+    .i16
+    ply
+    plx
+    plp
+    clc
+    rtl
+ScummV5_MsuProgram_NestedAdmission__defer:
+    .a8
+    .i8
+    rep #$10
+    .i16
+    ply
+    plx
+    plp
+    sec
+    rtl
+
 ScummV5_MsuProgram_Reset_Far:
     php
     rep #$30
