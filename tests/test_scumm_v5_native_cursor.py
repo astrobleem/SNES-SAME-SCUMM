@@ -20,14 +20,14 @@ D = 'SAME_VIDEO_SURFACE_DAMAGE_'
 
 
 class CursorMachine(ControllerMachine):
-    def __init__(self, source_size=(320, 200), camera=False):
+    def __init__(self, source_size=(320, 200), camera=False, cels=False):
         super().__init__([], source_size=source_size, camera=camera)
         cursor = (ROOT / 'runtime/snes/engines/scumm_v5_cursor_far.pasm').read_text()
         controller = (ROOT / 'runtime/snes/engines/scumm_v5_controller_far.pasm').read_text()
         helper = controller.split('ScummV5_ActorPose_ProjectSpan_Far:', 1)[1]
         helper = helper.split('; The provider has one global cursor.', 1)[0]
         self.code, self.labels = [], {}
-        for raw in camera_source(cursor + '\nScummV5_ActorPose_ProjectSpan_Far:\n' + helper,camera).splitlines():
+        for raw in camera_source(cursor + '\nScummV5_ActorPose_ProjectSpan_Far:\n' + helper,camera,cels=cels).splitlines():
             line = raw.split(';', 1)[0].strip()
             if not line or line.startswith('.') or ' = ' in line:
                 continue
@@ -302,6 +302,20 @@ def expected_surface(vm):
 
 
 class NativeCursorTests(unittest.TestCase):
+    def test_partial_cel_transaction_blocks_cursor_publication_and_damage_reset(self):
+        for pending in (0, 1):
+            vm = CursorMachine(cels=True)
+            vm.mem.update(SAME_SCUMM_CEL_VALID=1, SAME_SCUMM_CURSOR_COMPOSING=1,
+                          SAME_SCUMM_CURSOR_PENDING=pending)
+            vm.union((30, 40, 80, 100))
+            before = bytes(vm.surface), dict(vm.mem)
+            vm.entry()
+            self.assertEqual((bytes(vm.surface), vm.mem), before)
+            self.assertEqual(vm.events, [])
+            vm.mem['SAME_SCUMM_CEL_VALID'] = 0
+            vm.entry()
+            self.assertEqual(vm.queue_calls, 1)
+
     def test_draw_all_shapes_phases_source_anchors_and_edges(self):
         for size in ((320,200),(256,224),(200,320),(17,13)):
             for index in range(4):
@@ -542,7 +556,13 @@ class NativeCursorTests(unittest.TestCase):
         lines=[line.split(';',1)[0].strip() for line in actor.splitlines()]
         lines=[line for line in lines if line and not line.startswith('.')]
         restore=lines.index('jsl Same_VideoSurface_RestoreCursorUnderlay_Far')
-        self.assertEqual(lines[restore-2:restore],['lda #$0001','sta.l SAME_SCUMM_CURSOR_COMPOSING'])
+        claim=max(i for i in range(restore) if lines[i]=='sta.l SAME_SCUMM_CURSOR_COMPOSING')
+        self.assertEqual(lines[claim-1],'lda #$0001')
+        self.assertLess(claim,restore)
+        # A continuing checked cel transaction skips restoration only after
+        # claiming/retaining the same exclusive composition fence.
+        self.assertIn('lda.l SAME_SCUMM_CEL_VALID',lines[claim:restore])
+        self.assertIn('jml ScummV5_Controller_RenderActor__compose_actor',lines[claim:restore])
         success=lines.index('ScummV5_Controller_RenderActor__present_success:')
         self.assertEqual(lines[success+1:success+4],['rep #$20','lda #$0000','sta.l SAME_SCUMM_CURSOR_COMPOSING'])
         result=lines.index('ScummV5_Controller_RenderActor__present_result:')

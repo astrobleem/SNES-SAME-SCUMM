@@ -24,8 +24,10 @@ from same.package import build_package, inspect_package
 from same.resources import MemoryResourceProvider
 if __package__:
     from .actor_pose_plan import compile_pose as compile_actor_pose
+    from .actor_pose_plan import compile_cel_pose
 else:  # build_snes.sh executes this tool by filename with tools/ on sys.path
     from actor_pose_plan import compile_pose as compile_actor_pose
+    from actor_pose_plan import compile_cel_pose
 
 
 def source_bytes(archive: Path) -> dict[str, bytes]:
@@ -99,7 +101,7 @@ MAX_ANIMATION_STEPS = 256
 
 
 def compile_pose_set(
-    costumes: dict[int, tuple[str, bytes]],
+    costumes: dict[int, tuple[str, bytes]], *, preserve_cels: bool = False,
 ) -> tuple[bytes, list[dict[str, object]]]:
     """Return deterministic source-slot chunks and signed span metadata."""
     if not costumes:
@@ -136,14 +138,20 @@ def compile_pose_set(
                         f"did not reach a repeating command state in {MAX_ANIMATION_STEPS} steps"
                     )
                 for step in animation_steps:
+                    decoded_pose = costume.decode_pose(frame, facing=facing, step=step)
                     plan = compile_actor_pose(
-                        costume.decode_pose(frame, facing=facing, step=step),
-                        costume.palette,
+                        decoded_pose, costume.palette,
                     )
+                    cel_plan = compile_cel_pose(decoded_pose, costume.palette) if preserve_cels else None
+                    if cel_plan is not None and len(cel_plan.data) > 65535:
+                        raise ValueError(f"costume {costume_id} frame {frame} direction {direction} "
+                                         f"step {step}: {len(cel_plan.data)} opaque cel bytes exceed "
+                                         "the u16 logical source-pose address space")
                     if len(plan.palette) > 32:
                         raise ValueError("native actor palette directory supports at most 32 slots")
                     pose_chunks: list[dict[str, object]] = []
-                    for chunk in plan.chunks(MAX_CHUNK_BYTES):
+                    pose_offset = len(payload)
+                    for chunk in (cel_plan or plan).chunks(MAX_CHUNK_BYTES):
                         offset = len(payload)
                         payload.extend(chunk.data)
                         pose_chunks.append({
@@ -151,6 +159,7 @@ def compile_pose_set(
                             "length": len(chunk.data),
                             "crc32": f"{chunk.crc32:08x}",
                             "sha256": chunk.sha256,
+                            "pose_offset": offset - pose_offset,
                             "spans": [
                                 {"x": ref.x, "y": ref.y,
                                  "offset": ref.offset, "length": ref.length}
@@ -184,6 +193,14 @@ def compile_pose_set(
                         "loop_length": loop_length,
                         "source_resource": key,
                         "source_sha256": hashlib.sha256(raw).hexdigest(),
+                        **({"cel_format": 3, "draw_to_right": cel_plan.draw_to_right,
+                            "source_slot_bytes": len(cel_plan.data),
+                            "cels": [dict(width=c.width, height=c.height,
+                                          relative_x=c.relative_x, relative_y=c.relative_y,
+                                          move_x=c.move_x, move_y=c.move_y,
+                                          spans=[dict(x=s.x, y=s.y, offset=s.offset, length=s.length)
+                                                 for s in c.spans]) for c in cel_plan.cels]}
+                           if cel_plan is not None else {}),
                     })
     return bytes(payload), records
 
@@ -200,6 +217,30 @@ def pose_directory_include(
     chunk_rows: list[dict[str, int]] = []
     span_pages: list[bytearray] = [bytearray()]
     pose_rows: list[bytes] = []
+    cel_rows: list[bytes] = []
+    cel_format = any(row.get("cel_format") == 3 for row in records)
+    if cel_format and any(row.get("cel_format") != 3 for row in records):
+        raise ValueError("mixed native actor representation versions")
+
+    def add_spans(spans: list[dict], payload_size: int) -> int:
+        if len(spans) > SPANS_PER_BANK:
+            raise ValueError("one cel/chunk exceeds a span-directory bank")
+        if len(span_pages[-1]) // SPAN_RECORD_SIZE + len(spans) > SPANS_PER_BANK:
+            span_pages.append(bytearray())
+        first = (len(span_pages) - 1) * SPANS_PER_BANK + len(span_pages[-1]) // SPAN_RECORD_SIZE
+        if first + len(spans) > 65536:
+            raise ValueError("actor span directory exceeds u16 indexing")
+        for span in spans:
+            x, y = int(span["x"]), int(span["y"])
+            offset, length = int(span["offset"]), int(span["length"])
+            if (not -32768 <= x <= 32767 or not -32768 <= y <= 32767
+                    or not 0 <= offset <= 65535 or not 1 <= length <= 65535
+                    or offset + length > payload_size):
+                raise ValueError("invalid signed actor span descriptor")
+            span_pages[-1].extend(x.to_bytes(2, "little", signed=True)
+                                 + y.to_bytes(2, "little", signed=True)
+                                 + offset.to_bytes(2, "little") + length.to_bytes(2, "little"))
+        return first
     palettes: dict[int, tuple[int, ...]] = {}
     for row in records:
         palette_index = int(row["palette_index"])
@@ -224,7 +265,65 @@ def pose_directory_include(
             raise ValueError("actor pose bounds exceed signed 16-bit directory fields")
         pose_raw += b"".join(value.to_bytes(2, "little", signed=True)
                               for value in bounds)
-        pose_raw += bytes(5)
+        if cel_format:
+            cels = list(row["cels"])
+            # Native source offsets are u16; validate the complete canonical
+            # coverage before emitting ROM descriptors or checked transfers.
+            total = int(row["source_slot_bytes"])
+            if not 0 <= total <= 65535 or type(row["draw_to_right"]) is not bool:
+                raise ValueError("invalid cel pose length or drawing direction")
+            cursor = samples = cumulative_x = cumulative_y = 0
+            for cel in cels:
+                width, height = int(cel["width"]), int(cel["height"])
+                samples += width * height
+                if not (1 <= width <= 512 and 1 <= height <= 512) or samples > 4_194_304:
+                    raise ValueError("invalid or unbounded source cel geometry")
+                rx, ry, mx, my = (int(cel[k]) for k in
+                                  ("relative_x", "relative_y", "move_x", "move_y"))
+                if any(not -32768 <= v <= 32767 for v in
+                       (rx, ry, mx, my, cumulative_x + rx, cumulative_y + ry,
+                        cumulative_x + mx, cumulative_y - my)):
+                    raise ValueError("source cel anchor or cumulative movement overflow")
+                cumulative_x += mx
+                cumulative_y -= my
+                previous = (-1, 0)
+                for span in cel["spans"]:
+                    x, y, offset, length = (int(span[k]) for k in ("x", "y", "offset", "length"))
+                    if (not 0 <= y < height or not 0 <= x < width
+                            or not 1 <= length <= width - x or offset != cursor
+                            or y < previous[0] or (y == previous[0] and x < previous[1])):
+                        raise ValueError("noncanonical source cel spans")
+                    cursor += length
+                    previous = (y, x + length)
+            if cursor != total:
+                raise ValueError("cel spans do not cover the complete checked pose")
+            cursor = 0
+            physical_end = None
+            for chunk in chunks:
+                length, offset = int(chunk["length"]), int(chunk["relative_offset"])
+                if (not 1 <= length <= MAX_CHUNK_BYTES or int(chunk["pose_offset"]) != cursor
+                        or chunk["spans"] or not 0 <= offset <= 0xffffffff - length
+                        or (physical_end is not None and offset != physical_end)):
+                    raise ValueError("invalid checked cel chunk boundary")
+                cursor += length
+                physical_end = offset + length
+            if cursor != total:
+                raise ValueError("checked chunks do not cover the complete cel pose")
+            first_cel = len(cel_rows)
+            if first_cel + len(cels) > 65535:
+                raise ValueError("actor cel directory exceeds u16 indexing")
+            pose_raw += bytes((0x80 | int(row["draw_to_right"]),))
+            pose_raw += first_cel.to_bytes(2, "little") + len(cels).to_bytes(2, "little")
+            for cel in cels:
+                spans = list(cel["spans"])
+                first = add_spans(spans, int(row["source_slot_bytes"]))
+                raw = b"".join(int(cel[k]).to_bytes(2, "little") for k in ("width", "height"))
+                raw += b"".join(int(cel[k]).to_bytes(2, "little", signed=True)
+                                for k in ("relative_x", "relative_y", "move_x", "move_y"))
+                raw += first.to_bytes(2, "little") + len(spans).to_bytes(2, "little")
+                cel_rows.append(raw.ljust(32, b"\0"))
+        else:
+            pose_raw += bytes(5)
         if len(pose_raw) != POSE_RECORD_SIZE:
             raise AssertionError("pose directory record width changed")
         pose_rows.append(pose_raw)
@@ -258,6 +357,7 @@ def pose_directory_include(
                 "length": int(chunk["length"]),
                 "span_first": global_first,
                 "span_count": len(spans),
+                "pose_offset": int(chunk.get("pose_offset", 0)) if cel_format else 0,
             })
     if span_first_bank + len(span_pages) - 1 > 0x7F:
         raise ValueError("actor span directories exceed mapped LoROM banks")
@@ -269,6 +369,9 @@ def pose_directory_include(
     lines = [
         "; Generated lossless source-backed pose/chunk/palette directories.",
         "; Pixel slots remain in checked SC5ACT payloads in SAMEPKG.",
+        f"SCUMM_V5_ACTOR_CEL_FORMAT = ${int(cel_format):02X}",
+        f"SCUMM_V5_ACTOR_CEL_FIRST_BANK = ${span_first_bank + len(span_pages):02X}",
+        f"SCUMM_V5_ACTOR_CEL_COUNT = ${len(cel_rows):04X}",
         f"SCUMM_V5_ACTOR_POSE_COUNT = ${len(records):04X}",
         f"SCUMM_V5_ACTOR_POSE_RECORD_SIZE = ${POSE_RECORD_SIZE:04X}",
         f"SCUMM_V5_ACTOR_CHUNK_RECORD_SIZE = ${CHUNK_RECORD_SIZE:04X}",
@@ -291,7 +394,8 @@ def pose_directory_include(
                + chunk["crc"].to_bytes(4, "little")
                + chunk["length"].to_bytes(2, "little")
                + chunk["span_first"].to_bytes(2, "little")
-               + chunk["span_count"].to_bytes(2, "little") + bytes(2))
+               + chunk["span_count"].to_bytes(2, "little")
+               + chunk["pose_offset"].to_bytes(2, "little"))
         lines.extend(rows(raw, CHUNK_RECORD_SIZE).splitlines())
     lines.append("ScummV5_ActorPaletteDirectory:")
     for _palette_index, palette in sorted(palettes.items()):
@@ -303,6 +407,12 @@ def pose_directory_include(
         lines.extend(rows(bytes(payload), 16).splitlines())
         if not payload:
             lines.append("    .byte $00")
+    for start in range(0, len(cel_rows), 1024):
+        cel_bank = span_first_bank + len(span_pages) + start // 1024
+        if cel_bank > 0x7f or cel_bank == bank:
+            raise ValueError("actor cel metadata exceeds or overlaps mapped ROM")
+        lines.extend((f".bank {cel_bank}", ".org $8000", f"ScummV5_ActorCelDirectory{start // 1024}:"))
+        lines.extend(rows(b"".join(cel_rows[start:start + 1024]), 16).splitlines())
     return "\n".join(lines) + "\n"
 
 
@@ -315,8 +425,9 @@ def write_pose_package(
     span_first_bank: int = 25,
     prefix_package: Path | None = None,
     prefix_sections: tuple[str, ...] | None = None,
+    preserve_cels: bool = False,
 ) -> dict[str, object]:
-    payload, records = compile_pose_set(costumes)
+    payload, records = compile_pose_set(costumes, preserve_cels=preserve_cels)
     output_dir.mkdir(parents=True, exist_ok=True)
     payload_path = output_dir / "sc5act-payload.bin"
     payload_path.write_bytes(payload)
@@ -364,8 +475,8 @@ def write_pose_package(
                                span_first_bank=span_first_bank), encoding="ascii",
     )
     manifest = {
-        "schema": "same_scumm_v5_actor_pose_package_v2",
-        "pose_format": "signed-foot-anchor-span-chunks-v1",
+        "schema": "same_scumm_v5_actor_pose_package_v3" if preserve_cels else "same_scumm_v5_actor_pose_package_v2",
+        "pose_format": "ordered-source-cel-spans-v1" if preserve_cels else "signed-foot-anchor-span-chunks-v1",
         "pose_record_bytes": POSE_RECORD_SIZE,
         "chunk_record_bytes": CHUNK_RECORD_SIZE,
         "span_record_bytes": SPAN_RECORD_SIZE,
@@ -401,6 +512,8 @@ def main() -> int:
     parser.add_argument("--directory-include", type=Path)
     parser.add_argument("--directory-bank", type=lambda value: int(value, 0), default=13)
     parser.add_argument("--span-directory-bank", type=lambda value: int(value, 0), default=25)
+    parser.add_argument("--preserve-cels", action="store_true",
+                        help="retain source cel geometry/order for native phase-table scaling")
     parser.add_argument("--output", type=Path,
                         help="legacy fixture-only ROM sheet include output")
     parser.add_argument("--facing", type=int, default=180,
@@ -457,6 +570,7 @@ def main() -> int:
         args.output_dir, costumes, directory_include=args.directory_include,
         directory_bank=args.directory_bank,
         span_first_bank=args.span_directory_bank,
+        preserve_cels=args.preserve_cels,
         prefix_package=args.prefix_package,
         prefix_sections=(None if args.prefix_all_sections or not args.prefix_section
                          else tuple(args.prefix_section)),

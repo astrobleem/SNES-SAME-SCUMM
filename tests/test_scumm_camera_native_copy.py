@@ -15,7 +15,9 @@ def select_actor_path(text, enabled=False):
     active=[True];arms=[];result=[]
     for line in text.splitlines():
         directive=line.strip()
-        if directive == '.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER':
+        if directive == '.if SCUMM_V5_ACTOR_CEL_FORMAT':
+            arms.append(False);active.append(False)
+        elif directive == '.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER':
             arms.append(enabled);active.append(active[-1] and enabled)
         elif directive == '.else':
             active[-1]=active[-2] and not arms[-1]

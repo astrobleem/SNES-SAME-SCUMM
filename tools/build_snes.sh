@@ -1029,6 +1029,13 @@ else
             --directory-include "$ACTOR_POSE_INCLUDE"
             --directory-bank 13 "${ACTOR_COSTUME_ARGS[@]}"
         )
+        if [[ "${SAME_SCUMM_ACTOR_CELS:-0}" == "1" ]]; then
+            if [[ "${SAME_SCUMM_VISUAL_PROJECTION:-}" != "camera-viewport" ]]; then
+                echo "Ordered source-cel scaling requires the source-coordinate camera viewport" >&2
+                exit 1
+            fi
+            ACTOR_POSE_ARGS+=(--preserve-cels)
+        fi
         if [[ -n "$ACTOR_PREFIX_PACKAGE" ]]; then
             ACTOR_POSE_ARGS+=(--prefix-package "$ACTOR_PREFIX_PACKAGE")
             if [[ "$ACTOR_PREFIX_ALL_SECTIONS" == "1" ]]; then

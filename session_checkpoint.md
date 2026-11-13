@@ -1,3 +1,44 @@
+# Milestone D — source-cel scaling integration in progress
+
+Branch scumm-fate-input-callback, base b7f194d. PR16 remains stacked on PR15.
+Recovery worktree and prior evidence untouched. No authentic scaled room2
+acceptance yet. Do not load old-ROM checkpoints into the new image.
+
+Uncommitted source retains per-cel dimensions, signed anchors/movement, source
+slots/order and mirror direction in SC5ACT v3 metadata. Native phase-table
+compositor supports independent XY scaling and checked multi-chunk progression;
+legacy flattened v2 remains selectable. Extra state: 68 bytes at7E22B4..22F7;
+no pixel buffer or code-cache lease. Existing camera-viewport path only.
+
+Private root: /home/chad/SAME-private-evidence/milestone-d-actor-scaling-20261113
+- native-scaled-cels-1 stopped after cold-state initialization/key defects.
+- native-scaled-cels-2 final255/231 matched, but cursor color publication exposed
+  intermediate multi-chunk pixels; overall NOT_ACCEPTED. Asymmetric final
+  INDEX8 matched but PPU differed200pixels. Do not promote those narrow results.
+- native-scaled-cels-3 PASSED (9 captures,287.248sec); it ran with cursor exclusion and camera-foreground
+  continuation fix. Completed255/231/asymmetric/mirrored surfaces match source,
+  INDEX8,VRAM/CGRAM. All8stages completed, including2animation keys; zero differences.
+  ROM0f618437cb0436c193cc0cc4a4fd80988f40b7f85aff0b233221758abfbd2b16;
+  build fixture-build-7o1x3cbm, source fixture-source-la4hxgq9.
+
+Host phase/representation tests cover1000origins,1000lossless poses,80random
+raster cases and original source-neutral CostumeDecoder data. These are host
+source-instruction execution, NOT emulator evidence. Fullsuite rerun follows test conditional-parser correction; validate44regionsPASS.
+Native validator checks complete generations, no publication while CEL_VALID,
+source-indexed pixels, decodedVRAM/PPU andCGRAM; synthetic local ACKs only.
+
+Native3 is pre-relocation/hidden-key follow-up source, not the final build.
+Full-source ROMae2efc7e assembled/audited after cache-service bank relocation.
+Cold-scaled-room10 stopped at room0->4 precommit hold,error0. Read-only exact-ROM
+room-hold-observation confirms outstanding presentation; hidden actor scale key
+was stale and caused redundant full publications. Corrected; next build/run
+must prove regression. No old-ROM checkpoint reuse. See ACTOR_CEL_SCALING.md.
+Next: coherent checkpoint commit, new-ROM cold checkpoint, taxi/map/college.
+Room2 may require actor5/costume78; multi-actor andzmask remain unverified.
+No unchanged retries, no historical7actionroute, no display/CLI guessing.
+
+--- Prior checkpoint ---
+
 # Milestone D — callback implemented; destination graphics blocked
 
 Branch `scumm-fate-input-callback`, draft PR16 targeting unchanged PR15.

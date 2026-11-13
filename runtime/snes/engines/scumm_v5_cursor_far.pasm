@@ -75,6 +75,17 @@ ScummV5_Cursor_Frame_Far:
 ScummV5_Cursor_Frame__no_error:
     .a16
     .i16
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    ; A checked multi-chunk pose owns the surface until its final chunk.
+    ; Cursor color ticks must not publish or reset its accumulating damage.
+    lda.l SAME_SCUMM_CEL_VALID
+    and #$00FF
+    beq ScummV5_Cursor_Frame__actor_transaction_complete
+    jml ScummV5_Cursor_Frame__done
+ScummV5_Cursor_Frame__actor_transaction_complete:
+    .a16
+    .i16
+    .endif
     lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
     and #$00FF
     beq ScummV5_Cursor_Frame__actor_complete

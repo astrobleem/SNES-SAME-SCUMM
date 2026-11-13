@@ -991,6 +991,18 @@ ScummV5_Controller_PublishActorVisual_Far:
     sta.l SAME_SCUMM_ACTOR_POSE_COMPOSED
     jml ScummV5_Controller_PublishActorVisual__done
 ScummV5_Controller_PublishActorVisual__c14_ready:
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    ; A multi-chunk transaction owns its complete desired snapshot until
+    ; publication. Simulation continues, but cannot mutate this read ticket.
+    lda.l SAME_SCUMM_CEL_VALID
+    beq ScummV5_Controller_PublishActorVisual__cel_unlocked
+    jml ScummV5_Controller_PublishActorVisual__done
+ScummV5_Controller_PublishActorVisual__cel_unlocked:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C14_ACTORS+(SCUMM_V5_ACTOR_RENDER_ID*$40)+SAME_SCUMM_C14_A_SCALE_X
+    sta.l SAME_SCUMM_CEL_DESIRED_SCALE
+    .endif
     rep #$20
     .a16
     lda #SCUMM_V5_ACTOR_RENDER_ID
@@ -1574,6 +1586,19 @@ ScummV5_Controller_RenderActor__pose_same:
     rep #$30
     .a16
     .i16
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    lda.l SAME_SCUMM_CEL_VALID
+    and #$00FF
+    bne ScummV5_Controller_RenderActor__cel_changed
+    lda.l SAME_SCUMM_CEL_DESIRED_SCALE
+    cmp.l SAME_SCUMM_CEL_RENDER_SCALE
+    beq ScummV5_Controller_RenderActor__cel_same
+ScummV5_Controller_RenderActor__cel_changed:
+    jmp ScummV5_Controller_RenderActor__changed
+ScummV5_Controller_RenderActor__cel_same:
+    .endif
+    .endif
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
     cmp.l SAME_SCUMM_CONTROLLER_RENDER_X
     bne ScummV5_Controller_RenderActor__x_diff
@@ -1690,6 +1715,13 @@ ScummV5_Controller_RenderActor__compose_ready:
     .a16
     lda #$0001
     sta.l SAME_SCUMM_CURSOR_COMPOSING
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    lda.l SAME_SCUMM_CEL_VALID
+    and #$00FF
+    beq ScummV5_Controller_RenderActor__cel_first_chunk
+    jml ScummV5_Controller_RenderActor__compose_actor
+ScummV5_Controller_RenderActor__cel_first_chunk:
+    .endif
     ; Cursor is the topmost layer: restore it before touching actor backing.
     jsl Same_VideoSurface_RestoreCursorUnderlay_Far
     bcs ScummV5_Controller_RenderActor__streamed_restore_retry
@@ -1929,6 +1961,11 @@ ScummV5_Controller_RenderActor__compose_actor:
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     jsl ScummV5_ActorPose_Compose_Far
     bcc ScummV5_Controller_RenderActor__sparse_damage
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    ; A partial checked pose is deliberately not a PRESENT retry. That path
+    ; publishes a complete surface; this transaction has not completed yet.
+    jml ScummV5_Controller_RenderActor__done
+    .endif
     brl ScummV5_Controller_RenderActor__present_retry
 ScummV5_Controller_RenderActor__sparse_damage:
     rep #$20
@@ -2207,6 +2244,10 @@ ScummV5_Controller_RenderActor__witness_done:
     .a16
     lda.l SAME_SCUMM_ACTOR_POSE_GENERATION
     sta.l SAME_SCUMM_ACTOR_RENDER_PALETTE_GENERATION
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    lda.l SAME_SCUMM_CEL_TICKET_SCALE
+    sta.l SAME_SCUMM_CEL_RENDER_SCALE
+    .endif
     sep #$20
     .a8
     .endif
@@ -2469,6 +2510,26 @@ ScummV5_ActorPose_Ensure__provider_room_not_reading:
     jml ScummV5_ActorPose_Ensure__pending
 ScummV5_ActorPose_Ensure__provider_page_unpinned:
     .a8
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    lda.l SAME_SCUMM_CEL_VALID
+    beq ScummV5_ActorPose_Ensure__cel_new_pose
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ACTOR_TICKET_COSTUME_EPOCH
+    cmp.l SAME_SCUMM_ACTOR_POSE_GENERATION
+    bne ScummV5_ActorPose_Ensure__cel_superseded
+    lda.l SAME_SCUMM_ACTOR_TICKET_ROOM_EPOCH
+    cmp.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    bne ScummV5_ActorPose_Ensure__cel_superseded
+    jml ScummV5_ActorPose_Ensure__chunk_count_valid
+ScummV5_ActorPose_Ensure__cel_superseded:
+    .a16
+    jsl ScummV5_Cel_Abort_Far
+    sep #$20
+    .a8
+    jml ScummV5_ActorPose_Ensure__pending
+ScummV5_ActorPose_Ensure__cel_new_pose:
+    .endif
     jml ScummV5_ActorPose_Ensure__find
 
 ScummV5_ActorPose_Ensure__find:
@@ -2584,6 +2645,16 @@ ScummV5_ActorPose_Ensure__bounds_valid:
     inx
     lda.l ScummV5_ActorPoseDirectory,x
     sta.l SAME_SCUMM_ACTOR_CHUNK_COUNT
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    jsl ScummV5_Cel_Bind_Far
+    bcc ScummV5_ActorPose_Ensure__cel_bound
+    jml ScummV5_ActorPose_Ensure__error
+ScummV5_ActorPose_Ensure__cel_bound:
+    .a16
+    lda.l SAME_SCUMM_ACTOR_CHUNK_COUNT
+    beq ScummV5_ActorPose_Ensure__empty_pose
+    jml ScummV5_ActorPose_Ensure__chunk_count_valid
+    .endif
     cmp #$0001
     beq ScummV5_ActorPose_Ensure__chunk_count_valid
     cmp #$0000
@@ -2627,6 +2698,10 @@ ScummV5_ActorPose_Ensure__chunk_count_valid:
     jmp ScummV5_ActorPose_Ensure__error
 ScummV5_ActorPose_Ensure__chunk_directory_index_ok:
     lda.l SAME_SCUMM_ACTOR_CHUNK_FIRST
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    clc
+    adc.l SAME_SCUMM_CEL_CHUNK
+    .endif
     asl
     asl
     asl
@@ -2658,6 +2733,13 @@ ScummV5_ActorPose_Ensure__chunk_directory_index_ok:
     inx
     lda.l ScummV5_ActorPoseChunkDirectory,x
     sta.l SAME_SCUMM_ACTOR_SPAN_COUNT
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    inx
+    inx
+    lda.l ScummV5_ActorPoseChunkDirectory,x
+    sta.l SAME_SCUMM_CEL_CHUNK_OFFSET
+    jml ScummV5_ActorPose_Ensure__span_range_ok
+    .endif
     lda.l SAME_SCUMM_ACTOR_SPAN_FIRST
     and #$F000
     xba
@@ -2763,6 +2845,15 @@ ScummV5_ActorPose_Ensure__palette_valid:
     sta.l SAME_MSU1_REQUEST_LENGTH+2
     lda.l SAME_VIDEO_SURFACE_ROOM_GENERATION
     sta.l SAME_SCUMM_ACTOR_TICKET_ROOM_EPOCH
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    lda.l SAME_SCUMM_CEL_VALID
+    and #$00FF
+    beq ScummV5_ActorPose_Ensure__ticket_new_pose
+    lda.l SAME_SCUMM_ACTOR_POSE_GENERATION
+    bra ScummV5_ActorPose_Ensure__ticket_epoch
+ScummV5_ActorPose_Ensure__ticket_new_pose:
+    .a16
+    .endif
     lda.l SAME_SCUMM_ACTOR_POSE_GENERATION
     inc
     bne ScummV5_ActorPose_Ensure__ticket_epoch
@@ -2818,6 +2909,9 @@ ScummV5_ActorPose_Ensure__scratch_free:
 
 ScummV5_ActorPose_Ensure__lost_request:
     .a8
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    jsl ScummV5_Cel_Abort_Far
+    .endif
     ; A ticket mismatch does not authorize reuse while the provider may still
     ; be writing its destination. Drain the provider first; room requests have
     ; priority and will claim the shared staging only after this owner clears.
@@ -3093,6 +3187,9 @@ ScummV5_ActorPose_LoadSpan_Far:
 ; presentation state machine is extended. No code-cache page or ROM pixel
 ; fallback is used here.
 ScummV5_ActorPose_Compose_Far:
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    jml ScummV5_Cel_Compose_Far
+    .endif
     php
     cld
     rep #$30
@@ -3962,6 +4059,9 @@ ScummV5_ActorPose_ReleaseBuffer__done:
 ; reclaimable even while no drawable room is currently installed.
 ScummV5_ActorPose_Cancel_Far:
     php
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    jsl ScummV5_Cel_Abort_Far
+    .endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_ACTOR_POSE_STATE

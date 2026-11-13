@@ -622,13 +622,21 @@ Same_Tad_BlankSong:
 .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
 .include "engines/scumm_v5_resident_resolver.pasm"
 .endif
-.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
-.include "engines/scumm_v5_msu_programs.pasm"
-.endif
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
 .include "engines/scumm_v5_msu_live_room.pasm"
 .endif
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+; Live-room builds already select bank84 here. Keep the complete checked
+; cache service together in that far bank; bank9's controller/resolver closure
+; must not overflow when source-cel actor transactions are enabled.
+.include "engines/scumm_v5_msu_programs.pasm"
+.endif
 .include "engines/scumm_v5_camera_far.pasm"
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+.if SCUMM_V5_ACTOR_CEL_FORMAT
+.include "engines/scumm_v5_actor_cels.inc.pasm"
+.endif
+.endif
 .if SAME_BUILD_SCUMM_CONTROLLER
 ; Cold input allocation shares the existing far service bank, rather than
 ; expanding the bank-9 controller/resolver closure beyond a LoROM window.

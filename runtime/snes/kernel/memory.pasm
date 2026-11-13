@@ -336,6 +336,47 @@ SAME_SCUMM_INPUT_EDGE          = $7E22B0 ; u16 physical input sequence
 SAME_SCUMM_INPUT_ROOM_REQUEST  = $7E22B2 ; u8 accepted room-request epoch
 SAME_SCUMM_INPUT_END           = $7E22B4
 
+; Cel-preserving scale/composition state. Source pixels continue to use only
+; the existing checked 2-KiB pending scratch, one chunk at a time. Mode-3's
+; apparently reserved tail aliases active SC5LIVE and is NOT available here.
+SAME_SCUMM_CEL_STATE_BASE      = $7E22B4
+SAME_SCUMM_CEL_CHUNK           = $7E22B4
+SAME_SCUMM_CEL_TOTAL_BYTES     = $7E22B6
+SAME_SCUMM_CEL_VALID           = $7E22B8
+SAME_SCUMM_CEL_DIRECTION       = $7E22B9
+SAME_SCUMM_CEL_FIRST           = $7E22BA
+SAME_SCUMM_CEL_COUNT           = $7E22BC
+SAME_SCUMM_CEL_DESIRED_SCALE   = $7E22BE
+SAME_SCUMM_CEL_TICKET_SCALE    = $7E22C0
+SAME_SCUMM_CEL_RENDER_SCALE    = $7E22C2
+SAME_SCUMM_CEL_CURSOR          = $7E22C4
+SAME_SCUMM_CEL_REMAIN          = $7E22C6
+SAME_SCUMM_CEL_WIDTH           = $7E22C8
+SAME_SCUMM_CEL_HEIGHT          = $7E22CA
+SAME_SCUMM_CEL_RX              = $7E22CC
+SAME_SCUMM_CEL_RY              = $7E22CE
+SAME_SCUMM_CEL_MX              = $7E22D0
+SAME_SCUMM_CEL_MY              = $7E22D2
+SAME_SCUMM_CEL_CUM_X           = $7E22D4
+SAME_SCUMM_CEL_CUM_Y           = $7E22D6
+SAME_SCUMM_CEL_ORIGIN_X        = $7E22D8
+SAME_SCUMM_CEL_ORIGIN_Y        = $7E22DA
+SAME_SCUMM_CEL_PHASE_X         = $7E22DC
+SAME_SCUMM_CEL_PHASE_Y         = $7E22DE
+SAME_SCUMM_CEL_XSTEP           = $7E22E0
+SAME_SCUMM_CEL_X               = $7E22E2
+SAME_SCUMM_CEL_Y               = $7E22E4
+SAME_SCUMM_CEL_LOOP            = $7E22E6
+SAME_SCUMM_CEL_TEMP            = $7E22E8
+SAME_SCUMM_CEL_PIXEL_PHASE     = $7E22EA
+SAME_SCUMM_CEL_PIXEL           = $7E22EC
+SAME_SCUMM_CEL_PASS            = $7E22EE
+SAME_SCUMM_CEL_CHUNK_OFFSET    = $7E22F0
+SAME_SCUMM_CEL_ROW_PHASE       = $7E22F2
+SAME_SCUMM_CEL_SCALE_X         = $7E22F4
+SAME_SCUMM_CEL_SCALE_Y         = $7E22F6
+SAME_SCUMM_CEL_STATE_END       = $7E22F8
+
 ; Copyright-free SCUMM v5 conformance lane.  This is engine state, not a game
 ; profile and not donor state.  Sixteen signed 16-bit variables are sufficient
 ; for the ROM-resident semantic fixture.

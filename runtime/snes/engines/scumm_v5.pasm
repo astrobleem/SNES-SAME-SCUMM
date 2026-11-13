@@ -218,6 +218,22 @@ ScummV5_Input_Reset__loop:
     cpx #(SAME_SCUMM_INPUT_END-SAME_SCUMM_INPUT_BASE)
     bcc ScummV5_Input_Reset__loop
     .endif
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    ; WRAM powers up undefined; a random partial-transaction flag must never
+    ; freeze the actor snapshot or authorize reuse of an uncaptured underlay.
+    lda #$0000
+    ldx #$0000
+ScummV5_Cel_Reset__loop:
+    .a16
+    .i16
+    sta.l SAME_SCUMM_CEL_STATE_BASE,x
+    inx
+    inx
+    cpx #(SAME_SCUMM_CEL_STATE_END-SAME_SCUMM_CEL_STATE_BASE)
+    bcc ScummV5_Cel_Reset__loop
+    .endif
+    .endif
     sep #$20
     .a8
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE

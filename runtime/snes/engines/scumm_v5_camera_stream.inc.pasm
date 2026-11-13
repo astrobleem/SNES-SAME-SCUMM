@@ -735,6 +735,10 @@ ScummV5_Camera_ServiceForeground_Far:
     ; publication. A changed actor also draws the cursor in its PRESENT.
     sep #$20
     .a8
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    lda.l SAME_SCUMM_CEL_VALID
+    bne ScummV5_Camera_ServiceForeground__actor
+    .endif
     lda.l SAME_SCUMM_CURSOR_PENDING
     ora.l SAME_SCUMM_CURSOR_PENDING+1
     ora.l SAME_SCUMM_CURSOR_COMPOSING
