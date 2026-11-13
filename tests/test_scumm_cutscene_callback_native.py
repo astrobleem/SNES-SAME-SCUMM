@@ -16,7 +16,7 @@ class CutsceneCallbackNative(unittest.TestCase):
         return m
 
     def test_clear_entire_argument_frame_without_crossing_guards(self):
-        s=(ROOT/'runtime/snes/engines/scumm_v5_input_script.inc.pasm').read_text()
+        s=(ROOT/'runtime/snes/engines/scumm_v5_cutscene_callbacks.inc.pasm').read_text()
         code=s.split('ScummV5_Cutscene_ClearArgs_Far:',1)[1].split('ScummV5_Cutscene_StartCallback_Far:',1)[0]
         m=self.machine(code);base=m.symbols['SAME_SCUMM_C4_ARGS']
         m.ram[base-1:base+65]=b'\xa5'*66

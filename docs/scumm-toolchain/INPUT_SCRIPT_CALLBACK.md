@@ -150,3 +150,12 @@ error0, cutscene depth0, start arguments2/4660 and end arguments2/0. Native ROM
 `020edf8036dd826df92297b04be0208b035e2936e1df3b70e4bba8613c8c1f36`, identity
 `57b4844cd6a28172aa52d5b8dd8fcd371c81c12ae5c977e810d9a46aafbc1093`.
 These are synthetic native results, not authentic destination acceptance.
+
+Hosted assembly caught a separate include dependency: the cutscene bridge was
+inside the controller-only include, although room-service builds can omit the
+controller. It now has its own room-service include in the same far bank.
+The controller-disabled native build assembles and audits. The authentic ROM
+and package are byte-identical before/after this source-file move; the map is
+identical after excluding its generated timestamp. Existing native observations
+retain their original ROM/map/build identity, with explicit byte-equality
+linkage to the repaired build rather than relabeling old evidence.

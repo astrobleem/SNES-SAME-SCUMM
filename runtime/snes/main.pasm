@@ -634,6 +634,10 @@ Same_Tad_BlankSong:
 ; expanding the bank-9 controller/resolver closure beyond a LoROM window.
 .include "engines/scumm_v5_input_script.inc.pasm"
 .endif
+; Cutscene lifecycle callbacks are not a controller build dependency.
+.if SAME_BUILD_SCUMM_ROOM_SERVICE
+.include "engines/scumm_v5_cutscene_callbacks.inc.pasm"
+.endif
 .if SAME_VIDEO_BACKEND_LEGACY
 .include "services/video_k1_far.pasm"
 .endif
