@@ -29,6 +29,205 @@ SAME_VIDEO_CURSOR_WORK_PIXEL = SAME_VIDEO_CURSOR_UNDERLAY+$1A
 SAME_VIDEO_CURSOR_WORK_COLUMN = SAME_VIDEO_CURSOR_UNDERLAY+$1C
 SAME_VIDEO_CURSOR_WORK_ROWS = SAME_VIDEO_CURSOR_UNDERLAY+$1E
 
+; Camera-only callers have just exchanged a validated cursor journal. Preserve
+; the complete damage rectangle, but mark only tiles touched by source coverage.
+; This does not clear any existing candidate: actors/text/reused columns retain
+; independent invalidation. Nonaligned cameras keep the conservative path.
+Same_VideoSurface_FlushCursorCameraDamage_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    jsl Same_Mode3_Retained_DamageStaysVisible_Far
+    bcc Same_VideoSurface_FlushCursorCameraDamage__defer
+    jsl Same_Mode3_Retained_FlushDamage_Far
+    bra Same_VideoSurface_FlushCursorCameraDamage__done
+Same_VideoSurface_FlushCursorCameraDamage__defer:
+    .a16
+    lda.l MODE3_R_NEXT
+    pha
+    lda.l MODE3_R_CURRENT
+    sta.l MODE3_R_NEXT
+    jsl Same_VideoSurface_MarkCursorCoverage_Far
+    pla
+    sta.l MODE3_R_NEXT
+Same_VideoSurface_FlushCursorCameraDamage__done:
+    .a16
+    ply
+    plx
+    pla
+    plp
+    rtl
+
+Same_VideoSurface_MarkCursorCoverage_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    cld
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    beq Same_VideoSurface_MarkCursorCoverage__empty
+    cmp #$0011
+    bcs Same_VideoSurface_MarkCursorCoverage__dense
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    beq Same_VideoSurface_MarkCursorCoverage__empty
+    cmp #$0011
+    bcs Same_VideoSurface_MarkCursorCoverage__dense
+    lda.l MODE3_R_NEXT
+    and #$0007
+    beq Same_VideoSurface_MarkCursorCoverage__aligned
+Same_VideoSurface_MarkCursorCoverage__dense:
+    .a16
+    jsl Same_Mode3_Retained_MarkDamage_Far
+Same_VideoSurface_MarkCursorCoverage__empty:
+    .a16
+    ply
+    plx
+    pla
+    plp
+    rtl
+Same_VideoSurface_MarkCursorCoverage__aligned:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X
+    pha
+    and #$FFF8
+    sta.l SAME_VIDEO_CURSOR_WORK_DEST
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X
+    and #$0007
+    asl
+    sta.l SAME_VIDEO_CURSOR_WORK_PIXEL
+    asl
+    clc
+    adc.l SAME_VIDEO_CURSOR_WORK_PIXEL
+    sta.l SAME_VIDEO_CURSOR_WORK_PIXEL
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    pha
+    sta.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    and #$FFF8
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    pha
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    pha
+    sta.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    lda #$0008
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    lda #$0000
+    sta.l SAME_VIDEO_CURSOR_WORK_ROWS
+    sta.l SAME_VIDEO_CURSOR_WORK_AREA
+Same_VideoSurface_MarkCursorCoverage__row:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_ROWS
+    asl
+    cmp #$0010
+    bcc Same_VideoSurface_MarkCursorCoverage__low
+    sec
+    sbc #$0010
+    tax
+    lda.l SAME_VIDEO_CURSOR_COVERAGE_HI,x
+    bra Same_VideoSurface_MarkCursorCoverage__mask
+Same_VideoSurface_MarkCursorCoverage__low:
+    .a16
+    tax
+    lda.l SAME_VIDEO_CURSOR_COVERAGE_LO,x
+Same_VideoSurface_MarkCursorCoverage__mask:
+    .a16
+    ora.l SAME_VIDEO_CURSOR_WORK_AREA
+    sta.l SAME_VIDEO_CURSOR_WORK_AREA
+    lda.l SAME_VIDEO_CURSOR_WORK_ROWS
+    inc
+    sta.l SAME_VIDEO_CURSOR_WORK_ROWS
+    cmp.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    beq Same_VideoSurface_MarkCursorCoverage__group
+    clc
+    adc.l SAME_VIDEO_CURSOR_WORK_SURFACE
+    and #$0007
+    bne Same_VideoSurface_MarkCursorCoverage__row
+Same_VideoSurface_MarkCursorCoverage__group:
+    .a16
+    ; Dense-compatible captures may leave coverage bits beyond clipped width.
+    ; The already validated journal bounds those bits before tile admission.
+    lda.l SAME_VIDEO_CURSOR_UNDERLAY+$08
+    asl
+    tax
+    lda.l Same_VideoSurface_CursorWidthMasks,x
+    and.l SAME_VIDEO_CURSOR_WORK_AREA
+    sta.l SAME_VIDEO_CURSOR_WORK_AREA
+    lda.l SAME_VIDEO_CURSOR_WORK_DEST
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
+    lda.l SAME_VIDEO_CURSOR_WORK_PIXEL
+    sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    lda #$0003
+    sta.l SAME_VIDEO_CURSOR_WORK_WIDTH
+Same_VideoSurface_MarkCursorCoverage__tile:
+    .a16
+    lda.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    tax
+    lda.l Same_VideoSurface_CursorTileMasks,x
+    and.l SAME_VIDEO_CURSOR_WORK_AREA
+    beq Same_VideoSurface_MarkCursorCoverage__next_tile
+    jsl Same_Mode3_Retained_MarkDamage_Far
+    rep #$30
+    .a16
+    .i16
+Same_VideoSurface_MarkCursorCoverage__next_tile:
+    .a16
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_X
+    clc
+    adc #$0008
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
+    lda.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    inc
+    inc
+    sta.l SAME_VIDEO_CURSOR_WORK_COLUMN
+    lda.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    dec
+    sta.l SAME_VIDEO_CURSOR_WORK_WIDTH
+    bne Same_VideoSurface_MarkCursorCoverage__tile
+    lda.l SAME_VIDEO_CURSOR_WORK_ROWS
+    cmp.l SAME_VIDEO_CURSOR_WORK_HEIGHT
+    beq Same_VideoSurface_MarkCursorCoverage__restore
+    lda.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    clc
+    adc #$0008
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    lda #$0000
+    sta.l SAME_VIDEO_CURSOR_WORK_AREA
+    brl Same_VideoSurface_MarkCursorCoverage__row
+Same_VideoSurface_MarkCursorCoverage__restore:
+    .a16
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_HEIGHT
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_WIDTH
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_Y
+    pla
+    sta.l SAME_VIDEO_SURFACE_DAMAGE_X
+    ply
+    plx
+    pla
+    plp
+    rtl
+
+; Left-aligned 16-bit source coverage split across at most three screen tiles.
+; Rows are grouped separately; clipping is inherited from validated capture.
+Same_VideoSurface_CursorTileMasks:
+    .word $FF00,$00FF,$0000, $FE00,$01FE,$0001
+    .word $FC00,$03FC,$0003, $F800,$07F8,$0007
+    .word $F000,$0FF0,$000F, $E000,$1FE0,$001F
+    .word $C000,$3FC0,$003F, $8000,$7F80,$007F
+Same_VideoSurface_CursorWidthMasks:
+    .word $0000,$8000,$C000,$E000,$F000,$F800,$FC00,$FE00
+    .word $FF00,$FF80,$FFC0,$FFE0,$FFF0,$FFF8,$FFFC,$FFFE,$FFFF
+
 Same_VideoSurface_CaptureCursorUnderlay_Far:
     php
     rep #$30

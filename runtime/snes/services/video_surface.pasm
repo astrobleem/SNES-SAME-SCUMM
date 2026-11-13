@@ -2014,7 +2014,7 @@ Same_VideoSurface_ComposeRetainedScroll__capacity:
     jmp Same_VideoSurface_ComposeRetainedScroll__failed
 Same_VideoSurface_ComposeRetainedScroll__cursor_saved:
     .a16
-    jsl Same_Mode3_Retained_FlushDamage_Far
+    jsl Same_VideoSurface_FlushCursorCameraDamage_Far
     ; Cursor restoration has been preserved/marked. Only actor restoration
     ; may contribute to the second preservation pass; do not encode the
     ; same cursor rectangle twice when the actor is retained unchanged.
@@ -2079,7 +2079,7 @@ Same_VideoSurface_ComposeRetainedScroll__actor_retained:
     jmp Same_VideoSurface_ComposeRetainedScroll__failed
 Same_VideoSurface_ComposeRetainedScroll__cursor_restored:
     .a16
-    jsl Same_Mode3_Retained_MarkDamage_Far
+    jsl Same_VideoSurface_MarkCursorCoverage_Far
     ; Existing publication tail, without manufacturing full-screen damage.
     jsr Same_VideoSurface_PushDirtyPresent__dirty_queued
     bcs Same_VideoSurface_ComposeRetainedScroll__failed

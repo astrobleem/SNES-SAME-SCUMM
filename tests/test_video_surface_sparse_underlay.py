@@ -168,6 +168,17 @@ class ServiceMachine:
             elif op == 'asl':
                 result = (a & mask) << 1
                 p = (p & ~1) | int(result > mask)
+            elif op == 'asl.w':
+                shifted = value << 1
+                self.put(address, shifted & mask, width//8)
+                self.writes.append((address, width//8))
+                p = (p & ~0x83) | int(shifted > mask) | (2 if not shifted & mask else 0) | (0x80 if shifted & (1 << (width-1)) else 0)
+            elif op == 'rol':
+                result = ((a & mask) << 1) | (p & 1)
+                p = (p & ~1) | int(result > mask)
+            elif op == 'lsr':
+                p = (p & ~1) | (a & 1)
+                result = (a & mask) >> 1
             elif op == 'cpx':
                 v = (x-value)&65535
                 p = (p & ~0x83) | int(x>=value) | (2 if v==0 else 0) | (0x80 if v&32768 else 0)
@@ -180,14 +191,17 @@ class ServiceMachine:
                 returns.append(pc); pc = self.labels[arg]
             elif op == 'rts': pc = returns.pop()
             elif op == 'jsl':
-                if arg == 'Same_VideoSurface_CanWrite_Far':
+                if arg in getattr(self, 'external_services', {}):
+                    a,x,y,p,db = self.external_services[arg](a,x,y,p,db)
+                elif arg == 'Same_VideoSurface_CanWrite_Far':
                     a = (a & 0xFF00) | int(self.busy)
                     p = (p & ~1) | int(self.busy)
                 else:
                     returns.append(pc); pc = self.labels[arg]
-            elif op in ('jmp','bra','bcc','bcs','bne','beq','bpl'):
+            elif op in ('jmp','bra','bcc','bcs','bne','beq','bpl','bmi'):
                 take = {'bcc': not p & 1, 'bcs': bool(p & 1),
-                        'bpl': not p & 0x80, 'bne': not p & 2, 'beq': bool(p & 2)}.get(op, True)
+                        'bpl': not p & 0x80, 'bmi': bool(p & 0x80),
+                        'bne': not p & 2, 'beq': bool(p & 2)}.get(op, True)
                 if take: pc = self.labels[arg]
             elif op == 'rtl':
                 if returns:

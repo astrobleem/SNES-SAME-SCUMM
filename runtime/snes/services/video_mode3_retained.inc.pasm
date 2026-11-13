@@ -1545,6 +1545,18 @@ Same_Mode3_Retained_ReadColumn__row:
     .a8
     rep #$20
     .a16
+    ; A tile's eight planar rows are consecutive two-byte pairs. Resolve
+    ; the physical shadow once per tile, including the split guard bank.
+    lda.l MODE3_R_Y
+    and #$0007
+    beq Same_Mode3_Retained_ReadColumn__tile_row
+    lda.l SAME_MODE3_WORK_SOURCE
+    clc
+    adc #$0002
+    sta.l SAME_MODE3_WORK_SOURCE
+    brl Same_Mode3_Retained_ReadColumn__load_pairs
+Same_Mode3_Retained_ReadColumn__tile_row:
+    .a16
     lda.l MODE3_R_Y
     lsr
     lsr
@@ -1571,66 +1583,45 @@ Same_Mode3_Retained_ReadColumn__tile:
     .a16
     sta.l SAME_MODE3_WORK_TILE
     jsr Same_Mode3_Retained_ShadowAddress
-    lda.l MODE3_R_Y
-    and #$0007
-    asl
-    clc
-    adc.l SAME_MODE3_WORK_SOURCE
+Same_Mode3_Retained_ReadColumn__load_pairs:
+    .a16
+    lda.l SAME_MODE3_WORK_SOURCE
     tax
-    sep #$20
-    .a8
     lda.l SAME_MODE3_WORK_DESC_TYPE
-    cmp #$40
+    and #$00FF
+    cmp #$0040
     beq Same_Mode3_Retained_ReadColumn__bank40
     lda.l $410000,x
     sta.l SAME_MODE3_WORK_X0+0
-    lda.l $410001,x
-    sta.l SAME_MODE3_WORK_X0+1
     lda.l $410010,x
     sta.l SAME_MODE3_WORK_X0+2
-    lda.l $410011,x
-    sta.l SAME_MODE3_WORK_X0+3
     lda.l $410020,x
     sta.l SAME_MODE3_WORK_X0+4
-    lda.l $410021,x
-    sta.l SAME_MODE3_WORK_X0+5
     lda.l $410030,x
     sta.l SAME_MODE3_WORK_X0+6
-    lda.l $410031,x
-    sta.l SAME_MODE3_WORK_X0+7
     bra Same_Mode3_Retained_ReadColumn__planes
 Same_Mode3_Retained_ReadColumn__bank40:
-    .a8
+    .a16
     lda.l $400000,x
     sta.l SAME_MODE3_WORK_X0+0
-    lda.l $400001,x
-    sta.l SAME_MODE3_WORK_X0+1
     lda.l $400010,x
     sta.l SAME_MODE3_WORK_X0+2
-    lda.l $400011,x
-    sta.l SAME_MODE3_WORK_X0+3
     lda.l $400020,x
     sta.l SAME_MODE3_WORK_X0+4
-    lda.l $400021,x
-    sta.l SAME_MODE3_WORK_X0+5
     lda.l $400030,x
     sta.l SAME_MODE3_WORK_X0+6
-    lda.l $400031,x
-    sta.l SAME_MODE3_WORK_X0+7
 Same_Mode3_Retained_ReadColumn__planes:
-    .a8
-    rep #$20
     .a16
     lda.l MODE3_R_Y
     asl
     asl
     asl
     tax
-    ldy #$0008
-Same_Mode3_Retained_ReadColumn__pixel:
-    .a16
     sep #$20
     .a8
+    ; Fixed eight-pixel transpose. Word plane loads above preserve plane
+    ; order; no per-pixel width switch, loop counter, or branch is needed.
+    ; Pixel 0, left to right.
     lda #$00
     asl.w Same_Mode3_RowPlanes+7
     rol
@@ -1650,8 +1641,146 @@ Same_Mode3_Retained_ReadColumn__pixel:
     rol
     sta.l SAME_BWRAM_LIVE_ROOM_PENDING,x
     inx
-    dey
-    bne Same_Mode3_Retained_ReadColumn__pixel
+    ; Pixel 1, left to right.
+    lda #$00
+    asl.w Same_Mode3_RowPlanes+7
+    rol
+    asl.w Same_Mode3_RowPlanes+6
+    rol
+    asl.w Same_Mode3_RowPlanes+5
+    rol
+    asl.w Same_Mode3_RowPlanes+4
+    rol
+    asl.w Same_Mode3_RowPlanes+3
+    rol
+    asl.w Same_Mode3_RowPlanes+2
+    rol
+    asl.w Same_Mode3_RowPlanes+1
+    rol
+    asl.w Same_Mode3_RowPlanes+0
+    rol
+    sta.l SAME_BWRAM_LIVE_ROOM_PENDING,x
+    inx
+    ; Pixel 2, left to right.
+    lda #$00
+    asl.w Same_Mode3_RowPlanes+7
+    rol
+    asl.w Same_Mode3_RowPlanes+6
+    rol
+    asl.w Same_Mode3_RowPlanes+5
+    rol
+    asl.w Same_Mode3_RowPlanes+4
+    rol
+    asl.w Same_Mode3_RowPlanes+3
+    rol
+    asl.w Same_Mode3_RowPlanes+2
+    rol
+    asl.w Same_Mode3_RowPlanes+1
+    rol
+    asl.w Same_Mode3_RowPlanes+0
+    rol
+    sta.l SAME_BWRAM_LIVE_ROOM_PENDING,x
+    inx
+    ; Pixel 3, left to right.
+    lda #$00
+    asl.w Same_Mode3_RowPlanes+7
+    rol
+    asl.w Same_Mode3_RowPlanes+6
+    rol
+    asl.w Same_Mode3_RowPlanes+5
+    rol
+    asl.w Same_Mode3_RowPlanes+4
+    rol
+    asl.w Same_Mode3_RowPlanes+3
+    rol
+    asl.w Same_Mode3_RowPlanes+2
+    rol
+    asl.w Same_Mode3_RowPlanes+1
+    rol
+    asl.w Same_Mode3_RowPlanes+0
+    rol
+    sta.l SAME_BWRAM_LIVE_ROOM_PENDING,x
+    inx
+    ; Pixel 4, left to right.
+    lda #$00
+    asl.w Same_Mode3_RowPlanes+7
+    rol
+    asl.w Same_Mode3_RowPlanes+6
+    rol
+    asl.w Same_Mode3_RowPlanes+5
+    rol
+    asl.w Same_Mode3_RowPlanes+4
+    rol
+    asl.w Same_Mode3_RowPlanes+3
+    rol
+    asl.w Same_Mode3_RowPlanes+2
+    rol
+    asl.w Same_Mode3_RowPlanes+1
+    rol
+    asl.w Same_Mode3_RowPlanes+0
+    rol
+    sta.l SAME_BWRAM_LIVE_ROOM_PENDING,x
+    inx
+    ; Pixel 5, left to right.
+    lda #$00
+    asl.w Same_Mode3_RowPlanes+7
+    rol
+    asl.w Same_Mode3_RowPlanes+6
+    rol
+    asl.w Same_Mode3_RowPlanes+5
+    rol
+    asl.w Same_Mode3_RowPlanes+4
+    rol
+    asl.w Same_Mode3_RowPlanes+3
+    rol
+    asl.w Same_Mode3_RowPlanes+2
+    rol
+    asl.w Same_Mode3_RowPlanes+1
+    rol
+    asl.w Same_Mode3_RowPlanes+0
+    rol
+    sta.l SAME_BWRAM_LIVE_ROOM_PENDING,x
+    inx
+    ; Pixel 6, left to right.
+    lda #$00
+    asl.w Same_Mode3_RowPlanes+7
+    rol
+    asl.w Same_Mode3_RowPlanes+6
+    rol
+    asl.w Same_Mode3_RowPlanes+5
+    rol
+    asl.w Same_Mode3_RowPlanes+4
+    rol
+    asl.w Same_Mode3_RowPlanes+3
+    rol
+    asl.w Same_Mode3_RowPlanes+2
+    rol
+    asl.w Same_Mode3_RowPlanes+1
+    rol
+    asl.w Same_Mode3_RowPlanes+0
+    rol
+    sta.l SAME_BWRAM_LIVE_ROOM_PENDING,x
+    inx
+    ; Pixel 7, left to right.
+    lda #$00
+    asl.w Same_Mode3_RowPlanes+7
+    rol
+    asl.w Same_Mode3_RowPlanes+6
+    rol
+    asl.w Same_Mode3_RowPlanes+5
+    rol
+    asl.w Same_Mode3_RowPlanes+4
+    rol
+    asl.w Same_Mode3_RowPlanes+3
+    rol
+    asl.w Same_Mode3_RowPlanes+2
+    rol
+    asl.w Same_Mode3_RowPlanes+1
+    rol
+    asl.w Same_Mode3_RowPlanes+0
+    rol
+    sta.l SAME_BWRAM_LIVE_ROOM_PENDING,x
+    inx
     rep #$20
     .a16
     lda.l MODE3_R_Y
@@ -1807,6 +1936,14 @@ Same_Mode3_Retained_DamageStaysVisible__yes:
 Same_Mode3_Retained_DamageStaysVisible__no:
     sec
     rts
+
+; Surface facade may defer sparse coverage only under the same lifetime proof
+; used by the dense preservation path. A16/I16, C clear means still visible.
+Same_Mode3_Retained_DamageStaysVisible_Far:
+    .a16
+    .i16
+    jsr Same_Mode3_Retained_DamageStaysVisible
+    rtl
 
 Same_Mode3_Retained_FlushDamage_Far:
     php
