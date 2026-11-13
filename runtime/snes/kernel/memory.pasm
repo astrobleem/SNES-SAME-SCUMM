@@ -82,8 +82,9 @@ SAME_MSU1_BYTE_SCRATCH         = $7E2F21 ; u8 data byte
 SAME_MSU1_TIMEOUT              = $7E2F22 ; u8 bounded status poll budget
 SAME_MSU1_PREFIX_INDEX         = $7E2F23 ; u16 trusted metadata cursor
 SAME_MSU1_END_OFFSET           = $7E2F25 ; u32 overflow-checked exclusive end
-SAME_MSU1_CRC_LSB              = $7E2F29 ; u8 CRC polynomial scratch
-SAME_MSU1_CRC_BITS             = $7E2F2A ; u8 CRC bit count
+; The table CRC no longer needs the former bit-loop scratch bytes. Reuse
+; those provider-owned bytes; do not enlarge or overlap the cache metadata.
+SAME_MSU1_LAST_SERVICE_FRAME   = $7E2F29 ; u16 NMI epoch of last bounded quantum
 SAME_MSU1_SEEK_COUNT           = $7E2F2B ; u16 diagnostic seeks
 SAME_MSU1_BYTES_READ           = $7E2F2D ; u32 diagnostic transfer count
 SAME_MSU1_READ_COUNT           = $7E2F31 ; u16 completed/failed request count
@@ -160,6 +161,35 @@ SAME_SCUMM_MSU_CACHE_WAITER_SLOT1       = $7E2ED3
 SAME_SCUMM_MSU_CACHE_WAITER_SELECTOR2   = $7E2ED4
 SAME_SCUMM_MSU_CACHE_WAITER_SLOT2       = $7E2ED5
 SAME_SCUMM_MSU_CACHE_WAITER_END         = $7E2ED6
+; Logical activation view of a shared physical checked allocation. This
+; previously unclaimed gap is separately audited; cache payload remains 6KiB.
+SAME_SCUMM_MSU_LOGICAL_BASE             = $7E2ED6
+SAME_SCUMM_MSU_ACTIVE_OFFSET            = $7E2ED6 ; u16 physical member offset
+SAME_SCUMM_MSU_ACTIVE_START             = $7E2ED8 ; u16 logical page start
+SAME_SCUMM_MSU_ACTIVE_LENGTH            = $7E2EDA ; u16 logical member/page length
+SAME_SCUMM_MSU_ACTIVE_PROGRAM           = $7E2EDC ; u16 independent canonical identity
+SAME_SCUMM_MSU_CACHE_HITS               = $7E2EDE ; u16 READY admissions
+SAME_SCUMM_MSU_LOOKUP_PROGRAM           = $7E2EE0 ; u16 current logical lookup
+SAME_SCUMM_MSU_REQUEST_PROGRAM          = $7E2EE2 ; u16 immutable read owner
+SAME_SCUMM_MSU_REQUEST_PC               = $7E2EE4 ; u16 immutable read source PC
+SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH       = $7E2EE6 ; u16 complete body, not page/group extent
+SAME_SCUMM_MSU_LOGICAL_END              = $7E2EE8
+; Camera lookahead ticket, in the audited gap before the provider at $2F00.
+; Pixel bytes remain in the existing shared 2 KiB pending prefix. No extra
+; executable cache, pixel buffer, or VRAM allocation.
+SAME_SCUMM_CAMERA_AHEAD_BASE = $7E2EE8
+SAME_SCUMM_CAMERA_AHEAD_STATE = $7E2EE8 ; 0 empty, 1 reading, 2 CRC accepted
+SAME_SCUMM_CAMERA_AHEAD_ROOM = $7E2EE9
+SAME_SCUMM_CAMERA_AHEAD_EPOCH = $7E2EEA ; room epoch
+SAME_SCUMM_CAMERA_AHEAD_COLUMN = $7E2EEC
+SAME_SCUMM_CAMERA_AHEAD_LENGTH = $7E2EEE
+SAME_SCUMM_CAMERA_AHEAD_OFFSET = $7E2EF0 ; u32 immutable provider ticket
+SAME_SCUMM_CAMERA_AHEAD_CRC = $7E2EF4 ; u32
+SAME_SCUMM_CAMERA_AHEAD_GENERATION = $7E2EF8 ; full u32 retained publication
+SAME_SCUMM_CAMERA_AHEAD_ORIGIN = $7E2EFC ; origin after that publication
+SAME_SCUMM_CAMERA_AHEAD_HITS = $7E2EFE ; u16 diagnostic accepted prefetches
+SAME_SCUMM_CAMERA_AHEAD_END = $7E2F00
+
 ; Cache metadata stays in the provider's audited WRAM gap.
 SAME_SCUMM_MSU_CACHE_STATE0              = $7E2F48
 SAME_SCUMM_MSU_CACHE_STATE1              = $7E2F49
@@ -573,9 +603,14 @@ SAME_SCUMM_C14_A_HIT_BOTTOM         = $1D ; s16
 SAME_SCUMM_C14_A_PRESENT            = $1F
 SAME_SCUMM_C14_A_PALETTE            = $20
 
-SAME_SCUMM_C29_X                    = $7F5F0A ; s16 query point
-SAME_SCUMM_C29_Y                    = $7F5F0C ; s16 query point
-SAME_SCUMM_C29_ACTOR                = $7F5F0E ; u8 scan/result actor
+; Actor hit-test scratch fits the alignment gap after 32 name-size bytes.
+; It must never alias persistent C15 camera intent while queries execute.
+SAME_SCUMM_C14_NAME_SIZES_END        = $7F3EE0
+SAME_SCUMM_C29_SCRATCH_BASE          = $7F3EE0
+SAME_SCUMM_C29_X                     = $7F3EE0 ; s16 query point
+SAME_SCUMM_C29_Y                     = $7F3EE2 ; s16 query point
+SAME_SCUMM_C29_ACTOR                 = $7F3EE4 ; u8 scan/result actor
+SAME_SCUMM_C29_SCRATCH_END           = $7F3EE5
 
 ; C15 camera-follow intent remains separate from actor configuration. Future
 ; movement/render slices may consume the selected actor without coupling the
@@ -1097,6 +1132,49 @@ SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_W  = $7E5E64 ; u16
 SAME_SCUMM_CONTROLLER_WITNESS_DAMAGE_H  = $7E5E66 ; u16
 SAME_SCUMM_CONTROLLER_WITNESS_PRESENT   = $7E5E68 ; u16 generation
 SAME_SCUMM_CONTROLLER_WITNESS_VALID     = $7E5E6A ; u8
+
+; Camera transaction owns 40 bytes of the former resolver/name-cache padding.
+; Resolver ends at $7E8FC0; encoded names start at $7E9000. This allocation
+; is independent of controller diagnostics and their lifecycle trace ring.
+SAME_SCUMM_VIEWPORT_STATE_BASE = $7E8FC0
+SAME_SCUMM_VIEWPORT_STATE_END = $7E8FE8
+SAME_SCUMM_VIEWPORT_STATE = $7E8FC0
+; One foreground service turn between committed camera strips.
+SAME_SCUMM_VIEWPORT_ACTOR_SERVED = $7E8FC1
+SAME_SCUMM_VIEWPORT_STRIP = $7E8FC2
+SAME_SCUMM_VIEWPORT_FIRST = $7E8FC4
+SAME_SCUMM_VIEWPORT_LAST = $7E8FC6
+SAME_SCUMM_VIEWPORT_SOURCE_X = $7E8FC8
+SAME_SCUMM_VIEWPORT_SOURCE_Y = $7E8FCA
+SAME_SCUMM_VIEWPORT_DEST_X = $7E8FCC
+SAME_SCUMM_VIEWPORT_DEST_Y = $7E8FCE
+SAME_SCUMM_VIEWPORT_WIDTH = $7E8FD0
+SAME_SCUMM_VIEWPORT_HEIGHT = $7E8FD2
+SAME_SCUMM_VIEWPORT_ROOM_WIDTH = $7E8FD4
+SAME_SCUMM_VIEWPORT_ROOM_HEIGHT = $7E8FD6
+SAME_SCUMM_VIEWPORT_PITCH = $7E8FD8
+SAME_SCUMM_VIEWPORT_DIRECTORY = $7E8FDA
+SAME_SCUMM_VIEWPORT_CRC_BASE = $7E8FDC
+SAME_SCUMM_VIEWPORT_STRIP_BYTES = $7E8FDE
+SAME_SCUMM_VIEWPORT_OFFSET = $7E8FE0
+SAME_SCUMM_VIEWPORT_TEMP = $7E8FE4
+SAME_SCUMM_VIEWPORT_ROOM = $7E8FE6
+SAME_SCUMM_VIEWPORT_MODE = $7E8FE7
+
+ ; Controller adaptation occupies the remaining 24 padding bytes before names.
+SAME_SCUMM_PLAY_UI_BASE = $7E8FE8
+SAME_SCUMM_PLAY_UI_END = $7E9000
+SAME_SCUMM_PLAY_UI_MOTION = $7E8FE8 ; u16 this controller turn's directional mask
+SAME_SCUMM_PLAY_UI_HELD = $7E8FEA ; u16 previous held directional mask
+SAME_SCUMM_PLAY_UI_FRAME = $7E8FEC ; u16 logical frame of last cursor step
+SAME_SCUMM_PLAY_UI_MODE = $7E8FEE ; u8 0 scene,1 verbs,2 inventory
+SAME_SCUMM_PLAY_UI_SELECTION = $7E8FF0 ; u16 current menu identity
+SAME_SCUMM_PLAY_UI_STEP = $7E8FF2 ; u16 bounded cursor displacement for this turn
+SAME_SCUMM_PLAY_UI_OFFSET = $7E8FF4 ; u16 bounded presentation cursor
+SAME_SCUMM_PLAY_UI_COUNT = $7E8FF6 ; u16 bounded scan count
+SAME_SCUMM_PLAY_UI_SAVED_MODE = $7E8FF8 ; u8 scene controller mode
+SAME_SCUMM_PLAY_UI_TEMP = $7E8FFA ; u16 transient menu scratch
+
 ; Generic checked actor-pose request/scratch state occupies the audited final
 ; 128-byte Mode-3 work allocation. Pixel bytes use the ROOM-PENDING buffer,
 ; never a ProgramUnit cache page.
@@ -1318,8 +1396,8 @@ SAME_SCUMM_OBJECT_OWNERS                  = $7E8000 ; 2048 u8 mutable owner tabl
 SAME_SCUMM_OBJECT_NAME_LENGTH             = $7E8800 ; 1024 u8 bounded lengths
 .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
 ; Explicit ownership boundary: the always-live name-length cache ends at
-; $7E8C00; resolver state owns $7E8C00-$7E8FBF; $7E8FC0-$7E8FFF is reserved
-; padding; encoded names begin at $7E9000. Controller/input, C4, C19, room
+; $7E8C00; resolver state owns $7E8C00-$7E8FBF; $7E8FC0-$7E8FE7 owns camera transaction state; the remaining
+; $7E8FE8-$7E8FFF is padding; encoded names begin at $7E9000. Controller/input, C4, C19, room
 ; lifecycle, and save-validation ranges are independently declared and checked
 ; by tools/audit_scumm_residency_wram.py.
 SAME_SCUMM_RESIDENT_WRAM_BASE              = $7E8C00
@@ -1984,12 +2062,20 @@ SAME_SCUMM_MATRIX_TRACE_STRIDE            = $0008
 SAME_SCUMM_MATRIX_TRACE_CAPACITY          = $0004
 SAME_SCUMM_MATRIX_STATE_END               = $7FFB65
 SAME_SCUMM_MATRIX_STATE_SIZE              = $0125
-; SCUMM v5 createBoxMatrix uses a 64-box routing domain. Keep its two 64x64
-; byte tables in the audited gap after object-name storage and before C10.
+; SCUMM v5 createBoxMatrix uses an undirected 64-box portal graph. Distances
+; retain only the 2016 off-diagonal pairs; diagonal zero is implicit. The
+; directed next-hop table remains 64x64. Neither may alias executable pages.
 ; The C10 state tail byte at $34FA is outside all named fields/parameters and
 ; holds only the active-room validity flag; room commit/reset owns its lifetime.
-SAME_SCUMM_MATRIX_DISTANCE                 = $7F1000 ; 64 x 64 u8 distances
+SAME_SCUMM_MATRIX_DISTANCE                 = $7F1800 ; 64*63/2 symmetric u8 distances
+SAME_SCUMM_MATRIX_DISTANCE_END             = $7F1FE0
+SAME_SCUMM_MATRIX_DISTANCE_SCRATCH         = $7F1FE0 ; synchronous indexing only
+SAME_SCUMM_MATRIX_DISTANCE_ROW             = $7F1FE0 ; u16 smaller vertex
+SAME_SCUMM_MATRIX_DISTANCE_COLUMN          = $7F1FE2 ; u16 larger vertex
+SAME_SCUMM_MATRIX_DISTANCE_VALUE           = $7F1FE4 ; u8 store value
+SAME_SCUMM_MATRIX_DISTANCE_SCRATCH_END     = $7F1FE5
 SAME_SCUMM_MATRIX_DYNAMIC_ROUTES           = $7F2000 ; 64 x 64 u8 next hops
+SAME_SCUMM_MATRIX_DYNAMIC_ROUTES_END       = $7F3000
 SAME_SCUMM_MATRIX_DYNAMIC_VALID            = $7F34FA ; C10 free tail, active-room validity
 SAME_SCUMM_MATRIX_BUILD_I                   = SAME_SCUMM_C10_PARAM0 ; u16 scratch
 SAME_SCUMM_MATRIX_BUILD_J                   = SAME_SCUMM_C10_PARAM1 ; u16 scratch
@@ -2067,3 +2153,11 @@ SAME_SA1_MAILBOX_PENDING     = $01
 SAME_SA1_MAILBOX_RUNNING     = $02
 SAME_SA1_MAILBOX_COMPLETE    = $03
 SAME_SA1_MAILBOX_FAULT       = $FF
+
+; Cursor coverage is independent of INDEX8 color (zero may be opaque).
+; Two eight-row bitsets occupy audited gaps after VM control and actor-query
+; scratch; neither aliases incoming room staging or the pixel journals.
+SAME_VIDEO_CURSOR_COVERAGE_LO = $7E2370
+SAME_VIDEO_CURSOR_COVERAGE_LO_END = $7E2380
+SAME_VIDEO_CURSOR_COVERAGE_HI = $7F3EF0
+SAME_VIDEO_CURSOR_COVERAGE_HI_END = $7F3F00

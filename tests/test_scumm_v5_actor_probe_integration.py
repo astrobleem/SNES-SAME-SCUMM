@@ -243,7 +243,7 @@ class ActorProbeIntegrationTests(unittest.TestCase):
         sparse = surface.split("Same_VideoSurface_RestoreActorUnderlay_Far:", 1)[1].split(
             "Same_VideoSurface_BeginActorUnderlay_Far:", 1)[0]
         self.assertLess(sparse.index("jsr Same_VideoSurface_Underlay_Validate"),
-                        sparse.index("sta.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x"))
+                        sparse.index("jsl Same_VideoSurface_WriteIndexedPixel_Far"))
         self.assertIn("jsr Same_VideoSurface_Underlay_ClearMagic", sparse.split(
             "Same_VideoSurface_Underlay_Restore__record:", 1)[1].split(
             "Same_VideoSurface_Underlay_Restore__run:", 1)[0])

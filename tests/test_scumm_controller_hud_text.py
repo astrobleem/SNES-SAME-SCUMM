@@ -15,6 +15,8 @@ class HudMachine:
         self.symbols['SAME_OVERLAY_PRODUCER_TEMP'] = 0x406096
         source = (ROOT/'runtime/snes/engines/scumm_v5_controller_far.pasm').read_text()
         source = source[source.index(PREFIX+'_Far:'):source.index('; Deprecated prompt storage') if show else source.index('ScummV5_Controller_ShowHud_Far:')]
+        menu = (ROOT/'runtime/snes/engines/scumm_v5_controller_menu.inc.pasm').read_text()
+        source += '\nScummV5_Controller_MenuVerbEnabled_Far:' + menu.split('ScummV5_Controller_MenuVerbEnabled_Far:',1)[1]
         self.show, self.busy = show, busy
         self.service_styles = []
         self.symbols['SAME_VIDEO_SURFACE_DEST_X'] = 0x401050
@@ -128,6 +130,10 @@ class HudMachine:
             elif op=='jsl':
                 if arg in self.labels:
                     returns.append(pc);stack.append((0x123456,24));pc=self.labels[arg]
+                elif arg=='ScummV5_Controller_MenuText_Far':
+                    # The separately tested menu builder preserves opcode scratch.
+                    self.put('SAME_VIDEO_TEXT_CONTROLLER_VALID',1,1)
+                    self.put('SAME_SCUMM_TALK_VISUAL_STATUS',0,1)
                 else:
                     assert arg=='Same_VideoText_ShowSegment_Far'
                     self.service_styles.append(bytes(self.mem[self.style_base+i] for i in range(12)))
@@ -251,6 +257,23 @@ class HudTextTests(unittest.TestCase):
                     m.run()
                     self.assertEqual(m.service_styles[0][8:11],bytes((14 if mode==1 else 6,3,0)))
                     self.assertEqual(bytes(m.mem[m.style_base+i] for i in range(12)),m.style)
+
+    def test_menu_style_does_not_borrow_stale_opcode_scratch(self):
+        for ui in (1,2):
+            for stale in (0,96,17*96,255*96):
+                m=HudMachine(6,5,show=True,verb_id=7)
+                m.put('SAME_SCUMM_PLAY_UI_MODE',ui,1)
+                m.put('SAME_SCUMM_PLAY_UI_SELECTION',7 if ui==1 else 141)
+                m.put('SAME_SCUMM_C17_RECORD_OFFSET',stale)
+                m.put(m.verb-32+m.symbols['SAME_SCUMM_C17_V_COLOR'],178,1)
+                m.run()
+                self.assertEqual(m.service_styles[0][8:11],bytes((178,3,0)))
+                self.assertEqual(bytes(m.mem[m.style_base+i] for i in range(12)),m.style)
+        m=HudMachine(6,5,show=True)
+        m.put('SAME_SCUMM_PLAY_UI_MODE',1,1)
+        m.put('SAME_SCUMM_PLAY_UI_SELECTION',255) # absent, not silently substituted
+        m.run();self.assertEqual(m.service_styles,[])
+        self.assertEqual(m.get('SAME_SCUMM_TALK_VISUAL_STATUS',1),2)
 
     def test_frame_retries_only_busy_status(self):
         source=(ROOT/'runtime/snes/engines/scumm_v5_controller_far.pasm').read_text()

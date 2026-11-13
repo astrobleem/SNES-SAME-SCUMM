@@ -72,6 +72,9 @@ ScummV5_Visual_CameraPublished_Far:
 
 ScummV5_Visual_Frame_Far:
     php
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER && SCUMM_MSU1_CAMERA_VIEWPORT
+    jsl ScummV5_Camera_ServiceForeground_Far
+    .endif
     ; Resolve any room/camera presentation request before the actor pass.
     ; Actor composition must be the final indexed-surface mutation for this
     ; frame; otherwise a pending background blit can erase the actor before
@@ -79,6 +82,11 @@ ScummV5_Visual_Frame_Far:
     jsl Same_VideoSurface_ServiceEvents_Far
     jsl Same_VideoSurface_ServicePending_Far
     jsl Same_VideoSurface_ServiceEvents_Far
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER && SCUMM_MSU1_CAMERA_VIEWPORT
+    ; Composition has consumed the checked prefix before it accepts PRESENT.
+    ; Start the next strip now, while INDEX8 conversion owns the surface.
+    jsl ScummV5_Camera_AheadService_Far
+    .endif
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     ; Prepare colors without taking the writable surface away from actors.
     jsl ScummV5_Palette_Prepare_Far

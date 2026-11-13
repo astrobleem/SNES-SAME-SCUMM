@@ -356,7 +356,7 @@ ScummV5_Palette_Flush_Far:
     sep #$20
     .a8
     lda.l SAME_SCUMM_M23A_ACTIVE_ROOM
-    jsl Same_VideoSurface_PushDirtyPresent_Far
+    jsl Same_VideoSurface_PushPalettePresent_Far
     bcc ScummV5_Palette_Flush__included
     jmp ScummV5_Palette_Return
 ScummV5_Palette_Flush__included:

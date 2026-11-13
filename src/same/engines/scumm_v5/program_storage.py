@@ -137,6 +137,77 @@ def plan_program_pages(
     return tuple(pages)
 
 
+def pack_small_programs(entries, bodies, rows, page_indices, page_records, *, page_size):
+    """Pack single-page small bodies by room and role, retaining every identity.
+
+    Native page-index high bit denotes a shared checked group; its low bits
+    are the member offset. The referenced 8-byte page record contains the
+    anchor canonical ID, group length and group CRC. No new package section,
+    duplicated body bytes or permanent selector is introduced.
+    """
+    if not 0 < page_size <= 0x800:
+        raise ValueError("packed native allocation must be at most 2048 bytes")
+    buckets = {}
+    for entry, row in zip(entries, rows):
+        if row["length"] > page_size // 2:
+            continue
+        # Globals share global locality; room lifecycle/locals share their
+        # room. Object carriers retain a separate locality within that room.
+        role = "object" if entry.get("kind") in ("OBJECT", "OBCD") or entry.get("dispatch", {}).get("verbs") else "script"
+        key = (str(entry.get("room") if entry.get("room") is not None else entry.get("bundle", "global")), role)
+        if entry.get("kind") == "GLOBAL":
+            key = ("global", role)
+        buckets.setdefault(key, []).append(int(row["program_unit_id"]))
+    groups = []
+    for key in sorted(buckets):
+        members, size = [], 0
+        for unit in sorted(buckets[key], key=lambda i: (rows[i]["length"], i)):
+            length = int(rows[unit]["length"])
+            if size + length > page_size:
+                if len(members) > 1:
+                    groups.append(members)
+                members, size = [], 0
+            members.append(unit)
+            size += length
+        if len(members) > 1:
+            groups.append(members)
+    membership = {unit: group for group in groups for unit in group}
+    payload = bytearray()
+    new_pages, new_indices, emitted = [], [None] * len(rows), set()
+    for unit, row in enumerate(rows):
+        if unit in emitted:
+            continue
+        members = membership.get(unit, [unit])
+        anchor = members[0]
+        group_start = len(payload)
+        first = len(new_pages)
+        for member in members:
+            r = rows[member]
+            r["section_relative_offset"] = len(payload)
+            payload.extend(bodies[str(r["identity"])])
+            emitted.add(member)
+        if len(members) > 1:
+            data = bytes(payload[group_start:])
+            new_pages.append({"program_unit_id": anchor, "start_pc": 0,
+                              "storage_anchor_id": anchor, "length": len(data),
+                              "crc32": f"{zlib.crc32(data) & 0xffffffff:08x}",
+                              "sha256": hashlib.sha256(data).hexdigest(),
+                              "members": members})
+            for member in members:
+                r = rows[member]
+                offset = int(r["section_relative_offset"]) - group_start
+                r.update(first_page=first, page_count=1, storage_anchor_id=anchor,
+                         group_offset=offset, group_length=len(data))
+                new_indices[member] = {"program_unit_id": member, "first_page": first,
+                                      "page_count": 1, "encoded_count": 0x8000 | offset}
+        else:
+            old = page_indices[unit]
+            new_pages.extend(page_records[old["first_page"]:old["first_page"] + old["page_count"]])
+            row["first_page"] = first
+            new_indices[unit] = {**old, "first_page": first}
+    return payload, new_indices, new_pages, groups
+
+
 def read_package_prefix_sections(
     package_path: Path, section_names: tuple[str, ...] | None,
 ) -> tuple[tuple[str, str, bytes, int], ...]:
@@ -189,9 +260,13 @@ def _projection_directory(visual_records: list[dict[str, object]]) -> tuple[byte
         room = integer(row["room"], 0, 255, "room")
         if offsets[room] != 0xFFFF:
             raise ValueError("visual projection duplicate room")
-        tw = integer(row["width"], 1, 256, "target width")
-        th = integer(row["height"], 1, 224, "target height")
-        integer(row["pitch"], tw, 65535, "target pitch")
+        metadata = row.get("projection", {})
+        if not isinstance(metadata, Mapping):
+            raise ValueError("visual projection metadata must be a mapping")
+        camera = metadata.get("sampling") == "camera_viewport"
+        tw = 256 if camera else integer(row["width"], 1, 256, "target width")
+        th = 224 if camera else integer(row["height"], 1, 224, "target height")
+        integer(row["pitch"], int(row["width"]) if camera else tw, 65535, "target pitch")
         # Older callers supply already projected fixtures without provenance.
         # Only absent metadata gets identity fallback; malformed metadata fails.
         projection = row.get("projection") if "projection" in row else {
@@ -203,7 +278,9 @@ def _projection_directory(visual_records: list[dict[str, object]]) -> tuple[byte
         sh = integer(projection.get("source_height"), 1, 65535, "source_height")
         reserved = integer(projection.get("reserved_bottom", 0), 0, th-1, "reserved_bottom")
         vh = th-reserved
-        if tw * sh <= vh * sw:
+        if camera:
+            cw, ch = min(tw, sw), min(vh, sh)
+        elif tw * sh <= vh * sw:
             cw, ch = tw, max(1, sh * tw // sw)
         else:
             cw, ch = max(1, sw * vh // sh), vh
@@ -215,19 +292,19 @@ def _projection_directory(visual_records: list[dict[str, object]]) -> tuple[byte
                 raise ValueError(f"visual projection {key} disagrees with source aspect fit")
         if "source_pitch" in projection:
             integer(projection["source_pitch"], sw, 65535, "source_pitch")
-        if projection.get("sampling", "nearest_neighbor_aspect_fit") != "nearest_neighbor_aspect_fit":
+        if projection.get("sampling", "nearest_neighbor_aspect_fit") not in ("nearest_neighbor_aspect_fit", "camera_viewport"):
             raise ValueError("visual projection sampling is unsupported")
         if projection.get("border_palette_index", 0) != 0:
             raise ValueError("visual projection border must be palette index zero")
-        geometry = (sw, sh, cw, ch, ox, oy)
+        geometry = (sw, sh, cw, ch, ox, oy, camera)
         if geometry not in geometries:
-            length = 12 + 2 * (cw + ch)
+            length = 12 if camera else 12 + 2 * (cw + ch)
             if len(records) + length > 0xFFFF:
                 raise ValueError("visual projection records exceed u16 offset range")
             geometries[geometry] = len(records)
-            values = (*geometry,
+            values = (geometry[:6] if camera else (*geometry[:6],
                       *((2 * x + 1) * sw // (2 * cw) for x in range(cw)),
-                      *((2 * y + 1) * sh // (2 * ch) for y in range(ch)))
+                      *((2 * y + 1) * sh // (2 * ch) for y in range(ch))))
             for value in values:
                 records.extend(value.to_bytes(2, "little"))
         offsets[room] = geometries[geometry]
@@ -282,7 +359,18 @@ def _record_include(
             int(str(row[field]), 16)
     projection_map, projection_records = (_projection_directory(visual_records)
                                           if visual_records else (b"", b""))
-    projection_bytes = len(projection_map) + len(projection_records)
+    camera_modes = {bool(row.get("strips")) for row in visual_records}
+    if len(camera_modes) > 1:
+        raise ValueError("visual directory mixes camera and aspect-fit consumers")
+    camera = camera_modes == {True}
+    camera_offsets, camera_crcs = bytearray(), bytearray()
+    visual_by_room = {int(row["room"]): row for row in visual_records}
+    if camera:
+        for room in range(room_count):
+            camera_offsets.extend(len(camera_crcs).to_bytes(2, "little"))
+            for strip in visual_by_room.get(room, {}).get("strips", []):
+                camera_crcs.extend(int(strip["crc32"], 16).to_bytes(4, "little"))
+    projection_bytes = len(projection_map) + len(projection_records) + len(camera_offsets) + len(camera_crcs)
     if projection_directory_bank is not None:
         if type(projection_directory_bank) is not int or not 0 <= projection_directory_bank <= 0x7F:
             raise ValueError("projection directory bank must be a mapped LoROM bank")
@@ -316,6 +404,8 @@ def _record_include(
             raise ValueError("SCUMM MSU ProgramUnit directory bank must fit the LoROM bank byte")
         lines.extend((f".bank {rom_bank}", ".org $8000"))
     lines.extend([
+        f"SCUMM_MSU1_CAMERA_VIEWPORT = {int(camera)}",
+        f"SCUMM_MSU1_CAMERA_CRC_BYTES = ${len(camera_crcs):04X}",
         f"SCUMM_MSU1_PROGRAM_COUNT = ${len(records):04X}",
         "SCUMM_MSU1_PROGRAM_RECORD_SIZE = $000A",
         "ScummV5_MsuProgramRecords:",
@@ -439,7 +529,9 @@ def _record_include(
             f"SCUMM_MSU1_PROJECTION_RECORD_BYTES = ${len(projection_records):04X}",
         ))
         for label, payload in (("ScummV5_MsuVisualProjectionOffsets", projection_map),
-                               ("ScummV5_MsuVisualProjectionData", projection_records)):
+                               ("ScummV5_MsuVisualProjectionData", projection_records),
+                               ("ScummV5_MsuCameraCrcOffsets", camera_offsets),
+                               ("ScummV5_MsuCameraStripCrcs", camera_crcs)):
             lines.append(label + ":")
             for start in range(0, len(payload), 16):
                 lines.append("    .byte " + ",".join(
@@ -476,13 +568,13 @@ def _record_include(
         raw = bytearray()
         for row in page_indices:
             raw += int(row["first_page"]).to_bytes(2, "little")
-            raw += int(row["page_count"]).to_bytes(2, "little")
+            raw += int(row.get("encoded_count", row["page_count"])).to_bytes(2, "little")
         for start in range(0, len(raw), 16):
             lines.append("    .byte " + ",".join(f"${value:02X}" for value in raw[start:start + 16]))
         lines.append("ScummV5_MsuProgramPageRecords:")
         raw = bytearray()
         for row in page_records:
-            raw += int(row["start_pc"]).to_bytes(2, "little")
+            raw += int(row.get("storage_anchor_id", row["start_pc"])).to_bytes(2, "little")
             raw += int(row["length"]).to_bytes(2, "little")
             raw += int(str(row["crc32"]), 16).to_bytes(4, "little")
         for start in range(0, len(raw), 16):
@@ -496,6 +588,7 @@ def build_program_storage(
     output_dir: Path,
     *,
     max_cached_body_bytes: int = 0x0800,
+    pack_small: bool = False,
     page_metadata: Mapping[str, Mapping[str, object]] | None = None,
     prefix_sections: tuple[tuple[str, str, bytes, int], ...] = (),
     room_resources: Mapping[int, bytes] | None = None,
@@ -506,6 +599,7 @@ def build_program_storage(
     diagnostic_live_route_validation_resources: Mapping[int, bytes] | None = None,
     room_visual_resources: Mapping[int, bytes] | None = None,
     visual_reserved_bottom: int = 0,
+    visual_projection: str = "aspect-fit",
     rom_bank: int | None = None,
     page_directory_bank: int | None = None,
     projection_directory_bank: int | None = None,
@@ -516,6 +610,8 @@ def build_program_storage(
     every independently fetched page has its own checked CRC. Resource/object
     records without selector-bearing code are absent from this mapping.
     """
+    if visual_projection not in ("aspect-fit", "camera-viewport"):
+        raise ValueError("unsupported visual projection")
     entries = directory.get("entries")
     if not isinstance(entries, list):
         raise ValueError("canonical ProgramUnit directory has no entries")
@@ -542,6 +638,8 @@ def build_program_storage(
         body = bytes(bodies[identity])
         metadata = None if page_metadata is None else page_metadata.get(identity)
         pages = plan_program_pages(body, metadata, page_size=max_cached_body_bytes)
+        if len(pages) >= 0x8000:
+            raise ValueError("ordinary page count collides with checked-group tag")
         first_page = len(page_records)
         for page_start, page_length in pages:
             page = body[page_start:page_start + page_length]
@@ -582,6 +680,11 @@ def build_program_storage(
                 )
             ),
         })
+    groups = []
+    if pack_small:
+        payload, page_indices, page_records, groups = pack_small_programs(
+            ordered, bodies, rows, page_indices, page_records, page_size=max_cached_body_bytes,
+        )
     body_file.write_bytes(payload)
     package_manifest = output_dir / "same-package.json"
     package_sections: list[dict[str, object]] = []
@@ -790,24 +893,35 @@ def build_program_storage(
         from .room_visual import (
             HEADER as VISUAL_HEADER,
             decode_room_visual,
-            project_room_visual,
+            project_room_visual, encode_camera_room_visual,
         )
 
         visual_file = output_dir / "scumm-room-visual-resources.bin"
         for room_id, resource in sorted(visual_by_id.items()):
             source_body = bytes(resource)
             source_visual = decode_room_visual(source_body, expected_room=int(room_id))
-            body, projection = project_room_visual(
-                source_body, target_width=256, target_height=224,
-                reserved_bottom=visual_reserved_bottom,
-            )
+            strips = []
+            if visual_projection == "camera-viewport":
+                body, strips = encode_camera_room_visual(source_body)
+                cw, ch = min(256, source_visual.width), min(224 - visual_reserved_bottom, source_visual.height)
+                projection = dict(source_width=source_visual.width, source_height=source_visual.height,
+                                  source_pitch=source_visual.pitch, target_width=256, target_height=224,
+                                  content_width=cw, content_height=ch, offset_x=(256-cw)//2,
+                                  offset_y=(224-visual_reserved_bottom-ch)//2,
+                                  reserved_bottom=visual_reserved_bottom, sampling="camera_viewport",
+                                  border_palette_index=0, source_pixels_sha256=source_visual.decoded_pixels_sha256)
+            else:
+                body, projection = project_room_visual(
+                    source_body, target_width=256, target_height=224,
+                    reserved_bottom=visual_reserved_bottom,
+                )
             visual = decode_room_visual(body, expected_room=int(room_id))
             header_values = VISUAL_HEADER.unpack_from(body)
             palette_offset = int(header_values[10])
             pixel_offset = int(header_values[12])
             palette = body[palette_offset:palette_offset + 768]
-            pixels = body[pixel_offset:pixel_offset + len(visual.pixels)]
-            if len(palette) != 768 or len(pixels) != len(visual.pixels):
+            pixels = body[pixel_offset:]
+            if len(palette) != 768 or (not strips and len(pixels) != len(visual.pixels)):
                 raise ValueError(f"room {room_id} visual payload bounds differ")
             base = len(visual_payload)
             visual_payload.extend(body)
@@ -820,7 +934,9 @@ def build_program_storage(
                 "palette_length": len(palette),
                 "palette_crc32": f"{zlib.crc32(palette) & 0xFFFFFFFF:08x}",
                 "pixel_relative_offset": base + pixel_offset,
-                "pixel_length": len(pixels),
+                "pixel_length": strips[0]["length"] if strips else len(pixels),
+                "pixel_payload_length": len(pixels),
+                "strips": strips,
                 "pixel_crc32": f"{zlib.crc32(pixels) & 0xFFFFFFFF:08x}",
                 "width": visual.width, "height": visual.height, "pitch": visual.pitch,
             })
@@ -896,7 +1012,10 @@ def build_program_storage(
 
     directory_bytes = _canonical_json(directory)
     result: dict[str, object] = {
-        "schema": PROGRAM_STORAGE_SCHEMA,
+        "schema": "same_scumm_v5_msu1_program_storage_v5" if pack_small else PROGRAM_STORAGE_SCHEMA,
+        "packed_small_programs": pack_small,
+        "checked_storage_groups": groups,
+        "page_index_contract": "high bit: shared group, low15: member offset; otherwise page count",
         "id_width_bits": 16,
         "selector_values_emitted": False,
         "source_directory_sha256": hashlib.sha256(directory_bytes).hexdigest(),

@@ -715,6 +715,8 @@ class ScummV5Engine(Engine):
             self._handlers[opcode] = self._op_get_verb_entrypoint
         for opcode in (0x10, 0x90):
             self._handlers[opcode] = self._op_get_object_owner
+        for opcode in (0x31, 0xB1):
+            self._handlers[opcode] = self._op_get_inventory_count
         for opcode in (0x3D, 0x7D, 0xBD, 0xFD):
             self._handlers[opcode] = self._op_find_inventory
         for opcode in (0x34, 0x74, 0xB4, 0xF4):
@@ -997,6 +999,14 @@ class ScummV5Engine(Engine):
         for variable in (_VAR_TMR_1, _VAR_TMR_2, _VAR_TMR_3):
             value = (int(self.state.variables[variable]) + timer_delta) & 0xFFFF
             self.state.variables[variable] = value - 0x10000 if value & 0x8000 else value
+        # SCUMM v5 scummLoop_updateScummVars publishes the current logical
+        # camera before scripts, even without a scroll callback. Destination
+        # and asynchronously presented viewport are different coordinates.
+        # Old opcode-isolation fixtures reserve global2 as test scratch.
+        # Production defaults to the real outer-loop contract; opting out
+        # means the fixture is not evidence for engine-owned variables.
+        if context.profile.options.get("publish_camera_position", True):
+            self.state.variables[2] = self.state.camera_x
         self._advance_talk_frame_begin()
         self._tick_operations = 0
         self._tick_max_ops = context.profile.max_ops_per_tick
@@ -1996,11 +2006,19 @@ class ScummV5Engine(Engine):
                 slot.yielded = True
                 return True
             return False
-        if operation != 2:
+        if operation == 3:
+            # v5 waits for horizontal eight-pixel camera strips, not for a
+            # platform's asynchronous presentation queue. C++ division in the
+            # source VM truncates toward zero (including negative test states).
+            waiting = (int(self.state.camera_x / 8)
+                       != int(self.state.camera_destination_x / 8))
+        elif operation == 2:
+            waiting = bool(self.state.variables[_VAR_HAVE_MSG])
+        else:
             raise EngineExecutionError(
                 f"SCUMM wait sub-op {operation} is not implemented"
             )
-        if self.state.variables[_VAR_HAVE_MSG]:
+        if waiting:
             slot.pc = instruction
             slot.yielded = True
             return True
@@ -2220,6 +2238,7 @@ class ScummV5Engine(Engine):
         del context
         requested = self._var_or_direct_word(slot, 0x80)
         self.state.camera_mode = 0
+        self.state.camera_moving_to_actor = False
         self.state.camera_destination_x = requested
         self.state.camera_update_pending = True
         return False
@@ -2265,16 +2284,37 @@ class ScummV5Engine(Engine):
         state.camera_x &= 0xFFF8
         minimum = state.room_ops.scroll_min_x
         maximum = state.room_ops.scroll_max_x
-        # Phase 6F implements the canonical normal path. Existing follow intent
-        # remains stored but does not acquire new actor-follow/panning behavior.
+        # SCUMM v5 follows in logical 8-pixel strips. The target viewport
+        # crop never changes these source coordinates or the 10/30 triggers.
+        actor = None
+        if state.camera_mode == 1:
+            if state.camera_follow_actor is None or not 0 <= state.camera_follow_actor < _MAX_ACTORS:
+                raise EngineExecutionError("SCUMM camera has no valid followed actor")
+            actor = self._actor(state.camera_follow_actor)
+            strip = int(actor.position[0] / 8) - state.screen_start_strip
+            if strip < 10 or strip > 30:
+                if state.variables[26]:
+                    if strip > 35:
+                        state.camera_destination_x = actor.position[0] + 80
+                    elif strip < 5:
+                        state.camera_destination_x = actor.position[0] - 80
+                else:
+                    state.camera_moving_to_actor = True
+        if state.camera_moving_to_actor and actor is not None:
+            state.camera_destination_x = actor.position[0]
         state.camera_destination_x = min(maximum, max(minimum, state.camera_destination_x))
-        if state.camera_mode == 0:
-            if state.variables[26]:
-                state.camera_x = state.camera_destination_x
-            elif state.camera_x < state.camera_destination_x:
+        if state.variables[26]:
+            state.camera_x = state.camera_destination_x
+        else:
+            if state.camera_x < state.camera_destination_x:
                 state.camera_x += 8
-            elif state.camera_x > state.camera_destination_x:
+            # These are sequential comparisons in v5, not an if/elif. A
+            # destination inside the same strip must not oscillate forever.
+            if state.camera_x > state.camera_destination_x:
                 state.camera_x -= 8
+        if (state.camera_moving_to_actor and actor is not None
+                and int(state.camera_x / 8) == int(actor.position[0] / 8)):
+            state.camera_moving_to_actor = False
         half = logical_width // 2
         state.camera_x = min(
             max(half, state.room_ops.room_width - half),
@@ -3483,6 +3523,15 @@ class ScummV5Engine(Engine):
         self._write_var(slot, result, self._object_owners[object_id])
         return False
 
+    def _op_get_inventory_count(self, slot: ScriptSlot, context: EngineContext) -> bool:
+        """Count source-global object owners, including objects outside the room."""
+        del context
+        result = self._result_var(slot)
+        owner = self._var_or_direct_byte(slot, 0x80) & 0xFF
+        count = sum(value == owner for value in self._object_owners[:self._num_global_objects])
+        self._write_var(slot, result, count)
+        return False
+
     def _op_find_inventory(self, slot: ScriptSlot, context: EngineContext) -> bool:
         """Return the object at an owner's zero-based inventory ordinal.
 
@@ -4387,6 +4436,20 @@ class ScummV5Engine(Engine):
         self.state.current_room = room
         self._room_lifecycle_event("new_room_activated", room)
         self.state.room_ops.room_width = adapter.room.width
+        # Restore reconstructs resources without re-entering the scene.
+        if not preserve_local_scripts:
+            logical_width = context.profile.video.logical_width or context.profile.video.width
+            half = logical_width // 2
+            # startScene initializes camera bounds before ENCD, independently of
+            # the physical presentation crop. Later roomOps may narrow them.
+            self.state.room_ops.scroll_min_x = half
+            self.state.room_ops.scroll_max_x = max(half, adapter.room.width - half)
+            self.state.camera_mode = 0
+            self.state.camera_moving_to_actor = False
+            self.state.camera_x = self.state.camera_destination_x = half
+            self.state.screen_start_strip = self.state.virtual_screen_xstart = 0
+            self.state.screen_end_strip = logical_width // 8 - 1
+            self.state.camera_update_pending = True
         self.state.room_hash = context.services.video.surface.hash()
         self._actors_dirty = True
         if before_entry is not None:

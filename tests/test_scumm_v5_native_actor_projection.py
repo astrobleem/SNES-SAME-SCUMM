@@ -132,3 +132,22 @@ class NativeActorProjectionTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CameraActorProjectionTests(unittest.TestCase):
+    def test_unscaled_world_pixels_crop_and_restore_at_every_edge(self):
+        for origin in (32,72,384):
+            for foot in ((origin-3,1),(origin+60,100),(origin+254,143)):
+                spans=[(-4,-2,13),(0,0,8),(2,3,4)]
+                vm=ControllerMachine(spans,foot=foot,source_size=(640,144),camera=True)
+                vm.mem.update(SAME_VIDEO_SURFACE_SOURCE_X=origin,SAME_VIDEO_SURFACE_SOURCE_Y=0,
+                              SAME_VIDEO_SURFACE_DEST_X=0,SAME_VIDEO_SURFACE_DEST_Y=24)
+                want=bytearray(vm.original);offset=0
+                for x,y,n in spans:
+                    for i in range(n):
+                        dx,dy=foot[0]+x+i-origin,foot[1]+y+24
+                        if 0<=dx<256 and 24<=dy<168:want[dy*256+dx]=vm.pixels[offset+i]
+                    offset+=n
+                vm.run();self.assertFalse(vm.c);self.assertEqual(vm.surface,want)
+                for address,count,old in vm.captures:vm.surface[address:address+count]=old
+                self.assertEqual(vm.surface,vm.original)

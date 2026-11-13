@@ -2003,10 +2003,6 @@ ScummV5_GetDist_FarEntry__second_resolved:
     sta.l SAME_SCUMM_GET_DIST_TYPE2
     rep #$20
     .a16
-    lda.l SAME_SCUMM_GET_DIST_ADJUSTED
-    and #$00FF
-    cmp #$0002
-    beq ScummV5_GetDist_FarEntry__second_position_ready
     lda.l SAME_SCUMM_GET_DIST_X2_RAW
     sta.l SAME_SCUMM_GET_DIST_X2
     lda.l SAME_SCUMM_GET_DIST_Y2_RAW
@@ -2023,14 +2019,9 @@ ScummV5_GetDist_FarEntry__second_position_ready:
     lda.l SAME_SCUMM_GET_DIST_OPERAND2
     cmp #$000D
     bcc ScummV5_GetDist_FarEntry__distance
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_GET_DIST_ADJUSTED
-    cmp #$02
-    bne ScummV5_GetDist_FarEntry__runtime_projection
-    lda #$01
-    sta.l SAME_SCUMM_GET_DIST_ADJUSTED
-    bra ScummV5_GetDist_FarEntry__distance
+    ; The cooker projection predates matrixOps and actor ignoreBoxes changes.
+    ; Like walkActorToObject, project the raw point against current room flags.
+    ; Never reuse immutable object-walk projection for a live distance query.
 ScummV5_GetDist_FarEntry__runtime_projection:
     rep #$20
     .a16
@@ -2237,20 +2228,6 @@ ScummV5_GetDist_Resolve_Far__room_object:
     .a8
     lda #$14
     sta.l SAME_SCUMM_GET_DIST_STAGE
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_MOVE_POSITION_AXIS
-    beq ScummV5_GetDist_Resolve_Far__room_object_type
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_PUT_ACTOR_RESULT_X
-    sta.l SAME_SCUMM_GET_DIST_X2
-    lda.l SAME_SCUMM_PUT_ACTOR_RESULT_Y
-    sta.l SAME_SCUMM_GET_DIST_Y2
-    sep #$20
-    .a8
-    lda #$02
-    sta.l SAME_SCUMM_GET_DIST_ADJUSTED
 ScummV5_GetDist_Resolve_Far__room_object_type:
     sep #$20
     .a8
@@ -5388,7 +5365,8 @@ ScummV5_MatrixOps_FarTrace__done:
 
 ; Build the SCUMM v5 shortest-path matrix from the active room's live box
 ; visibility flags and immutable shared-edge geometry.  The canonical v5
-; matrix domain is 64 boxes; the two 64x64 WRAM tables are reserved above.
+; matrix domain is 64 boxes; symmetric distances use 2016 bytes while
+; directed next hops retain their established 4096-byte table.
 ; The distance table is temporary after this routine returns.  The next-hop
 ; table is consulted by the generated room-data accessor until the next room
 ; install or createBoxMatrix call.
@@ -5484,7 +5462,7 @@ ScummV5_Matrix_BuildRoutes_Far__init_j_ok:
     sep #$20
     .a8
     lda #$01
-    sta.l SAME_SCUMM_MATRIX_DISTANCE,x
+    jsr ScummV5_Matrix_DistanceWrite
     lda.l SAME_SCUMM_MATRIX_BUILD_J
     sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
     bra ScummV5_Matrix_BuildRoutes_Far__init_next_j
@@ -5497,7 +5475,7 @@ ScummV5_Matrix_BuildRoutes_Far__diagonal:
     sep #$20
     .a8
     lda #$00
-    sta.l SAME_SCUMM_MATRIX_DISTANCE,x
+    jsr ScummV5_Matrix_DistanceWrite
     lda.l SAME_SCUMM_MATRIX_BUILD_J
     sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
     bra ScummV5_Matrix_BuildRoutes_Far__init_next_j
@@ -5510,7 +5488,7 @@ ScummV5_Matrix_BuildRoutes_Far__unreachable:
     sep #$20
     .a8
     lda #$FF
-    sta.l SAME_SCUMM_MATRIX_DISTANCE,x
+    jsr ScummV5_Matrix_DistanceWrite
     sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
 ScummV5_Matrix_BuildRoutes_Far__init_next_j:
     rep #$20
@@ -5603,7 +5581,7 @@ ScummV5_Matrix_BuildRoutes_Far__floyd_j_ok:
     tax
     sep #$20
     .a8
-    lda.l SAME_SCUMM_MATRIX_DISTANCE,x
+    jsr ScummV5_Matrix_DistanceRead
     cmp #$FF
     bne ScummV5_Matrix_BuildRoutes_Far__floyd_left_ok
     brl ScummV5_Matrix_BuildRoutes_Far__floyd_next_j
@@ -5615,7 +5593,7 @@ ScummV5_Matrix_BuildRoutes_Far__floyd_left_ok:
     tax
     sep #$20
     .a8
-    lda.l SAME_SCUMM_MATRIX_DISTANCE,x
+    jsr ScummV5_Matrix_DistanceRead
     cmp #$FF
     bne ScummV5_Matrix_BuildRoutes_Far__floyd_right_ok
     brl ScummV5_Matrix_BuildRoutes_Far__floyd_next_j
@@ -5634,7 +5612,7 @@ ScummV5_Matrix_BuildRoutes_Far__floyd_right_ok:
     tax
     sep #$20
     .a8
-    lda.l SAME_SCUMM_MATRIX_DISTANCE,x
+    jsr ScummV5_Matrix_DistanceRead
     cmp #$FF
     beq ScummV5_Matrix_BuildRoutes_Far__floyd_update
     cmp.l SAME_SCUMM_MOVE_TEMP2
@@ -5642,7 +5620,7 @@ ScummV5_Matrix_BuildRoutes_Far__floyd_right_ok:
     beq ScummV5_Matrix_BuildRoutes_Far__floyd_next_j
 ScummV5_Matrix_BuildRoutes_Far__floyd_update:
     lda.l SAME_SCUMM_MOVE_TEMP2
-    sta.l SAME_SCUMM_MATRIX_DISTANCE,x
+    jsr ScummV5_Matrix_DistanceWrite
     rep #$20
     .a16
     lda.l SAME_SCUMM_MATRIX_BUILD_OFFSET_IK
@@ -5654,6 +5632,41 @@ ScummV5_Matrix_BuildRoutes_Far__floyd_update:
     rep #$20
     .a16
     lda.l SAME_SCUMM_MOVE_TEMP
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_LAST_BOX
+    sta.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+    ; Shared-edge geometry and visibility give symmetric distances. Updating
+    ; the stored pair also updates the reverse directed next hop, using j->k.
+    ; Equal-length alternatives remain untouched, preserving Floyd's tie rule.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_J
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MATRIX_BUILD_K
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MATRIX_DYNAMIC_ROUTES,x
+    sta.l SAME_SCUMM_MATRIX_LAST_BOX
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MATRIX_BUILD_J
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MATRIX_BUILD_I
     tax
     sep #$20
     .a8
@@ -7066,3 +7079,83 @@ ScummV5_WaitActor_Call_Far__error:
     sta.l SAME_SCUMM_STATUS
     sec
     rtl
+
+; Distance adapter. Input X is the unchanged logical i*64+j table index.
+; All callers use A8/X16. Preserve X and processor width; diagonal is zero.
+ScummV5_Matrix_DistanceRead:
+    .a8
+    .i16
+    phx
+    jsr ScummV5_Matrix_DistanceIndex
+    bcs ScummV5_Matrix_DistanceRead__diagonal
+    lda.l SAME_SCUMM_MATRIX_DISTANCE,x
+    plx
+    rts
+ScummV5_Matrix_DistanceRead__diagonal:
+    .a8
+    .i16
+    lda #$00
+    plx
+    rts
+
+ScummV5_Matrix_DistanceWrite:
+    .a8
+    .i16
+    sta.l SAME_SCUMM_MATRIX_DISTANCE_VALUE
+    phx
+    jsr ScummV5_Matrix_DistanceIndex
+    bcs ScummV5_Matrix_DistanceWrite__diagonal
+    lda.l SAME_SCUMM_MATRIX_DISTANCE_VALUE
+    sta.l SAME_SCUMM_MATRIX_DISTANCE,x
+ScummV5_Matrix_DistanceWrite__diagonal:
+    .a8
+    .i16
+    lda.l SAME_SCUMM_MATRIX_DISTANCE_VALUE
+    plx
+    rts
+
+ScummV5_Matrix_DistanceIndex:
+    rep #$20
+    .a16
+    txa
+    and #$003F
+    sta.l SAME_SCUMM_MATRIX_DISTANCE_COLUMN
+    txa
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    lsr
+    sta.l SAME_SCUMM_MATRIX_DISTANCE_ROW
+    cmp.l SAME_SCUMM_MATRIX_DISTANCE_COLUMN
+    beq ScummV5_Matrix_DistanceIndex__diagonal
+    bcc ScummV5_Matrix_DistanceIndex__ordered
+    lda.l SAME_SCUMM_MATRIX_DISTANCE_COLUMN
+    tax
+    lda.l SAME_SCUMM_MATRIX_DISTANCE_ROW
+    sta.l SAME_SCUMM_MATRIX_DISTANCE_COLUMN
+    txa
+    sta.l SAME_SCUMM_MATRIX_DISTANCE_ROW
+ScummV5_Matrix_DistanceIndex__ordered:
+    asl
+    tax
+    lda.l ScummV5_Matrix_DistanceRowOffsets,x
+    clc
+    adc.l SAME_SCUMM_MATRIX_DISTANCE_COLUMN
+    sec
+    sbc.l SAME_SCUMM_MATRIX_DISTANCE_ROW
+    dec
+    tax
+    sep #$20
+    .a8
+    clc
+    rts
+ScummV5_Matrix_DistanceIndex__diagonal:
+    sep #$20
+    .a8
+    sec
+    rts
+
+ScummV5_Matrix_DistanceRowOffsets:
+    .word $0000,$003F,$007D,$00BA,$00F6,$0131,$016B,$01A4,$01DC,$0213,$0249,$027E,$02B2,$02E5,$0317,$0348,$0378,$03A7,$03D5,$0402,$042E,$0459,$0483,$04AC,$04D4,$04FB,$0521,$0546,$056A,$058D,$05AF,$05D0,$05F0,$060F,$062D,$064A,$0666,$0681,$069B,$06B4,$06CC,$06E3,$06F9,$070E,$0722,$0735,$0747,$0758,$0768,$0777,$0785,$0792,$079E,$07A9,$07B3,$07BC,$07C4,$07CB,$07D1,$07D6,$07DA,$07DD,$07DF,$07E0

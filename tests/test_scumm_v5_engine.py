@@ -2150,6 +2150,8 @@ class ScummV5EngineTests(unittest.TestCase):
         state.camera_publish_count = 4
         state.camera_scroll_script_count = 5
         state.camera_update_pending = True
+        state.room_ops.scroll_min_x = 176
+        state.room_ops.scroll_max_x = 240
         saved = host.save(0)
 
         state.camera_destination_x = 0
@@ -2167,6 +2169,7 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(camera["publish_count"], 4)
         self.assertEqual(camera["scroll_script_count"], 5)
         self.assertTrue(camera["update_pending"])
+        self.assertEqual((state.room_ops.scroll_min_x, state.room_ops.scroll_max_x), (176, 240))
         self.assertEqual(saved.schema, 6)
 
     def test_c16_set_class_direct_variable_clear_and_save(self) -> None:

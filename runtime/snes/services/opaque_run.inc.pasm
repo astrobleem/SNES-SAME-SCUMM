@@ -95,7 +95,7 @@ Same_VideoSurface_BlitCheckedOpaqueRun__copy:
     sep #$20
     .a8
     lda [SAME_VIDEO_SURFACE_DP_SOURCE],y
-    sta.l SAME_BWRAM_SURFACE_BASE,x
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
     inx
     iny
     rep #$20

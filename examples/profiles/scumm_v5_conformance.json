@@ -52,7 +52,8 @@
   "options": {
     "boot_script": "script.boot",
     "initial_room": 0,
-    "room_key_template": "room.{room}"
+    "room_key_template": "room.{room}",
+    "publish_camera_position": false
   },
   "quirks": {}
 }

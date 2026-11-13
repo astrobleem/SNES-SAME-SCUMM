@@ -15,12 +15,29 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from same.snes_carrier import _validate_layout
+from same.snes_video_backend import validate_mode3_layout
 
 MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 
 # Intervals are half-open. Their endpoints are ownership boundaries declared
 # in memory.pasm; unrelated ownership overlap fails closed.
 REGIONS = (
+    ("cursor_coverage_rows_0_7", "SAME_VIDEO_CURSOR_COVERAGE_LO", "SAME_VIDEO_CURSOR_COVERAGE_LO_END"),
+    ("cursor_coverage_rows_8_15", "SAME_VIDEO_CURSOR_COVERAGE_HI", "SAME_VIDEO_CURSOR_COVERAGE_HI_END"),
+    ("interpreter_core_and_control", "SAME_SCUMM_PC", "SAME_SCUMM_CONTROL_END"),
+    ("camera_lookahead_ticket", "SAME_SCUMM_CAMERA_AHEAD_BASE", "SAME_SCUMM_CAMERA_AHEAD_END"),
+    ("matrix_symmetric_distances", "SAME_SCUMM_MATRIX_DISTANCE", "SAME_SCUMM_MATRIX_DISTANCE_END"),
+    ("matrix_distance_indexing", "SAME_SCUMM_MATRIX_DISTANCE_SCRATCH", "SAME_SCUMM_MATRIX_DISTANCE_SCRATCH_END"),
+    ("matrix_directed_routes", "SAME_SCUMM_MATRIX_DYNAMIC_ROUTES", "SAME_SCUMM_MATRIX_DYNAMIC_ROUTES_END"),
+    ("program_cache_logical_binding", "SAME_SCUMM_MSU_LOGICAL_BASE",
+     "SAME_SCUMM_MSU_LOGICAL_END"),
+    ("actor_records_and_name_lengths", "SAME_SCUMM_C14_ACTORS", "SAME_SCUMM_C14_NAME_SIZES_END"),
+    ("actor_hit_test_scratch", "SAME_SCUMM_C29_SCRATCH_BASE", "SAME_SCUMM_C29_SCRATCH_END"),
+    ("actor_names_and_operands", "SAME_SCUMM_C14_NAMES", "SAME_SCUMM_C14_STATE_END"),
+    ("camera_follow_intent", "SAME_SCUMM_C15_CAMERA_FOLLOWS", "SAME_SCUMM_C15_STATE_END"),
+    ("playable_controller_ui", "SAME_SCUMM_PLAY_UI_BASE", "SAME_SCUMM_PLAY_UI_END"),
+    ("camera_transaction", "SAME_SCUMM_VIEWPORT_STATE_BASE",
+     "SAME_SCUMM_VIEWPORT_STATE_END"),
     ("retained_text_and_pending_snapshot", "SAME_SCUMM_TEXT_STORAGE_START",
      "SAME_SCUMM_TEXT_STORAGE_END"),
     ("mode3_backend_scratch", "SAME_MODE3_WORK_OWNER_START",
@@ -136,6 +153,12 @@ def audit() -> dict[str, Any]:
             or [values["SAME_VIDEO_ACTOR_UNDERLAY_" + name]
                 for name in underlay_fields] != expected):
         raise ValueError("actor-underlay scratch must alias only nonconcurrent restore witnesses, never room readiness")
+    if not (values["SAME_SCUMM_VIEWPORT_STATE_BASE"] == values["SAME_SCUMM_RESIDENT_WRAM_END"]
+            and values["SAME_SCUMM_VIEWPORT_STATE_END"] == 0x7E8FE8
+            and values["SAME_SCUMM_VIEWPORT_STATE"] == values["SAME_SCUMM_VIEWPORT_STATE_BASE"]
+            and values["SAME_SCUMM_VIEWPORT_STATE_END"] <= values["SAME_SCUMM_OBJECT_NAMES"]
+            and values["SAME_SCUMM_VIEWPORT_MODE"] + 1 == values["SAME_SCUMM_VIEWPORT_STATE_END"]):
+        raise ValueError("camera transaction must retain its separate 40-byte resolver/name padding allocation")
     if (values["SAME_SCUMM_TEXT_STORAGE_START"] < values["SAME_SCUMM_PUT_ACTOR_GEOMETRY_WORK"] + values["SAME_SCUMM_PUT_ACTOR_BOX_STRIDE"]
             or values["SAME_SCUMM_TEXT_STORAGE_END"] > values["SAME_SCUMM_PUT_ACTOR_WALKBOX"]):
         raise ValueError("retained text overlaps active geometry or actor walkbox state")
@@ -248,9 +271,9 @@ def audit() -> dict[str, Any]:
     restore = video_surface_source.split("Same_VideoSurface_RestoreActorUnderlay_Far:", 1)[1].split(
         "Same_VideoSurface_BeginActorUnderlay_Far:", 1)[0]
     if ("jsr Same_VideoSurface_Underlay_Validate" not in restore
-            or "sta.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x" not in restore
+            or "jsl Same_VideoSurface_WriteIndexedPixel_Far" not in restore
             or restore.index("jsr Same_VideoSurface_Underlay_Validate")
-            > restore.index("sta.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x")):
+            > restore.index("jsl Same_VideoSurface_WriteIndexedPixel_Far")):
         raise ValueError("sparse underlay must validate the entire journal before pixel writes")
     consumed = restore.split("Same_VideoSurface_Underlay_Restore__record:", 1)[1].split(
         "Same_VideoSurface_Underlay_Restore__run:", 1)[0]
@@ -275,6 +298,18 @@ def audit() -> dict[str, Any]:
     )[1].split("Same_Mode3_HandlePresent__reject:", 1)[0]
     if "sta.l SAME_BWRAM_CONTROL_TILE_VALID" in present_accept:
         raise ValueError("ordinary PRESENT must not invalidate cached tiles")
+    validate_mode3_layout(video)
+    retained_source = (ROOT / "runtime/snes/services/video_mode3_retained.inc.pasm").read_text()
+    camera_source = (ROOT / "runtime/snes/engines/scumm_v5_camera_stream.inc.pasm").read_text()
+    if "MODE3_R_HDMA = SAME_MODE3_SCROLL_HDMA" not in retained_source:
+        raise ValueError("retained HDMA must survive room-staging aliases")
+    if (parse_address(video['scroll_hdma']['address']), video['scroll_hdma']['bytes']) != (0x41e73a,10):
+        raise ValueError("retained NMI scroll table ownership changed")
+    for contract in ('Same_VideoSurface_RetireScroll_Far', 'Same_VideoSurface_ColdScroll_Far'):
+        if f'jsl {contract}' not in live_room_source:
+            raise ValueError('incoming room omits retained cache lifetime handoff')
+    if 'cmp #$0801' not in camera_source or 'jsl Same_VideoSurface_AbortScroll_Far' not in camera_source:
+        raise ValueError('same-room checked strip must respect retained guard tail')
     active = bwram["live_room_active"]
     active_start = parse_address(str(active["address"]))
     active_end = active_start + int(active["bytes"])
@@ -324,12 +359,21 @@ def audit() -> dict[str, Any]:
             "address": page2["start"], "bytes": page2["bytes"],
             "exclusive_with": [],
         },
+        "retained_video_ownership": {
+            "guard_head": bwram['backend_reserved']['allocations']['retained_guard_head'],
+            "guard_tail": bwram['retained_guard_tail_alias'],
+            "camera_transaction": bwram['backend_reserved']['allocations']['retained_viewport'],
+            "persistent_hdma": video['scroll_hdma'],
+            "vram": video['retained_viewport'],
+            "staging_prefix_limit": 2048,
+            "retirement": "idle surface and empty event/DMA queues before incoming room; HDMA table remains outside retired aliases",
+        },
         "bwram_lifetime_aliases": [{
             "owner": "SCUMM checked SC5VIS pixel staging",
             "address": f"${pixel_stage_address:06X}",
             "bytes": tile_shadow["bytes"],
             "aliases": "Mode-3 encoded tile shadow",
-            "lifetime": "incoming visual transfer through checked publication",
+            "lifetime": "cold incoming room only; same-room retained columns do not use tile-shadow staging",
             "coherency": "full room present invalidates shadow before re-encoding",
         }, {
             "owner": "SCUMM actor chunk / live-room transaction",

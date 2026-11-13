@@ -537,12 +537,15 @@ def main() -> int:
     parser.add_argument("--msu1-program-directory-bank", type=int, default=10)
     parser.add_argument("--msu1-projection-directory-bank", type=int, default=19,
                         help="reserved LoROM bank for room projection lookup tables")
+    parser.add_argument("--msu1-pack-small-programs", action="store_true",
+                        help="Pack small executable bodies by compiler locality into shared checked pages")
     parser.add_argument(
         "--msu1-program-page-directory-bank", type=int,
         help="ROM bank for compiler-proven bytecode page index/CRC records",
     )
     parser.add_argument("--actor-probe-font-sample", action="store_true")
     parser.add_argument("--visual-reserved-bottom", type=int, default=0)
+    parser.add_argument("--visual-projection", choices=("aspect-fit", "camera-viewport"), default="aspect-fit")
     parser.add_argument("--msu1-program-cache-bytes", type=lambda value: int(value, 0), default=0x0800)
     parser.add_argument(
         "--diagnostic-actor-probe", action="store_true",
@@ -1802,6 +1805,7 @@ def main() -> int:
         program_storage = build_program_storage(
             native_directory.document, storage_bodies, args.msu1_program_storage_dir,
             max_cached_body_bytes=args.msu1_program_cache_bytes,
+            pack_small=args.msu1_pack_small_programs,
             page_metadata=storage_page_metadata,
             prefix_sections=prefix_sections,
             room_resources=room_resources,
@@ -1816,6 +1820,7 @@ def main() -> int:
             ),
             room_visual_resources=room_visual_resources,
             visual_reserved_bottom=args.visual_reserved_bottom,
+            visual_projection=args.visual_projection,
             rom_bank=args.msu1_program_directory_bank,
             projection_directory_bank=args.msu1_projection_directory_bank,
             page_directory_bank=(

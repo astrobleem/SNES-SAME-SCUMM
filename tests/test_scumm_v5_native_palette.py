@@ -194,7 +194,7 @@ class PaletteMachine:
                     if not self.c:
                         self.live = self.read(pointer, 768)
                         self.write(SYMBOLS['SAME_VIDEO_SURFACE_PALETTE_DIRTY'], b'\x01')
-                elif operand == 'Same_VideoSurface_PushDirtyPresent_Far':
+                elif operand == 'Same_VideoSurface_PushPalettePresent_Far':
                     assert self.a & 255 == 4
                     self.c = self.queue_failed
                     if self.c and self.queue_failure_advances_generation:
@@ -328,7 +328,7 @@ class NativePaletteTests(unittest.TestCase):
         vm.entry('Flush')
         self.assertEqual(vm.mem[STATE + 1], 0)
         self.assertEqual(vm.calls[-2:], ['Same_VideoSurface_CanWrite_Far',
-                                      'Same_VideoSurface_PushDirtyPresent_Far'])
+                                      'Same_VideoSurface_PushPalettePresent_Far'])
         count = len(vm.calls)
         vm.entry('Flush')
         self.assertEqual(len(vm.calls), count)
@@ -359,7 +359,7 @@ class NativePaletteTests(unittest.TestCase):
             self.assertEqual(int.from_bytes(vm.read(SYMBOLS['SAME_VIDEO_SURFACE_NEXT_GENERATION'], 2), 'little'), before)
             self.assertEqual(vm.read(SYMBOLS['SAME_VIDEO_SURFACE_PALETTE_DIRTY'], 1), b'\x01')
             self.assertFalse(vm.busy, 'palette prepare stole actor writable pass')
-            self.assertNotIn('Same_VideoSurface_PushDirtyPresent_Far', vm.calls)
+            self.assertNotIn('Same_VideoSurface_PushPalettePresent_Far', vm.calls)
             vm.scene_present()  # actor/cursor accepts the installed colors
             calls = len(vm.calls)
             vm.entry('Flush')

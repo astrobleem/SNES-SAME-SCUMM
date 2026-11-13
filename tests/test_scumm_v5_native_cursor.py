@@ -10,7 +10,7 @@ import struct
 import re
 import unittest
 
-from test_scumm_v5_actor_damage_boundaries import ControllerMachine
+from test_scumm_v5_actor_damage_boundaries import ControllerMachine, camera_source
 from same.engines.scumm_v5.cursor import MASKS, HOTSPOTS, COLORS
 from tools.validate_scumm_actor_visual_probe_nexen import pose_is_presented
 
@@ -20,14 +20,14 @@ D = 'SAME_VIDEO_SURFACE_DAMAGE_'
 
 
 class CursorMachine(ControllerMachine):
-    def __init__(self, source_size=(320, 200)):
-        super().__init__([], source_size=source_size)
+    def __init__(self, source_size=(320, 200), camera=False):
+        super().__init__([], source_size=source_size, camera=camera)
         cursor = (ROOT / 'runtime/snes/engines/scumm_v5_cursor_far.pasm').read_text()
         controller = (ROOT / 'runtime/snes/engines/scumm_v5_controller_far.pasm').read_text()
         helper = controller.split('ScummV5_ActorPose_ProjectSpan_Far:', 1)[1]
         helper = helper.split('; The provider has one global cursor.', 1)[0]
         self.code, self.labels = [], {}
-        for raw in (cursor + '\nScummV5_ActorPose_ProjectSpan_Far:\n' + helper).splitlines():
+        for raw in camera_source(cursor + '\nScummV5_ActorPose_ProjectSpan_Far:\n' + helper,camera).splitlines():
             line = raw.split(';', 1)[0].strip()
             if not line or line.startswith('.') or ' = ' in line:
                 continue
@@ -50,7 +50,10 @@ class CursorMachine(ControllerMachine):
                          'SAME_SCUMM_CONTROLLER_CURSOR_X': 160,
                          'SAME_SCUMM_CONTROLLER_CURSOR_Y': 100,
                          'SAME_SCUMM_FRAME_COUNT': 0})
+        self.mem.update(SAME_VIDEO_SURFACE_WIDTH=source_size[0],
+                        SAME_VIDEO_SURFACE_COPY_WIDTH=min(256,source_size[0]))
         self.journal = None
+        self.coverage = {}
         self.retained = None
         service_source = (ROOT / 'runtime/snes/services/cursor_underlay.inc.pasm').read_text()
         self.magic = int(re.search(r'SAME_VIDEO_CURSOR_MAGIC\s*=\s*\$([0-9A-Fa-f]+)', service_source)[1], 16)
@@ -94,9 +97,16 @@ class CursorMachine(ControllerMachine):
             box = (x,y,x+w,y+h)
             saved = [(r*256+x,bytes(self.surface[r*256+x:r*256+x+w])) for r in range(y,y+h)]
             self.journal = box, saved
+            self.coverage = {}
             self.retained = box
             self.mem['SAME_VIDEO_CURSOR_UNDERLAY'] = self.magic
             self.union(box)
+        elif name == 'Same_VideoSurface_SetCursorCoverageRow_Far':
+            assert self.journal
+            left,top,right,bottom=self.journal[0]
+            assert 0<=self.x<bottom-top
+            self.coverage[self.x]=self.a
+            self.c=False
         elif name == 'Same_VideoSurface_RestoreCursorUnderlay_Far':
             self.c = self.restore_fail
             if self.c:
@@ -118,6 +128,7 @@ class CursorMachine(ControllerMachine):
             x,y = self.x % 256,self.x // 256
             left,top,right,bottom = self.journal[0]
             assert left <= x < right and top <= y < bottom, 'pixel outside captured bounds'
+            assert self.coverage[y-top] & (0x8000>>(x-left)), 'opaque write outside source coverage'
             self.surface[self.x] = self.a & 255
             self.pixel_calls += 1
             if self.pixel_hook:
@@ -563,3 +574,46 @@ class NativeCursorTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CameraCursorTests(unittest.TestCase):
+    def test_world_hit_point_and_visible_cursor_share_camera_origin(self):
+        for origin in (0,40,320):
+            for x,y in ((0,0),(40,60),(287,143),(319,199)):
+                vm=CursorMachine((640,144),camera=True)
+                vm.mem.update(SAME_SCUMM_CONTROLLER_CURSOR_X=x,
+                              SAME_SCUMM_CONTROLLER_CURSOR_Y=y,
+                              SAME_SCUMM_CAMERA_VSCREEN_XSTART=origin,
+                              SAME_SCUMM_CAMERA_CURRENT_Y=100,
+                              SAME_VIDEO_SURFACE_SOURCE_X=origin+32,
+                              SAME_VIDEO_SURFACE_SOURCE_Y=0,
+                              SAME_VIDEO_SURFACE_DEST_X=0,
+                              SAME_VIDEO_SURFACE_DEST_Y=24)
+                want=bytearray(vm.original);left=x-32-HOTSPOTS[0][0];top=y+24-HOTSPOTS[0][1]
+                for i,covered in enumerate(MASKS[0]):
+                    dx,dy=left+i%16,top+i//16
+                    if covered and 0<=dx<256 and 0<=dy<224:want[dy*256+dx]=COLORS[0]
+                vm.entry('Draw');self.assertFalse(vm.c);self.assertEqual(vm.surface,want)
+
+    def test_future_camera_target_cannot_move_fixed_cursor_before_strip_commit(self):
+        for width in (160,256,280,320,640):
+            inset=min(32,max(0,width-min(width,256)))
+            for target in (0,8,176,320):
+                for committed in (0,32,72,208):
+                    vm=CursorMachine((width,144),camera=True)
+                    vm.mem.update(SAME_SCUMM_CONTROLLER_CURSOR_X=120,
+                                  SAME_SCUMM_CONTROLLER_CURSOR_Y=100,
+                                  SAME_SCUMM_CAMERA_VSCREEN_XSTART=target,
+                                  SAME_SCUMM_CAMERA_CURRENT_Y=100,
+                                  SAME_VIDEO_SURFACE_SOURCE_X=committed,
+                                  SAME_VIDEO_SURFACE_SOURCE_Y=0,
+                                  SAME_VIDEO_SURFACE_DEST_X=max(0,(256-width)//2),
+                                  SAME_VIDEO_SURFACE_DEST_Y=24)
+                    want=bytearray(vm.original)
+                    left=120-inset+max(0,(256-width)//2)-HOTSPOTS[0][0]
+                    top=124-HOTSPOTS[0][1]
+                    for i,covered in enumerate(MASKS[0]):
+                        dx,dy=left+i%16,top+i//16
+                        if covered and 0<=dx<256 and 0<=dy<224:want[dy*256+dx]=COLORS[0]
+                    vm.entry('Draw');self.assertFalse(vm.c)
+                    self.assertEqual(vm.surface,want)

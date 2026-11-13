@@ -1,7 +1,7 @@
 """Execute actual dense cursor service instructions; CanWrite is the only stub."""
 import re
 import unittest
-from test_video_surface_sparse_underlay import ServiceMachine, ROOT
+from test_video_surface_sparse_underlay import ServiceMachine, ROOT, pixel_leaves
 
 SOURCE = ROOT / 'runtime/snes/services/cursor_underlay.inc.pasm'
 
@@ -11,7 +11,7 @@ class CursorMachine(ServiceMachine):
         super().__init__()
         self.symbols['SAME_VIDEO_CURSOR_UNDERLAY'] = 0x400620
         self.symbols['SAME_BWRAM_SURFACE_BASE'] = self.surface
-        text = SOURCE.read_text()
+        text = SOURCE.read_text() + pixel_leaves()
         for name, expr in re.findall(r'^([A-Z][A-Z0-9_]*)\s*=\s*([^;\n]+)', text, re.M):
             self.symbols[name] = self.value(expr)
         self.header = self.symbols['SAME_VIDEO_CURSOR_UNDERLAY']
@@ -28,7 +28,7 @@ class CursorMachine(ServiceMachine):
             self.code.append(line)
             op, _, arg = line.partition(' ')
             if op in ('rep', 'sep', 'bra', 'bcc', 'bcs', 'beq', 'bne'): size = 2
-            elif op in ('jmp', 'jsr'): size = 3
+            elif op in ('jmp', 'jsr', 'brl') or '.w' in op: size = 3
             elif op == 'jsl' or '.l' in op: size = 4
             elif arg.startswith('#'): size = 1 + width // 8
             else: size = 1
@@ -194,3 +194,83 @@ class CursorUnderlayTests(unittest.TestCase):
 
 
 if __name__=='__main__': unittest.main()
+
+
+class CursorRowCopyTests(unittest.TestCase):
+    def test_bounded_rows_wrap_physical_scene_but_not_hud(self):
+        for origin in (0,1,8,127,248,255):
+            for x,y,width,height in ((0,0,16,2),(240,190,16,4),(255,223,1,1),(251,191,5,3)):
+                with self.subTest(origin=origin,rectangle=(x,y,width,height)):
+                    m=CursorMachine();m.put('MODE3_R_ACTIVE',1,1);m.put('MODE3_R_INDEX_ORIGIN',origin)
+                    physical=lambda row,col:row*256+((col+origin)&255 if row<192 else col)
+                    before=bytes(m.ram[m.surface:m.surface+57344])
+                    self.assertFalse(m.capture(x,y,width,height))
+                    painted=bytearray(before)
+                    for row in range(y,y+height):
+                        for col in range(x,x+width):painted[physical(row,col)]=(row*17+col)&255
+                    m.ram[m.surface:m.surface+57344]=painted
+                    start=len(m.writes)
+                    self.assertFalse(m.call('ExchangeCursorUnderlay',p=0xff,db=0x7f))
+                    self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),before)
+                    allowed={m.surface+physical(row,col) for row in range(y,y+height) for col in range(x,x+width)}
+                    writes={a+i for a,n in m.writes[start:] for i in range(n) if m.surface<=a+i<m.surface+57344}
+                    self.assertEqual(writes,allowed)
+                    self.assertFalse(m.call('ExchangeCursorUnderlay'))
+                    self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),painted)
+                    self.assertFalse(m.call('RestoreCursorUnderlay'))
+                    self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),before)
+                    self.assertEqual(m.ram[m.header-16:m.header],bytes([0xd3])*16)
+                    self.assertEqual(m.ram[m.header+288:m.header+480],bytes([0xa7])*192)
+
+
+class CursorCoverageTests(unittest.TestCase):
+    def test_transparent_holes_follow_new_background_and_zero_is_opaque(self):
+        for origin in (0, 8, 248):
+            for x,y,w,h in ((10,40,16,16),(250,191,6,3),(0,223,16,1)):
+                with self.subTest(origin=origin,rect=(x,y,w,h)):
+                    m=CursorMachine();m.put('MODE3_R_ACTIVE',1,1);m.put('MODE3_R_INDEX_ORIGIN',origin)
+                    physical=lambda row,col:row*256+((col+origin)&255 if row<192 else col)
+                    self.assertFalse(m.capture(x,y,w,h))
+                    masks=[(0x8021 ^ (row*1237))&65535 for row in range(h)]
+                    for row,mask in enumerate(masks):
+                        self.assertFalse(m.call('SetCursorCoverageRow',a=mask,x=row))
+                        for col in range(w):
+                            if mask & (0x8000>>col):m.ram[m.surface+physical(y+row,x+col)]=0
+                    self.assertFalse(m.call('ExchangeCursorUnderlay'))
+                    self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),m.original_surface)
+                    # Background changes under the complete stationary cursor rectangle.
+                    new=bytes((i*17+31)%251+1 for i in range(57344))
+                    m.ram[m.surface:m.surface+57344]=new
+                    expected=bytearray(new)
+                    for row,mask in enumerate(masks):
+                        for col in range(w):
+                            if mask&(0x8000>>col):expected[physical(y+row,x+col)]=0
+                    self.assertFalse(m.call('ExchangeCursorUnderlay'))
+                    self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),expected)
+                    self.assertFalse(m.call('RestoreCursorUnderlay'))
+                    self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),new)
+                    self.assertEqual(m.ram[m.header+288:m.header+480],bytes([0xa7])*192)
+
+    def test_coverage_row_bounds_busy_and_register_contract(self):
+        for p in (0,8,0x20,0x28,0x10,0x18,0x30,0x38,0xcf):
+            m=CursorMachine();self.assertFalse(m.capture(h=3))
+            self.assertFalse(m.call('SetCursorCoverageRow',a=0x8001,x=2,p=p,db=0x7f))
+            before=bytes(m.ram[0x7e2370:0x7e2380])+bytes(m.ram[0x7f3ef0:0x7f3f00])
+            for row in (3,16,255):self.assertTrue(m.call('SetCursorCoverageRow',a=0,x=row))
+            m.busy=True;self.assertTrue(m.call('SetCursorCoverageRow',a=0,x=0))
+            self.assertEqual(before,bytes(m.ram[0x7e2370:0x7e2380])+bytes(m.ram[0x7f3ef0:0x7f3f00]))
+
+    def test_producer_passes_source_mask_before_pixel_draw(self):
+        source=(ROOT/'runtime/snes/engines/scumm_v5_cursor_far.pasm').read_text()
+        body=source.split('ScummV5_Cursor_Draw__mask_ready:',1)[1]
+        self.assertLess(body.index('jsl Same_VideoSurface_SetCursorCoverageRow_Far'),body.index('jsl Same_VideoSurface_WriteIndexedPixel_Far'))
+
+
+class CursorOverlapModeTests(unittest.TestCase):
+    def test_text_restore_after_camera_consumes_instead_of_exchanging(self):
+        m=CursorMachine();self.assertFalse(m.capture(10,190,4,4));m.paint_rect(10,190,4,4)
+        self.assertFalse(m.call('ExchangeCursorUnderlay'));self.assertFalse(m.call('ExchangeCursorUnderlay'))
+        for f,v in zip(('X','Y','WIDTH','HEIGHT'),(0,192,256,32)):m.put('SAME_VIDEO_SURFACE_DAMAGE_'+f,v)
+        self.assertFalse(m.call('RestoreCursorOverlappingDamage'))
+        self.assertEqual(m.get(m.header,1),0)
+        self.assertEqual(bytes(m.ram[m.surface:m.surface+57344]),m.original_surface)

@@ -304,7 +304,7 @@ class NativeResidencyLayoutTests(unittest.TestCase):
             "owner": "SCUMM checked SC5VIS pixel staging",
             "address": "$410000", "bytes": 0xE000,
             "aliases": "Mode-3 encoded tile shadow",
-            "lifetime": "incoming visual transfer through checked publication",
+            "lifetime": "cold incoming room only; same-room retained columns do not use tile-shadow staging",
             "coherency": "full room present invalidates shadow before re-encoding",
         }, {
             "owner": "SCUMM actor chunk / live-room transaction",

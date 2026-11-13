@@ -1,3 +1,181 @@
+# Milestone C camera pipeline — integrated native acceptance
+
+Runtime: 16592b90cbc04bdf6bd325fc772805f3396b8eb4 on
+scumm-fate-playable-adventure / draft PR15, still stacked on PR14. No merge.
+Recovery worktree untouched. Final publication changes only evidence docs.
+
+Checked strip lookahead now overlaps immutable tile conversion; ready DMA/NMI
+handoffs advance in the same bounded slice. Cursor source-coverage masks fix
+transparent-hole corruption and text-overlap restore mode. No new renderer,
+cache, image buffer, script timing, or DMA budget. All runtime changes committed.
+
+Continuous authentic startup/newspaper/inventory/walk/camera/continued input
+PASS: owner/state1/1, error0, seven full source/INDEX8/VRAM/CGRAM comparisons
+equal, actor273,139 standing3/crop208. Separate exact-ROM reverse PASS:
+actor233,138/crop32, inventory persistent. No synthetic story, gameplay writes,
+or seven-action replay. Forward919->808frames; reverse801->643. Median sampled
+columns32->24. Exact prepared-new composition->PPU21frames; cached16. Fixture
+targets16-17/9 NOT fully reached; do not claim60Hz or hardware minimum.
+
+Final read-only bounded timing probe accounts for conversion, next-strip
+checked reads, foreground composition and actual scheduler work. See
+docs/scumm-toolchain/CAMERA_PIPELINE.md for non-double-counted costs and limits.
+Forward21lookaheadhits, one isolated Global33 load/eviction before scrolling;
+reverse0loads/evictions. No recurrence of the five-program eviction cycle.
+
+Private root: /home/chad/SAME-private-evidence/milestone-c-camera-pipeline-20261112
+authentic-pipeline-final and authentic-pipeline-reverse hold actual continuous
+and separate reverse reports/captures; final-column-profile holds timing only.
+ROMc244c4ba..., map0eac10eb..., packagee6cf5c28..., identityd3a14f3a... .
+All59nongenerated runtime files byte-match16592b9. Full hashes/linkage in docs.
+Supervisor deadlines obeyed; no owned Nexen/Xvfb left. Unrelated userMCP7381
+and preexisting zombie603102 must not be touched. No extra replay for docs.
+
+Local1586tests:1574passed/12skipped. makevalidate,41-region audit,pinnedPoppy,
+ROM/Python/Bash/JSON/diffchecks pass. Runtime hostedCI43178831917 bothgreen.
+Final docs-head hosted run must be checked separately. HostedCI is not Nexen.
+Public source audit finds no commercial payload/binary or credential pattern.
+Full-game semantics, audio, portable saves and hardware remain unqualified.
+
+--- Historical checkpoints below retain their original scope ---
+
+## Milestone C packed-cache checkpoint — native integrated acceptance
+
+Current runtime: e3e77ad32270a086408f55d9ce408cf63bb4f6e7, published to
+scumm-fate-playable-adventure / draft PR15, still stacked on PR14.
+No automatic merge. Separate progression recovery worktree untouched.
+
+Completed one continuous authentic source session: original newspaper pickup,
+owner/state1/1, readable inventory open/close, normal walk/camera and continued
+input. Source/INDEX8/VRAM/CGRAM differences zero, error0, actor273,139 standing3,
+sourcecrop208. Separate exact-ROM post-forward checkpoint reverse also passes,
+actor233,138/crop32, persistent newspaper. No game-state writes or7-actionroute.
+Forward1061→919frames; reverse946→801. Column intervals24–32/median32 versus40.
+Target16–17fixture is NOT reached; do not claim60Hz scrolling or a hardware
+minimum. Typical work remains27tiles/1728bytes/1DMA, not full-screen repaint.
+
+Executable thrashing is removed: zero forward/reverse additional code loads
+or evictions. Physical cache remains6KiB,178selectors unchanged. Small bodies
+share fully checked groups with independent logical bounds. Full2203body
+package unchanged, SHAe6cf5c28... . Native working set/nested/large-page/matrix
+control passes; CRC corruption rejects before execution. Native binding leaf
+passes8boundary/generation/guard assertions plus selector safety. Host tests
+separately cover all-pinned retry and other-client provider ownership.
+
+Storage cadence now offers3bounded opportunities per engine turn, with at most
+one quantum start per NMI epoch, unchanged64/256byte quantum and DMA budgets.
+Synthetic completion1920→1632frames. PCM/read control captures27.17s with zero
+silent20ms windows after track start; no FATEaudio or hardware claim.
+
+Private evidence root:
+/home/chad/SAME-private-evidence/milestone-c-packed-20261111
+Authentic final ROMb2a60d36..., mapaa4263ce..., build080947f9... . All51native
+source files match e3e77ad; exact hashes are in PLAYABLE_PRESENTATION_LATENCY.md.
+Continuous supervisor541.942s, reverse110.039s, PCM35.675s, all exit0/cleaned.
+Read actual pixel reports, not exitcode alone. Built-in MCP7381 is an unrelated
+user SuperMonkeyIsland session; never touch it. Native tests used one private
+Xvfb/MCP process tree each, no desktop or CLI experiments.
+
+Hosted run43154691340 green both jobs on e3e77ad. Final local1563tests run:
+1551passed/12skipped (221.815s). Focused14cachebounds tests pass. makevalidate,
+37-region audit, pinnedPoppy/ROMaudit,467Python/3Bash/60JSON anddiffchecks pass.
+All34new reachable blobs across5runtime/test commits have no binary/media or
+credential-pattern findings; documentation/test publication is additive. Check
+PR15 for the exact final docs/test-head CI result. No need for another
+authentic replay to test reports. No merge is authorized.
+
+--- Older entries retain their historical scope ---
+
+## Current checkpoint — retained camera verified, Milestone C responsiveness incomplete
+
+Runtime source: cc04e1ed662a4b1093dff15dd35e4b9ce7536d5d, published on
+scumm-fate-playable-adventure / draft PR #15, still stacked on PR #14.
+The full continuous authentic newspaper/inventory/walk/camera/control session
+passes with zero source/INDEX8/VRAM/CGRAM differences, error zero, actor273,139,
+standing3 and source crop208. No guest gameplay writes or seven-action replay.
+Current exact-ROM reverse continuation also passes full pixels and persistent
+inventory, source crop32/actor239,138. It is separate, not spliced continuity.
+
+Measured forward response:1908→1061 emulated frames, reverse946. Typical
+camera publication:27tiles/1728B/one DMA batch rather than896/57344/28+.
+Synthetic132-step ring/foreground/HUD/refusal/stale/cold proof passes.
+Current cursor composition median3frames versus6 before row mapping.
+**Do not claim smooth scrolling or Milestone C complete.** Further work must
+address measured service/CPU costs. Five recurrent source programs (1358bytes)
+exceed the three separately tagged page windows; current forward interval
+records103cache loads/102evictions. Removing this pressure requires a scoped
+cache capacity/packing change, expressly outside the camera-only task. It is
+not proven to explain all remaining latency. Do not redesign it speculatively.
+
+Local1536tests run:1524pass/12skip; validate/33-region audit/pinnedassembly/ROM
+checks pass. Hosted run43091042731 passed both jobs on cc04e1e (not Nexen).
+Authentic ROM369e1fb8..., package70564585... unchanged/full2203units; all40
+nongenerated assembly inputs match cc04. Exact hashes and observations are in
+PLAYABLE_PRESENTATION_LATENCY.md. Private durable evidence:
+/home/chad/SAME-private-evidence/milestone-c-retained-20261111/column-and-cursor
+includes commands, identities, failed predecessors and SHA256 manifests.
+Forward477.831s and reverse119.952s exited normally with owned cleanup.
+No current test-owned emulator remains. Unrelated PID104488 and the separate
+progression recovery worktree remain untouched. No automatic merge.
+
+--- Historical checkpoints below retain their original scopes/statuses ---
+
+## Active camera repair — retained backend native proof, integration pending
+
+HEAD before this tranche: 80719edf. Do not stop at this intermediate checkpoint.
+No new full seven-action replay. Recovery worktree is untouched.
+
+132 native original-fixture scroll steps passed full INDEX8/VRAM/PPU equality,
+including both ring wraps and reverse motion. Subsequent production edge-fill
+and foreground-damage controls also pass. New column:24tiles/1536B; foreground
+control:26–27 conversions/1664B rather than896tiles/57344B. Cached columns use
+zero background conversions. Steps still18–33frames; CPU-cost instrumentation
+measured INDEX8 shifting at7–8frames, cached-column decode4frames and edge
+fill2–3frames. These remain optimization targets; budgets were not increased.
+
+Native first authentic attempt failed before gameplay at frame128/error16:
+the moved palette destination was not accepted by the checked provider.
+Corrected by preserving its original destination and retiring overlapping
+camera state; HDMA table remains in its separately audited permanent range.
+Source/backend boundaries now go through surface-service APIs. 82 focused
+tests pass; complete suite, new authentic integration, and CI still pending.
+
+Evidence is in /tmp/astra-retained-* (private; do not commit payloads/captures).
+See PLAYABLE_PRESENTATION_LATENCY.md for exact native scope and identities.
+Continue with the corrected isolated authentic build and bounded controls;
+never reuse the failed ROM checkpoint across changed identities.
+
+--- Historical checkpoints follow ---
+
+## Active Milestone C — camera checkpoint, not completion
+
+The optional source-resolution camera reached an authentic room-10 settled
+frame with exact original source/INDEX8/PPU pixels. See
+`docs/scumm-toolchain/CAMERA_VIEWPORT_INTEGRATION.md` for identities and limits.
+The first failed run exposed a lifecycle-trace/camera-state overlap; corrected
+allocation is independently audited. No replay of the seven-action route.
+Camera scrolling, visible verb/inventory navigation and persistent interaction
+remain active work. Existing source recovery worktree remains untouched.
+
+# Active Milestone C — presentation backlog corrected; camera/UI remain pending
+
+Published successor draft PR15 targets preserved completed-B PR14. Last hosted
+checks green at eaad5d8; subsequent commits require their own hosted checks.
+Palette-only native walk:69 frames input-to-standing,13 queue-to-PPU; exact
+source/INDEX8/PPU comparison passes. Starts84,60 rather than prior82,59: not an
+identical A/B. Word-copy backend native fixture:6 exact generations pass,468
+frames versus651 prior. Full suite1438 run/12 skipped, validation27 regions pass.
+See PLAYABLE_PRESENTATION_LATENCY.md for exact ROM identities and limitations.
+No seven-action replay, no recovery-worktree changes, no gameplay-state writes.
+
+Continue: source-faithful camera, visible verbs/inventory, continuous persistent
+original action are NOT_VERIFIED. This performance tranche does not complete
+Milestone C. Camera source audit: current package stores only aspect-fit256x224
+pixels, so a true viewport needs checked access to original-resolution SC5VIS
+pixels. Use the existing service/surface; do not invent fallback room data.
+
+---
+
 # Milestone B — first readable authentic object interaction VERIFIED
 
 Runtime commit df8fd88c6f2cdfdcc47612eeeec119119e6ae112. Normal authored startup
@@ -3926,3 +4104,341 @@ exceed rectangular-underlay capacity. The source compiler represents these
 poses. Do not relax the capacity guard or claim them rendered without a
 correct bounded restoration path. Original full-source reanalysis remains
 NOT_READY; report is local at /tmp/astra-authentic-room-capabilities-20261109.
+
+
+### Milestone C responsiveness — 2026-11-11 (in progress)
+
+Branch `scumm-fate-playable-adventure` preserves completed Milestone B/PR #14
+at `41305d9`. Recovery worktree remains untouched. Commits `f205e45`,
+`199b036`, `fc71f44`, `dfa8f13` repair room cursor width/engine linkage and
+reduce tile conversion/scanning and text damage. Exact native evidence and
+rejected observations are recorded in
+`docs/scumm-toolchain/PLAYABLE_PRESENTATION_LATENCY.md`.
+
+Copyright-free six-generation Mode-3 control passes. Original text response
+now observed at 218 frames versus baseline 513, with zero source/INDEX8/PPU
+pixel differences; substantial script/resource and remaining presentation
+waits still exist. Caption association regression is fixed and independently
+checked using an existing matching-ROM checkpoint, not another story replay.
+A changed-code walking measurement is in progress. Camera crop, complete
+verbs/inventory and persistent original-game interaction are NOT complete.
+Do not stop at this performance checkpoint or claim Milestone C acceptance.
+No full seven-action replay is authorized/needed for this work.
+
+## Milestone C controller integration — 2026-11-11 (NOT COMPLETE)
+
+Camera viewport source/PPU proof and the original two-line C17 verb menu are
+captured privately. Held cursor repeat now follows elapsed NMI frames with a
+bounded step. Host inventory-count dispatch and source-strip camera/message
+waits have focused tests. A real A8/X16 lifecycle child-index defect was fixed
+and published as 004e76c/0f88c64; CI run 43010704305 passed on 0f88c64.
+
+Current UI/wait integration is being checkpointed for review. It has not yet
+accepted the persistent newspaper action or scrolling camera. Original room
+10 local 210 owns a real palette fade and introductory dialogue; do not treat
+visible enabled verb records as proof that its cutscene has finished. The
+source introduction rendered at generation 44 with zero indexed/PPU errors.
+A captured A edge exposed missing forwarding from dialogue ownership to talk
+acknowledgement. That generic handoff now has instruction tests; current-ROM
+native validation is in progress with a private 600-second supervisor.
+
+Existing private evidence is preserved under
+`/home/chad/SAME-private-evidence/milestone-c-20261111/ui-integration`.
+The separate progression recovery worktree remains untouched. No seven-action
+route, no state injection, no whole-game readiness claim. Continue the actual
+Milestone C gates; a passing host suite or this checkpoint is not completion.
+
+### Milestone C live query correction — 2026-11-11
+
+CRC/scheduler corrections are committed at a3eb72b. The subsequent original
+pickup attempt (ROM70954700...) reached the authored “can't reach” branch.
+It is not a deadlock or persistent-action pass. Captured immutable object
+projection and live walking target differed; native getDist was using the
+former despite matrixOps. Current correction uses the existing live geometry
+path. C29 hit-test scratch also overlapped C15 camera follow state; ownership
+is repaired and audited. Camera follow now has host/native-source tests.
+A changed-ROM bounded continuous native test is in progress; no old savestate
+is transplanted into it. Separate progression recovery is untouched.
+
+### Milestone C persistent pickup preserved; camera commit repair
+
+f2801ff hosted CI passed run 43020341432. Native ROM ca43b98a... completed
+original newspaper pickup owner15->1/state0->1 with error0 through controller
+input, then inventory navigation. Matching continuation produced readable
+source inventory with exact source/INDEX8/PPU comparison. Do not conflate the
+separate capture sessions. All446 evidence files preserved in private
+milestone-c/live-query-success, including failures. Camera walk reached275139
+but limits stayed160/160; ordinary room installation omitted source bounds.
+Host/native commit correction and physical B/name-cache bounds fixes have
+focused tests and pinned assembly; current-image native camera proof pending.
+No emulator owned by these tests remains. Unrelated user Nexen7381 untouched.
+
+### Current Milestone C camera admission test
+
+3495344 is pushed and hosted CI43024771853 is green. Original current-ROM
+pickup/inventory/B-close passed, with owner1/state1, but the camera observer
+first failed on a missing import. Its corrected matching-state continuation
+proved the logical source pan but exposed real camera request starvation:
+video idle, pending visual, continuing executable reads, no viewport claim.
+The new camera path reconciles READ_OK through the existing cache owner.
+Focused admission regressions, full1492 tests/12skips, validation and pinned
+assembly pass. A fresh source-bound native session is running at
+/tmp/astra-camera-admission-continuous-20261111 (600sec supervisor, port7421).
+No old checkpoint crosses ROM identities. No accepted seven-action replay.
+Observer errors and incomplete rasters remain failures, with all data retained.
+
+### HUD receipt correction; camera/persistent session in progress
+
+3431adb hosted CI43027084518 passed. Its native session stopped on an unchanged
+menu repeatedly requeued by the controller, before camera input. No camera
+acceptance is inferred. The service now distinguishes an accepted asynchronous
+HUD request from a BUSY rejection while preserving authored-talk waits and
+committed-generation visibility.1,494 tests/12skips,validate,pinned assembly
+and ROM audit pass. New native session uses fresh ROM under
+/tmp/astra-camera-link-build.c0i6701k, private port7422,600-second supervisor,
+with source hashes and first-failure captures. It uses the existing original
+startup/pickup/inventory/camera sequence, not the seven-action route. No old
+savestate crosses ROM identities. Continue the actual native gates.
+
+### Readability defect found by inspecting the actual capture
+
+31dfbe5 CI43029280756 passed. Its native session completed the original pickup,
+but inventory ink0/background0 was invisible despite exact pixel equality.
+Stopped the owned session at391.349sec; no camera completion claimed. The
+first failed readability boundary is preserved with an explicit correction
+note. C17 style now resolves the current UI verb independently of opcode
+scratch. Focused tests pass and pinned assembly/ROM audit pass. The observer
+now separately requires visible palette contrast. A changed-image continuous
+session is running under600sec atport7423 with fresh source startup; no old
+savestate or seven-action replay. Full suite1,496run/12skipped passes; make validate and33-region audit pass.
+
+### Camera publication ownership correction
+
+037fd3d native ROMfe8d84eb... completed source pickup and genuinely readable
+inventory (276 contrast pixels, exact source/INDEX8/PPU). Its camera reached
+checked STATE3 but rejected its own staging lock in CanWrite. Stopped at504.797s;
+no emulator leak. Handoff now releases the completed owner synchronously and
+reclaims on backpressure; latest pending crop survives old-frame publication.
+Actual-source guard/transaction tests pass. New pinned ROM/audit pass; full
+suite1498run/12skips andmake validate pass. Bounded native session port7425 is at
+/tmp/astra-camera-publish-continuous-20261111,600sec supervisor and128-frame
+no-progress capture. Preserve separate recovery worktree. No seven-action replay.
+
+### Functional playable checkpoint preserved; latency still open
+
+fa11ae2 is pushed and hosted CI43032628646 passed. Native ROM034b6836...
+completed cold original pickup→readable inventory→B close→walk→source camera
+pan in one continuous session,551.275sec,zero errors/source/INDEX8/PPU mismatch.
+Separate matching-state post-scroll object selection passed44.888sec. All262
+files retained privately underplayable-camera-checkpoint. See
+docs/scumm-toolchain/PLAYABLE_NATIVE_CHECKPOINT.md. Do not call the1908-frame
+camera responsive: two checked crops and two full publications dominate.
+Next bounded performance correction should coalesce obsolete checked camera
+crops without changing logical source timing or adding caches/renderers.
+No story replay is needed to test that contract; preserve accepted evidence.
+
+### Camera outer-loop semantics and bounded capture
+
+Publish v5 current camera position to global2 before scripts even without
+scroll callback27. Original left-pan branch now observes160 after right336.
+Full1502test/12skip suite and pinned assembly pass. Native ROM6604a3cd...
+forward crop208 exact; matching-ROM reverse checkpoint captured in11.961sec
+with exact source/INDEX8/PPU and error0. The preceding observer timeout required
+extra idle frames while cursor composition kept progressing; do not call it
+a game deadlock or splice the restored capture into continuous gameplay.
+Evidence: /tmp/astra-camera-script-position-listed-20261111 and
+/tmp/astra-camera-completed-fence-20261111. Storage read-loop batching is a
+separate uncommitted performance change; preserve its tests and validate
+natively before claiming performance. No new story replay required.
+
+
+### Published functional checkpoint; measured backend responsiveness boundary
+
+0bbd67b includes checked-read counter batching and clean provider-only build
+ownership. Hosted run43045634973 passed both jobs. Winston A/B same-package
+native control:257508bytes,2656→2144frames, medianReadStep80927→46770counterunits.
+Production256-byte full-directory boot reached authenticroom68,error0. These
+are separate identities; no performance result is transferred to the older
+continuous gameplay recording. Six-generation Mode3 pixel control passes;
+1835actualtileintervals median6565counterunits. Camera staging destroys the
+planarshadow, requiring896tileconversions+57344DMAbytes perpublication.
+Responsive scrolling remainsOPEN and needs retained/incremental viewport
+presentation, not another story replay or timeout increase.
+
+CRC fault control correctly rejected bad data but exposed Winston diagnostic
+u8→u16casecopy; allthreefailureexits nowzeroextend. CorrectednativeROM80b51214...
+rejectscase2/CRC6 atframe24,guardsintact,noassetpublication,5.304s normalcleanup.
+All97lateststorage/performancefiles preservedprivatelywithSHA256manifest under
+provider-and-renderer-cost-final. Separateprogressionworktreeuntouched.
+Do not call the current fullviewport backend responsive or MilestoneCcomplete.
+PR15 staysdraft, successor to14; no protectedmainmerge.
+
+Final source checks:1508tests run1496passed12skipped,makevalidate/33regions,
+Python/Bash/JSON/diffclean. CorrectedWinstonROM17nongeneratedassemblyinputs
+matchsource; privatebuildGitdiffers. No ownedNexen/Xvfbleft; unrelatedPID104488
+onport7381leftuntouched. Privateevidenceandseparateprogressiontreepreserved.
+
+## Retained camera continuation — circular surface
+
+Local retained-camera source now removes the scene-wide INDEX8 shift. Native
+original fixture passes six forward/reverse steps with foreground/cursor and
+full raster equality; cached-column steps9frames/128B, new-column20–24/1664B.
+Evidence `/tmp/astra-retained-ring-fast-native-20261111/observations/report.json`.
+Current full local suite1525tests run,12skips, no failures; validation/memory
+and source checks pass. Two additional edge-copy invariant tests pass focused.
+Authentic current-ROM continuous acceptance is in progress, not yet a pass:
+`/tmp/astra-retained-ring-authentic-20261111/observations/action.json`.
+Source linkage matches58 non-generated native files in private build
+`/tmp/astra-camera-link-source.tgxau257`; full package unchanged. Preserve all
+prior failed logs and the separate progression recovery worktree.
+
+## Retained actor/camera correction in progress
+
+The first circular authentic run reached source208 but failed error16: desired
+standing chore3/step1 inherited old walking loop8. Evidence preserved at
+`/tmp/astra-retained-ring-authentic-20261111`; not accepted. New pose-key reset
+clears loop bounds. Fully visible actors retain physical pixels while only
+journal coordinates rebase. Camera gives the late compositor one checked
+foreground turn between strips, with no render call inside an opcode.
+
+Current circular native132-step wrap/reverse control passes full pixels:
+`/tmp/astra-retained-ring-wrap2-20261111`. Stale-ticket high-word rejection,
+refusal/abort and cold replacement pass:
+`/tmp/astra-retained-fault-native-20261111` (29.285seconds).
+Integrated authentic run is currently in progress, not yet accepted:
+`/tmp/astra-retained-actor-authentic-20261111`, ROM build`lwnjmox2`, source
+`q4g9ri5t`.58non-generated runtime inputs match current source. Preserve
+its checkpoints and observe first failing boundary; no unchanged retry.
+
+## Retained camera: passing functional checkpoint, further latency correction
+
+1529a2c is published; hosted run43081698605passed. Continuous authentic original
+pickup/inventory/forward camera/control passes at ROM07711a05..., followed by a
+separate matching-ROM reverse full-pixel pass. Forward1564frames vs1908baseline
+still fails the requested responsiveness quality. Do not call MilestoneCdone.
+Evidence preserved privately under milestone-c-retained-20261111/forward.
+
+New bounded changes defer in-view restoration conversion and distribute the
+same4video slices across kernel phases. Synthetic132-step/edge/stale/refusal/
+cold-replacement proof passes; six-step proof also passes with interleaving.
+Local1533tests run,12skips,makevalidate/memoryaudit/pinnedassemblies pass.
+Authentic run in progress: /tmp/astra-retained-sliced-authentic-20261111,
+ROM /tmp/astra-camera-link-build.ax4wsre4/fate-authentic-room.sfc.
+It measures this specific correction, with a600-second supervisor and no guest
+state writes. Preserve its first failing boundary; no unchanged retry. Separate
+progression recovery worktree and unrelated Nexen PID104488 remain untouched.
+
+## Contiguous columns and bounded final camera measurement
+
+94a6c88 authentic run timed out in observer after reaching source208/error0.
+Preserve as NOT_ACCEPTED; no inferred image. Column-contiguous character
+storage removes three-batch column fragmentation without new memory/budgets.
+Native132-step wrap/reverse/foreground/fault/cold proof passes, ROM3201b090...,
+16–17frame new columns,9frame cached columns. Current authentic run uses
+ROM `/tmp/astra-camera-link-build.85nseceg/fate-authentic-room.sfc`,
+`/tmp/astra-column-authentic-20261111`, private supervisor600seconds,
+frame-polling immutable-generation fence and durable cost-event journal.
+Do not repeat unchanged failures or transfer old-ROM states/results.
+Whole task remains in progress until actual responsive gameplay is measured.
+
+## Column pass and next bounded cursor correction
+
+88b4118 published, hosted43088136942green. Column native132step proof passes.
+Cold authentic run timed out atsource192/error0; exact-ROM pre-camera
+continuation passes source/PPU at208,1,163input→captureframes,172.953seconds.
+Not continuous latest-build acceptance; do not splice observations.
+Profile isolates six-frame cursor/foreground composition and109code-cache
+evictions among five original program identities in the camera interval.
+Three2KiB windows cannot retain all five tags despite combined1,358bodybytes.
+Do not start a new cache architecture inside this camera mission.
+
+Row-mapped cursor exchange passes31focused tests and1536fullsuite/12skips;
+assembly/memoryauditpass. Final changed-ROM authentic run in progress:
+`/tmp/astra-cursor-row-authentic-20261111`, ROM build`fhzsa1w3`, source`d41hjwgf`.
+600second supervisor; capture caches repeated paused reads and polls quickly
+only when the actual visual target is committed, not merely the logical one.
+No new gameplay-state writes, no old-ROM restore, no7-action route.
+
+
+## Packed groups and movement/cache collision — active work
+
+Private evidence root: /home/chad/SAME-private-evidence/milestone-c-packed-20261111.
+Packed compiler and three-window native adapter implemented; physical cache
+still 6 KiB. Native steady-set and corrupt-group tests pass. Full-source two
+independent storage generations match all files and all 2,203 prior body IDs,
+hashes, sizes and dispatch metadata. No FATE payload is staged for Git.
+
+First authentic run preserved a room-10 variable error. Offline saved-state
+inspection proves MATRIX_DISTANCE at $7F1000 overwrote cache page2. Fixed by
+symmetric distance storage in the adjacent 2 KiB gap, preserving directed
+next hops; audit now includes matrix regions. Native matrix-from-cache test
+passes at ROM f1bd8a2f..., including nested and large paged programs. Full
+local suite/validation and corrected authentic continuous acceptance running.
+Current authentic ROM: auth-build-6o9kqlk0/fate-authentic-room.sfc under root;
+observations: authentic-matrix-continuous/observations. One private-Xvfb MCP
+client, port7478,600-second watchdog. Do not repeat unchanged failures or
+reuse old-ROM states. Milestone C remains incomplete until measured authentic
+camera and final fidelity acceptance. Progression recovery worktree untouched.
+
+## Active-size shortcut and ongoing bounded acceptance
+
+fd6f744 is published; both CI checks pass on run43136837660. Local suite ran
+1549 tests (1537 pass,12skip), validation37-region audit passed. The corrected
+packed authentic run has zero code loads/evictions in its camera interval but
+1109frames and supervisor timeout after final camera capture; not accepted as
+complete gameplay. No retry of unchanged code.
+
+64-frame matching-ROM profile isolates 13% CPU cost in per-byte canonical
+program-size resolution. Active binding now retains the immutable body length,
+without removing any checked fetch/generation/member bounds. Focused native
+packed/matrix/large-page control passes at frame1920 vs2016, physical6KiBsame.
+Current changed-ROM continuous run: auth-build-nqrpcbcs/fate-authentic-room.sfc;
+root/authentic-bound-size-continuous, privateMCP7483,600-secondwatchdog. Wait
+for observed outcome; no acceptance inferred from elapsed time or process exit.
+No heavy local suite concurrent with this native run. Separate progression
+recovery and user's unrelated emulator remain untouched.
+
+## Camera pipeline — 2026-11-12 active correction
+
+Worktree `/tmp/same-scumm-authentic-room`, PR15 branch unchanged; recovery
+worktree untouched. `babed27` and `bd558dc` preserve the bounded handoffs and
+checked lookahead implementation. A subsequent measured correction moves
+lookahead admission from conversion-complete to composition-complete: the
+pending prefix is dead once INDEX8 owns the column. See CAMERA_PIPELINE.md.
+
+Synthetic bidirectional source/PPU equality, in-flight reversal and corrupt
+lookahead rejection pass. First authentic implementation preserved all gameplay
+but did not improve latency; it is not Milestone C acceptance. Corrected full
+continuous run is supervised under `authentic-overlap-continuous` in the private
+pipeline evidence root. No old-ROM state transfer, desktop display, or seven-
+action route. Do not repeat an unchanged failed run or infer a performance PASS.
+
+## Milestone C qualified; first source-authored exit — 2026-11-12
+
+Runtime `be553385b7419e5d8d1e6e6fa492ab48e40b80ab` pushed; hosted run43340757233
+passes both required jobs (1591 tests,12skipped). Local1579pass/12skip,
+validation41-region audit, pinned assembly and ROM/source checks pass.
+Cached reverse decoding184578→145290CPU units; cursor source coverage removes
+2unnecessary encodes (33→31). No new memory. Continuous authentic startup,
+newspaper, inventory, forward camera and continued control pass seven exact
+scene/text comparisons. Forward778frames; separate reverse658 (previous643,
+not an overall reverse speedup). Cached compose→NMI15frames. Current native
+retained76-step control and copyright-free source/cursor fixture both pass.
+See CAMERA_PIPELINE.md; C functional/integration scope complete, not60Hz.
+
+Private evidence root: milestone-c-final-multiroom-20261112 under
+/home/chad/SAME-private-evidence. ROM56e2396f..., mapd2cad5e2..., packagee6cf5c28...
+All59non-generated runtime files byte-match the reviewed commit. Recovery
+worktree untouched; no baseline tag or main rewrite, no automatic merge.
+
+D advanced through normal Use taxi input and original room10→75 lifecycle,
+with newspaper owner/state1/1 and error0. Original map source/INDEX8/VRAM/CGRAM
+comparison passes at completed generation379. A corrected observer uses
+lifecycleRUNNING2, not install-phase0; its earlier timeout remains unverified.
+No taxi/startup retry. Matching-room75 continuation selects then confirms
+Barnett through normal A input; no transition or local204 callback follows.
+VAR_VERB_SCRIPT32=204 is a missing input-service contract, distinct from the
+implemented VAR_SENTENCE_SCRIPT33/C20 semantic mailbox. Do not bypass it by
+calling the destination object or special-casing room75. See
+MULTIROOM_GAMEPLAY_FRONTIER.md for source evidence and exact next boundary.
+No complete destination gameplay or actor10/costume58 acceptance claimed.

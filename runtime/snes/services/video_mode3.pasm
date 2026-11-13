@@ -13,6 +13,7 @@ Same_Mode3_ScreenBitMasks:
 
 Same_Mode3_Reset_Far:
     php
+    jsl Same_Mode3_Retained_Reset_Far
     rep #$30
     .a16
     .i16
@@ -73,7 +74,11 @@ Same_Mode3_Reset__clear_surface_facade:
     stz BGMODE
     lda #$03
     sta BGMODE
+    .if SAME_VIDEO_OVERLAY_BG2
     lda #$70
+    .else
+    lda #$79 ; 64x32 map at byte $F000, 920 character slots below $E600
+    .endif
     sta BG1SC
     stz BG12NBA
     .if SAME_VIDEO_OVERLAY_BG2
@@ -112,9 +117,39 @@ Same_Mode3_Boot_Realize_Far:
     rep #$30
     .a16
     .i16
+    .if SAME_VIDEO_OVERLAY_BG2
     lda #Same_Mode3_StaticTilemap
     sta.l SAME_DMA_REQUEST_SOURCE_LO
     lda #$E000
+    sta.l SAME_DMA_REQUEST_TARGET
+    lda #$0800
+    .else
+    lda #Same_Mode3_RetainedTilemap
+    sta.l SAME_DMA_REQUEST_SOURCE_LO
+    lda #$F000
+    sta.l SAME_DMA_REQUEST_TARGET
+    lda #$0800
+    .endif
+    sta.l SAME_DMA_REQUEST_LENGTH
+    sep #$20
+    .a8
+    lda #$0F
+    sta.l SAME_DMA_REQUEST_SOURCE_BANK
+    lda #SAME_DMA_TYPE_VRAM|SAME_DMA_FLAG_FORCED_BLANK
+    sta.l SAME_DMA_REQUEST_TYPE_FLAGS
+    jsl Same_Mode3_Dma_Enqueue_Far
+    bcc Same_Mode3_Boot_Realize__first_map
+    brl Same_Mode3_Boot_Realize__error
+Same_Mode3_Boot_Realize__first_map:
+    .a8
+    .if SAME_VIDEO_OVERLAY_BG2 == 0
+    rep #$20
+    .a16
+    lda #Same_Mode3_RetainedTilemap
+    clc
+    adc #$0800
+    sta.l SAME_DMA_REQUEST_SOURCE_LO
+    lda #$F800
     sta.l SAME_DMA_REQUEST_TARGET
     lda #$0800
     sta.l SAME_DMA_REQUEST_LENGTH
@@ -125,7 +160,11 @@ Same_Mode3_Boot_Realize_Far:
     lda #SAME_DMA_TYPE_VRAM|SAME_DMA_FLAG_FORCED_BLANK
     sta.l SAME_DMA_REQUEST_TYPE_FLAGS
     jsl Same_Mode3_Dma_Enqueue_Far
-    bcs Same_Mode3_Boot_Realize__error
+    bcc Same_Mode3_Boot_Realize__map_ready
+    brl Same_Mode3_Boot_Realize__error
+Same_Mode3_Boot_Realize__map_ready:
+    .a8
+    .endif
     jsl Same_Mode3_Video_Commit_Far
     ; M24R-B starts SCUMM's room lifecycle separately and deliberately does
     ; not request the legacy initial visual here.  The static tilemap DMA is
@@ -290,14 +329,31 @@ Same_Mode3_Step__converting:
     .a8
     lda #SAME_MODE3_STATE_QUEUEING
     sta.l SAME_MODE3_CONTROL_STATE
-    rts
+    ; Conversion has met its dependency fence. Queue in this same bounded
+    ; slice, rather than making the next script turn delay ready character
+    ; data. This does not perform another conversion or raise the DMA budget.
 Same_Mode3_Step__queueing:
     jsr Same_Mode3_QueueBatch
+    sep #$20
+    .a8
+    lda.l SAME_MODE3_CONTROL_STATE
+    cmp #SAME_MODE3_STATE_COMPLETE
+    beq Same_Mode3_Step__complete
     rts
 Same_Mode3_Step__waiting:
     jsr Same_Mode3_ObserveBatch
+    sep #$20
+    .a8
+    lda.l SAME_MODE3_CONTROL_STATE
+    cmp #SAME_MODE3_STATE_QUEUEING
+    ; ObserveBatch has retired the completed descriptors. Exactly one queue
+    ; attempt may follow, including the empty tail that arms the NMI scroll
+    ; ticket. Refusal or an unfinished DMA returns without spinning.
+    beq Same_Mode3_Step__queueing
     rts
 Same_Mode3_Step__complete:
+    jsr Same_Mode3_Retained_Complete
+    bcs Same_Mode3_Step__return
     sep #$20
     .a8
     lda #$01
@@ -403,24 +459,35 @@ Same_Mode3_HandleDirty__y_size:
     lsr
     sta.l SAME_MODE3_WORK_Y0
 Same_Mode3_HandleDirty__row:
+    .a16
+    lda.l SAME_MODE3_WORK_X1
+    sta.l SAME_MODE3_WORK_RUN_COUNT
+    lda.l MODE3_R_ACTIVE
+    and #$00FF
+    beq Same_Mode3_HandleDirty__row_end_ready
+    lda.l SAME_MODE3_WORK_Y0
+    cmp #$0018
+    bcs Same_Mode3_HandleDirty__row_end_ready
+    lda.l MODE3_R_NEXT
+    and #$0007
+    beq Same_Mode3_HandleDirty__row_end_ready
+    lda.l SAME_MODE3_WORK_RUN_COUNT
+    inc
+    sta.l SAME_MODE3_WORK_RUN_COUNT
+Same_Mode3_HandleDirty__row_end_ready:
+    .a16
     lda.l SAME_MODE3_WORK_X0
     sta.l SAME_MODE3_WORK_COLUMN
 Same_Mode3_HandleDirty__column:
-    lda.l SAME_MODE3_WORK_Y0
-    asl
-    asl
-    asl
-    asl
-    asl
-    clc
-    adc.l SAME_MODE3_WORK_COLUMN
+    .a16
+    jsr Same_Mode3_Retained_MapDirtyTile
     sta.l SAME_MODE3_WORK_TILE
     lda.l SAME_MODE3_WORK_TILE
     jsr Same_Mode3_SetCandidateTile
     rep #$20
     .a16
     lda.l SAME_MODE3_WORK_COLUMN
-    cmp.l SAME_MODE3_WORK_X1
+    cmp.l SAME_MODE3_WORK_RUN_COUNT
     beq Same_Mode3_HandleDirty__next_row
     inc
     sta.l SAME_MODE3_WORK_COLUMN
@@ -500,6 +567,18 @@ Same_Mode3_HandlePresent__state:
     beq Same_Mode3_HandlePresent__args
     brl Same_Mode3_HandlePresent__reject
 Same_Mode3_HandlePresent__args:
+    .a8
+    lda.l MODE3_R_ACTIVE
+    beq Same_Mode3_HandlePresent__retained_ready
+    lda.l MODE3_R_PHASE
+    cmp #$01
+    bne Same_Mode3_HandlePresent__retained_ready
+    lda.l MODE3_R_VALIDATED
+    cmp #$01
+    beq Same_Mode3_HandlePresent__retained_ready
+    brl Same_Mode3_HandlePresent__reject
+Same_Mode3_HandlePresent__retained_ready:
+    .a8
     rep #$20
     .a16
     lda.l SAME_EVENT_STAGING+SAME_PKT_ARG1
@@ -535,10 +614,23 @@ Same_Mode3_HandlePresent__accept:
     lda #$0000
     sta.l SAME_MODE3_CONTROL_SCAN_TILE
     sta.l SAME_MODE3_CONTROL_SCAN_PALETTE
-    sta.l SAME_MODE3_CONTROL_PENDING_COUNT
     sta.l SAME_MODE3_CONTROL_INFLIGHT_COUNT
+    lda.l MODE3_R_ACTIVE
+    and #$00FF
+    beq Same_Mode3_HandlePresent__reset_counts
+    lda.l MODE3_R_PHASE
+    and #$00FF
+    cmp #$0001
+    beq Same_Mode3_HandlePresent__keep_restored
+Same_Mode3_HandlePresent__reset_counts:
+    .a16
+    lda #$0000
+    sta.l SAME_MODE3_CONTROL_PENDING_COUNT
     sta.l SAME_MODE3_CONTROL_CONVERTED_COUNT
     sta.l SAME_MODE3_CONTROL_UNCHANGED_COUNT
+Same_Mode3_HandlePresent__keep_restored:
+    .a16
+    lda #$0000
     sta.l SAME_MODE3_CONTROL_QUEUED_TILE_BYTES
     sta.l SAME_MODE3_CONTROL_QUEUED_CGRAM_BYTES
     sta.l SAME_MODE3_CONTROL_BATCH_COUNT
@@ -557,13 +649,18 @@ Same_Mode3_HandlePresent__accept:
 Same_Mode3_HandlePresent__invalidate_all_tiles:
     .a8
     .i16
+    cpx #$0070 ; 896 cold visible characters, no unvalidated guard bytes
+    bcc Same_Mode3_HandlePresent__cold_candidate
+    lda #$00
+Same_Mode3_HandlePresent__cold_candidate:
+    .a8
     sta.l SAME_MODE3_CANDIDATE_TILES,x
     inx
     cpx #SAME_MODE3_CANDIDATE_TILES_SIZE
     bcc Same_Mode3_HandlePresent__invalidate_all_tiles
     rep #$20
     .a16
-    lda #SAME_MODE3_TILE_COUNT
+    lda #$0380 ; cold visible tile count
     sta.l SAME_MODE3_CONTROL_CANDIDATE_COUNT
     bra Same_Mode3_HandlePresent__tile_candidates_ready
 Same_Mode3_HandlePresent__tile_shadow_valid:
@@ -1004,6 +1101,108 @@ Same_Mode3_ClearPendingInflightPalette:
 ; --------------------------------------------------------------------------
 ; Palette and tile conversion
 
+; Skip an empty bitset byte in one operation instead of testing its eight
+; bits separately. A16 is the current in-range index; C=1 retains that index
+; for the existing per-bit test, C=0 advances to the next byte. Bounds remain
+; owned by the callers. X is scratch; Y/DBR/stack and all bitsets are preserved.
+; Available bytes exclude in-flight DMA exactly like TestAvailable*.
+Same_Mode3_SeekCandidateTileByte:
+    .a16
+    .i16
+    pha
+    lsr
+    lsr
+    lsr
+    tax
+    lda.l SAME_MODE3_CANDIDATE_TILES,x
+    and #$00FF
+    bne Same_Mode3_SeekCandidateTileByte__nonempty
+    pla
+    and #$FFF8
+    clc
+    adc #$0008
+    clc
+    rts
+Same_Mode3_SeekCandidateTileByte__nonempty:
+    .a16
+    pla
+    sec
+    rts
+
+Same_Mode3_SeekCandidatePaletteByte:
+    .a16
+    .i16
+    pha
+    lsr
+    lsr
+    lsr
+    tax
+    lda.l SAME_MODE3_CANDIDATE_PALETTE,x
+    and #$00FF
+    bne Same_Mode3_SeekCandidatePaletteByte__nonempty
+    pla
+    and #$FFF8
+    clc
+    adc #$0008
+    clc
+    rts
+Same_Mode3_SeekCandidatePaletteByte__nonempty:
+    .a16
+    pla
+    sec
+    rts
+
+Same_Mode3_SeekAvailableTileByte:
+    .a16
+    .i16
+    pha
+    lsr
+    lsr
+    lsr
+    tax
+    lda.l SAME_MODE3_INFLIGHT_TILES,x
+    eor #$FFFF
+    and.l SAME_MODE3_PENDING_TILES,x
+    and #$00FF
+    bne Same_Mode3_SeekAvailableTileByte__nonempty
+    pla
+    and #$FFF8
+    clc
+    adc #$0008
+    clc
+    rts
+Same_Mode3_SeekAvailableTileByte__nonempty:
+    .a16
+    pla
+    sec
+    rts
+
+Same_Mode3_SeekAvailablePaletteByte:
+    .a16
+    .i16
+    pha
+    lsr
+    lsr
+    lsr
+    tax
+    lda.l SAME_MODE3_INFLIGHT_PALETTE,x
+    eor #$FFFF
+    and.l SAME_MODE3_PENDING_PALETTE,x
+    and #$00FF
+    bne Same_Mode3_SeekAvailablePaletteByte__nonempty
+    pla
+    and #$FFF8
+    clc
+    adc #$0008
+    clc
+    rts
+Same_Mode3_SeekAvailablePaletteByte__nonempty:
+    .a16
+    pla
+    sec
+    rts
+
+
 Same_Mode3_ProcessPaletteCandidates:
     rep #$30
     .a16
@@ -1013,6 +1212,9 @@ Same_Mode3_ProcessPaletteCandidates__next:
     lda.l SAME_MODE3_CONTROL_SCAN_PALETTE
     cmp #$0100
     bcs Same_Mode3_ProcessPaletteCandidates__done
+    jsr Same_Mode3_SeekCandidatePaletteByte
+    sta.l SAME_MODE3_CONTROL_SCAN_PALETTE
+    bcc Same_Mode3_ProcessPaletteCandidates__next
     jsr Same_Mode3_TestCandidatePalette
     rep #$20
     .a16
@@ -1114,14 +1316,17 @@ Same_Mode3_ProcessTileCandidates__scan:
     lda.l SAME_MODE3_CONTROL_SCAN_TILE
     cmp #SAME_MODE3_TILE_COUNT
     bcs Same_Mode3_ProcessTileCandidates__done
+    jsr Same_Mode3_SeekCandidateTileByte
+    sta.l SAME_MODE3_CONTROL_SCAN_TILE
+    bcc Same_Mode3_ProcessTileCandidates__scan
     jsr Same_Mode3_TestCandidateTile
     rep #$20
     .a16
     lda.l SAME_MODE3_CONTROL_SCAN_TILE
     bcc Same_Mode3_ProcessTileCandidates__advance
     sta.l SAME_MODE3_WORK_TILE
-    jsr Same_Mode3_EncodeTile
-    jsr Same_Mode3_CommitEncodedTile
+    jsr Same_Mode3_EncodeViewportTile
+    jsr Same_Mode3_CommitViewportTile
     rep #$20
     .a16
     lda.l SAME_MODE3_WORK_TILE
@@ -1139,9 +1344,22 @@ Same_Mode3_ProcessTileCandidates__advance:
 Same_Mode3_ProcessTileCandidates__done:
     rts
 
-; Exact Phase-6A 8bpp plane order. One tile number is read from WORK_TILE and
-; the 64-byte result is written to TILE_SCRATCH.
+; Exact 8bpp plane order, gathered one row at a time. Eight shifts replace
+; each plane byte completely, including zero pixels; no scratch clear needed.
+; X is the source pixel offset, Y the planar row offset. The eight temporary
+; planes alias only backend-owned rectangle scratch ($18..$1F), which is dead
+; after candidate construction. No actor/cache/surface allocation is borrowed.
+; DBR=$41 makes absolute ROL legal (65816 has no absolute-long ROL).
+Same_Mode3_TileScratchLow = SAME_MODE3_TILE_SCRATCH & $FFFF
+Same_Mode3_TileShadowLow = SAME_BWRAM_TILE_SHADOW_BASE & $FFFF
+Same_Mode3_RowPlanes = SAME_MODE3_WORK_X0 & $FFFF
 Same_Mode3_EncodeTile:
+    phb
+    sep #$20
+    .a8
+    lda #$41
+    pha
+    plb
     rep #$30
     .a16
     .i16
@@ -1162,135 +1380,88 @@ Same_Mode3_EncodeTile:
     asl
     clc
     adc.l SAME_MODE3_WORK_SOURCE
-    sta.l SAME_MODE3_WORK_SOURCE
-    lda #$0000
-    ldx #$0000
-Same_Mode3_EncodeTile__clear:
-    .a16
-    sta.l SAME_MODE3_TILE_SCRATCH,x
-    inx
-    inx
-    cpx #$0040
-    bcc Same_Mode3_EncodeTile__clear
-    lda #$0000
-    sta.l SAME_MODE3_WORK_ROW
+    tax
+    ldy #$0000
 Same_Mode3_EncodeTile__row:
-    .a16
-    lda #$0000
+    sep #$20
+    .a8
+    lda #$08
     sta.l SAME_MODE3_WORK_COLUMN
 Same_Mode3_EncodeTile__column:
-    lda.l SAME_MODE3_WORK_ROW
-    xba
-    clc
-    adc.l SAME_MODE3_WORK_SOURCE
-    adc.l SAME_MODE3_WORK_COLUMN
-    tax
-    sep #$20
-    .a8
     lda.l SAME_BWRAM_SURFACE_BASE,x
-    sta.l SAME_MODE3_WORK_PIXEL
-    rep #$20
-    .a16
+    lsr
+    rol.w Same_Mode3_RowPlanes+0
+    lsr
+    rol.w Same_Mode3_RowPlanes+1
+    lsr
+    rol.w Same_Mode3_RowPlanes+2
+    lsr
+    rol.w Same_Mode3_RowPlanes+3
+    lsr
+    rol.w Same_Mode3_RowPlanes+4
+    lsr
+    rol.w Same_Mode3_RowPlanes+5
+    lsr
+    rol.w Same_Mode3_RowPlanes+6
+    lsr
+    rol.w Same_Mode3_RowPlanes+7
+    inx
     lda.l SAME_MODE3_WORK_COLUMN
-    tax
-    sep #$20
-    .a8
-    lda.l Same_Mode3_ScreenBitMasks,x
-    sta.l SAME_MODE3_WORK_BITMASK
-    rep #$20
-    .a16
-    lda.l SAME_MODE3_WORK_ROW
-    asl
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_MODE3_WORK_PIXEL
-    and #$01
-    beq Same_Mode3_EncodeTile__p1
-    lda.l SAME_MODE3_TILE_SCRATCH+$00,x
-    ora.l SAME_MODE3_WORK_BITMASK
-    sta.l SAME_MODE3_TILE_SCRATCH+$00,x
-Same_Mode3_EncodeTile__p1:
-    .a8
-    lda.l SAME_MODE3_WORK_PIXEL
-    and #$02
-    beq Same_Mode3_EncodeTile__p2
-    lda.l SAME_MODE3_TILE_SCRATCH+$01,x
-    ora.l SAME_MODE3_WORK_BITMASK
-    sta.l SAME_MODE3_TILE_SCRATCH+$01,x
-Same_Mode3_EncodeTile__p2:
-    .a8
-    lda.l SAME_MODE3_WORK_PIXEL
-    and #$04
-    beq Same_Mode3_EncodeTile__p3
-    lda.l SAME_MODE3_TILE_SCRATCH+$10,x
-    ora.l SAME_MODE3_WORK_BITMASK
-    sta.l SAME_MODE3_TILE_SCRATCH+$10,x
-Same_Mode3_EncodeTile__p3:
-    .a8
-    lda.l SAME_MODE3_WORK_PIXEL
-    and #$08
-    beq Same_Mode3_EncodeTile__p4
-    lda.l SAME_MODE3_TILE_SCRATCH+$11,x
-    ora.l SAME_MODE3_WORK_BITMASK
-    sta.l SAME_MODE3_TILE_SCRATCH+$11,x
-Same_Mode3_EncodeTile__p4:
-    .a8
-    lda.l SAME_MODE3_WORK_PIXEL
-    and #$10
-    beq Same_Mode3_EncodeTile__p5
-    lda.l SAME_MODE3_TILE_SCRATCH+$20,x
-    ora.l SAME_MODE3_WORK_BITMASK
-    sta.l SAME_MODE3_TILE_SCRATCH+$20,x
-Same_Mode3_EncodeTile__p5:
-    .a8
-    lda.l SAME_MODE3_WORK_PIXEL
-    and #$20
-    beq Same_Mode3_EncodeTile__p6
-    lda.l SAME_MODE3_TILE_SCRATCH+$21,x
-    ora.l SAME_MODE3_WORK_BITMASK
-    sta.l SAME_MODE3_TILE_SCRATCH+$21,x
-Same_Mode3_EncodeTile__p6:
-    .a8
-    lda.l SAME_MODE3_WORK_PIXEL
-    and #$40
-    beq Same_Mode3_EncodeTile__p7
-    lda.l SAME_MODE3_TILE_SCRATCH+$30,x
-    ora.l SAME_MODE3_WORK_BITMASK
-    sta.l SAME_MODE3_TILE_SCRATCH+$30,x
-Same_Mode3_EncodeTile__p7:
-    .a8
-    lda.l SAME_MODE3_WORK_PIXEL
-    and #$80
-    beq Same_Mode3_EncodeTile__advance
-    lda.l SAME_MODE3_TILE_SCRATCH+$31,x
-    ora.l SAME_MODE3_WORK_BITMASK
-    sta.l SAME_MODE3_TILE_SCRATCH+$31,x
-Same_Mode3_EncodeTile__advance:
-    rep #$20
-    .a16
-    lda.l SAME_MODE3_WORK_COLUMN
-    inc
+    dec
     sta.l SAME_MODE3_WORK_COLUMN
-    cmp #$0008
-    bcs Same_Mode3_EncodeTile__next_row
-    brl Same_Mode3_EncodeTile__column
-Same_Mode3_EncodeTile__next_row:
+    bne Same_Mode3_EncodeTile__column
+    phx
+    tyx
+    lda.l SAME_MODE3_WORK_X0+0
+    sta.l SAME_MODE3_TILE_SCRATCH+$00,x
+    lda.l SAME_MODE3_WORK_X0+1
+    sta.l SAME_MODE3_TILE_SCRATCH+$01,x
+    lda.l SAME_MODE3_WORK_X0+2
+    sta.l SAME_MODE3_TILE_SCRATCH+$10,x
+    lda.l SAME_MODE3_WORK_X0+3
+    sta.l SAME_MODE3_TILE_SCRATCH+$11,x
+    lda.l SAME_MODE3_WORK_X0+4
+    sta.l SAME_MODE3_TILE_SCRATCH+$20,x
+    lda.l SAME_MODE3_WORK_X0+5
+    sta.l SAME_MODE3_TILE_SCRATCH+$21,x
+    lda.l SAME_MODE3_WORK_X0+6
+    sta.l SAME_MODE3_TILE_SCRATCH+$30,x
+    lda.l SAME_MODE3_WORK_X0+7
+    sta.l SAME_MODE3_TILE_SCRATCH+$31,x
+    plx
+    iny
+    iny
+    cpy #$0010
+    beq Same_Mode3_EncodeTile__done
+    rep #$20
     .a16
-    lda.l SAME_MODE3_WORK_ROW
-    inc
-    sta.l SAME_MODE3_WORK_ROW
-    cmp #$0008
-    bcs Same_Mode3_EncodeTile__done
+    txa
+    clc
+    adc #$00F8
+    tax
     brl Same_Mode3_EncodeTile__row
 Same_Mode3_EncodeTile__done:
+    plb
+    rep #$30
+    .a16
+    .i16
     rts
 
+; Compare/copy aligned words within the existing bank-$41 tile shadow. Both
+; regions are even-sized and bounded by the tile index; no speculative read
+; crosses the 64-byte tile. DBR is restored before the pending-bit helper.
 Same_Mode3_CommitEncodedTile:
+    phb
+    sep #$20
+    .a8
+    lda #$41
+    pha
+    plb
     rep #$30
     .a16
     .i16
     lda.l SAME_MODE3_WORK_TILE
+    jsr Same_Mode3_CharacterIndex
     asl
     asl
     asl
@@ -1298,73 +1469,52 @@ Same_Mode3_CommitEncodedTile:
     asl
     asl
     sta.l SAME_MODE3_WORK_TEMP
+    tax
+    ldy #$0000
     sep #$20
     .a8
     lda.l SAME_BWRAM_CONTROL_TILE_VALID
     beq Same_Mode3_CommitEncodedTile__copy
     rep #$20
     .a16
-    lda #$0000
-    sta.l SAME_MODE3_WORK_INDEX
 Same_Mode3_CommitEncodedTile__compare:
-    lda.l SAME_MODE3_WORK_INDEX
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_MODE3_TILE_SCRATCH,x
-    sta.l SAME_MODE3_WORK_CHANGED
-    rep #$20
     .a16
-    txa
-    clc
-    adc.l SAME_MODE3_WORK_TEMP
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_BWRAM_TILE_SHADOW_BASE,x
-    cmp.l SAME_MODE3_WORK_CHANGED
+    .i16
+    lda.w Same_Mode3_TileScratchLow,y
+    cmp.w Same_Mode3_TileShadowLow,x
     bne Same_Mode3_CommitEncodedTile__copy
-    rep #$20
-    .a16
-    lda.l SAME_MODE3_WORK_INDEX
-    inc
-    sta.l SAME_MODE3_WORK_INDEX
-    cmp #$0040
+    inx
+    inx
+    iny
+    iny
+    cpy #$0040
     bcc Same_Mode3_CommitEncodedTile__compare
     lda.l SAME_MODE3_CONTROL_UNCHANGED_COUNT
     inc
     sta.l SAME_MODE3_CONTROL_UNCHANGED_COUNT
+    plb
     rts
 Same_Mode3_CommitEncodedTile__copy:
-    rep #$20
+    rep #$30
     .a16
-    lda #$0000
-    sta.l SAME_MODE3_WORK_INDEX
+    .i16
+    lda.l SAME_MODE3_WORK_TEMP
+    tax
+    ldy #$0000
 Same_Mode3_CommitEncodedTile__copy_loop:
-    lda.l SAME_MODE3_WORK_INDEX
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_MODE3_TILE_SCRATCH,x
-    sta.l SAME_MODE3_WORK_CHANGED
-    rep #$20
     .a16
-    txa
-    clc
-    adc.l SAME_MODE3_WORK_TEMP
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_MODE3_WORK_CHANGED
-    sta.l SAME_BWRAM_TILE_SHADOW_BASE,x
-    rep #$20
-    .a16
-    lda.l SAME_MODE3_WORK_INDEX
-    inc
-    sta.l SAME_MODE3_WORK_INDEX
-    cmp #$0040
+    .i16
+    lda.w Same_Mode3_TileScratchLow,y
+    sta.w Same_Mode3_TileShadowLow,x
+    inx
+    inx
+    iny
+    iny
+    cpy #$0040
     bcc Same_Mode3_CommitEncodedTile__copy_loop
+    plb
     lda.l SAME_MODE3_WORK_TILE
+    jsr Same_Mode3_CharacterIndex
     jsr Same_Mode3_SetPendingTile
     rep #$20
     .a16
@@ -1390,7 +1540,14 @@ Same_Mode3_QueueBatch__palette_scan:
     .a16
     lda.l SAME_MODE3_WORK_INDEX
     cmp #$0100
-    bcs Same_Mode3_QueueBatch__tile_begin
+    bcc Same_Mode3_QueueBatch__palette_in_range
+    brl Same_Mode3_QueueBatch__tile_begin
+Same_Mode3_QueueBatch__palette_in_range:
+    jsr Same_Mode3_SeekAvailablePaletteByte
+    sta.l SAME_MODE3_WORK_INDEX
+    bcs Same_Mode3_QueueBatch__palette_byte_nonempty
+    brl Same_Mode3_QueueBatch__palette_scan
+Same_Mode3_QueueBatch__palette_byte_nonempty:
     jsr Same_Mode3_TestAvailablePalette
     rep #$20
     .a16
@@ -1468,7 +1625,14 @@ Same_Mode3_QueueBatch__tile_scan:
     .a16
     lda.l SAME_MODE3_WORK_INDEX
     cmp #SAME_MODE3_TILE_COUNT
-    bcs Same_Mode3_QueueBatch__finish
+    bcc Same_Mode3_QueueBatch__tile_in_range
+    brl Same_Mode3_QueueBatch__finish
+Same_Mode3_QueueBatch__tile_in_range:
+    jsr Same_Mode3_SeekAvailableTileByte
+    sta.l SAME_MODE3_WORK_INDEX
+    bcs Same_Mode3_QueueBatch__tile_byte_nonempty
+    brl Same_Mode3_QueueBatch__tile_scan
+Same_Mode3_QueueBatch__tile_byte_nonempty:
     jsr Same_Mode3_TestAvailableTile
     rep #$20
     .a16
@@ -1483,6 +1647,16 @@ Same_Mode3_QueueBatch__tile_run:
     lda #$0000
     sta.l SAME_MODE3_WORK_RUN_COUNT
 Same_Mode3_QueueBatch__tile_extend:
+    .a16
+    ; A DMA descriptor cannot cross the split guard-column shadow.
+    lda.l SAME_MODE3_WORK_RUN_COUNT
+    beq Same_Mode3_QueueBatch__tile_source_ok
+    lda.l SAME_MODE3_WORK_INDEX
+    cmp #$0380
+    beq Same_Mode3_QueueBatch__tile_queue
+    cmp #$038B
+    beq Same_Mode3_QueueBatch__tile_queue
+Same_Mode3_QueueBatch__tile_source_ok:
     .a16
     lda.l SAME_MODE3_WORK_INDEX
     cmp #SAME_MODE3_TILE_COUNT
@@ -1638,6 +1812,45 @@ Same_Mode3_QueueTileRun:
     .a8
     lda #$41
     sta.l SAME_DMA_REQUEST_SOURCE_BANK
+    rep #$20
+    .a16
+    lda.l SAME_MODE3_WORK_RUN_START
+    cmp #$0380
+    bcc Same_Mode3_QueueTileRun__source_ready
+    sec
+    sbc #$0380
+    cmp #$000B
+    bcs Same_Mode3_QueueTileRun__tail
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc #SAME_BWRAM_RETAINED_GUARD_HEAD&$FFFF
+    bra Same_Mode3_QueueTileRun__guard_source
+Same_Mode3_QueueTileRun__tail:
+    .a16
+    sec
+    sbc #$000B
+    asl
+    asl
+    asl
+    asl
+    asl
+    asl
+    clc
+    adc #SAME_MODE3_GUARD_TAIL&$FFFF
+Same_Mode3_QueueTileRun__guard_source:
+    sta.l SAME_DMA_REQUEST_SOURCE_LO
+    sep #$20
+    .a8
+    lda #$40
+    sta.l SAME_DMA_REQUEST_SOURCE_BANK
+Same_Mode3_QueueTileRun__source_ready:
+    sep #$20
+    .a8
     lda #SAME_DMA_TYPE_VRAM
     sta.l SAME_DMA_REQUEST_TYPE_FLAGS
     jsl Same_Mode3_Dma_Enqueue_Far
@@ -1682,8 +1895,6 @@ Same_Mode3_RecordInflight:
     lda.l SAME_MODE3_CONTROL_RECORD_COUNT
     sta.l SAME_MODE3_WORK_INDEX
     asl
-    clc
-    adc.l SAME_MODE3_WORK_INDEX
     asl
     asl
     tax
@@ -1706,8 +1917,9 @@ Same_Mode3_ObserveBatch:
     .a16
     .i16
     lda.l SAME_DMA_COMMITTED
-    cmp.l SAME_MODE3_CONTROL_EXPECTED_DMA
-    bcs Same_Mode3_ObserveBatch__ready
+    sec
+    sbc.l SAME_MODE3_CONTROL_EXPECTED_DMA
+    bpl Same_Mode3_ObserveBatch__ready
     brl Same_Mode3_ObserveBatch__done
 Same_Mode3_ObserveBatch__ready:
     .a16
@@ -1719,8 +1931,6 @@ Same_Mode3_ObserveBatch__record:
     bcs Same_Mode3_ObserveBatch__complete
     sta.l SAME_MODE3_WORK_TEMP
     asl
-    clc
-    adc.l SAME_MODE3_WORK_TEMP
     asl
     asl
     tax
@@ -2099,6 +2309,7 @@ Same_Mode3_Fixture_Frame__done:
     lda #$0001
     sta.l SAME_MODE3_FIXTURE_DONE
 Same_Mode3_Fixture_Frame__return:
+    jsr Same_Mode3_Retained_Fixture
     plp
     rtl
 
@@ -2211,5 +2422,27 @@ Same_Mode3_Fixture_PushPresent:
     jsl Same_Mode3_Event_Push_Far
     rts
 
+.include "video_mode3_retained.inc.pasm"
+
+Same_Mode3_RetainedTilemap:
+    .incbin "../generated/video_backend_mode3_retained_tilemap.bin"
+
 Same_Mode3_StaticTilemap:
     .incbin "../generated/video_backend_mode3_tilemap.bin"
+
+; Logical candidates retain the existing row-major surface coordinates.
+; Only immutable character storage/pending DMA IDs use column-major scene
+; slots. HUD and legacy BG2 storage retain their established identities.
+Same_Mode3_CharacterIndex:
+    .a16
+    .i16
+    .if SAME_VIDEO_OVERLAY_BG2 == 0
+    phx
+    asl
+    tax
+    lda.l Same_Mode3_CharacterOrder,x
+    plx
+    .endif
+    rts
+Same_Mode3_CharacterOrder:
+    .incbin "../generated/video_backend_mode3_character_order.bin"

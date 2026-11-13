@@ -2663,6 +2663,145 @@ def run_dynamic_route(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[
     }
 
 
+def run_packed_corruption(args: argparse.Namespace,
+                          inputs: dict[str, Any]) -> dict[str, Any]:
+    """Corrupt a sibling body: the entire shared group must remain unpublished."""
+    storage = inputs["program_storage"]
+    require(storage and storage.get("packed_small_programs"), "requires packed storage")
+    record = next(r for r in storage["records"] if r["identity"] == "GlobalProgram(2)")
+    boot = next(r for r in storage["records"] if r["identity"] == "GlobalProgram(1)")
+    require(record["storage_anchor_id"] == boot["storage_anchor_id"],
+            "fault must affect a sibling in the boot checked group")
+    package = bytearray(Path(inputs["program_storage_package"]["path"]).read_bytes())
+    offset = int(record["package_offset"])
+    package[offset] ^= 0x80
+    fault = args.output.parent / "fault-image"
+    fault.mkdir()
+    for suffix in (".sfc", ".map", ".build_identity.json"):
+        shutil.copyfile(args.rom.with_suffix(suffix), fault / ("fault" + suffix))
+    (fault / "fault.msu").write_bytes(package)
+    original = args.rom
+    args.rom = fault / "fault.sfc"
+    terminal = None
+    try:
+        with _session(args) as session:
+            _cold_reset(session)
+            for _ in range(0, args.frames, 16):
+                _run_exact(session, 16)
+                if session.read_memory("snesMemory", ERROR, 1)[0]:
+                    terminal = {"cache": msu_program_diagnostics(session, inputs),
+                                "variables": variables(session, (100,101,102,103,104,110)),
+                                "error": session.read_memory("snesMemory", ERROR, 1)[0],
+                                "frame": int(session.get_state()["frameCount"]),
+                                "stream_error": list(session.read_memory("snesMemory",0x7e5f13,7)),
+                                "stack": cpu_sp(session)}
+                    break
+    finally:
+        args.rom = original
+    evidence = {"terminal": terminal, **inputs["hashes"], "fault_offset": offset,
+                "fault_package_sha256": hashlib.sha256(package).hexdigest()}
+    args.output.with_suffix(".observations.json").write_text(json.dumps(evidence, indent=2)+'\n')
+    require(terminal is not None, "corrupt shared group did not fail within budget")
+    cache = terminal["cache"]
+    require(cache["provider_error"] == 6 and cache["cache_failures"] == 1
+            and cache["cache_loads"] == 0 and all(v == 0 for v in terminal["variables"].values()),
+            "corrupt group published or executed a constituent")
+    require(any(c["program_unit_id"] == record["storage_anchor_id"] and c["state"] == 255
+                for c in cache["cache_slots"]), "failed group did not invalidate its physical binding")
+    require(u16(bytes(terminal["stream_error"])) == boot["program_unit_id"],
+            "CRC failure lost the requesting executable's canonical identity")
+    return {"format": "same-packed-group-crc-native-v1", **evidence, "result": "PASS"}
+
+
+def run_packed_working_set(args: argparse.Namespace,
+                           inputs: dict[str, Any]) -> dict[str, Any]:
+    """Original yielding scripts, nested call and conventional large paging.
+
+    Native observations are journaled before assertions. No guest writes or
+    gameplay input is needed: the fixture stops its own counters and executes
+    its >21 KiB branch/yield body after the steady working-set interval.
+    """
+    require(inputs["manifest"].get("conformance_case") == "packed-working-set",
+            "packed mode requires the original working-set fixture")
+    storage = inputs["program_storage"]
+    require(storage and storage.get("packed_small_programs"),
+            "packed mode requires compiler storage groups")
+    identities = ["GlobalProgram(2)"] + [
+        f"RoomLocalProgram(room=1,local={n})" for n in range(250, 254)]
+    records = {r["identity"]: r for r in storage["records"]}
+    require([records[i]["length"] for i in identities] == [787, 120, 107, 163, 181],
+            "fixture does not reproduce the measured body-size working set")
+    anchors = {records[i].get("storage_anchor_id", records[i]["program_unit_id"])
+               for i in identities}
+    require(len(anchors) <= 2, "five small programs were not packed into two groups")
+    samples = []
+    journal = args.output.with_suffix(".observations.jsonl")
+    with journal.open("x", encoding="utf-8") as log, _session(args) as session:
+        log.write(json.dumps({"identities": inputs["hashes"],
+                              "hypothesis": "five active bodies coexist without reloads"}) + "\n")
+        log.flush()
+        _cold_reset(session)
+        if args.stop_on_resource_error:
+            session.trace_log(count=1, cpu_type="Snes")
+            hook = session.add_write_hook(ERROR, match_value=0x10, match_value_mask=0xff)
+            wait = session.run_until(max_frames=args.frames, hook_handle=hook)
+            cpu = session.get_cpu_state("Snes")
+            address = (int(cpu.get("k", 0)) << 16) | int(cpu["pc"])
+            boundary = {"wait": wait, "cpu": cpu,
+                        "disassembly": session.disassemble(address, count=20, cpu_type="Snes"),
+                        "trace": session.trace_log(count=1000, cpu_type="Snes"),
+                        "cache": msu_program_diagnostics(session, inputs),
+                        "logical_binding": list(session.read_memory("snesMemory", 0x7e2ed6, 10)),
+                        "stream_error": list(session.read_memory("snesMemory", 0x7e5f13, 7)),
+                        "vm": list(session.read_memory("snesMemory", 0x7e2300, 0x80)),
+                        "slots": active_slots(session)}
+            log.write(json.dumps(boundary, sort_keys=True) + "\n"); log.flush()
+            session.remove_hook(hook)
+            raise RuntimeError("Resource-error notification and later snapshot captured; not an instruction-exact boundary or acceptance")
+        for elapsed in range(0, args.frames, 16):
+            _run_exact(session, min(16, args.frames - elapsed))
+            v = variables(session, (6, 50, 51, 53, 54, 100, 101, 102, 103, 104, 110, 111))
+            d = msu_program_diagnostics(session, inputs)
+            row = {"frame": int(session.get_state()["frameCount"]),
+                   "variables": v, "storage": d, "slots": active_slots(session),
+                   "error": session.read_memory("snesMemory", ERROR, 1)[0],
+                   "room": session.read_memory("snesMemory", ROOM, 1)[0],
+                   "stats": stats(session), "stack": cpu_sp(session)}
+            samples.append(row)
+            log.write(json.dumps(row, sort_keys=True) + "\n"); log.flush()
+            require(row["error"] == 0, f"packed execution failed: {row}")
+            if v["53"] == 4000 and v["54"] == 2 and not row["slots"]:
+                break
+    steady = [r for r in samples if all(20 <= r["variables"][str(v)] < 120
+                                       for v in range(100, 105))]
+    require(len(steady) >= 3, "no sustained simultaneous yielding working-set evidence")
+    first, last = steady[0], steady[-1]
+    require(last["variables"]["100"] - first["variables"]["100"] >= 20,
+            "insufficient repeated execution after warm-up")
+    for counter in ("cache_loads", "cache_evictions", "bytes_read"):
+        require(first["storage"][counter] == last["storage"][counter],
+                f"steady working set caused unnecessary {counter}")
+    for row in steady:
+        ready = {c["program_unit_id"] for c in row["storage"]["cache_slots"]
+                 if c["state"] == 2}
+        require(anchors <= ready, f"checked groups not simultaneously READY: {row}")
+    final = samples[-1]
+    require({k: final["variables"][k] for k in ("6", "50", "51", "53", "54", "110", "111")}
+            == {"6": 2, "50": 1, "51": 0, "53": 4000, "54": 2, "110": 0x1234, "111": 0x4567},
+            f"nested or large cross-page execution incomplete: {final}")
+    require(not final["slots"] and final["stack"] >= args.stack_floor,
+            "fixture did not retire cleanly")
+    require(final["storage"]["cache_failures"] == 0
+            and not any(final["storage"]["transient_execution_pins"])
+            and final["stats"]["exhaustions"] == 0
+            and final["stats"]["stale_rejections"] == 0,
+            "cache or resolver invariants failed")
+    return {"format": "same-packed-working-set-native-v1", **inputs["hashes"],
+            "working_set": identities, "physical_groups": sorted(anchors),
+            "steady_first": first, "steady_last": last, "final": final,
+            "journal": str(journal), "result": "PASS"}
+
+
 def run_large_program_body(args: argparse.Namespace,
                            inputs: dict[str, Any]) -> dict[str, Any]:
     """Execute a long, paged MSU body without coupling the test to room routing."""
@@ -4007,6 +4146,15 @@ def run_exhaustion(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[str
         final_stats = stats(session)
         pin_census = owned_pin_census(session)
         sp = cpu_sp(session)
+        cache_binding = None
+        if inputs.get("program_storage") is not None:
+            cache_binding = {
+                "assertions_completed": u16(diagnostic, 12),
+                "guarded_member_hex": session.read_memory(
+                    "snesMemory", 0x7E100B, 5).hex(),
+                "error": session.read_u8(ERROR),
+                "scope": "synthetic binding leaf; checked MSU transfers tested separately",
+            }
     report = {
         "format": "same-scumm-native-residency-exhaustion-v1",
         "mode": "pinned-exhaustion-and-stale-generation",
@@ -4025,11 +4173,20 @@ def run_exhaustion(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[str
         "peak_stats": final_stats,
         "owned_pin_census": pin_census,
         "stack_pointer": sp,
-        "result": "PASS",
+        "cache_binding_control": cache_binding,
+        "result": "NOT_VERIFIED",
     }
+    # Preserve measured fields even when a subsequent safety assertion fails.
+    args.output.with_suffix(".observations.json").write_text(
+        json.dumps(report, indent=2) + "\n", encoding="utf-8")
     require(report["diagnostic"]["status"] == 1,
             f"native exhaustion control did not pass: {report['diagnostic']}; "
             f"stats={final_stats}; resident_count={len(bindings)}; SP=${sp:04X}")
+    if cache_binding is not None:
+        require(cache_binding["assertions_completed"] == 8
+                and cache_binding["guarded_member_hex"] == "a5313233a5"
+                and cache_binding["error"] == 0x10,
+                f"packed byte-fetch binding safety control failed: {cache_binding}")
     require(report["diagnostic"]["exhaustion_error"] == 0x20,
             "179th pinned binding did not report RESIDENCY_EXHAUSTED")
     require(report["diagnostic"]["stale_rejected"] == 1
@@ -4047,6 +4204,7 @@ def run_exhaustion(args: argparse.Namespace, inputs: dict[str, Any]) -> dict[str
             "all 178 selectors were not simultaneously pinned")
     require(final_stats["exhaustions"] == 1 and final_stats["stale_rejections"] == 1,
             "native failure counters do not match expected single events")
+    report["result"] = "PASS"
     return report
 
 
@@ -4554,7 +4712,7 @@ def _press_exact(session: Any, mask: int) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("dynamic-route", "dynamic-candidates",
-                                            "large-program-body",
+                                            "large-program-body", "packed-working-set", "packed-corruption",
                                             "program-page-failure",
                                             "page-generation-failure",
                                             "room-resource-failure",
@@ -4602,6 +4760,10 @@ def main() -> int:
         args.stack_floor = 0x0FFF if build_env.get("SAME_BUILD_SCUMM_MSU1_PROGRAMS") == "1" else 0x1FFF
     if args.mode == "dynamic-route":
         report = run_dynamic_route(args, inputs)
+    elif args.mode == "packed-corruption":
+        report = run_packed_corruption(args, inputs)
+    elif args.mode == "packed-working-set":
+        report = run_packed_working_set(args, inputs)
     elif args.mode == "large-program-body":
         report = run_large_program_body(args, inputs)
     elif args.mode == "program-page-failure":

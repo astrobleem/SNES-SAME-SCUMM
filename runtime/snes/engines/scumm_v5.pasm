@@ -764,6 +764,20 @@ ScummV5_AdvanceTimers__loop:
     plp
     rts
 
+; v5 VAR_CAMERA_POS_X is refreshed before script scheduling, independently
+; of VAR_SCROLL_SCRIPT. Do not expose destination or presented crop instead.
+ScummV5_PublishCameraPosition:
+    php
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_CAMERA_CURRENT_X
+    sta.l SAME_SCUMM_VARIABLES+(2 * 2)
+    .if SAME_BUILD_SCUMM_M23B
+    sta.l SAME_SCUMM_M23B_VARIABLES+(2 * 2)
+    .endif
+    plp
+    rts
+
 ScummV5_Engine_Frame:
     php
     rep #$30
@@ -838,6 +852,11 @@ ScummV5_Engine_Frame__skip_caller_recorded:
     jmp ScummV5_Engine_Frame__fixture_check
     .endif
     jsr ScummV5_AdvanceTimers
+    ; Embedded opcode fixtures use global2 as scratch, without the outer-loop
+    ; system-variable contract. Authentic bootstrap always uses v5 semantics.
+    .if !SAME_BUILD_SCUMM_EMBEDDED_TEST_PROGRAMS || SAME_BUILD_SCUMM_AUTHENTIC_BOOTSTRAP
+    jsr ScummV5_PublishCameraPosition
+    .endif
     sep #$20
     .a8
     ; Consume one semantic sentence submitted through the SCUMM-owned API.
@@ -2110,6 +2129,7 @@ ScummV5_Engine_RunSelected__msu_select0:
     lda.l SAME_SCUMM_MSU_CACHE_GENERATION0
     sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
 ScummV5_Engine_RunSelected__msu_enter:
+    jsl ScummV5_MsuProgram_BindLogical_Far
     sep #$20
     .a8
     lda #$00
@@ -3692,6 +3712,16 @@ ScummV5_C4_Scheduler_Frame__freeze_trace_done:
 ScummV5_C4_Scheduler_Frame__eligible:
     .a8
     .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; Sleeping activations need no executable bytes. Advance their existing
+    ; delay before page admission, just as the ROM interpreter does. An I/O
+    ; miss must not lengthen an authored timer or evict a runnable page merely
+    ; to discover that this activation cannot execute an instruction yet.
+    jsl ScummV5_MsuProgram_ServiceDelay_Far
+    bcc ScummV5_C4_Scheduler_Frame__delay_runnable
+    jmp ScummV5_C4_Scheduler_Frame__advance
+ScummV5_C4_Scheduler_Frame__delay_runnable:
+    .a8
+    .i8
     ; A parent whose nested StartScript child could not fetch its first body
     ; remains parked until that exact child selector has run or failed.
     lda.l SAME_SCUMM_C4_SCHED_SLOT
@@ -5946,10 +5976,9 @@ ScummV5_Op_ResourceRoutines__invalid:
     jsr ScummV5_SetError
     jmp ScummV5_Op__error
 
-; v5 wait sub-op family.  The authored transition uses forCamera ($03).
-; Camera completion is owned by the presentation service, so consuming the
-; sub-op and yielding preserves the scheduler boundary without inventing a
-; second camera state machine in the SCUMM core.
+; v5 wait sub-op family. A pending condition rewinds the complete
+; instruction before yielding. Camera waits compare source eight-pixel
+; strips, independently of the asynchronous target presentation generation.
 ScummV5_Op_Wait:
     jsr ScummV5_FetchByte
     bcc ScummV5_Op_Wait__operand_ok
@@ -5997,7 +6026,10 @@ ScummV5_Op_Wait__actor_test:
     sep #$20
     .a8
     lda.l SAME_SCUMM_C31_MOVING,x
-    beq ScummV5_Op_Wait__done
+    bne ScummV5_Op_Wait__actor_waiting
+    jmp ScummV5_Op_Wait__done
+ScummV5_Op_Wait__actor_waiting:
+    .a8
     rep #$20
     .a16
     lda.l SAME_SCUMM_C17_SUBOP
@@ -6032,21 +6064,37 @@ ScummV5_Op_Wait__yield:
     sta.l SAME_SCUMM_STATUS
     jmp ScummV5_Engine_Frame__complete_success
 ScummV5_Op_Wait__message:
-    ; Headless mode removes only presentation ownership.  Logical message
-    ; lifetime remains owned by the talk service, so the authored wait must
-    ; observe the same active/complete state as production.
-    lda.l SAME_SCUMM_TALK_ACTIVE
-    bne ScummV5_Op_Wait__yield_simple
-    bra ScummV5_Op_Wait__done
-ScummV5_Op_Wait__camera:
-    ; Camera destination convergence is represented by the generic camera
-    ; service; its wait is a scheduler yield until the next presentation pass.
-ScummV5_Op_Wait__yield_simple:
+    ; Logical message lifetime is independent of visible/headless rendering.
     sep #$20
     .a8
-    lda #SCUMM_VM_YIELDED
-    sta.l SAME_SCUMM_STATUS
-    jmp ScummV5_Engine_Frame__complete_success
+    lda.l SAME_SCUMM_TALK_ACTIVE
+    bne ScummV5_Op_Wait__rewind_simple
+    jmp ScummV5_Op_Wait__done
+ScummV5_Op_Wait__camera:
+    rep #$20
+    .a16
+    ; Camera service clamps both coordinates to the nonnegative room range.
+    lda.l SAME_SCUMM_CAMERA_CURRENT_X
+    and #$FFF8
+    pha
+    lda.l SAME_SCUMM_CAMERA_DEST_X
+    and #$FFF8
+    cmp 1,s
+    beq ScummV5_Op_Wait__camera_arrived
+    pla
+    bra ScummV5_Op_Wait__rewind_simple
+ScummV5_Op_Wait__camera_arrived:
+    .a16
+    pla
+    jmp ScummV5_Op_Wait__done
+ScummV5_Op_Wait__rewind_simple:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PC
+    sec
+    sbc #$0002 ; AE + subcommand; resume must recheck the predicate
+    sta.l SAME_SCUMM_PC
+    jmp ScummV5_Op_Wait__yield
 ScummV5_Op_Wait__done:
     jmp ScummV5_Engine_Frame__next
 
@@ -19449,6 +19497,10 @@ ScummV5_GetProgramSize:
     sep #$20
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_GetActiveSize_Far
+    bcs ScummV5_GetProgramSize__m23a
+    .endif
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsr ScummV5_M23A_GetProgramSize
     bcs ScummV5_GetProgramSize__m23a

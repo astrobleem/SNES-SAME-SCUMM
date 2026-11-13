@@ -792,7 +792,9 @@ class LiveRoomResourceTests(unittest.TestCase):
         self.assertIn("lda.l SAME_BWRAM_CONTROL_TILE_VALID", invalidate)
         self.assertIn("sta.l SAME_MODE3_CANDIDATE_TILES,x", present)
         self.assertIn("cpx #SAME_MODE3_CANDIDATE_TILES_SIZE", present)
-        self.assertIn("lda #SAME_MODE3_TILE_COUNT", present)
+        self.assertIn("lda #$0380 ; cold visible tile count", present)
+        self.assertIn("cpx #$0070", present)
+        self.assertIn("lda #$00\nSame_Mode3_HandlePresent__cold_candidate:", present)
         self.assertIn("sta.l SAME_MODE3_CONTROL_CANDIDATE_COUNT", present)
         self.assertLess(
             present.index("Same_Mode3_HandlePresent__tile_candidates_ready:"),

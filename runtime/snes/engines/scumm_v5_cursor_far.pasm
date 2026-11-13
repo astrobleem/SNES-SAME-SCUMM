@@ -393,6 +393,17 @@ ScummV5_Cursor_Draw__shift:
 ScummV5_Cursor_Draw__mask_ready:
     .a16
     .i16
+    lda.l SAME_SCUMM_CURSOR_ROW
+    sec
+    sbc.l SAME_SCUMM_CURSOR_CLIP_Y
+    tax
+    lda.l SAME_SCUMM_CURSOR_MASK
+    jsl Same_VideoSurface_SetCursorCoverageRow_Far
+    bcc ScummV5_Cursor_Draw__coverage_ready
+    jml ScummV5_Cursor_Draw__failure
+ScummV5_Cursor_Draw__coverage_ready:
+    .a16
+    .i16
     lda.l SAME_SCUMM_CURSOR_CLIP_X
     sta.l SAME_SCUMM_CURSOR_COLUMN
 ScummV5_Cursor_Draw__pixel:
@@ -424,7 +435,8 @@ ScummV5_Cursor_Draw__transparent:
     sec
     sbc.l SAME_SCUMM_CURSOR_CLIP_Y
     cmp.l SAME_SCUMM_CURSOR_HEIGHT
-    bcc ScummV5_Cursor_Draw__row
+    bcs ScummV5_Cursor_Draw__commit
+    brl ScummV5_Cursor_Draw__row
 ScummV5_Cursor_Draw__commit:
     .a16
     .i16
@@ -482,6 +494,45 @@ ScummV5_Cursor_Project_Far:
     pha
     phx
     phy
+    .if SCUMM_MSU1_CAMERA_VIEWPORT
+    ; Cursor belongs to the virtual screen, not to a future world-camera
+    ; target. The 256px adapter crops at most32px from the320px virtual
+    ; screen; narrower source rooms clamp that inset just like SC5VIS.
+    ; Adding the authored camera target while an older strip is displayed
+    ; sends a stationary cursor offscreen during a pan. World hit testing
+    ; remains gated until the corresponding camera transform is committed.
+    lda.l SAME_VIDEO_SURFACE_WIDTH
+    sec
+    sbc.l SAME_VIDEO_SURFACE_COPY_WIDTH
+    cmp #$0020
+    bcc ScummV5_Cursor_Project__camera_inset
+    lda #$0020
+ScummV5_Cursor_Project__camera_inset:
+    .a16
+    sta.l SAME_SCUMM_CURSOR_SOURCE_X
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_X
+    sec
+    sbc.l SAME_SCUMM_CURSOR_SOURCE_X
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_X
+    sta.l SAME_SCUMM_CURSOR_LEFT
+    lda.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    clc
+    adc.l SAME_SCUMM_CAMERA_CURRENT_Y
+    sec
+    sbc #$0064
+    sec
+    sbc.l SAME_VIDEO_SURFACE_SOURCE_Y
+    clc
+    adc.l SAME_VIDEO_SURFACE_DEST_Y
+    sta.l SAME_SCUMM_CURSOR_TOP
+    ply
+    plx
+    pla
+    plp
+    clc
+    rtl
+    .endif
     lda.l SAME_VIDEO_SURFACE_ROOM
     and #$00FF
     asl

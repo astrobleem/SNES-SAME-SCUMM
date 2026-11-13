@@ -126,7 +126,8 @@ def _validate_layout(layout: dict[str, Any]) -> tuple[MemoryRegion, ...]:
     expected_allocations = {
         "mode3_control": (0x000, 0x040),
         "video_surface_state": (0x040, 0x044),
-        "live_room_palette_stage": (0x084, 0x300),
+        "retained_viewport": (0x084, 0x040),
+        "retained_guard_head": (0x0C4, 0x2C0),
         "live_room_control": (0x384, 0x040),
         "live_room_pending": (0x3C4, 0xC3C),
     }
@@ -166,6 +167,15 @@ def _validate_layout(layout: dict[str, Any]) -> tuple[MemoryRegion, ...]:
     if pending != {"offset": 0x3C4, "bytes": 0xC3C,
                    "owner": "SCUMM live-room incoming metadata transaction"}:
         raise ValueError("live-room pending metadata must use its packed 3,132-byte backend allocation")
+    # Palette uses retired camera storage; its live HDMA table is elsewhere.
+    palette = layout.get('live_room_palette_stage_alias', {})
+    if (palette.get('address'), palette.get('bytes')) != ('40:1084',768):
+        raise ValueError('legacy palette must occupy only retired viewport/guard storage')
+    record = layout.get('retained_guard_tail_alias', {})
+    if (record.get('address'), record.get('bytes')) != ('40:1BC4',832):
+        raise ValueError('invalid retained guard lifetime alias')
+    if parse_address(record['address']) < 0x4013c4+2048 or parse_address(record['address'])+832 > 0x402000:
+        raise ValueError('retained guard escapes pending tail')
     return tuple(ordered)
 
 

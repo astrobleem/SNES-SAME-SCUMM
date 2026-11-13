@@ -3,7 +3,7 @@
 ; The 8-bit VM selector remains an ephemeral resident handle. This layer maps
 ; it to the canonical 16-bit ProgramUnit ID, requests a complete CRC-checked
 ; body from SAME storage, and only then enters the unchanged interpreter.
-; Two 2-KiB WRAM windows plus an optional third 2-KiB SA-1 BW-RAM window are
+; Two 2-KiB WRAM windows plus an optional third 2-KiB WRAM window are
 ; bounded and instruction-page validated. Active nested executions pin their
 ; windows until the interpreter returns. Yielded C4 activations keep their
 ; canonical selector ownership and refetch on resume.
@@ -91,6 +91,45 @@ ScummV5_MsuProgram_EnsureSelectedForActivation_Far:
 ScummV5_MsuProgram_EnsureSelectedForActivation_Far__done:
     jml ScummV5_MsuProgram_EnsureSelected_Far
 
+; C4 has already checked stopped/error/freeze/didexec ownership. A delayed
+; slot consumes exactly one scheduler tick without acquiring executable data.
+; No PC, selector, cache identity, pin or provider state changes. C=1 means
+; serviced; C=0 takes the ordinary checked-page path. Returns A8/X8.
+ScummV5_MsuProgram_ServiceDelay_Far:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    and #$00FF
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    and #$00FF
+    cmp #SCUMM_VM_DELAYED
+    bne ScummV5_MsuProgram_ServiceDelay__runnable
+    txa
+    asl
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_DELAY,x
+    beq ScummV5_MsuProgram_ServiceDelay__runnable
+    dec
+    sta.l SAME_SCUMM_C4_SLOT_DELAY,x
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    and #$00FF
+    tax
+    sep #$30
+    .a8
+    .i8
+    lda #$01
+    sta.l SAME_SCUMM_C4_SLOT_DIDEXEC,x
+    sec
+    rtl
+ScummV5_MsuProgram_ServiceDelay__runnable:
+    sep #$30
+    .a8
+    .i8
+    clc
+    rtl
+
 ScummV5_MsuProgram_Reset_Far:
     php
     rep #$30
@@ -100,10 +139,19 @@ ScummV5_MsuProgram_Reset_Far:
     sta.l SAME_SCUMM_MSU_CACHE_ID0
     sta.l SAME_SCUMM_MSU_CACHE_ID1
     sta.l SAME_SCUMM_MSU_CACHE_ID2
+    sta.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
+    sta.l SAME_SCUMM_MSU_LOOKUP_PROGRAM
+    sta.l SAME_SCUMM_MSU_REQUEST_PROGRAM
     lda #$0000
     sta.l SAME_SCUMM_MSU_CACHE_SIZE0
     sta.l SAME_SCUMM_MSU_CACHE_SIZE1
     sta.l SAME_SCUMM_MSU_CACHE_SIZE2
+    sta.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    sta.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    sta.l SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH
+    sta.l SAME_SCUMM_MSU_CACHE_HITS
+    sta.l SAME_SCUMM_MSU_REQUEST_PC
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_START
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_LENGTH
@@ -205,6 +253,13 @@ ScummV5_MsuProgram_Reset_Far__pending:
     lda #SCUMM_MSU_ROOM_IDLE
     sta.l SAME_SCUMM_MSU_ROOM_STATE
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    lda #$00
+    sta.l SAME_SCUMM_CAMERA_AHEAD_STATE
+    sta.l SAME_SCUMM_CAMERA_AHEAD_HITS
+    sta.l SAME_SCUMM_CAMERA_AHEAD_HITS+1
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
+    sta.l SAME_SCUMM_VIEWPORT_MODE
     lda #SCUMM_LIVE_ROOM_STAGE_COOKED
     sta.l SCUMM_LIVE_ROOM_STAGE
     lda #$00
@@ -243,8 +298,19 @@ ScummV5_MsuProgram_Reset_Far__failed:
     rtl
 
 ; Carry set only after the provider has authenticated the package prefix and
-; reached READY/READ_OK. Initialization and body transfer are frame-driven.
+; reached READY/READ_OK/READING. An authenticated in-flight request blocks only
+; its resource waiter; already verified code and actor movement remain runnable.
+; Room installation above this gate retains its separate transactional barrier.
 ScummV5_MsuProgram_FrameReady_Far:
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER && SCUMM_MSU1_CAMERA_VIEWPORT
+    ; Retire speculative READ_OK before any foreground client may reuse the
+    ; provider descriptor. This never stalls already resident scripts.
+    jsl ScummV5_Camera_AheadReconcile_Far
+    bcc ScummV5_MsuProgram_FrameReady_Far__ahead_ready
+    jml ScummV5_MsuProgram_FrameReady_Far__failed
+ScummV5_MsuProgram_FrameReady_Far__ahead_ready:
+    .a8
+.endif
     ; The SAME provider has one serialized checked-read cursor. Reconcile a
     ; completed executable page before the room state machine can start its
     ; next metadata/palette/pixel read; otherwise a room read could inherit
@@ -575,6 +641,8 @@ ScummV5_MsuProgram_FrameReady_Far__provider:
     beq ScummV5_MsuProgram_FrameReady_Far__ready
     cmp #SAME_MSU1_STATE_READ_OK
     beq ScummV5_MsuProgram_FrameReady_Far__ready
+    cmp #SAME_MSU1_STATE_READING
+    beq ScummV5_MsuProgram_FrameReady_Far__ready
     cmp #SAME_MSU1_STATE_ERROR
     beq ScummV5_MsuProgram_FrameReady_Far__failed
     bra ScummV5_MsuProgram_FrameReady_Far__wait
@@ -610,6 +678,17 @@ ScummV5_MsuRoom_Request_Far:
     php
     sep #$20
     .a8
+.if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && SCUMM_MSU1_CAMERA_VIEWPORT
+    ; A real incoming room outranks a camera request, but cannot erase its
+    ; ownership before YieldToRoom drains the provider and publication fence.
+    lda.l SAME_SCUMM_VIEWPORT_MODE
+    beq ScummV5_MsuRoom_Request_Far__camera_idle
+    plp
+    clc
+    rtl
+ScummV5_MsuRoom_Request_Far__camera_idle:
+    .a8
+.endif
     lda.l SAME_SCUMM_MSU_ROOM_STATE
     cmp #SCUMM_MSU_ROOM_REQUESTED
     beq ScummV5_MsuRoom_Request_Far__coalesced
@@ -630,8 +709,14 @@ ScummV5_MsuRoom_Request_Far:
     lda #$00
     sta.l SCUMM_LIVE_ROOM_OLD_BUNDLE_RELEASED
     sta.l SCUMM_LIVE_ROOM_CHUNK_MODE
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
+    sta.l SAME_SCUMM_VIEWPORT_MODE
     rep #$20
     .a16
+    ; SEP/LDA #0 cleared only A.low. B may still contain an unrelated
+    ; caller value: reset the full u16 chunk index for every new transaction.
+    lda #$0000
     sta.l SCUMM_LIVE_ROOM_CHUNK_INDEX
     sep #$20
     .a8
@@ -661,6 +746,16 @@ ScummV5_MsuRoom_Request_Far__coalesced:
 ScummV5_MsuRoom_Service_Far:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+      .if SCUMM_MSU1_CAMERA_VIEWPORT
+    jsl ScummV5_Camera_YieldToRoom_Far
+    bcc ScummV5_MsuRoom_Service_Far__camera_drained
+    clc
+    rtl
+ScummV5_MsuRoom_Service_Far__camera_drained:
+    .a8
+      .endif
+    .endif
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     lda #$A0
     sta.l SAME_SCUMM_LIVE_ROOM_CONTROL+$1D
@@ -1145,6 +1240,10 @@ ScummV5_MsuProgram_FindPage_Far__id_ok:
     inx
     lda.l ScummV5_MsuProgramPageIndex,x
     sta.l SAME_SCUMM_MSU_PAGE_SCAN_COUNT
+    bpl ScummV5_MsuProgram_FindPage_Far__ordinary
+    jml ScummV5_MsuProgram_FindGroup_Far
+ScummV5_MsuProgram_FindPage_Far__ordinary:
+    .a16
     bne ScummV5_MsuProgram_FindPage_Far__scan
     jmp ScummV5_MsuProgram_FindPage_Far__not_found
 ScummV5_MsuProgram_FindPage_Far__scan:
@@ -1271,11 +1370,11 @@ ScummV5_MsuProgram_ActivePageContainsPC_Far__slot0_id_ok:
     cmp.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
     bne ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     lda.l SAME_SCUMM_PC
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START0
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START0
-    cmp.l SAME_SCUMM_MSU_CACHE_SIZE0
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__hit
     bra ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
 ScummV5_MsuProgram_ActivePageContainsPC_Far__slot1:
@@ -1292,11 +1391,11 @@ ScummV5_MsuProgram_ActivePageContainsPC_Far__slot1:
     cmp.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
     bne ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     lda.l SAME_SCUMM_PC
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START1
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START1
-    cmp.l SAME_SCUMM_MSU_CACHE_SIZE1
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__hit
     bra ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
 .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
@@ -1314,11 +1413,11 @@ ScummV5_MsuProgram_ActivePageContainsPC_Far__slot2:
     cmp.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
     bne ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     lda.l SAME_SCUMM_PC
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START2
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START2
-    cmp.l SAME_SCUMM_MSU_CACHE_SIZE2
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
     bcc ScummV5_MsuProgram_ActivePageContainsPC_Far__hit
 .endif
 ScummV5_MsuProgram_ActivePageContainsPC_Far__miss16:
@@ -1351,6 +1450,7 @@ ScummV5_MsuProgram_EnsureSelected_Far__selector_valid:
     rep #$20
     .a16
     lda.l SAME_SCUMM_RESIDENT_EXPECTED_ID
+    sta.l SAME_SCUMM_MSU_LOOKUP_PROGRAM
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
     lda.l SAME_SCUMM_PC
     sta.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
@@ -1468,6 +1568,12 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot2_pending:
     jmp ScummV5_MsuProgram_EnsureSelected_Far__pending
     .endif
 ScummV5_MsuProgram_EnsureSelected_Far__slot0_ready:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_HITS
+    inc
+    sta.l SAME_SCUMM_MSU_CACHE_HITS
+    sep #$20
     .a8
     lda #$00
     jsl ScummV5_MsuProgram_ReleasePageWaiter_Far
@@ -1478,6 +1584,12 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot0_ready:
     sec
     rtl
 ScummV5_MsuProgram_EnsureSelected_Far__slot1_ready:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_HITS
+    inc
+    sta.l SAME_SCUMM_MSU_CACHE_HITS
+    sep #$20
     .a8
     lda #$01
     jsl ScummV5_MsuProgram_ReleasePageWaiter_Far
@@ -1489,6 +1601,12 @@ ScummV5_MsuProgram_EnsureSelected_Far__slot1_ready:
     rtl
     .if SAME_SCUMM_MSU_CACHE_HAS_PAGE2
 ScummV5_MsuProgram_EnsureSelected_Far__slot2_ready:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_HITS
+    inc
+    sta.l SAME_SCUMM_MSU_CACHE_HITS
+    sep #$20
     .a8
     lda #$02
     jsl ScummV5_MsuProgram_ReleasePageWaiter_Far
@@ -1708,6 +1826,10 @@ ScummV5_MsuProgram_EnsureSelected_Far__chosen:
     .a16
     lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
     sta.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
+    lda.l SAME_SCUMM_MSU_LOOKUP_PROGRAM
+    sta.l SAME_SCUMM_MSU_REQUEST_PROGRAM
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
+    sta.l SAME_SCUMM_MSU_REQUEST_PC
     ; Validate the indexed generated record and enforce the exact WRAM bound.
     lda.l SAME_SCUMM_MSU_CACHE_REQUEST_ID
     cmp #SCUMM_MSU1_PROGRAM_COUNT
@@ -1781,6 +1903,12 @@ ScummV5_MsuProgram_EnsureSelected_Far__body_length_high_zero:
     jmp ScummV5_MsuProgram_EnsureSelected_Far__bad_length
 ScummV5_MsuProgram_EnsureSelected_Far__body_length_nonzero:
     sta.l SAME_SCUMM_MSU_PAGE_BODY_LENGTH
+    lda.l SAME_SCUMM_MSU_PAGE_SCAN_COUNT
+    bpl ScummV5_MsuProgram_EnsureSelected_Far__ordinary_extent
+    ; FindGroup has checked member extent and whole-group capacity.
+    jml ScummV5_MsuProgram_EnsureSelected_Far__page_body_bounds_ok
+ScummV5_MsuProgram_EnsureSelected_Far__ordinary_extent:
+    .a16
     lda.l SAME_SCUMM_MSU_PAGE_REQUEST_LENGTH
     bne ScummV5_MsuProgram_EnsureSelected_Far__page_length_nonzero
     sep #$20
@@ -2133,7 +2261,7 @@ ScummV5_MsuProgram_EnsureSelected_Far__report_error:
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     rep #$20
     .a16
-    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
+    lda.l SAME_SCUMM_MSU_LOOKUP_PROGRAM
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_ID
     lda.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_PC
@@ -2278,6 +2406,7 @@ ScummV5_MsuProgram_ResumeActive_Far__pin0:
     lda.l SAME_SCUMM_MSU_CACHE_GENERATION0
     sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
 ScummV5_MsuProgram_ResumeActive_Far__ready:
+    jsl ScummV5_MsuProgram_BindLogical_Far
     sep #$20
     .a8
     lda #$01
@@ -2447,9 +2576,9 @@ ScummV5_MsuProgram_ReconcileRead_Far__failed_count:
     ; identity/PC captured when this page was selected.
     rep #$20
     .a16
-    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
+    lda.l SAME_SCUMM_MSU_REQUEST_PROGRAM
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_ID
-    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
+    lda.l SAME_SCUMM_MSU_REQUEST_PC
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_PC
     sep #$20
     .a8
@@ -2525,16 +2654,27 @@ ScummV5_MsuProgram_FetchByte_Far__slot1_id_ok:
 ScummV5_MsuProgram_FetchByte_Far__slot1_generation_ok:
     .a16
     txa
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START1
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcs ScummV5_MsuProgram_FetchByte_Far__slot1_min_ok
     jml ScummV5_MsuProgram_FetchByte_Far__range16
 ScummV5_MsuProgram_FetchByte_Far__slot1_min_ok:
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START1
-    cmp.l SAME_SCUMM_MSU_CACHE_SIZE1
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
     bcc ScummV5_MsuProgram_FetchByte_Far__slot1_range_ok
     jml ScummV5_MsuProgram_FetchByte_Far__range16
 ScummV5_MsuProgram_FetchByte_Far__slot1_range_ok:
+    clc
+    adc.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    bcc ScummV5_MsuProgram_FetchByte_Far__slot1_offset_ok
+    jml ScummV5_MsuProgram_FetchByte_Far__range16
+ScummV5_MsuProgram_FetchByte_Far__slot1_offset_ok:
+    .a16
+    cmp.l SAME_SCUMM_MSU_CACHE_SIZE1
+    bcc ScummV5_MsuProgram_FetchByte_Far__slot1_physical_ok
+    jml ScummV5_MsuProgram_FetchByte_Far__range16
+ScummV5_MsuProgram_FetchByte_Far__slot1_physical_ok:
+    .a16
     tax
     sep #$20
     .a8
@@ -2567,10 +2707,15 @@ ScummV5_MsuProgram_FetchByte_Far__slot2_id_ok:
 ScummV5_MsuProgram_FetchByte_Far__slot2_generation_ok:
     .a16
     txa
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START2
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcc ScummV5_MsuProgram_FetchByte_Far__range16
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START2
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    bcs ScummV5_MsuProgram_FetchByte_Far__range16
+    clc
+    adc.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    bcs ScummV5_MsuProgram_FetchByte_Far__range16
     cmp.l SAME_SCUMM_MSU_CACHE_SIZE2
     bcs ScummV5_MsuProgram_FetchByte_Far__range16
     tax
@@ -2605,10 +2750,15 @@ ScummV5_MsuProgram_FetchByte_Far__slot0_id_ok:
 ScummV5_MsuProgram_FetchByte_Far__slot0_generation_ok:
     .a16
     txa
-    cmp.l SAME_SCUMM_MSU_CACHE_PAGE_START0
+    cmp.l SAME_SCUMM_MSU_ACTIVE_START
     bcc ScummV5_MsuProgram_FetchByte_Far__range16
     sec
-    sbc.l SAME_SCUMM_MSU_CACHE_PAGE_START0
+    sbc.l SAME_SCUMM_MSU_ACTIVE_START
+    cmp.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    bcs ScummV5_MsuProgram_FetchByte_Far__range16
+    clc
+    adc.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    bcs ScummV5_MsuProgram_FetchByte_Far__range16
     cmp.l SAME_SCUMM_MSU_CACHE_SIZE0
     bcs ScummV5_MsuProgram_FetchByte_Far__range16
     tax
@@ -2625,14 +2775,15 @@ ScummV5_MsuProgram_FetchByte_Far__range16:
 ScummV5_MsuProgram_FetchByte_Far__stale:
     .a8
     .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
-    ; X is still the logical source PC and the active cache ID is canonical.
+    ; X is still the logical source PC; ACTIVE_PROGRAM is the member identity,
+    ; while CACHE_ACTIVE_ID may name the shared physical allocation's anchor.
     ; Record them before returning the explicit resource error; selector or
     ; page-generation failures must not lose their source-bound diagnosis.
     lda.l SAME_SCUMM_STREAM_ERROR_SITE
     bne ScummV5_MsuProgram_FetchByte_Far__stale_site_recorded
     rep #$20
     .a16
-    lda.l SAME_SCUMM_MSU_CACHE_ACTIVE_ID
+    lda.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_ID
     txa
     sta.l SAME_SCUMM_STREAM_ERROR_REQUEST_PC
@@ -2716,9 +2867,10 @@ ScummV5_MsuProgram_Leave_Far__restore:
     sta.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
     lda.l SAME_SCUMM_MSU_EXEC_PREV_SELECTOR,x
     sta.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
+    lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
     cmp #$FF
     beq ScummV5_MsuProgram_Leave_Far__no_parent
-    lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    cmp #$00
     beq ScummV5_MsuProgram_Leave_Far__parent0
     cmp #$01
     beq ScummV5_MsuProgram_Leave_Far__parent1
@@ -2765,6 +2917,7 @@ ScummV5_MsuProgram_Leave_Far__no_parent:
     lda #$FF
     sta.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
 ScummV5_MsuProgram_Leave_Far__done:
+    jsl ScummV5_MsuProgram_BindLogical_Far
     rep #$30
     .a16
     .i16
@@ -2772,3 +2925,499 @@ ScummV5_MsuProgram_Leave_Far__done:
     plx
     plp
     rtl
+
+; Tagged page-index alternative. Tail-entered with FindPage's saved P/X on
+; stack. No bytes execute before the whole physical group passes CRC.
+ScummV5_MsuProgram_FindGroup_Far:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
+    asl
+    sta.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    tax
+    inx
+    inx
+    inx
+    inx
+    lda.l ScummV5_MsuProgramRecords,x
+    sta.l SAME_SCUMM_MSU_PAGE_BODY_LENGTH
+    beq ScummV5_MsuProgram_FindGroup__bad
+    cmp.l SAME_SCUMM_MSU_PAGE_REQUEST_PC
+    bcc ScummV5_MsuProgram_FindGroup__bad
+    lda.l SAME_SCUMM_MSU_PAGE_SCAN_INDEX
+    cmp #SCUMM_MSU1_PROGRAM_PAGE_RECORD_COUNT
+    bcs ScummV5_MsuProgram_FindGroup__bad
+    asl
+    asl
+    asl
+    tax
+    lda.l ScummV5_MsuProgramPageRecords,x
+    cmp #SCUMM_MSU1_PROGRAM_COUNT
+    bcs ScummV5_MsuProgram_FindGroup__bad
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_ID
+    inx
+    inx
+    lda.l ScummV5_MsuProgramPageRecords,x
+    beq ScummV5_MsuProgram_FindGroup__bad
+    cmp #SAME_SCUMM_MSU_PROGRAM_CACHE_SLOT_SIZE+1
+    bcs ScummV5_MsuProgram_FindGroup__bad
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_LENGTH
+    lda.l SAME_SCUMM_MSU_PAGE_SCAN_COUNT
+    and #$7FFF
+    clc
+    adc.l SAME_SCUMM_MSU_PAGE_BODY_LENGTH
+    bcs ScummV5_MsuProgram_FindGroup__bad
+    cmp.l SAME_SCUMM_MSU_PAGE_REQUEST_LENGTH
+    beq ScummV5_MsuProgram_FindGroup__extent_ok
+    bcs ScummV5_MsuProgram_FindGroup__bad
+ScummV5_MsuProgram_FindGroup__extent_ok:
+    .a16
+    inx
+    inx
+    lda.l ScummV5_MsuProgramPageRecords,x
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_CRC
+    inx
+    inx
+    lda.l ScummV5_MsuProgramPageRecords,x
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_CRC+2
+    lda #$0000
+    sta.l SAME_SCUMM_MSU_PAGE_REQUEST_START
+    jml ScummV5_MsuProgram_FindPage_Far__found
+ScummV5_MsuProgram_FindGroup__bad:
+    jml ScummV5_MsuProgram_FindPage_Far__not_found
+
+; Reconstruct the immutable logical view on enter/resume/parent return. The
+; existing continuation stack saves selector and physical window; source PC
+; remains with C4. A nested sibling can share the pinned allocation without
+; inheriting its parent's logical bounds. No released scratch pointer survives.
+ScummV5_MsuProgram_BindLogical_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    lda #$0000
+    sta.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    sta.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    sta.l SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    cmp #$FF
+    bne ScummV5_MsuProgram_BindLogical__resolve
+    jml ScummV5_MsuProgram_BindLogical__done
+ScummV5_MsuProgram_BindLogical__resolve:
+    .a8
+    lda.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
+    jsl ScummV5_Resident_ProgramUnitForSelector_Far
+    bcs ScummV5_MsuProgram_BindLogical__valid
+    jml ScummV5_MsuProgram_BindLogical__done
+ScummV5_MsuProgram_BindLogical__valid:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_RESIDENT_EXPECTED_ID
+    sta.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
+    cmp #SCUMM_MSU1_PROGRAM_PAGE_INDEX_COUNT
+    bcc ScummV5_MsuProgram_BindLogical__index_ok
+    jml ScummV5_MsuProgram_BindLogical__done
+ScummV5_MsuProgram_BindLogical__index_ok:
+    ; Canonical directory metadata is immutable. Bind the complete body size
+    ; once per activation, including nested parent restoration. Operand fetch
+    ; must not repeat selector/directory resolution for every byte. Physical
+    ; readiness, generation and member/page bounds remain checked by FetchByte.
+    asl
+    sta.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    tax
+    inx
+    inx
+    inx
+    inx
+    lda.l ScummV5_MsuProgramRecords,x
+    sta.l SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH
+    lda.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
+    asl
+    asl
+    tax
+    inx
+    inx
+    lda.l ScummV5_MsuProgramPageIndex,x
+    bmi ScummV5_MsuProgram_BindLogical__group
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    beq ScummV5_MsuProgram_BindLogical__slot0
+    cmp #$01
+    beq ScummV5_MsuProgram_BindLogical__slot1
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_PAGE_START2
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    lda.l SAME_SCUMM_MSU_CACHE_SIZE2
+    bra ScummV5_MsuProgram_BindLogical__length
+ScummV5_MsuProgram_BindLogical__slot1:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_PAGE_START1
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    lda.l SAME_SCUMM_MSU_CACHE_SIZE1
+    bra ScummV5_MsuProgram_BindLogical__length
+ScummV5_MsuProgram_BindLogical__slot0:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_CACHE_PAGE_START0
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    lda.l SAME_SCUMM_MSU_CACHE_SIZE0
+    bra ScummV5_MsuProgram_BindLogical__length
+ScummV5_MsuProgram_BindLogical__group:
+    .a16
+    and #$7FFF
+    sta.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    lda #$0000
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    lda.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
+    asl
+    sta.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    asl
+    asl
+    clc
+    adc.l SAME_SCUMM_MSU_CACHE_TABLE_INDEX
+    tax
+    inx
+    inx
+    inx
+    inx
+    lda.l ScummV5_MsuProgramRecords,x
+ScummV5_MsuProgram_BindLogical__length:
+    .a16
+    sta.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+ScummV5_MsuProgram_BindLogical__done:
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
+    plp
+    rtl
+
+; A8 selector -> A16 complete size/C=1 for the current bound execution only.
+; C=0 leaves A8 selector for the ordinary ROM/directory path. Preserve X/Y:
+; FetchByte holds its logical PC in X. This is metadata, not fetch permission;
+; the existing checked-byte path still validates every physical access.
+ScummV5_MsuProgram_GetActiveSize_Far:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_GetActiveSize__miss
+    cmp.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
+    bne ScummV5_MsuProgram_GetActiveSize__miss
+    lda.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    cmp #(2+SAME_SCUMM_MSU_CACHE_HAS_PAGE2)
+    bcs ScummV5_MsuProgram_GetActiveSize__miss
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH
+    sec
+    rtl
+ScummV5_MsuProgram_GetActiveSize__miss:
+    .a8
+    lda.l SAME_SCUMM_PROGRAM_SELECT
+    clc
+    rtl
+
+.if SAME_BUILD_SCUMM_RESIDENCY_DIAGNOSTIC
+; Deterministic native leaf control in the existing residency safety harness.
+; It constructs a synthetic checked-binding view, not an MSU integrity proof
+; (the packed working-set/corrupt-group controls exercise real provider I/O).
+; No debugger timing or gameplay writes are involved. Scratch counts completed
+; assertions; the ordinary resolver diagnostic owns this memory until halt.
+ScummV5_MsuProgram_RunBindingControl_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    lda #$0000
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    sta.l SAME_SCUMM_MSU_CACHE_ID0
+    sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_ID
+    sta.l SAME_SCUMM_MSU_ACTIVE_START
+    lda #$0007
+    sta.l SAME_SCUMM_MSU_CACHE_GENERATION0
+    sta.l SAME_SCUMM_MSU_CACHE_ACTIVE_GENERATION
+    lda #$0020
+    sta.l SAME_SCUMM_MSU_CACHE_SIZE0
+    lda #$000C
+    sta.l SAME_SCUMM_MSU_ACTIVE_OFFSET
+    lda #$0003
+    sta.l SAME_SCUMM_MSU_ACTIVE_LENGTH
+    sta.l SAME_SCUMM_MSU_ACTIVE_BODY_LENGTH
+    lda #$0001
+    sta.l SAME_SCUMM_MSU_ACTIVE_PROGRAM
+    sep #$20
+    .a8
+    lda #$D0
+    sta.l SAME_SCUMM_MSU_ACTIVE_SELECTOR
+    lda #$00
+    sta.l SAME_SCUMM_MSU_ACTIVE_CACHE_SLOT
+    lda #SCUMM_MSU_CACHE_READY
+    sta.l SAME_SCUMM_MSU_CACHE_STATE0
+    lda #$01
+    sta.l SAME_SCUMM_MSU_CACHE_PINS0
+    lda #$A5
+    sta.l SAME_SCUMM_MSU_PROGRAM_CACHE0+11
+    sta.l SAME_SCUMM_MSU_PROGRAM_CACHE0+15
+    lda #$31
+    sta.l SAME_SCUMM_MSU_PROGRAM_CACHE0+12
+    lda #$32
+    sta.l SAME_SCUMM_MSU_PROGRAM_CACHE0+13
+    lda #$33
+    sta.l SAME_SCUMM_MSU_PROGRAM_CACHE0+14
+    rep #$10
+    .i16
+    ldx #$0000
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcc ScummV5_MsuProgram_BindingControl__carry0
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry0:
+    .a8
+    cmp #$31
+    beq ScummV5_MsuProgram_BindingControl__value0
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value0:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__error0
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error0:
+    .a8
+    lda #$01
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$10
+    .i16
+    ldx #$0002
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcc ScummV5_MsuProgram_BindingControl__carry1
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry1:
+    .a8
+    cmp #$33
+    beq ScummV5_MsuProgram_BindingControl__value1
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value1:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__error1
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error1:
+    .a8
+    lda #$02
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$10
+    .i16
+    ldx #$0003
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcs ScummV5_MsuProgram_BindingControl__carry2
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry2:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__value2
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value2:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$10
+    beq ScummV5_MsuProgram_BindingControl__error2
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error2:
+    .a8
+    lda #$03
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$20
+    .a16
+    lda #$0008
+    sta.l SAME_SCUMM_MSU_CACHE_GENERATION0
+    rep #$10
+    .i16
+    ldx #$0000
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcs ScummV5_MsuProgram_BindingControl__carry3
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry3:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__value3
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value3:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$10
+    beq ScummV5_MsuProgram_BindingControl__error3
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error3:
+    .a8
+    lda #$04
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$20
+    .a16
+    lda #$0007
+    sta.l SAME_SCUMM_MSU_CACHE_GENERATION0
+    rep #$10
+    .i16
+    ldx #$0000
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D1
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcs ScummV5_MsuProgram_BindingControl__carry4
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry4:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__value4
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value4:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$10
+    beq ScummV5_MsuProgram_BindingControl__error4
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error4:
+    .a8
+    lda #$05
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$20
+    .a16
+    lda #$0002
+    sta.l SAME_SCUMM_MSU_CACHE_ID0
+    rep #$10
+    .i16
+    ldx #$0000
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcs ScummV5_MsuProgram_BindingControl__carry5
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry5:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__value5
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value5:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$10
+    beq ScummV5_MsuProgram_BindingControl__error5
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error5:
+    .a8
+    lda #$06
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_MSU_CACHE_ID0
+    sep #$20
+    .a8
+    lda #$0001
+    sta.l SAME_SCUMM_MSU_CACHE_STATE0
+    rep #$10
+    .i16
+    ldx #$0000
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ERROR
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+    sta.l SAME_SCUMM_STREAM_ERROR_SITE
+    .endif
+    lda #$D0
+    jsl ScummV5_MsuProgram_FetchByte_Far
+    bcs ScummV5_MsuProgram_BindingControl__carry6
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__carry6:
+    .a8
+    cmp #$00
+    beq ScummV5_MsuProgram_BindingControl__value6
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__value6:
+    .a8
+    lda.l SAME_SCUMM_ERROR
+    cmp #$10
+    beq ScummV5_MsuProgram_BindingControl__error6
+    jml ScummV5_MsuProgram_BindingControl__failed
+ScummV5_MsuProgram_BindingControl__error6:
+    .a8
+    lda #$07
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    lda.l SAME_SCUMM_MSU_PROGRAM_CACHE0+11
+    cmp #$A5
+    bne ScummV5_MsuProgram_BindingControl__failed
+    lda.l SAME_SCUMM_MSU_PROGRAM_CACHE0+15
+    cmp #$A5
+    bne ScummV5_MsuProgram_BindingControl__failed
+    lda #$08
+    sta.l SAME_SCUMM_RESIDENT_DIAG_SCRATCH
+    plp
+    sec
+    rtl
+ScummV5_MsuProgram_BindingControl__failed:
+    plp
+    clc
+    rtl
+.endif

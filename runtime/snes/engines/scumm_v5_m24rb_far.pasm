@@ -1914,6 +1914,7 @@ ScummV5_M25A_RunNestedChild__parent_mode_packed:
     ; Keep the exact slot selected for this nested activation in its bounded
     ; frame so an asynchronous first-page wait cannot be attributed to a
     ; later allocation (or to the lifecycle owner itself).
+    phx ; retain depth * 3 while indexing the byte-per-depth child directory
     sep #$10
     .i8
     lda.l SAME_SCUMM_M23B_NEST_DEPTH
@@ -1922,6 +1923,7 @@ ScummV5_M25A_RunNestedChild__parent_mode_packed:
     sta.l SAME_SCUMM_M23B_NEST_CHILD_SLOTS,x
     rep #$10
     .i16
+    plx
     rep #$20
     .a16
     lda.l SAME_SCUMM_FRAME_OPS
@@ -2122,6 +2124,10 @@ ScummV5_M25A_RunNestedChild__restore_mode:
     lda.l SAME_SCUMM_C4_SLOT_DELAY,x
     sta.l SAME_SCUMM_DELAY
 .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    ; CACHE_RETURN_P is a byte. Parent PC/delay restoration above is A16;
+    ; do not include the adjacent byte or enter an A8 wait/error leaf in A16.
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_MSU_CACHE_RETURN_P
     cmp #$01
     beq ScummV5_M25A_RunNestedChild__msu_parent_wait

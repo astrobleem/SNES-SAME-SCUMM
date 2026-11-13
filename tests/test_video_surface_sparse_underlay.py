@@ -13,6 +13,13 @@ SERVICE = ROOT / 'runtime/snes/services/video_surface.pasm'
 U = 'Same_VideoSurface_Underlay_'
 
 
+def pixel_leaves():
+    source=SERVICE.read_text()
+    leaves=source[source.index('Same_VideoSurface_WriteIndexedPixel_Far:'):source.index('; Fill an inclusive viewport-relative')]
+    backend=(ROOT/'runtime/snes/services/video_mode3_retained.inc.pasm').read_text()
+    return '\n'+leaves+backend[backend.index('Same_Mode3_MapSurfaceX_Far:'):backend.index('; Extension of the existing copyright-free')]
+
+
 class ServiceMachine:
     def __init__(self, tail=4790):
         self.ram = bytearray(0x800000)
@@ -26,6 +33,11 @@ class ServiceMachine:
             'SAME_SCUMM_LIVE_ROOM_SURFACE_BASE': addr('live_surface'),
             'SAME_SCUMM_LIVE_ROOM_CONTROL': reserved + alloc['live_room_control']['offset'],
             'SAME_BWRAM_VIDEO_SURFACE_STATE': reserved + alloc['video_surface_state']['offset'],
+            'MODE3_R_ACTIVE': reserved + 13,
+            'MODE3_R_INDEX_ORIGIN': reserved + alloc['retained_viewport']['offset'] + 0x18,
+            'SAME_BWRAM_SURFACE_BASE': addr('live_surface'),
+            'MODE3_R_EXCHANGE': reserved + alloc['retained_viewport']['offset'] + 0x39,
+            'MODE3_R_DELTA': reserved + alloc['retained_viewport']['offset'] + 0x0c,
         }
         definitions = []
         for file in (ROOT / 'runtime/snes/kernel/memory.pasm',
@@ -48,8 +60,8 @@ class ServiceMachine:
         self.ram[self.surface:self.surface+57344] = bytes(i % 251 for i in range(57344))
         self.original_surface = bytes(self.ram[self.surface:self.surface+57344])
         source = SERVICE.read_text()
-        text = source[source.index('Same_VideoSurface_RestoreActorUnderlay_Far:'):]
-        text = text.split('\n.endif', 1)[0]
+        text = source[source.index('Same_VideoSurface_ExchangeActorUnderlay_Far:'):]
+        text = text.split('\n.endif', 1)[0] + pixel_leaves()
         self.code, self.labels, self.offsets = [], {}, []
         position, width = 0, 16
         for raw in text.splitlines():
@@ -64,7 +76,7 @@ class ServiceMachine:
             self.code.append(line)
             op, _, arg = line.partition(' ')
             if op in ('rep','sep') or op in ('bra','bcc','bcs','beq','bne'): size=2
-            elif op in ('jmp','jsr'): size=3
+            elif op in ('jmp','jsr','brl'): size=3
             elif op == 'jsl' or '.l' in op: size=4
             elif arg.startswith('#'): size=1+width//8
             else: size=1
@@ -106,9 +118,10 @@ class ServiceMachine:
             value = address = None
             if arg.startswith('#'):
                 value = self.value(arg[1:])
-            elif '.l' in op:
-                expression = arg.removesuffix(',x')
-                address = self.value(expression) + (x if arg.endswith(',x') else 0)
+            elif '.l' in op or '.w' in op:
+                expression = arg.removesuffix(',x').removesuffix(',y')
+                address = self.value(expression) + (x if arg.endswith(',x') else y if arg.endswith(',y') else 0)
+                if '.w' in op: address = (db << 16) | (address & 65535)
                 value = self.get(address, width//8)
             result = None
             if op == 'php': push(p, 8)
@@ -124,10 +137,12 @@ class ServiceMachine:
             elif op == 'rep': p &= ~value
             elif op == 'sep': p |= value
             elif op == 'cld': p &= ~8
+            elif op == 'eor': result = a ^ value
+            elif op == 'brl': pc = self.labels[arg]
             elif op == 'clc': p &= ~1
             elif op == 'sec': p |= 1
-            elif op in ('lda', 'lda.l'): result = value
-            elif op == 'sta.l':
+            elif op in ('lda', 'lda.l', 'lda.w'): result = value
+            elif op in ('sta.l','sta.w'):
                 self.put(address, a & mask, width//8)
                 self.writes.append((address, width//8))
             elif op == 'tax': x = a & (255 if p & 0x10 else 65535)
@@ -146,6 +161,27 @@ class ServiceMachine:
             elif op in ('cmp', 'cmp.l'):
                 v = ((a & mask)-value) & mask
                 p = (p & ~0x83) | int((a & mask) >= value) | (2 if v == 0 else 0) | (0x80 if v & (1 << (width-1)) else 0)
+            elif op == 'ldx': x = value & (255 if p & 0x10 else 65535)
+            elif op == 'ldy': y = value & (255 if p & 0x10 else 65535)
+            elif op == 'iny': y = (y+1)&65535
+            elif op == 'inx': x = (x+1)&65535
+            elif op == 'asl':
+                result = (a & mask) << 1
+                p = (p & ~1) | int(result > mask)
+            elif op == 'asl.w':
+                shifted = value << 1
+                self.put(address, shifted & mask, width//8)
+                self.writes.append((address, width//8))
+                p = (p & ~0x83) | int(shifted > mask) | (2 if not shifted & mask else 0) | (0x80 if shifted & (1 << (width-1)) else 0)
+            elif op == 'rol':
+                result = ((a & mask) << 1) | (p & 1)
+                p = (p & ~1) | int(result > mask)
+            elif op == 'lsr':
+                p = (p & ~1) | (a & 1)
+                result = (a & mask) >> 1
+            elif op == 'cpx':
+                v = (x-value)&65535
+                p = (p & ~0x83) | int(x>=value) | (2 if v==0 else 0) | (0x80 if v&32768 else 0)
             elif op == 'inc': result = (a & mask)+1
             elif op == 'dec': result = (a & mask)-1
             elif op == 'xba':
@@ -155,14 +191,21 @@ class ServiceMachine:
                 returns.append(pc); pc = self.labels[arg]
             elif op == 'rts': pc = returns.pop()
             elif op == 'jsl':
-                assert arg == 'Same_VideoSurface_CanWrite_Far'
-                a = (a & 0xFF00) | int(self.busy)
-                p = (p & ~1) | int(self.busy)
-            elif op in ('jmp','bra','bcc','bcs','bne','beq'):
+                if arg in getattr(self, 'external_services', {}):
+                    a,x,y,p,db = self.external_services[arg](a,x,y,p,db)
+                elif arg == 'Same_VideoSurface_CanWrite_Far':
+                    a = (a & 0xFF00) | int(self.busy)
+                    p = (p & ~1) | int(self.busy)
+                else:
+                    returns.append(pc); pc = self.labels[arg]
+            elif op in ('jmp','bra','bcc','bcs','bne','beq','bpl','bmi'):
                 take = {'bcc': not p & 1, 'bcs': bool(p & 1),
+                        'bpl': not p & 0x80, 'bmi': bool(p & 0x80),
                         'bne': not p & 2, 'beq': bool(p & 2)}.get(op, True)
                 if take: pc = self.labels[arg]
             elif op == 'rtl':
+                if returns:
+                    pc=returns.pop();continue
                 assert (a,x,y,p & ~1,db) == (original[0],original[1],original[2],original[3] & ~1,original[4])
                 assert stack == [0xCA,0xFE,0xAB] and not returns
                 return bool(p & 1)
@@ -280,7 +323,8 @@ class SparseUnderlayServiceTests(unittest.TestCase):
         for address,size in m.writes:
             self.assertTrue(any(start <= address and address+size <= end for start,end in
                 [(m.header,m.base+6144),(m.surface,m.surface+57344),(scratch,scratch+14),
-                 (state+0x34,state+0x40),(error,error+1)]),hex(address))
+                 (state+0x34,state+0x40),(error,error+1),
+                 (m.symbols['MODE3_R_EXCHANGE'],m.symbols['MODE3_R_EXCHANGE']+1)]),hex(address))
 
     def test_short_branch_distances_and_feature_guard(self):
         m=ServiceMachine()

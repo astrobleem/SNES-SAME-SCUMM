@@ -260,9 +260,38 @@ def sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def packed_counter_body(variable: int, length: int, *, nested: bool = False) -> bytes:
+    """Original yielding program; padding is decoded STOP, never another body."""
+    prefix = bytes((0x0A, 3, 0xFF)) if nested else b""
+    loop = bytes((0x46, variable, 0, 0x80, 0x18, 0xF9, 0xFF))
+    code = prefix + loop
+    if len(code) > length:
+        raise ValueError("counter body does not fit")
+    return code + bytes((0xA0,)) * (length - len(code))
+
+
+def packed_working_room(payload: bytes) -> bytes:
+    """Replace only original fixture scripts; keep its compiler-consumed room."""
+    children = []
+    pc = 0
+    while pc < len(payload):
+        size = int.from_bytes(payload[pc+4:pc+8], "big")
+        if size < 8 or pc+size > len(payload):
+            raise ValueError("malformed fixture chunk")
+        if payload[pc:pc+4] not in (b"ENCD", b"EXCD", b"LSCR"):
+            children.append(payload[pc:pc+size])
+        pc += size
+    children += [chunk(b"ENCD", b"\xA0"), chunk(b"EXCD", b"\xA0")]
+    for variable, (local, size) in enumerate(zip(range(250,254), (120,107,163,181)), 101):
+        children.append(chunk(b"LSCR", bytes((local,)) + packed_counter_body(variable, size)))
+    return b"".join(children)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--packed-working-set", action="store_true",
+                        help="original five-program cache-working-set and nested/large-page control")
     parser.add_argument(
         "--load-room-with-ego", action="store_true",
         help="generate a compact native loadRoomWithEgo conformance route",
@@ -297,7 +326,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     if sum((args.load_room_with_ego, args.find_inventory, args.draw_box,
-            args.room_resource_failure)) > 1:
+            args.room_resource_failure, args.packed_working_set, args.large_program_body)) > 1:
         parser.error("choose only one focused conformance program")
     if args.large_program_body and any((args.load_room_with_ego, args.find_inventory,
                                         args.draw_box, args.room_resource_failure)):
@@ -330,6 +359,8 @@ def main() -> int:
             large_live_room=args.large_live_room,
             large_live_room_name_padding_bytes=args.large_live_room_name_padding_bytes,
         )
+        if args.packed_working_set:
+            payload = packed_working_room(payload)
         compiled = compile_room_payload(
             payload, room_number=room,
             game_name="copyright-free-native-residency-fixture",
@@ -337,7 +368,7 @@ def main() -> int:
             source_container_offset=0, original_room_file_offset=room * 0x10000,
             profile_sha256=ids["profile"], game_identity_sha256=ids["game"],
             archive_sha256=ids["archive"], index_sha256=ids["index"],
-            data_sha256=ids["data"], global_script_count=GLOBAL_COUNT,
+            data_sha256=ids["data"], global_script_count=(250 if args.packed_working_set else GLOBAL_COUNT),
         )
         name = f"room-{room}.sc5c"
         (out / name).write_bytes(compiled.cooked_record)
@@ -504,10 +535,26 @@ def main() -> int:
         0x1A, 7, 0, 192, 0, 0x8A, 7, 0, 0xFF, 0x80,
         0x1A, 23, 0, 7, 0, 0xA0,
     ))
+    if args.packed_working_set:
+        global_one = bytes((0x72,1,0x80)) + b"".join(
+            bytes((0x0A,number,0xFF)) for number in (2,250,251,252,253,5)
+        ) + bytes((0x80,))*160 + b"".join(
+            bytes((0x62,number)) for number in (2,250,251,252,253)
+        ) + bytes((0x0A,4,0xFF,0xA0))
+        global_two = packed_counter_body(100,787,nested=True)
+        global_three = bytes((0x1A,110,0,0x34,0x12,0xA0))
+        global_four = large_program_body()
     globals_ = [(1, global_one), (2, global_two), (3, global_three), (4, global_four),
                 (191, global_191), (192, global_192), (193, global_193)] + [
         (number, bytes((0xA0,))) for number in range(5, 191)
     ]
+    if args.packed_working_set:
+        # A conventional (> half-page) third allocation rebuilds the movement
+        # matrix before its next opcode. The historical distance/cache alias
+        # corrupted this executable even though its checked read had passed.
+        matrix_body = bytes((0x30,4,0x1A,111,0,0x67,0x45,0xA0))
+        globals_ = [(number, matrix_body + bytes((0xA0,))*(1200-len(matrix_body))
+                     if number == 5 else body) for number, body in globals_]
     for number, program in globals_:
         (out / f"global-{number}.bin").write_bytes(program)
     # Keep the generated SCUMM object domain truthful for this fixture.  The
@@ -519,7 +566,7 @@ def main() -> int:
     (out / "object-owners.bin").write_bytes(bytes(GLOBAL_OBJECT_COUNT))
     manifest = {
         "schema": "same_scumm_v5_cooked_rooms_v1",
-        "num_global_scripts": GLOBAL_COUNT,
+        "num_global_scripts": 250 if args.packed_working_set else GLOBAL_COUNT,
         "global_objects": {
             "count": GLOBAL_OBJECT_COUNT,
             "states_output": "object-states.bin",
@@ -527,6 +574,7 @@ def main() -> int:
         },
         "copyright": "Copyright-free generated structural/runtime fixture.",
         "conformance_case": (
+            "packed-working-set" if args.packed_working_set else
             "load-room-with-ego" if args.load_room_with_ego else
             "find-inventory" if args.find_inventory else
             "draw-box" if args.draw_box else

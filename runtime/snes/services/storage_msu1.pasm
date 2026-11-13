@@ -1,7 +1,7 @@
 ; SAME checked package reads on the MSU-1. This module is the sole owner of
 ; MSU data registers. A client fills SAME_MSU1_REQUEST_* and calls
 ; Same_Msu1_ReadBegin; Same_Storage_Process transfers a bounded quantum each
-; logical frame and publishes READ_OK only after per-request CRC32 succeeds.
+; NMI epoch and publishes READ_OK only after per-request CRC32 succeeds.
 
 SAME_MSU1_STATE_OFF          = $00
 SAME_MSU1_ERROR_NONE         = $00
@@ -50,6 +50,8 @@ Same_Msu1_Reset__clear:
     inx
     cpx #$0048
     bcc Same_Msu1_Reset__clear
+    lda #$FFFF
+    sta.l SAME_MSU1_LAST_SERVICE_FRAME
     sep #$20
     .a8
     lda #SAME_MSU1_STATE_RESET
@@ -120,6 +122,25 @@ Same_Msu1_Process:
     .a8
     lda.l SAME_MSU1_STATUS
     cmp #SAME_MSU1_STATE_INITIALIZING
+    beq Same_Msu1_Process__due
+    cmp #SAME_MSU1_STATE_TAIL_CHECK
+    beq Same_Msu1_Process__due
+    cmp #SAME_MSU1_STATE_READING
+    bne Same_Msu1_Process__done
+Same_Msu1_Process__due:
+    ; An interpreter turn can span several NMIs. The kernel may offer service
+    ; between phases, but at most one bounded quantum starts in any NMI epoch.
+    ; Never loop to catch up, borrow a future budget, or run storage in NMI.
+    rep #$20
+    .a16
+    lda.l SAME_FRAME_COUNTER
+    cmp.l SAME_MSU1_LAST_SERVICE_FRAME
+    beq Same_Msu1_Process__done
+    sta.l SAME_MSU1_LAST_SERVICE_FRAME
+    sep #$20
+    .a8
+    lda.l SAME_MSU1_STATUS
+    cmp #SAME_MSU1_STATE_INITIALIZING
     beq Same_Msu1_Process__prefix
     cmp #SAME_MSU1_STATE_TAIL_CHECK
     beq Same_Msu1_Process__tail
@@ -135,8 +156,8 @@ Same_Msu1_Process__tail:
 Same_Msu1_Process__read:
     jsr Same_Msu1_ReadStep
 Same_Msu1_Process__done:
-    ; All status dispatch reaches this label in M=8, while the entry saved A,
-    ; X, and Y under M=X=16. Restore those widths before balancing the stack.
+    ; Status dispatch returns in M=8; the epoch gate can return in M=16.
+    ; Entry saved A, X, and Y under M=X=16. Restore before balancing the stack.
     rep #$30
     .a16
     .i16
@@ -714,91 +735,96 @@ Same_Msu1_ReadBegin__fail:
     sec
     rts
 
+; Keep the bounded quantum and destination cursor in registers. The request
+; counters are committed once at the service boundary, including partial busy
+; failure. CRC and data-ready checking still cover every transferred byte.
+; No caller or other provider client runs inside this synchronous quantum.
 Same_Msu1_ReadStep:
     php
     rep #$30
     .a16
     .i16
+    lda.l SAME_MSU1_REMAINING+2
+    bne Same_Msu1_ReadStep__full_quantum
+    lda.l SAME_MSU1_REMAINING
+    cmp #SAME_MSU1_STEP_BUDGET
+    bcc Same_Msu1_ReadStep__quantum_ready
+Same_Msu1_ReadStep__full_quantum:
+    .a16
     lda #SAME_MSU1_STEP_BUDGET
+Same_Msu1_ReadStep__quantum_ready:
+    .a16
     sta.l SAME_MSU1_STEP_REMAINING
+    tax
+    lda.l SAME_MSU1_DEST_INDEX
+    tay
+    cpx #$0000
+    beq Same_Msu1_ReadStep__commit_counts
 Same_Msu1_ReadStep__next:
     sep #$20
     .a8
-    lda.l SAME_MSU1_REMAINING
-    ora.l SAME_MSU1_REMAINING+1
-    ora.l SAME_MSU1_REMAINING+2
-    ora.l SAME_MSU1_REMAINING+3
-    bne Same_Msu1_ReadStep__has_data
-    jml Same_Msu1_ReadStep__complete
-Same_Msu1_ReadStep__has_data:
     jsr Same_Msu1_WaitDataReady
-    bcc Same_Msu1_ReadStep__data_ready
-    jml Same_Msu1_ReadStep__done
-Same_Msu1_ReadStep__data_ready:
+    bcs Same_Msu1_ReadStep__commit_counts
     lda MSU1_DATA
     sta.l SAME_MSU1_BYTE_SCRATCH
-    jsr Same_Msu1_CrcByte
-    rep #$20
-    .a16
-    lda.l SAME_MSU1_DEST_INDEX
-    tay
-    sep #$20
-    .a8
+    jsr Same_Msu1_CrcByte ; preserves X/Y, returns A8/X16
     lda.l SAME_MSU1_BYTE_SCRATCH
     sta [SAME_MSU1_DP_DEST],y
-    rep #$20
-    .a16
     iny
-    tya
-    sta.l SAME_MSU1_DEST_INDEX
-    sep #$20
-    .a8
     lda.l SAME_MSU1_FLAGS
     and #SAME_MSU1_FLAG_RING
-    beq Same_Msu1_ReadStep__advance_source
+    beq Same_Msu1_ReadStep__byte_done
     rep #$20
     .a16
-    lda.l SAME_MSU1_DEST_INDEX
+    tya
     cmp.l SAME_MSU1_DEST_CAPACITY
-    bcc Same_Msu1_ReadStep__advance_source16
-    lda #$0000
+    bcc Same_Msu1_ReadStep__byte_done
+    ldy #$0000
+Same_Msu1_ReadStep__byte_done:
+    .i16
+    dex
+    bne Same_Msu1_ReadStep__next
+Same_Msu1_ReadStep__commit_counts:
+    rep #$30
+    .a16
+    .i16
+    txa
+    pha ; quantum bytes not consumed, including a failed busy poll
+    lda.l SAME_MSU1_STEP_REMAINING
+    sec
+    sbc 1,s
+    plx
+    pha ; consumed bytes, independently of destination ring wrap
+    tya
     sta.l SAME_MSU1_DEST_INDEX
-Same_Msu1_ReadStep__advance_source16:
+    lda.l SAME_MSU1_REMAINING
+    sec
+    sbc 1,s
+    sta.l SAME_MSU1_REMAINING
+    lda.l SAME_MSU1_REMAINING+2
+    sbc #$0000
+    sta.l SAME_MSU1_REMAINING+2
+    lda.l SAME_MSU1_BYTES_READ
+    clc
+    adc 1,s
+    sta.l SAME_MSU1_BYTES_READ
+    lda.l SAME_MSU1_BYTES_READ+2
+    adc #$0000
+    sta.l SAME_MSU1_BYTES_READ+2
+    pla
+    txa
+    sta.l SAME_MSU1_STEP_REMAINING
     sep #$20
     .a8
-Same_Msu1_ReadStep__advance_source:
-    .a8
-    sec
-    lda.l SAME_MSU1_REMAINING
-    sbc #$01
-    sta.l SAME_MSU1_REMAINING
-    lda.l SAME_MSU1_REMAINING+1
-    sbc #$00
-    sta.l SAME_MSU1_REMAINING+1
-    lda.l SAME_MSU1_REMAINING+2
-    sbc #$00
-    sta.l SAME_MSU1_REMAINING+2
-    lda.l SAME_MSU1_REMAINING+3
-    sbc #$00
-    sta.l SAME_MSU1_REMAINING+3
+    lda.l SAME_MSU1_STATUS
+    cmp #SAME_MSU1_STATE_READING
+    bne Same_Msu1_ReadStep__done ; retain explicit provider failure
     rep #$20
     .a16
-    lda.l SAME_MSU1_BYTES_READ
-    inc
-    sta.l SAME_MSU1_BYTES_READ
-    bne Same_Msu1_ReadStep__count_done
-    lda.l SAME_MSU1_BYTES_READ+2
-    inc
-    sta.l SAME_MSU1_BYTES_READ+2
-Same_Msu1_ReadStep__count_done:
-    lda.l SAME_MSU1_STEP_REMAINING
-    dec
-    sta.l SAME_MSU1_STEP_REMAINING
-    beq Same_Msu1_ReadStep__budget_done
-    jml Same_Msu1_ReadStep__next
-Same_Msu1_ReadStep__budget_done:
-    bra Same_Msu1_ReadStep__done
-Same_Msu1_ReadStep__complete:
+    lda.l SAME_MSU1_REMAINING
+    ora.l SAME_MSU1_REMAINING+2
+    bne Same_Msu1_ReadStep__done
+    sep #$20
     .a8
     jsr Same_Msu1_CheckCrc
     bcs Same_Msu1_ReadStep__done
@@ -813,52 +839,30 @@ Same_Msu1_ReadStep__done:
     plp
     rts
 
-; Reflected CRC-32 / IEEE, one input byte at a time; CRC is finalized only once
-; the entire checked request has arrived.
+; Reflected CRC-32 / IEEE. The byte table is exactly the eight reflected
+; EDB88320 steps of the former bit loop; initial/final XOR, checked range,
+; request completion and transfer budget are unchanged. Keep X for the caller.
+; Long addressing does not depend on DB. Entry/return A8/X16 (ReadStep).
 Same_Msu1_CrcByte:
-    sep #$20
-    .a8
+    rep #$30
+    .a16
+    .i16
+    phx
     lda.l SAME_MSU1_BYTE_SCRATCH
     eor.l SAME_MSU1_CRC_STATE
+    and #$00FF
+    asl
+    tax
+    lda.l SAME_MSU1_CRC_STATE+1
+    eor.l Same_Msu1_CrcTableLow,x
     sta.l SAME_MSU1_CRC_STATE
-    lda #$08
-    sta.l SAME_MSU1_CRC_BITS
-Same_Msu1_CrcByte__bit:
+    lda.l SAME_MSU1_CRC_STATE+3
+    and #$00FF
+    eor.l Same_Msu1_CrcTableHigh,x
+    sta.l SAME_MSU1_CRC_STATE+2
+    plx
+    sep #$20
     .a8
-    lda.l SAME_MSU1_CRC_STATE
-    and #$01
-    sta.l SAME_MSU1_CRC_LSB
-    lda.l SAME_MSU1_CRC_STATE+3
-    lsr
-    sta.l SAME_MSU1_CRC_STATE+3
-    lda.l SAME_MSU1_CRC_STATE+2
-    ror
-    sta.l SAME_MSU1_CRC_STATE+2
-    lda.l SAME_MSU1_CRC_STATE+1
-    ror
-    sta.l SAME_MSU1_CRC_STATE+1
-    lda.l SAME_MSU1_CRC_STATE
-    ror
-    sta.l SAME_MSU1_CRC_STATE
-    lda.l SAME_MSU1_CRC_LSB
-    beq Same_Msu1_CrcByte__no_poly
-    lda.l SAME_MSU1_CRC_STATE
-    eor #$20
-    sta.l SAME_MSU1_CRC_STATE
-    lda.l SAME_MSU1_CRC_STATE+1
-    eor #$83
-    sta.l SAME_MSU1_CRC_STATE+1
-    lda.l SAME_MSU1_CRC_STATE+2
-    eor #$B8
-    sta.l SAME_MSU1_CRC_STATE+2
-    lda.l SAME_MSU1_CRC_STATE+3
-    eor #$ED
-    sta.l SAME_MSU1_CRC_STATE+3
-Same_Msu1_CrcByte__no_poly:
-    lda.l SAME_MSU1_CRC_BITS
-    dec
-    sta.l SAME_MSU1_CRC_BITS
-    bne Same_Msu1_CrcByte__bit
     rts
 
 Same_Msu1_CheckCrc:

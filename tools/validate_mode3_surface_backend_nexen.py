@@ -26,6 +26,7 @@ from same.snes_surface import (  # noqa: E402
     encode_snes_8bpp_tile,
     encode_surface_tiles,
 )
+from same.snes_video_backend import mode3_character_index, mode3_retained_tilemap, mode3_dma_batches
 from same.video import IndexedSurface  # noqa: E402
 
 DEFAULT_NEXEN = Path("/mnt/sdc1/Nexen-r5-20260712/bin/linux-x64/Release/linux-x64/publish/Nexen")
@@ -115,6 +116,7 @@ def main() -> int:
         transitions: list[dict[str, object]] = []
         observed_batches: dict[int, list[list[dict[str, int]]]] = {}
         seen_batches: set[tuple[int, int]] = set()
+        first_unblank_frame: int | None = None
         previous_state: tuple[int, ...] | None = None
         previous_generation = 0
         previous_converted = 0
@@ -154,10 +156,10 @@ def main() -> int:
             record_count = int.from_bytes(control[0x3E:0x40], "little")
             batch_key = (pending_generation, expected_dma)
             if state == 4 and record_count and batch_key not in seen_batches:
-                raw_records = session.read_memory("snesMemory", 0x41E6F0, record_count * 12)
+                raw_records = session.read_memory("snesMemory", 0x41E6FA, record_count * 8)
                 records = []
                 for index in range(record_count):
-                    record = raw_records[index * 12:(index + 1) * 12]
+                    record = raw_records[index * 8:(index + 1) * 12]
                     records.append({
                         "type": int.from_bytes(record[0:2], "little"),
                         "first": int.from_bytes(record[2:4], "little"),
@@ -166,7 +168,15 @@ def main() -> int:
                     })
                 observed_batches.setdefault(pending_generation, []).append(records)
                 seen_batches.add(batch_key)
-            if generation and generation not in observations and not session.get_ppu_state()["forcedBlank"]:
+            forced_blank = session.get_ppu_state()["forcedBlank"]
+            if not forced_blank and first_unblank_frame is None:
+                first_unblank_frame = frame
+            # Boot realization can turn off forced blank partway through a
+            # raster. The committed tile/palette generation is valid, but the
+            # screenshot still contains black scanlines from that first frame.
+            # Require a full displayed raster, never accept or mask those rows.
+            if (generation and generation not in observations and not forced_blank
+                    and first_unblank_frame is not None and frame > first_unblank_frame):
                 shot = base64.b64decode(session.take_screenshot(format="base64")["base64"])
                 image = Image.open(io.BytesIO(shot)).convert("RGB").crop((0, 0, 256, 224))
                 reference = reference_image(states[generation - 1], palettes[generation - 1])
@@ -206,18 +216,23 @@ def main() -> int:
     require(live_surface == states[-1], "final live indexed surface differs")
     palette = [tuple(live_palette[i:i + 3]) for i in range(0, 0x300, 3)]
     surface = IndexedSurface.wrap(256, 224, 256, live_surface, palette=palette)
-    expected_tiles = encode_surface_tiles(surface)
+    logical_tiles = encode_surface_tiles(surface)
+    arranged = bytearray(len(logical_tiles))
+    for tile in range(896):
+        dest = mode3_character_index(tile)*64
+        arranged[dest:dest+64] = logical_tiles[tile*64:(tile+1)*64]
+    expected_tiles = bytes(arranged)
     expected_cgram = encode_cgram(palette)
     require(tile_shadow == expected_tiles, "target 8bpp encoder differs from Phase-6A oracle")
     require(cgram_shadow == expected_cgram, "target BGR555 conversion differs")
-    require(vram[:0xE000] == tile_shadow and vram[0xE000:0xE800] == build_static_tilemap(),
+    require(vram[:0xE000] == tile_shadow and vram[0xF000:0xF800] == mode3_retained_tilemap()[:2048],
             "VRAM differs from fixed shadows/tilemap")
     require(cgram == cgram_shadow, "CGRAM differs from committed shadow")
-    decoded = decode_bundle_indexed(SnesIndexedSurfaceBundle(tile_shadow, vram[0xE000:0xE800], cgram_shadow))
+    decoded = decode_bundle_indexed(SnesIndexedSurfaceBundle(tile_shadow, vram[0xF000:0xF800], cgram_shadow))
     require(decoded == live_surface, "decoded VRAM indexed plane differs")
     require(ppu["bgMode"] == 3 and ppu["mainScreenLayers"] == 1 and ppu["subScreenLayers"] == 0,
             "Mode-3 BG1 PPU state differs")
-    require(ppu["layers"][0]["tilemapAddr"] == 0x7000 and ppu["layers"][0]["chrAddr"] == 0,
+    require(ppu["layers"][0]["tilemapAddr"] == 0x7800 and ppu["layers"][0]["chrAddr"] == 0,
             "BG1 VRAM bases differ")
     require(ppu["layers"][0]["hscroll"] == 0 and ppu["layers"][0]["vscroll"] == 0x3FF,
             "BG1 logical-surface alignment differs")
@@ -229,7 +244,7 @@ def main() -> int:
     expected = {
         1: (896, 0, 0xE000, 0x200, 29), 2: (0, 896, 0, 0, 0),
         3: (1, 0, 64, 0, 1), 4: (0, 0, 0, 2, 1),
-        5: (33, 0, 33 * 64, 0, 2), 6: (9, 0, 9 * 64, 0, 2),
+        5: (33, 0, 33 * 64, 0, 4), 6: (9, 0, 9 * 64, 0, 1),
     }
     for generation, values in expected.items():
         actual = snapshots[generation]
@@ -260,17 +275,15 @@ def main() -> int:
         "rejected_dirty": 1, "rejected_palette": 1,
         "candidate_tiles": 0, "pending_tiles": 0, "inflight_descriptors": 0,
     }, f"terminal backend control differs: {final_control}")
-    require(max_converted_per_emulator_frame <= 4,
-            f"active conversion exceeded four tiles in one emulator frame: {max_converted_per_emulator_frame}")
-    expected_active_batches = {
-        3: [[{"type": 0, "first": 33, "count": 1, "bytes": 64}]],
-        4: [[{"type": 2, "first": 1, "count": 1, "bytes": 2}]],
-        5: [[{"type": 0, "first": 0, "count": 32, "bytes": 2048}],
-            [{"type": 0, "first": 32, "count": 1, "bytes": 64}]],
-        6: [[{"type": 0, "first": tile, "count": 1, "bytes": 64}
-             for tile in (0, 2, 4, 6, 8, 10, 12, 14)],
-            [{"type": 0, "first": 32, "count": 1, "bytes": 64}]],
-    }
+    require(max_converted_per_emulator_frame <= 16,
+            f"bounded four-step hook exceeded sixteen tiles in one emulator frame: {max_converted_per_emulator_frame}")
+    expected_active_batches = {4: [[{"type": 2, "first": 1, "count": 1, "bytes": 2}]]}
+    for generation, logical in ((3,[33]),(5,range(33)),(6,[0,2,4,6,8,10,12,14,32])):
+        batches = mode3_dma_batches((),[mode3_character_index(t) for t in logical])
+        expected_active_batches[generation] = [
+            [{"type":0,"first":run.first_tile,"count":run.tile_count,"bytes":run.byte_length}
+             for run in batch.tile_runs] for batch in batches]
+
     # A one-descriptor active batch can enqueue and commit between two emulator
     # frame observations. Multi-batch generations must expose their retained
     # work, while snapshots above prove the single-batch byte/count result.
@@ -284,6 +297,7 @@ def main() -> int:
         "gate": "Phase 6D selectable production Mode-3 indexed-surface backend",
         "result": "pass", "fresh_power_on": True, "debugger_writes": 0,
         "terminal_frame": terminal_frame,
+        "first_unblank_frame": first_unblank_frame,
         "rom_sha256": sha(args.rom.read_bytes()), "observations": observations,
         "snapshots": snapshots,
         "final_control": final_control,
@@ -291,13 +305,15 @@ def main() -> int:
         "observed_active_batches": observed_batches,
         "reference_active_batches": expected_active_batches,
         "active_conversion_budget": {
-            "tiles_per_engine_frame": 4,
+            "tiles_per_backend_step": 4,
+            "backend_steps_per_engine_frame": 4,
+            "tiles_per_engine_frame": 16,
             "maximum_observed_per_emulator_frame": max_converted_per_emulator_frame,
         },
         "hashes": {"live_surface": sha(live_surface), "tile_shadow": sha(tile_shadow),
                    "cgram_shadow": sha(cgram_shadow),
                    "vram_realized": sha(vram[:0xE800]), "cgram": sha(cgram)},
-        "ppu": {"BGMODE": 3, "BG1SC": 0x70, "BG12NBA": 0, "TM": 1, "TS": 0},
+        "ppu": {"BGMODE": 3, "BG1SC": 0x79, "BG12NBA": 0, "TM": 1, "TS": 0},
         "dma": {"pending": int.from_bytes(dma[2:4], "little"),
                 "committed": int.from_bytes(dma[4:6], "little"),
                 "rejected": int.from_bytes(dma[10:12], "little")},

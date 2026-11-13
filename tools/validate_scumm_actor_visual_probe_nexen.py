@@ -268,6 +268,42 @@ def committed_pose_is_presented(state: dict, *, expected_room: int | None = None
     )
 
 
+def decode_captured_mode3(session, vram: bytes, cgram: bytes, ppu: dict | None = None):
+    """Observe the selected physical map; never assume the historical map ABI."""
+    from same.snes_video_backend import decode_retained_mode3, retained_scroll_hdma
+    if ppu is None: ppu = session.get_ppu_state()
+    require(ppu.get('bgMode') == 3, 'capture is not Mode-3')
+    layer = ppu['layers'][0]
+    require(layer['chrAddr'] == 0, 'unexpected character base')
+    address = layer['tilemapAddr'] * 2
+    if address == 0xe000:
+        return decode_bundle_indexed(SnesIndexedSurfaceBundle(vram[:0xe000], vram[address:address+2048], cgram))
+    require(address == 0xf000, 'unknown Mode-3 tilemap allocation')
+    table = session.read_memory('snesMemory', 0x41e73a, 10)
+    if table == bytes(10):
+        hofs = 0 # cold init; retained HDMA has not been enabled
+    else:
+        hofs = int.from_bytes(table[1:3], 'little')
+        require(table == retained_scroll_hdma(hofs), 'invalid/unsettled retained HDMA table')
+    return decode_retained_mode3(vram, hofs=hofs)
+
+
+def read_logical_indexed_surface(session):
+    """Read one paused surface with its physical backing and storage origin.
+
+    The caller still must enforce its queued/committed generation fence. This
+    helper never advances execution or substitutes expected pixels.
+    """
+    from same.snes_video_backend import linearize_retained_index8
+    physical=session.read_memory("snesMemory", SURFACE, 256*224)
+    active=session.read_memory("snesMemory", 0x40100d, 1)
+    origin=0
+    if active == b"\x01":
+        origin=int.from_bytes(session.read_memory("snesMemory",0x40109c,2),'little')
+        require(origin < 256, 'invalid physical surface origin')
+    return linearize_retained_index8(physical,origin=origin)
+
+
 def capture_committed_surface(session, directory: Path, label: str, *,
                               cursor_base: int, projection: dict | None = None,
                               source_foot: tuple[int, int] | None = None,
@@ -288,7 +324,7 @@ def capture_committed_surface(session, directory: Path, label: str, *,
                                        expected_x=expected_x, expected_y=expected_y,
                                        expected_frame=expected_frame),
             f"committed actor presentation fence is not satisfied: {state}")
-    pixels = session.read_memory("snesMemory", SURFACE, 256 * 224)
+    pixels = read_logical_indexed_surface(session)
     palette = session.read_memory("snesMemory", PALETTE, 768)
     vram = session.read_memory("snesVideoRam", 0, 0x10000)
     cgram = session.read_memory("snesCgRam", 0, 0x200)
@@ -324,8 +360,7 @@ def capture_committed_surface(session, directory: Path, label: str, *,
                 "source foot X differs from committed actor X")
         pose.update(foot_screen=list(source_foot), foot_coordinate_space="source_room",
                     foot_evidence="caller-provided committed foot; elevation not persisted natively")
-    ppu_pixels = decode_bundle_indexed(SnesIndexedSurfaceBundle(
-        vram[:0xE000], vram[0xE000:0xE800], cgram))
+    ppu_pixels = decode_captured_mode3(session, vram, cgram)
     expected_cgram = encode_cgram(tuple(tuple(palette[i:i+3]) for i in range(0, 768, 3)))
     record = {
         "label": label, "pose": pose,
@@ -335,6 +370,7 @@ def capture_committed_surface(session, directory: Path, label: str, *,
         "cgram_difference_bytes": sum(a != b for a,b in zip(cgram, expected_cgram)),
     }
     directory.mkdir(parents=True, exist_ok=True)
+    (directory / f'{label}.scroll-hdma.bin').write_bytes(session.read_memory('snesMemory',0x41e73a,10))
     for suffix, data in (("indexed.bin", pixels), ("palette-rgb.bin", palette),
                          ("vram.bin", vram), ("cgram.bin", cgram)):
         (directory / f"{label}.{suffix}").write_bytes(data)
@@ -354,20 +390,59 @@ def indexed_text_request_is_composed(text: bytes, raw: bytes, pose: dict,
     This is an association gate, not pixel evidence. The caller still compares
     the retained surface and actual PPU against an independent font oracle.
     after_generation is captured before the requested content was published.
+    Only the immutable awaiting-commit phase owns these retained request bytes.
+    In idle phase the producer can already be copying/preflighting a replacement
+    while CURRENT_GENERATION still names the previous caption.
     """
     if len(text) < 0x6C:
         return False
     word = lambda offset: int.from_bytes(text[offset:offset+2], 'little')
-    phase, generation, committed = word(0), word(2), word(4)
+    phase, generation = word(0), word(2)
     delta = (generation - after_generation) & 0xFFFF
-    if phase not in (0, 1) or not 0 < delta < 0x8000 or not word(0x68):
+    if phase != 1 or word(0x38) != 1 or not 0 < delta < 0x8000 or not word(0x68):
         return False
     if word(0x64) != pose['room'] or word(0x66) != pose['surface_room_generation']:
         return False
     pending = pose['backend_pending_generation']
-    if phase == 1 and generation != pending:
+    if generation != pending:
         return False
-    if phase == 0 and (committed != generation or (pending-generation)&0xFFFF >= 0x8000):
+    length = word(0x24)
+    return length == len(expected) and len(raw) >= length and raw[:length] == expected
+
+
+def indexed_contrast_pixels(indexed: bytes, cgram: bytes, *, background_index: int = 0) -> int:
+    """Count visible contrast, separately from exact glyph/palette fidelity.
+
+    A correctly rendered black glyph on black is not readable UI acceptance.
+    Palette index zero can still be opaque and visible on another background.
+    This check does not change rendering or certify glyph shape by itself.
+    """
+    if len(cgram) != 512 or not 0 <= background_index < 256:
+        raise ValueError('expected complete SNES CGRAM and valid background index')
+    colors = [int.from_bytes(cgram[i:i+2], 'little') & 0x7FFF
+              for i in range(0, 512, 2)]
+    return sum(colors[index] != colors[background_index] for index in indexed)
+
+
+def indexed_text_committed_candidate(text: bytes, raw: bytes, pose: dict,
+                                     expected: bytes, *, after_generation: int) -> bool:
+    """Candidate for independent pixel validation after the queue fence passed.
+
+    This does NOT associate idle pending bytes with a completed caption: a
+    producer may be preparing replacement bytes. Accept only after separately
+    rasterizing the expected source text and comparing INDEX8 and actual PPU.
+    The actor/surface must also satisfy committed_pose_is_presented(). This
+    avoids requiring the observer to catch an earlier transient locked phase.
+    """
+    if len(text) < 0x6C or not committed_pose_is_presented(pose):
+        return False
+    word = lambda offset: int.from_bytes(text[offset:offset+2], 'little')
+    delta = (word(2) - after_generation) & 0xFFFF
+    if word(0) != 0 or word(2) != word(4) or not 0 < delta < 0x8000:
+        return False
+    if not word(0x38) or not word(0x68):
+        return False
+    if word(0x64) != pose['room'] or word(0x66) != pose['surface_room_generation']:
         return False
     length = word(0x24)
     return length == len(expected) and len(raw) >= length and raw[:length] == expected
@@ -393,7 +468,8 @@ def snapshot_locked_generation(session, *, cursor_base: int) -> dict:
     result = {'state': state, 'frame': session.get_state()['frameCount']}
     for key, address, size in (('indexed', SURFACE, 57344), ('palette', PALETTE, 768),
                                ('cursor', cursor_base, 64)):
-        result[key] = session.read_memory('snesMemory', address, size)
+        result[key] = (read_logical_indexed_surface(session) if key == 'indexed'
+                       else session.read_memory('snesMemory', address, size))
         require(len(result[key]) == size, 'incomplete queued surface read')
     require(read_committed_pose(session, cursor_base=cursor_base) == state,
             'surface generation changed during paused snapshot')
@@ -439,7 +515,7 @@ def capture_presented_generation(session, snapshot: dict, directory: Path,
     require(read_committed_pose(session, cursor_base=cursor_base) == state,
             'presentation generation changed during paused capture')
     pixels, palette = snapshot['indexed'], snapshot['palette']
-    ppu = decode_bundle_indexed(SnesIndexedSurfaceBundle(vram[:0xE000], vram[0xE000:0xE800], cgram))
+    ppu = decode_captured_mode3(session, vram, cgram)
     colors = encode_cgram(tuple(tuple(palette[i:i+3]) for i in range(0,768,3)))
     record = dict(label=label, queued_pose=snapshot['state'], presented_state=state,
                   queued_frame=snapshot['frame'], presented_frame=session.get_state()['frameCount'],
@@ -448,6 +524,7 @@ def capture_presented_generation(session, snapshot: dict, directory: Path,
                   ppu_indexed_differences=sum(a != b for a,b in zip(pixels, ppu)),
                   cgram_difference_bytes=sum(a != b for a,b in zip(colors, cgram)))
     directory.mkdir(parents=True, exist_ok=True)
+    (directory / f'{label}.scroll-hdma.bin').write_bytes(session.read_memory('snesMemory',0x41e73a,10))
     for suffix, data in (('indexed.bin', pixels), ('palette-rgb.bin', palette),
                          ('cursor.bin', snapshot['cursor']), ('vram.bin', vram),
                          ('cgram.bin', cgram), ('ppu.png', screenshot)):
@@ -683,7 +760,7 @@ def actor_bounds_on_surface(raw: bytes, projection: dict | None = None) -> tuple
 def capture_surface(session, directory: Path, label: str,
                     backdrop: bytes, *, projection: dict | None = None,
                     cursor_base: int | None = None) -> dict:
-    pixels = session.read_memory("snesMemory", SURFACE, 256 * 224)
+    pixels = read_logical_indexed_surface(session)
     palette = session.read_memory("snesMemory", PALETTE, 768)
     require(len(pixels) == len(backdrop), "incomplete indexed surface read")
     (directory / f"{label}.indexed.bin").write_bytes(pixels)
@@ -703,8 +780,7 @@ def capture_surface(session, directory: Path, label: str,
     cgram = session.read_memory("snesCgRam", 0, 0x200)
     (directory / f"{label}.vram.bin").write_bytes(vram)
     (directory / f"{label}.cgram.bin").write_bytes(cgram)
-    ppu_pixels = decode_bundle_indexed(SnesIndexedSurfaceBundle(
-        vram[:0xE000], vram[0xE000:0xE800], cgram))
+    ppu_pixels = decode_captured_mode3(session, vram, cgram)
     expected_cgram = encode_cgram(tuple(tuple(palette[i:i + 3])
                                       for i in range(0, 768, 3)))
 
@@ -1048,7 +1124,7 @@ class ProbeObserver:
             boundary["screenshot_error"] = f"{type(exc).__name__}: {exc}"
         try:
             boundary["ppu_state"] = self.session.get_ppu_state()
-            pixels = self.session.read_memory("snesMemory", SURFACE, 256 * 224)
+            pixels = read_logical_indexed_surface(self.session)
             boundary["indexed_surface_sha256"] = hashlib.sha256(pixels).hexdigest()
             (self.output / "actor-timeout.indexed.bin").write_bytes(pixels)
             palette = self.session.read_memory("snesMemory", PALETTE, 768)
