@@ -124,3 +124,29 @@ its caller to observe42 only afterward. Actual Nexen acceptance passes the
 combined argument, checked-page wait, frozen caller, and same-carrier ancestor
 replacement fixture; no native error and exactly one replacement execution.
 Authentic map-to-destination acceptance remains a separate gate.
+
+
+## Authored cutscene callbacks
+
+The next original taxi trace reached its source dialogue at object140 PC139,
+then lost that activation before its endCutscene/room request. Cutscene depth
+remained1. The installed start/end callback numbers are source variables35/36
+(20/21 in this edition). Host dispatch already existed; native begin/end only
+maintained the stack. The authored hover loop therefore remained runnable.
+
+Native room-service cutscenes now retain all32 normal argument words, invoke
+variables35/36 through the existing ordinary StartScript allocator, and pass
+the saved first argument with zero trailing locals to the end callback.
+`cutSceneScriptIndex` protects the original caller from freezeScripts while
+the start callback executes. Checked-code waits preserve that context; actual
+caller resumption clears it. No selector, cache, or memory allocation changes.
+
+The copyright-free nested fixture now checks both callback argument frames,
+freeze ownership, ordinary source yield, checked-page continuation, and the
+existing same-carrier ancestor replacement. Actual Nexen passes in23.55seconds,
+error0, cutscene depth0, start arguments2/4660 and end arguments2/0. Native ROM
+`ddc9382fe26bbed65a0df95458ffda8d67cfdff978cdc2e361858893a4cfea02`, map
+`74aee31b728862c41158ba3f6340a2684cc16202ecdf26e7be3a4889cf89d249`, package
+`020edf8036dd826df92297b04be0208b035e2936e1df3b70e4bba8613c8c1f36`, identity
+`57b4844cd6a28172aa52d5b8dd8fcd371c81c12ae5c977e810d9a46aafbc1093`.
+These are synthetic native results, not authentic destination acceptance.

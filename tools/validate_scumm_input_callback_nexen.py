@@ -136,6 +136,9 @@ def main() -> int:
                 assert report['nested_object_values']==[42,42,1], report
                 report['nested_freeze_resume']=s.read_u16(base+236)
                 report['ancestor_replacement_count']=s.read_u16(base+234)
+                report['cutscene_callback_values']=[s.read_u16(base+2*i) for i in (119,120,121,122)]
+                assert report['cutscene_callback_values']==[2,0x1234,2,0]
+                assert sample(s)['cutscene']==0
                 replay.advance_bounded(s,64)
                 assert s.read_u16(base+234)==1 and sample(s)['error']==0
             report['result'] = 'PASS'

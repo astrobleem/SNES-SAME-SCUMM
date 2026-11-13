@@ -30,6 +30,7 @@ def source_files(*, nested_object_wait: bool = False) -> dict[str, bytes]:
     if nested_object_wait:
         header = struct.pack('<HBBBBBBhhB',77,1,1,1,1,0,0,40,20,0)
         action = (b'\x60\x01\x80\x60\x00' + move(114,42) + move(118,1)
+                  + b'\x40\x00\x02\x00\x00\x34\x12\xff\x80\xc0'
                   + b'\x0a\x05\xff\x00')
         # Separate instruction-safe pages. The action later starts a child
         # that replaces its ancestor with a new entry in the SAME carrier.
@@ -62,9 +63,15 @@ def source_files(*, nested_object_wait: bool = False) -> dict[str, bytes]:
         # action on its same carrier. Parent must observe the action's write.
         nested = (b'\x0a\x04\xff\x37\x4d\x00\x0b\xff'
                   + move(115,114,local=True))
-        globals_[1] = global2[:-1] + nested + b'\x00'
+        globals_[1] = global2[:-1] + move(35,6) + move(36,7) + nested + b'\x00'
         globals_.append(b'\x37\x4d\x00\x5a\xff\x80\x18\xf7\xff')
         globals_.append(b'\x37\x4d\x00\x5b\xff\x00')
+        # Authored begin/end callbacks must protect their cutscene caller
+        # from freezeScripts, carry all start args, and clear trailing end args.
+        globals_.append(move(119,0x4000,local=True)+move(120,0x4001,local=True)
+                        +b'\x60\x01\x00')
+        globals_.append(move(121,0x4000,local=True)+move(122,0x4001,local=True)
+                        +b'\x60\x00\x00')
     container = bytearray(ch(b'ROOM', room)); offsets = [0]
     for body in globals_:
         offsets.append(len(container)); container += ch(b'SCRP', body)

@@ -2254,6 +2254,17 @@ ScummV5_Engine_Frame__start_runnable:
 ScummV5_Engine_Frame__next:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    ; A checked-code wait is not a source yield. Keep cutSceneScriptIndex
+    ; while its callback runs; clear it when the original caller resumes.
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    cmp.l SAME_SCUMM_C19_SCRIPT_INDEX
+    bne ScummV5_Engine_Frame__cutscene_context_ready
+    lda #$FF
+    sta.l SAME_SCUMM_C19_SCRIPT_INDEX
+ScummV5_Engine_Frame__cutscene_context_ready:
+    .a8
+    .endif
     lda.l SAME_SCUMM_C18_NESTED
     beq ScummV5_Engine_Frame__outer_next
     dec
@@ -8146,6 +8157,9 @@ ScummV5_Op_CutsceneDispatch__override:
     jmp ScummV5_Op_BeginOverride
 
 ScummV5_Op_Cutscene:
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    jsl ScummV5_Cutscene_ClearArgs_Far
+    .endif
     rep #$20
     .a16
     lda #$0000
@@ -8214,6 +8228,17 @@ ScummV5_Op_Cutscene__variable_ok:
     .a16
     sta.l SAME_SCUMM_OPERAND
 ScummV5_Op_Cutscene__value_ready:
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C4_ARG_COUNT
+    and #$00FF
+    asl
+    tax
+    lda.l SAME_SCUMM_OPERAND
+    sta.l SAME_SCUMM_C4_ARGS,x
+    .endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_C4_ARG_COUNT
@@ -8272,7 +8297,11 @@ ScummV5_Op_Cutscene__depth_room:
     lda.l SAME_SCUMM_C19_STACK_POINTER
     sta.l $7E5688
     .endif
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    jml ScummV5_Cutscene_StartCallback_Far
+    .else
     jmp ScummV5_Engine_Frame__next
+    .endif
 
 ScummV5_Op_EndCutscene:
     sep #$20
@@ -8366,6 +8395,10 @@ ScummV5_Op_EndCutscene__second_depth_done:
     tax
 ScummV5_Op_EndCutscene__override_done:
     .a16
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    lda.l SAME_SCUMM_C19_DATA,x
+    sta.l SAME_SCUMM_C19_ARGUMENT0
+    .endif
     lda #$0000
     sta.l SAME_SCUMM_C19_OVERRIDE_PC,x
     sep #$20
@@ -8392,7 +8425,11 @@ ScummV5_Op_EndCutscene__override_done:
     sta.l $7E569D
     sep #$20
     .endif
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    jml ScummV5_Cutscene_EndCallback_Far
+    .else
     jmp ScummV5_Engine_Frame__next
+    .endif
 
 ScummV5_Op_BeginOverride:
     .a8
@@ -17961,7 +17998,10 @@ ScummV5_Op_FreezeScripts:
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
     cmp #SCUMM_C2_FIXTURE_C20_DO_SENTENCE
-    beq ScummV5_Op_FreezeScripts__c20
+    bne ScummV5_Op_FreezeScripts__ordinary
+    brl ScummV5_Op_FreezeScripts__c20
+ScummV5_Op_FreezeScripts__ordinary:
+    .a8
     lda.l SAME_SCUMM_RETURN_MODE
     bne ScummV5_Op_FreezeScripts__c5
     lda #SCUMM_ERR_SCRIPT
@@ -17974,7 +18014,11 @@ ScummV5_Op_FreezeScripts__c5:
 ScummV5_Op_FreezeScripts__flag_ok:
     .a8
     sta.l SAME_SCUMM_CONDITION
-    beq ScummV5_Op_FreezeScripts__unfreeze
+    bne ScummV5_Op_FreezeScripts__freeze_begin
+    brl ScummV5_Op_FreezeScripts__unfreeze
+ScummV5_Op_FreezeScripts__freeze_begin:
+    .a8
+    .i16
     ldx #$0000
 ScummV5_Op_FreezeScripts__freeze_scan:
     .a8
@@ -18003,6 +18047,23 @@ ScummV5_Op_FreezeScripts__freeze_next:
     inx
     cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
     bcc ScummV5_Op_FreezeScripts__freeze_scan
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    ; Canonical freezeScripts exempts the beginCutscene caller while the
+    ; authored start callback executes, including checked-code suspension.
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C19_SCRIPT_INDEX
+    and #$00FF
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_Op_FreezeScripts__cutscene_owner_done
+    tax
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
+ScummV5_Op_FreezeScripts__cutscene_owner_done:
+    .endif
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_FreezeScripts__unfreeze:
     .a8
