@@ -345,6 +345,14 @@ ScummV5_Engine_Boot__clear_scenario:
     .a16
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_X
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_Y
+    lda #$0000
+    ldx #$0000
+ScummV5_Input_Reset__loop:
+    sta.l SAME_SCUMM_INPUT_BASE,x
+    inx
+    inx
+    cpx #(SAME_SCUMM_INPUT_END-SAME_SCUMM_INPUT_BASE)
+    bcc ScummV5_Input_Reset__loop
     .endif
     ; A standalone scenario is a fresh semantic session even when the
     ; emulator preserves WRAM across power/reset.  Do not let an old API
@@ -850,6 +858,9 @@ ScummV5_Engine_Frame__skip_caller_recorded:
     lda #SCUMM_C2_FIXTURE_C19_CUTSCENE
     sta.l SAME_SCUMM_FIXTURE_REQUEST
     jmp ScummV5_Engine_Frame__fixture_check
+    .endif
+    .if SAME_BUILD_SCUMM_CONTROLLER
+    jsl ScummV5_Input_Process_Far
     .endif
     jsr ScummV5_AdvanceTimers
     ; Embedded opcode fixtures use global2 as scratch, without the outer-loop

@@ -22,6 +22,8 @@ MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 # Intervals are half-open. Their endpoints are ownership boundaries declared
 # in memory.pasm; unrelated ownership overlap fails closed.
 REGIONS = (
+    ("kernel_dma_ring", "SAME_DMA_QUEUE", "SAME_DMA_QUEUE_END"),
+    ("scumm_input_callback", "SAME_SCUMM_INPUT_BASE", "SAME_SCUMM_INPUT_END"),
     ("cursor_coverage_rows_0_7", "SAME_VIDEO_CURSOR_COVERAGE_LO", "SAME_VIDEO_CURSOR_COVERAGE_LO_END"),
     ("cursor_coverage_rows_8_15", "SAME_VIDEO_CURSOR_COVERAGE_HI", "SAME_VIDEO_CURSOR_COVERAGE_HI_END"),
     ("interpreter_core_and_control", "SAME_SCUMM_PC", "SAME_SCUMM_CONTROL_END"),

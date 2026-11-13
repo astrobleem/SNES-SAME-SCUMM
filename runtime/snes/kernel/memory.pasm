@@ -318,6 +318,23 @@ SAME_DMA_QUEUE_SLOT_SIZE      = $0008
 SAME_DMA_QUEUE_MASK           = $003F
 SAME_DMA_FRAME_BUDGET         = $0800
 
+ ; Input ticket follows the DMA ring ($2260..$229F), before VM state.
+SAME_DMA_QUEUE_END             = $7E22A0
+SAME_SCUMM_INPUT_BASE          = $7E22A0
+SAME_SCUMM_INPUT_PENDING       = $7E22A0 ; u8 accepted, not yet allocated
+SAME_SCUMM_INPUT_SCRIPT        = $7E22A1 ; u8 source script number, not selector
+SAME_SCUMM_INPUT_ROOM          = $7E22A2 ; u8 ownership at acceptance
+SAME_SCUMM_INPUT_SLOT          = $7E22A3 ; u8 last allocated C4 slot
+SAME_SCUMM_INPUT_AREA          = $7E22A4 ; u16 original click-area enumeration
+SAME_SCUMM_INPUT_VALUE         = $7E22A6 ; u16 verb/inventory/key value
+SAME_SCUMM_INPUT_MODE          = $7E22A8 ; u16 button mode
+SAME_SCUMM_INPUT_ACCEPTED      = $7E22AA ; u16 accepted events
+SAME_SCUMM_INPUT_ALLOCATED     = $7E22AC ; u16 allocated activations
+SAME_SCUMM_INPUT_SELECTOR      = $7E22AE ; u8 transient resolver result
+SAME_SCUMM_INPUT_EDGE_VALID    = $7E22AF ; u8 edge token survives publication waits
+SAME_SCUMM_INPUT_EDGE          = $7E22B0 ; u16 physical input sequence
+SAME_SCUMM_INPUT_END           = $7E22B2
+
 ; Copyright-free SCUMM v5 conformance lane.  This is engine state, not a game
 ; profile and not donor state.  Sixteen signed 16-bit variables are sufficient
 ; for the ROM-resident semantic fixture.

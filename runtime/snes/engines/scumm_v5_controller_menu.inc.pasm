@@ -37,6 +37,18 @@ ScummV5_Controller_MenuFrame__open_inventory:
     ; Inventory starts with an authored enabled verb, never an uninitialized
     ; action ID. Opening this page does not submit or change object ownership.
     lda.l SAME_SCUMM_PLAY_UI_SELECTION
+    tax
+    lda #$0001
+    ldy #$0001
+    jsl ScummV5_Input_Queue_Far
+    bcc ScummV5_Controller_MenuFrame__verb_without_callback
+    sep #$20
+    .a8
+    jmp ScummV5_Controller_MenuFrame__chosen
+ScummV5_Controller_MenuFrame__verb_without_callback:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_PLAY_UI_SELECTION
     sep #$20
     .a8
     sta.l SAME_SCUMM_CONTROLLER_VERB
@@ -144,6 +156,19 @@ ScummV5_Controller_MenuFrame__inventory:
     .a16
     jmp ScummV5_Controller_MenuFrame__close
 ScummV5_Controller_MenuFrame__inventory_owned:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_PLAY_UI_SELECTION
+    tax
+    lda #$0003
+    ldy #$0001
+    jsl ScummV5_Input_Queue_Far
+    bcc ScummV5_Controller_MenuFrame__inventory_without_callback
+    sep #$20
+    .a8
+    jmp ScummV5_Controller_MenuFrame__chosen
+ScummV5_Controller_MenuFrame__inventory_without_callback:
     rep #$20
     .a16
     lda.l SAME_SCUMM_PLAY_UI_SELECTION

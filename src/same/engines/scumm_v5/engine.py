@@ -24,7 +24,7 @@ from .audio import ScummV5AudioAdapter
 from .costume import ScummV5Costume
 from .cooked_room import CookedRoomRecord, CookedScriptSource, decode_cooked_room
 from .embedded_audio import ScummV5EmbeddedAudioAdapter
-from .input import ScummV5InputAdapter
+from .input import ClickArea, InputScriptRequest, ScummV5InputAdapter
 from .policy import ScummV5GamePolicy, parse_game_policy
 from .resources import LucasartsScummV5ResourceProvider
 from .room import ScummV5RoomAdapter, decode_room
@@ -560,6 +560,9 @@ class ScummV5Engine(Engine):
         self._context: EngineContext | None = None
         self._policy: ScummV5GamePolicy | None = None
         self._input: ScummV5InputAdapter | None = None
+        self._input_request: InputScriptRequest | None = None
+        self._input_serial = 0
+        self._input_room_epoch = 0
         self._video: ScummV5VideoAdapter | ScummV5RoomAdapter | None = None
         self._actors_dirty = False
         self._presentation_dirty = False
@@ -961,6 +964,7 @@ class ScummV5Engine(Engine):
     def handle_event(self, context: EngineContext, event: InputEvent) -> None:
         if self._input is None:
             raise EngineExecutionError("SCUMM input adapter is unavailable before boot")
+        held_before = set(self._input.state.held_buttons)
         logical = self._input.consume(event)
         self.state.cursor_x = logical.cursor_x
         self.state.cursor_y = logical.cursor_y
@@ -968,6 +972,14 @@ class ScummV5Engine(Engine):
             context.services.video.move_cursor(logical.cursor_x, logical.cursor_y)
         else:
             self._video.move_cursor(logical.cursor_x, logical.cursor_y)
+        # Only a new physical edge owns an input request. pressed_buttons is
+        # frame-scoped and may still contain an earlier edge on pointer motion.
+        for button, mode in (("primary", 1), ("secondary", 2)):
+            if button in logical.held_buttons and button not in held_before:
+                area = (ClickArea.SCENE
+                        if self.state.room_ops.screen_top <= logical.cursor_y
+                        < self.state.room_ops.screen_bottom else ClickArea.VERB)
+                self.queue_input_event(area, 0, mode)
         if "skip" in logical.commands:
             self._abort_cutscene()
         # Profiles may describe a title/game-start command that is consumed by
@@ -1014,6 +1026,7 @@ class ScummV5Engine(Engine):
         for slot in self.state.scripts:
             slot.did_exec = False
         try:
+            self._check_and_run_input_script(context)
             for slot in self.state.scripts:
                 if not slot.active or slot.did_exec or slot.freeze_count:
                     continue
@@ -2945,6 +2958,48 @@ class ScummV5Engine(Engine):
                 self._actors_dirty = True
         return False
 
+    def queue_input_event(self, area: ClickArea | int, value: int, mode: int) -> bool:
+        """Accept raw input for VAR_VERB_SCRIPT; never also create a sentence.
+
+        UI hit testing supplies VERB/INVENTORY IDs, the keyboard supplies KEY,
+        and scene clicks supply zero. False means no callback owns this event
+        (disabled input or variable 32 unset). A full mailbox is an explicit
+        error, not permission to send the same event through C20 instead.
+        """
+        try:
+            area = ClickArea(area)
+        except ValueError as exc:
+            raise EngineExecutionError("SCUMM invalid input click area") from exc
+        if not 0 <= value <= 0xFFFF or mode not in (0, 1, 2):
+            raise EngineExecutionError("SCUMM invalid input value/button mode")
+        number = self.state.variables[32] & 0xFFFF
+        if not number or self.state.user_input_state <= 0:
+            return False
+        if number > 255:
+            raise EngineExecutionError("SCUMM input script number exceeds v5 namespace")
+        if self._input_request is not None:
+            raise EngineExecutionError("SCUMM input callback mailbox occupied")
+        self._input_serial += 1
+        self._input_request = InputScriptRequest(
+            self._input_serial, self._input_room_epoch, number, area, value, mode,
+        )
+        return True
+
+    def _check_and_run_input_script(self, context: EngineContext) -> None:
+        request = self._input_request
+        if request is None:
+            return
+        if request.room_epoch != self._input_room_epoch:
+            self._input_request = None
+            return
+        # Retain ownership until allocation succeeds. An explicit resource
+        # failure cannot turn into an accidental successful sentence submission.
+        self._allocate_script_slot(
+            context, request.script, [int(request.area), request.value, request.mode],
+            freeze_resistant=False, recursive=False,
+        )
+        self._input_request = None
+
     def _check_and_run_sentence_script(self, context: EngineContext) -> None:
         number = self.state.variables[33] & 0xFF
         if number and any(
@@ -4381,6 +4436,10 @@ class ScummV5Engine(Engine):
                     script.recursive = False
                     script.freeze_count = 0
             self._room_lifecycle_event("old_room_scripts_retired", old_room)
+        # A committed room/revisit retires input not yet activated. Running
+        # globals retain normal C4 lifetime; only the mailbox is room-scoped.
+        self._input_room_epoch += 1
+        self._input_request = None
         # A room's derived BOXM routes belong to its own geometry and live
         # flags.  A successful scene installation starts from the destination
         # resource's authored matrix until that room executes createBoxMatrix.

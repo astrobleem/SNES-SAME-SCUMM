@@ -53,6 +53,7 @@ ScummV5_Controller_ResetInteractionOnRoomInstall_Far:
     .a8
     lda #$00
     sta.l SAME_INPUT_TALK_OWNED_VALID
+    sta.l SAME_SCUMM_INPUT_PENDING
     sta.l SAME_SCUMM_PLAY_UI_MODE
     rep #$20
     .a16
@@ -419,6 +420,10 @@ ScummV5_Controller_Frame__up_done:
     .a16
 ScummV5_Controller_Frame__down_done:
     jsl ScummV5_Controller_ClampCursor_Far
+    jsl ScummV5_Input_Scene_Far
+    bcc ScummV5_Controller_Frame__no_input_callback
+    jmp ScummV5_Controller_Frame__hud
+ScummV5_Controller_Frame__no_input_callback:
     rep #$20
     .a16
     sep #$20
@@ -5065,3 +5070,5 @@ ScummV5_Controller_AcknowledgeTalk__none16:
 ScummV5_Controller_AcknowledgeTalk__none:
     clc
     rtl
+
+.include "scumm_v5_input_script.inc.pasm"
