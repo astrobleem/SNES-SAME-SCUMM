@@ -234,3 +234,102 @@ https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43178831917 .
 Hosted CI assembles native code but does not run Nexen or use commercial data.
 No physical hardware, complete game semantics/audio, or portable streamed-save
 acceptance is claimed. PR #15 remains stacked on #14 and is not auto-merged.
+
+
+## Final measured corrections and Milestone C qualification
+
+Runtime `be553385b7419e5d8d1e6e6fa492ab48e40b80ab` retains the same memory
+allocations and publication budgets. The INDEX8 ring has 32 columns while the
+planar ring has 33: a cached reverse column is not necessarily still present
+in INDEX8. The apparently available BW-RAM tail is live SC5LIVE metadata, not
+free scratch. Rather than allocate another image, the bounded decoder now
+resolves each eight-row tile once, loads paired planes as words, and transposes
+its eight pixels without per-pixel accumulator-width changes or loop branches.
+It retains the split guard-column bank mapping and exact opaque-zero values.
+
+Camera cursor damage now marks only tile cells touched by the cursor's source
+coverage. It never uses final color as transparency, never clears another
+producer's candidate, and retains complete old/new damage rectangles. The
+existing visibility predicate permits deferred old-cursor damage only while
+those pixels remain in INDEX8. Unaligned origins retain conservative marking.
+The implementation uses existing cursor scratch and 82 bytes of immutable ROM
+masks; no video, metadata, or executable buffer is borrowed.
+
+The actual instruction-path tests cover every physical column, guard segments,
+all palette bits, wrap, negative world origins, cursor alignments/clipping,
+dense compatibility, and unchanged public state. The copyright-free native
+source fixture passes full background/cursor INDEX8, VRAM, palette, and actual
+screenshot comparisons in both directions. The rebuilt native retained-renderer
+control also passes all 76 steps, including one-pixel motion, repeated reversal,
+ring wrap, foreground/fixed HUD, DMA refusal, stale tickets and replacement.
+The source-driven fixture
+measures decoder cost at 145,010 CPU counter units; it is not used as an authentic-game timing substitute.
+
+The new **continuous authentic** run passes original startup, newspaper pickup,
+owner/state 15/0 to 1/1, readable inventory, closing inventory, walking through
+the camera trigger, and continued controller input. Seven completed source
+scene/text captures have zero differences. Final actor (273,139), standing
+chore 3, crop 208, error zero. The private supervisor reports 490.497 seconds,
+normal exit and cleanup. A separate matching-ROM reverse continuation passes
+crop 32, actor (233,138), persistent newspaper and full scene equality.
+
+| Measurement | Previous pipeline | Final correction |
+| --- | ---: | ---: |
+| Authentic cached decoder CPU counter units | 184,578 | 145,290 |
+| Cached composition-to-NMI commit | 16 frames | 15 frames |
+| Prepared-column encoder attempts | 33 | 31 |
+| Prepared-column changed tiles / character bytes | 25 / 1,600 | 25 / 1,600 |
+| Prepared-column conversion/scan CPU counter units | 291,709 | 274,542 |
+| Forward input to final image | 808 frames | 778 frames |
+| Separate reverse input to final image | 643 frames | 658 frames |
+| Median sampled column interval | 24 frames | 24 frames |
+
+The prepared-column scan row compares the second ordinary forward column in
+each trace, starting at frame 7266. The old window ends at its NMI commit;
+the final window ends before the next composition and contains eight complete
+scan calls, versus nine previously. Nested encoder costs are part of scan, not
+additional work. The final reverse trace directly observes composition at
+8221, decoder completion at 8225, and NMI commit at 8236. Following checked
+columns take 21 composition-to-commit frames. Forward hook intervals are 23–24
+frames; eight-frame polling is not an exact commit timer. Reverse has zero
+code loads/evictions. Forward has one earlier load/eviction, not repeated
+working-set churn, and 21 checked lookahead hits.
+
+The decoder is 21.3% cheaper and unnecessary cursor encodes fall by two, but
+**reverse total latency did not improve**. The whole-walk figures include
+original movement, animation, final-pose/resource waits, and observation
+sampling phase. They must not be substituted for the measured function cost.
+The remaining ordinary column work includes checked preparation of the next
+strip, eight bounded candidate-scan calls, genuine foreground damage, SCUMM
+scheduling and NMI acknowledgement. These overlap; their CPU sums are not
+independent elapsed-time components. Six unchanged candidates remain in the
+representative 31-attempt scan: their output is not proven unchanged merely
+from the damage rectangle, so exact shadow comparison remains necessary.
+
+**Milestone C functional/integration scope is complete.** The accepted system
+has original gameplay, inventory, text, bidirectional retained camera and
+continued control without full-screen reconstruction or pathological executable
+churn. It is not smooth 60 Hz scrolling. The measured 21-frame checked-column
+and 15-frame cached publication costs remain explicit performance limitations;
+there is no basis to alter authored script timing or pursue an arbitrary
+fixture frame target as another acceptance gate.
+
+Private evidence root:
+`/home/chad/SAME-private-evidence/milestone-c-final-multiroom-20261112`.
+`authentic-final`, `reverse-final`, `native-coverage`, and
+`final-source-build-linkage.json` preserve exact reports and images.
+
+| Final artifact | SHA-256 |
+| --- | --- |
+| ROM | `56e2396f12a0341b96eadec4ca30dac4315a93f175d548141f9ded69c7cfd0d0` |
+| Map | `d2cad5e205b9acbe79890cb3fc4cbbf10569e604f80fcb9452dd26467ec732ac` |
+| Package | `e6cf5c28f36f20c10cb9ef7819a1b278b1067ed3014462cee53d9a63d9772afd` |
+| Build identity | `42a8f9e81a30c92d814879bb3e48c8a4a847a01394be0396e4b17ecdaf79b939` |
+
+All 59 non-generated runtime files match the reviewed runtime commit. The
+build records its actual isolated pre-commit snapshot; later documentation is
+not retroactively described as natively tested. Local tests: 1,579 passed,
+12 skipped (1,591 run). Validation, 41-region ownership audit, pinned Poppy,
+4 MiB ROM audit and Python/Bash/JSON checks pass. Both hosted jobs pass on
+[the runtime commit](https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43340757233).
+Hosted assembly is not Nexen execution. Commercial evidence remains outside Git.

@@ -4412,3 +4412,33 @@ but did not improve latency; it is not Milestone C acceptance. Corrected full
 continuous run is supervised under `authentic-overlap-continuous` in the private
 pipeline evidence root. No old-ROM state transfer, desktop display, or seven-
 action route. Do not repeat an unchanged failed run or infer a performance PASS.
+
+## Milestone C qualified; first source-authored exit — 2026-11-12
+
+Runtime `be553385b7419e5d8d1e6e6fa492ab48e40b80ab` pushed; hosted run43340757233
+passes both required jobs (1591 tests,12skipped). Local1579pass/12skip,
+validation41-region audit, pinned assembly and ROM/source checks pass.
+Cached reverse decoding184578→145290CPU units; cursor source coverage removes
+2unnecessary encodes (33→31). No new memory. Continuous authentic startup,
+newspaper, inventory, forward camera and continued control pass seven exact
+scene/text comparisons. Forward778frames; separate reverse658 (previous643,
+not an overall reverse speedup). Cached compose→NMI15frames. Current native
+retained76-step control and copyright-free source/cursor fixture both pass.
+See CAMERA_PIPELINE.md; C functional/integration scope complete, not60Hz.
+
+Private evidence root: milestone-c-final-multiroom-20261112 under
+/home/chad/SAME-private-evidence. ROM56e2396f..., mapd2cad5e2..., packagee6cf5c28...
+All59non-generated runtime files byte-match the reviewed commit. Recovery
+worktree untouched; no baseline tag or main rewrite, no automatic merge.
+
+D advanced through normal Use taxi input and original room10→75 lifecycle,
+with newspaper owner/state1/1 and error0. Original map source/INDEX8/VRAM/CGRAM
+comparison passes at completed generation379. A corrected observer uses
+lifecycleRUNNING2, not install-phase0; its earlier timeout remains unverified.
+No taxi/startup retry. Matching-room75 continuation selects then confirms
+Barnett through normal A input; no transition or local204 callback follows.
+VAR_VERB_SCRIPT32=204 is a missing input-service contract, distinct from the
+implemented VAR_SENTENCE_SCRIPT33/C20 semantic mailbox. Do not bypass it by
+calling the destination object or special-casing room75. See
+MULTIROOM_GAMEPLAY_FRONTIER.md for source evidence and exact next boundary.
+No complete destination gameplay or actor10/costume58 acceptance claimed.
