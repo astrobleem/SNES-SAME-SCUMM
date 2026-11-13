@@ -19,10 +19,13 @@ def move(result: int, value: int, *, local: bool = False) -> bytes:
     return bytes((0x9A if local else 0x1A,)) + struct.pack('<HH', result, value)
 
 
-def source_files(*, nested_object_wait: bool = False) -> dict[str, bytes]:
+def source_files(*, nested_object_wait: bool = False, lifecycle_chain: bool = False) -> dict[str, bytes]:
+    if lifecycle_chain:
+        nested_object_wait = True
     source = camera_source_files()
     data = bytes(v ^ 0x69 for v in source['ATLANTIS/ATLANTIS.001'])
-    # Existing public camera fixture's first LFLF starts at offset 30.
+    # Existing public camera fixture's ROOM starts at offset 30.
+    assert data[30:34] == b'ROOM'
     size = int.from_bytes(data[34:38], 'big')
     room = data[38:30 + size]
     room = room.replace(ch(b'RMHD', struct.pack('<HHH', 640, 144, 0)),
@@ -74,6 +77,19 @@ def source_files(*, nested_object_wait: bool = False) -> dict[str, bytes]:
                         +b'\x60\x01\x00')
         globals_.append(move(121,0x4000,local=True)+move(122,0x4001,local=True)
                         +b'\x60\x00\x00')
+    if lifecycle_chain:
+        # A third normal callback requests resource-less room zero. EXCD must
+        # wait for 9 -> 10 -> 11, with checked bodies on distinct physical
+        # pages, before publishing that room. No synthetic VM driver.
+        globals_[1] = globals_[1][:-1] + move(32,8) + b'\x00'
+        globals_.extend([
+            b'\x72\x00\x00',
+            b'\x0a\x0a\xff' + move(124,125,local=True) + b'\x00' + b'\xa0'*2100,
+            b'\x0a\x0b\xff' + move(125,126,local=True) + b'\x00' + b'\xa0'*2100,
+            move(126,42) + b'\x00' + b'\xa0'*2100,
+        ])
+        room = room.replace(ch(b'EXCD',b'\x00'),
+                            ch(b'EXCD', b'\x0a\x09\xff' + move(127,124,local=True) + b'\x00'),1)
     container = bytearray(ch(b'ROOM', room)); offsets = [0]
     for body in globals_:
         offsets.append(len(container)); container += ch(b'SCRP', body)
@@ -88,9 +104,9 @@ def source_files(*, nested_object_wait: bool = False) -> dict[str, bytes]:
             for n, payload in enumerate((index, data))}
 
 
-def write_archive(path: Path, *, nested_object_wait: bool = False) -> None:
+def write_archive(path: Path, *, nested_object_wait: bool = False, lifecycle_chain: bool = False) -> None:
     with zipfile.ZipFile(path, 'x', compression=zipfile.ZIP_STORED) as archive:
-        for name, data in source_files(nested_object_wait=nested_object_wait).items():
+        for name, data in source_files(nested_object_wait=nested_object_wait, lifecycle_chain=lifecycle_chain).items():
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
             info.external_attr = 0o100644 << 16
             archive.writestr(info, data)
@@ -100,5 +116,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
     parser.add_argument('--nested-object-wait', action='store_true')
+    parser.add_argument('--lifecycle-chain', action='store_true')
     args=parser.parse_args()
-    write_archive(args.output, nested_object_wait=args.nested_object_wait)
+    write_archive(args.output, nested_object_wait=args.nested_object_wait, lifecycle_chain=args.lifecycle_chain)

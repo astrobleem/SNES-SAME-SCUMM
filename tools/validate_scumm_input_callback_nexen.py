@@ -25,7 +25,9 @@ def main() -> int:
     parser.add_argument('--port', type=int, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--nested-object-wait', action='store_true')
+    parser.add_argument('--lifecycle-chain', action='store_true')
     args = parser.parse_args()
+    if args.lifecycle_chain: args.nested_object_wait = True
     if not re.fullmatch(r':\d+', os.environ.get('DISPLAY', '')):
         parser.error('a supervised private Xvfb DISPLAY is required')
     sys.path.insert(0, str(args.mcp_python))
@@ -90,7 +92,7 @@ def main() -> int:
                       selector=byte('SAME_SCUMM_INPUT_SELECTOR'),
                       values=[int.from_bytes(values[i:i+2], 'little') for i in range(0, 28, 2)])
         report['samples'].append(sample); save()
-        if sample['room'] == 1 and sample['ready'] and sample['accepted'] > 2:
+        if sample['room'] == 1 and sample['ready'] and sample['accepted'] > (3 if args.lifecycle_chain else 2):
             raise RuntimeError(f'input counter initialization/single-edge violation: {sample}')
         if sample['error']: raise RuntimeError(f'SCUMM error: {sample}')
         if time.monotonic() - started > 180 or sample['frame'] > 6000:
@@ -143,6 +145,13 @@ def main() -> int:
                 assert report['absent_optional_verb_return']==1
                 replay.advance_bounded(s,64)
                 assert s.read_u16(base+234)==1 and sample(s)['error']==0
+            if args.lifecycle_chain:
+                wait(s, lambda q: q['script']==8 and not q['cutscene'])
+                s.set_input(s.BTN_A,1); replay.advance_bounded(s,1)
+                s.set_input(0,1)
+                wait(s, lambda q: q['room']==0 and q['phase']==0, frames=1200)
+                report['lifecycle_chain_values']=[s.read_u16(base+2*i) for i in (124,125,126,127)]
+                assert report['lifecycle_chain_values']==[42]*4,report
             report['result'] = 'PASS'
             save()
     except BaseException as exc:
