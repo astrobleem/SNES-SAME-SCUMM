@@ -29,13 +29,18 @@ def source_files(*, nested_object_wait: bool = False) -> dict[str, bytes]:
                         ch(b'RMHD', struct.pack('<HHH', 640, 144, 1)), 1)
     if nested_object_wait:
         header = struct.pack('<HBBBBBBhhB',77,1,1,1,1,0,0,40,20,0)
-        action = move(114,42) + b'\x60\x01\x80\x60\x00' + move(118,1) + b'\x00'
-        # Separate instruction-safe pages for the action and hover entries.
-        # Hover keeps the second page hot; the first action requires checked IO.
+        action = (b'\x60\x01\x80\x60\x00' + move(114,42) + move(118,1)
+                  + b'\x0a\x05\xff\x00')
+        # Separate instruction-safe pages. The action later starts a child
+        # that replaces its ancestor with a new entry in the SAME carrier.
         padding = b'\xa0' * 2100
-        table = bytes((11,)) + struct.pack('<H',15)
-        table += bytes((90,)) + struct.pack('<H',15+len(action)+len(padding)) + b'\x00'
-        room += ch(b'OBCD',ch(b'CDHD',header)+ch(b'VERB',table+action+padding+move(116,1)+b'\x00'))
+        hover = move(116,1) + b'\x00'
+        replace_ancestor = b'\x46\x75\x00\x00'
+        at=18; entries=[]
+        for verb,body in ((11,action+padding),(90,hover),(91,replace_ancestor)):
+            entries.append(bytes((verb,))+struct.pack('<H',at));at+=len(body)
+        table=b''.join(entries)+b'\x00'
+        room += ch(b'OBCD',ch(b'CDHD',header)+ch(b'VERB',table+action+padding+hover+replace_ancestor))
     else:
         room += _data_only_object(77, 0)
     callback = (move(100, 0x4000, local=True) + move(101, 0x4001, local=True)
@@ -59,6 +64,7 @@ def source_files(*, nested_object_wait: bool = False) -> dict[str, bytes]:
                   + move(115,114,local=True))
         globals_[1] = global2[:-1] + nested + b'\x00'
         globals_.append(b'\x37\x4d\x00\x5a\xff\x80\x18\xf7\xff')
+        globals_.append(b'\x37\x4d\x00\x5b\xff\x00')
     container = bytearray(ch(b'ROOM', room)); offsets = [0]
     for body in globals_:
         offsets.append(len(container)); container += ch(b'SCRP', body)

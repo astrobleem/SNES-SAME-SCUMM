@@ -130,6 +130,52 @@ ScummV5_MsuProgram_ServiceDelay__runnable:
     clc
     rtl
 
+; A fresh C4 activation must not inherit its previous occupant's nested IO
+; edges, even when the canonical selector/carrier is identical. Invalidate
+; both outgoing and incoming references before publishing the new slot.
+; X=slot, preserves A/X/Y/P. Bounded 25-entry scan, no storage/cache mutation.
+ScummV5_MsuProgram_NewActivation_Far:
+    php
+    rep #$30
+    .a16
+    .i16
+    pha
+    phx
+    phy
+    sep #$20
+    .a8
+    txa
+    inc
+    pha
+    lda #$00
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    ldx #$0000
+ScummV5_MsuProgram_NewActivation__scan:
+    .a8
+    .i16
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    cmp 1,s
+    bne ScummV5_MsuProgram_NewActivation__next
+    lda #$00
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+ScummV5_MsuProgram_NewActivation__next:
+    .a8
+    .i16
+    inx
+    cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcc ScummV5_MsuProgram_NewActivation__scan
+    pla
+    rep #$30
+    .a16
+    .i16
+    ply
+    plx
+    pla
+    plp
+    rtl
+
 ; Preserve synchronous StartScript/StartObject ordering across storage waits.
 ; A child that has not reached a source yield is not an independent thread yet:
 ; unrelated object starts must not cancel it while its checked page is loading.

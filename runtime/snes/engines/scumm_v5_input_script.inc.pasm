@@ -282,6 +282,9 @@ ScummV5_Input_Process__locals:
     tax
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_NewActivation_Far
+    .endif
     lda #SCUMM_VM_RUNNING
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda.l SAME_SCUMM_C4_ACTIVE_COUNT

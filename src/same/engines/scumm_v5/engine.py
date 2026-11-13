@@ -1321,7 +1321,7 @@ class ScummV5Engine(Engine):
 
     def _execute_slot(self, slot: ScriptSlot, context: EngineContext) -> None:
         slot.did_exec = True
-        while slot.active and not slot.yielded:
+        while slot.active and not slot.yielded and not slot.freeze_count:
             if self._tick_operations >= self._tick_max_ops:
                 raise EngineExecutionError(
                     f"SCUMM script {slot.resource_key!r} exhausted the per-tick opcode budget"

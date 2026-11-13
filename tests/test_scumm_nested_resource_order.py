@@ -67,6 +67,25 @@ class NestedResourceOrder(unittest.TestCase):
             self.assertEqual(m.consume()[0],deferred)
             self.assertEqual(m.get(m.symbols['SAME_SCUMM_MSU_PENDING_CHILD_SLOT']+4,1),2 if status==5 else 0)
 
+    def test_new_activation_clears_own_and_all_old_incoming_tickets(self):
+        for slot in (0,1,24):
+            m=self.machine(11)
+            source=(ROOT/'runtime/snes/engines/scumm_v5_msu_programs.pasm').read_text()
+            source=source.split('ScummV5_MsuProgram_NewActivation_Far:',1)[1].split('; Preserve synchronous StartScript',1)[0]
+            m.code=[];m.labels={}
+            for raw in (f'ldx #{slot}\n'+source).splitlines():
+                line=raw.split(';')[0].strip()
+                if not line or line.startswith('.'):continue
+                if line.endswith(':'):m.labels[line[:-1]]=len(m.code)
+                else:m.code.append(line)
+            for z in range(25):self.ticket(m,z,slot if z%2 else 12,0xe4)
+            before=bytes(m.ram)
+            m.consume()
+            for z in range(25):
+                cleared=z==slot or z%2 or slot==12
+                self.assertEqual(m.get(m.symbols['SAME_SCUMM_MSU_PENDING_CHILD_SLOT']+z,1),0 if cleared else 13)
+                self.assertEqual(m.get(m.symbols['SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM']+z,1),0 if cleared else 0xe4)
+
     def test_cycle_and_invalid_child_fail_bounded(self):
         for child in (4,25):
             m=self.machine(11);self.activation(m,4,5,0xe4)

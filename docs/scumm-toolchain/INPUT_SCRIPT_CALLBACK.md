@@ -107,3 +107,20 @@ not edits to the commercial game's story. Instruction-runner tests cover exact
 byte writes, neighboring guards, deep waits, replacement, frozen parents,
 bounded invalid tickets and deferred input ownership. They are host evidence;
 actual Nexen results are recorded separately against their ROM identity.
+
+The subsequent authentic run executed the original pickup (owner/state1/1,
+error0), then reported an explicit resource error while Global10 started a
+new entry of its ancestor's object carrier. A reused C4 slot retained the old
+outgoing dependency and formed a cycle. Fresh script/object/input/sentence and
+scroll-script allocations now invalidate both outgoing and incoming tickets
+for the previous slot occupant. Canonical identity alone is not activation
+identity. The synthetic fixture reproduces ancestor replacement through a
+second checked page and requires the replacement to execute exactly once.
+
+The pinned reference's `runScriptNested` also refuses to resume a frozen
+caller. The host execution loop and streamed native return now preserve that
+rule. The fixture freezes/yields/unfreezes before the action write, requiring
+its caller to observe42 only afterward. Actual Nexen acceptance passes the
+combined argument, checked-page wait, frozen caller, and same-carrier ancestor
+replacement fixture; no native error and exactly one replacement execution.
+Authentic map-to-destination acceptance remains a separate gate.

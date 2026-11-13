@@ -150,6 +150,9 @@ ScummV5_Camera_RunScrollScript_Far__found:
     lda.l SAME_SCUMM_C4_SCAN_SLOT
     sta.l SAME_SCUMM_C4_LAST_ALLOCATED
     tax
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_NewActivation_Far
+    .endif
     lda #SCUMM_VM_RUNNING
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda.l SAME_SCUMM_CAMERA_SCROLL_SCRIPT

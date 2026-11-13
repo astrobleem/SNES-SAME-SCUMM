@@ -223,7 +223,7 @@ class PackedNativeBounds(unittest.TestCase):
         begin=source.index('    ; CACHE_RETURN_P is a byte.')
         end=source.index('ScummV5_M25A_RunNestedChild__msu_parent_ready:',begin)
         code=source[begin:end]+'ScummV5_M25A_RunNestedChild__msu_parent_ready:\nrtl\n'
-        for flag,expected in ((0,1),(1,5),(2,255)):
+        for flag,expected,frozen in ((0,1,0),(1,5,0),(2,255,0),(0,2,1)):
             m=CacheMachine('ScummV5_MsuProgram_Leave_Far')
             m.code=[];m.labels={};calls=[]
             for line in code.splitlines():
@@ -239,9 +239,10 @@ class PackedNativeBounds(unittest.TestCase):
             m.put('SAME_SCUMM_MSU_CACHE_RETURN_P',0xa500|flag)
             m.put('SAME_SCUMM_STATUS',0x5a01)
             m.put('SAME_SCUMM_C4_PARENT_SLOT',2,1)
+            m.put(m.symbols['SAME_SCUMM_C4_SLOT_FREEZE_COUNT']+2,frozen,1)
             m.consume()
             self.assertEqual(m.get('SAME_SCUMM_STATUS'),0x5a00|expected)
-            self.assertEqual(len(calls),int(flag==0))
+            self.assertEqual(len(calls),int(flag==0 and not frozen))
 
     def test_member_bytes_and_neighbor_exclusion(self):
         for pc in range(5):

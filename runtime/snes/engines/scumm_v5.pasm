@@ -17524,6 +17524,9 @@ ScummV5_Op_StartScript__alloc_trace_done:
     ; is mutable and therefore cannot identify the lifecycle continuation.
     jsl ScummV5_M23A_CaptureLifecycleChainTarget_FarEntry
     .endif
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_NewActivation_Far
+    .endif
     lda #SCUMM_VM_RUNNING
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda.l SAME_SCUMM_CONDITION
@@ -17800,6 +17803,12 @@ ScummV5_Op_StartScript__nested_ok:
     bne ScummV5_Op_StartScript__nested_resource_ready
     jmp ScummV5_Engine_Frame__complete_success
 ScummV5_Op_StartScript__nested_resource_ready:
+    .a8
+    lda.l SAME_SCUMM_STATUS
+    cmp #SCUMM_VM_YIELDED
+    bne ScummV5_Op_StartScript__nested_caller_ready
+    jmp ScummV5_Engine_Frame__complete_success
+ScummV5_Op_StartScript__nested_caller_ready:
     .a8
     .endif
     .if SAME_BUILD_SCUMM_ROOM_SERVICE && SCUMM_V5_HOLD_AFTER_STARTED_GLOBAL_ENABLED

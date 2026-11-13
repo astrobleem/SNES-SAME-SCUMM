@@ -267,6 +267,9 @@ ScummV5_M24RB_Far_ScheduleLocal__found:
     sta.l SAME_SCUMM_C4_SCAN_SLOT
     sta.l SAME_SCUMM_C4_LAST_ALLOCATED
     sta.l SAME_SCUMM_SCENARIO_M24RB_ALLOC_CHOSEN
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_NewActivation_Far
+    .endif
     lda #SCUMM_VM_RUNNING
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda #SAME_M24RB_LOCAL_SCRIPT
@@ -2137,6 +2140,21 @@ ScummV5_M25A_RunNestedChild__restore_mode:
     beq ScummV5_M25A_RunNestedChild__msu_parent_wait
     cmp #$02
     beq ScummV5_M25A_RunNestedChild__msu_parent_error
+    ; runScriptNested resumes a live caller only when it is not frozen. A
+    ; child can freeze that caller before its first authored yield. Preserve
+    ; the saved post-call PC; let the normal C4 unfreeze path resume it later.
+    sep #$10
+    .i8
+    lda.l SAME_SCUMM_C4_PARENT_SLOT
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
+    beq ScummV5_M25A_RunNestedChild__msu_parent_unfrozen
+    lda #SCUMM_VM_YIELDED
+    sta.l SAME_SCUMM_STATUS
+    sta.l SAME_SCUMM_C4_SLOT_STATUS,x
+    bra ScummV5_M25A_RunNestedChild__msu_parent_ready
+ScummV5_M25A_RunNestedChild__msu_parent_unfrozen:
+    .a8
     ; The child may have reclaimed the suspended caller's page.  Re-resolve
     ; the parent's canonical selector only after its owning slot and logical
     ; PC have been restored.

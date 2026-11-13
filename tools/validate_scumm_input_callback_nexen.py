@@ -131,10 +131,13 @@ def main() -> int:
             assert q['values'] == [2, 0, 1, 1, 2, 0, 2, 1, 1, 42, 1, 77, 1, 1], q
             if args.nested_object_wait:
                 base=symbols['SAME_SCUMM_VARIABLES']
-                wait(s, lambda q: s.read_u16(base+230)==42 and s.read_u16(base+236)==1, frames=512)
+                wait(s, lambda q: s.read_u16(base+230)==42 and s.read_u16(base+236)==1 and s.read_u16(base+234)==1, frames=512)
                 report['nested_object_values']=[s.read_u16(base+2*i) for i in (114,115,116)]
                 assert report['nested_object_values']==[42,42,1], report
                 report['nested_freeze_resume']=s.read_u16(base+236)
+                report['ancestor_replacement_count']=s.read_u16(base+234)
+                replay.advance_bounded(s,64)
+                assert s.read_u16(base+234)==1 and sample(s)['error']==0
             report['result'] = 'PASS'
             save()
     except BaseException as exc:

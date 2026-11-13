@@ -50,6 +50,7 @@ class InputCallbackFixtureTests(unittest.TestCase):
         for _ in range(8):h.tick()
         self.assertEqual(e.state.variables[114:117],[42,42,1])
         self.assertEqual(e.state.variables[118],1)
+        self.assertEqual(e.state.variables[117],1)
 
     def test_archive_is_reproducible_and_refuses_overwrite(self):
         with tempfile.TemporaryDirectory() as d:

@@ -394,6 +394,9 @@ ScummV5_SentenceProcess_Far__slot_found:
     .endif
     txa
     sta.l SAME_SCUMM_C4_SCAN_SLOT
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_NewActivation_Far
+    .endif
     lda #SCUMM_VM_RUNNING
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda.l SAME_SCUMM_OPERAND
@@ -1714,6 +1717,9 @@ ScummV5_StartObject_FarEntry__slot_found:
     sta.l SAME_SCUMM_C4_SCAN_SLOT
     sta.l SAME_SCUMM_C4_LAST_ALLOCATED
     sta.l SAME_SCUMM_START_OBJECT_SLOT
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_NewActivation_Far
+    .endif
     lda #SCUMM_VM_RUNNING
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda #$00
