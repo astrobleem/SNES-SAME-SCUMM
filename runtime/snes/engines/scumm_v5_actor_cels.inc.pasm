@@ -477,13 +477,26 @@ ScummV5_Cel_Project_Far:
 ScummV5_Cel_Project__sample_y:
     .a16
     .i16
+    ; Rows are canonical and increasing. Count only the newly crossed source
+    ; rows; multiple opaque spans on one row reuse the same scaled ordinate.
     lda.l SAME_SCUMM_ACTOR_SPAN_Y
+    sec
+    sbc.l SAME_SCUMM_CEL_ROW_PHASE
     tax
     lda.l SAME_SCUMM_CEL_SCALE_Y
     tay
     lda.l SAME_SCUMM_CEL_PHASE_Y
+    clc
+    adc.l SAME_SCUMM_CEL_ROW_PHASE
+    and #$00FF
     sec
     jsl ScummV5_Cel_Count_Far
+    clc
+    adc.l SAME_SCUMM_CEL_PIXEL
+    sta.l SAME_SCUMM_CEL_PIXEL
+    lda.l SAME_SCUMM_ACTOR_SPAN_Y
+    sta.l SAME_SCUMM_CEL_ROW_PHASE
+    lda.l SAME_SCUMM_CEL_PIXEL
     bra ScummV5_Cel_Project__row
 ScummV5_Cel_Project__full_y:
     .a16
@@ -740,6 +753,11 @@ ScummV5_Cel_Compose__extents_ok:
     sta.l SAME_SCUMM_CEL_ROW_PHASE ; previous source row for canonical validation
     lda #$0000
     sta.l SAME_SCUMM_CEL_TEMP ; prior exclusive source X
+    lda.l SAME_SCUMM_CEL_PASS
+    beq ScummV5_Cel_Compose__span
+    lda #$0000
+    sta.l SAME_SCUMM_CEL_ROW_PHASE
+    sta.l SAME_SCUMM_CEL_PIXEL ; scaled Y offset, after canonical validation
 ScummV5_Cel_Compose__span:
     .a16
     .i16
@@ -794,10 +812,116 @@ ScummV5_Cel_Compose__canonical_row:
 ScummV5_Cel_Compose__project:
     .a16
     .i16
+    ; Do not project or walk pixels belonging entirely to another checked
+    ; chunk. Canonical validation/capture still cover the complete pose.
+    lda.l SAME_SCUMM_CEL_PASS
+    cmp #$0002
+    bne ScummV5_Cel_Compose__project_owned
+    lda.l SAME_SCUMM_ACTOR_SPAN_SOURCE
+    clc
+    adc.l SAME_SCUMM_ACTOR_SPAN_LENGTH
+    cmp.l SAME_SCUMM_CEL_CHUNK_OFFSET
+    bcc ScummV5_Cel_Compose__skip_chunk
+    beq ScummV5_Cel_Compose__skip_chunk
+    lda.l SAME_SCUMM_CEL_CHUNK_OFFSET
+    clc
+    adc.l SAME_SCUMM_ACTOR_TICKET_LENGTH
+    cmp.l SAME_SCUMM_ACTOR_SPAN_SOURCE
+    bcc ScummV5_Cel_Compose__skip_chunk
+    beq ScummV5_Cel_Compose__skip_chunk
+ScummV5_Cel_Compose__project_owned:
+    .a16
+    .i16
     jsl ScummV5_Cel_Project_Far
     bcc ScummV5_Cel_Compose__row_visible
+ScummV5_Cel_Compose__skip_chunk:
+    .a16
+    .i16
     jml ScummV5_Cel_Compose__next_span
 ScummV5_Cel_Compose__row_visible:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CEL_PASS
+    cmp #$0001
+    beq ScummV5_Cel_Compose__capture_row
+    jml ScummV5_Cel_Compose__draw_row
+ScummV5_Cel_Compose__capture_row:
+    .a16
+    .i16
+    ; A source run maps monotonically, including repeated destinations when
+    ; X reduction does not advance. Its first/last pixel give exact capture
+    ; coverage; walking every pixel just to find these bounds is unnecessary.
+    lda.l SAME_SCUMM_ACTOR_SPAN_LENGTH
+    dec
+    tax
+    lda.l SAME_SCUMM_CEL_SCALE_X
+    cmp #$00FF
+    beq ScummV5_Cel_Compose__capture_full
+    tay
+    lda.l SAME_SCUMM_CEL_XSTEP
+    bmi ScummV5_Cel_Compose__capture_back
+    lda.l SAME_SCUMM_CEL_PIXEL_PHASE
+    sec
+    bra ScummV5_Cel_Compose__capture_count
+ScummV5_Cel_Compose__capture_back:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CEL_PIXEL_PHASE
+    clc
+ScummV5_Cel_Compose__capture_count:
+    .a16
+    .i16
+    jsl ScummV5_Cel_Count_Far
+    bra ScummV5_Cel_Compose__capture_extent
+ScummV5_Cel_Compose__capture_full:
+    .a16
+    .i16
+    txa
+ScummV5_Cel_Compose__capture_extent:
+    .a16
+    .i16
+    sta.l SAME_SCUMM_CEL_TEMP
+    lda.l SAME_SCUMM_CEL_XSTEP
+    bmi ScummV5_Cel_Compose__capture_left
+    lda.l SAME_SCUMM_CEL_X
+    sta.l SAME_SCUMM_ACTOR_CLIP_LEFT
+    clc
+    adc.l SAME_SCUMM_CEL_TEMP
+    inc
+    bra ScummV5_Cel_Compose__capture_clip
+ScummV5_Cel_Compose__capture_left:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_CEL_X
+    sec
+    sbc.l SAME_SCUMM_CEL_TEMP
+    sta.l SAME_SCUMM_ACTOR_CLIP_LEFT
+    lda.l SAME_SCUMM_CEL_X
+    inc
+ScummV5_Cel_Compose__capture_clip:
+    .a16
+    .i16
+    bpl ScummV5_Cel_Compose__capture_nonnegative
+    jml ScummV5_Cel_Compose__next_span
+ScummV5_Cel_Compose__capture_nonnegative:
+    .a16
+    .i16
+    cmp #$0101
+    bcc ScummV5_Cel_Compose__capture_right_ok
+    lda #$0100
+ScummV5_Cel_Compose__capture_right_ok:
+    .a16
+    .i16
+    sta.l SAME_SCUMM_ACTOR_CLIP_RIGHT
+    lda.l SAME_SCUMM_ACTOR_CLIP_LEFT
+    bpl ScummV5_Cel_Compose__capture_left_ok
+    lda #$0000
+    sta.l SAME_SCUMM_ACTOR_CLIP_LEFT
+ScummV5_Cel_Compose__capture_left_ok:
+    .a16
+    .i16
+    jml ScummV5_Cel_Compose__row_done
+ScummV5_Cel_Compose__draw_row:
     .a16
     .i16
     lda #$0100
@@ -845,25 +969,27 @@ ScummV5_Cel_Compose__draw:
     bcc ScummV5_Cel_Compose__advance
     cmp.l SAME_SCUMM_ACTOR_TICKET_LENGTH
     bcs ScummV5_Cel_Compose__advance
-    tay
-    ; Capture and other services borrow DP_SOURCE. Rebind for each opaque run.
+    ; CanWrite was acquired once for this synchronous composition turn.
+    ; Y clipping, X clipping and the accepted ticket length were checked
+    ; above. Use the existing target-neutral pixel leaf, not a one-pixel run
+    ; which would re-scan ownership and save/restore damage for every byte.
+    tax
     sep #$20
     .a8
-    lda #<SAME_SCUMM_ACTOR_POSE_BUFFER
-    sta SAME_VIDEO_SURFACE_DP_SOURCE
-    lda #>SAME_SCUMM_ACTOR_POSE_BUFFER
-    sta SAME_VIDEO_SURFACE_DP_SOURCE+$01
-    lda #SAME_SCUMM_LIVE_ROOM_PENDING_BANK
-    sta SAME_VIDEO_SURFACE_DP_SOURCE+$02
+    lda.l SAME_SCUMM_ACTOR_POSE_BUFFER,x
+    pha
     rep #$20
     .a16
     lda.l SAME_SCUMM_CEL_Y
     xba
     ora.l SAME_SCUMM_CEL_X
-    ldx #$0001
-    jsl Same_VideoSurface_BlitCheckedOpaqueRun_Far
-    bcc ScummV5_Cel_Compose__advance
-    jml ScummV5_Cel_Compose__invalid
+    tax
+    sep #$20
+    .a8
+    pla
+    jsl Same_VideoSurface_WriteIndexedPixel_Far
+    rep #$20
+    .a16
 ScummV5_Cel_Compose__advance:
     .a16
     .i16

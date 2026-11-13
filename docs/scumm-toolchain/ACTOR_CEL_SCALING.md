@@ -86,7 +86,32 @@ error0. A matching-ROM read-only continuation confirms an outstanding video
 publication. Source/cache-key inspection found hidden poses committing an old
 scale ticket and requesting redundant publications. The hidden path now
 commits its own desired scale without fetching or drawing stale costume data.
-A new-ROM regression is required before assigning a gameplay result.
+A new-ROM regression reached the original room10 interface, but its subsequent
+controller edge was not sampled within the unchanged90-frame deadline. This
+exposed excessive synchronous cel composition work, not a reason to extend the
+input timeout.
+
+## Composition cost correction
+
+The compositor now acquires surface write ownership once per synchronous turn,
+checks each pixel against the accepted chunk length and clipped coordinates,
+and calls the existing target-neutral indexed pixel leaf. It no longer invokes
+the whole opaque-run ownership/damage transaction for each individual pixel.
+Capture uses the exact monotonic first/last destination of each opaque span.
+Vertical phases advance from the preceding source row instead of recounting
+from the cel origin for every span. Drawing skips spans owned entirely by other
+checked chunks; canonical validation and underlay capture still cover all cels.
+
+`native-scaled-cels-optimized/observations/report.json` repeats all nine actual
+native comparisons with zero differences, including opaque color0 and complete
+old-position restoration. It finished at emulated frame2499 versus3069 for the
+earlier control (includes boot, presentation and observer acknowledgements;
+not a raw CPU benchmark),224.764seconds with owned-process cleanup. The package
+hash is unchanged. ROM `ee05c763c67ffb5628ab87c2174af0237840e970621df5acf6024f883dd4b51d`,
+map `733a0b2f5a530c870bbd00d837273547ae5d5ff31dd076bd313748a8139c9c06`,
+build identity `eac5eedca0758d9a0571a9cb1a1393b9cc772fa1e7ddaf7bbcb9218ee722a9c6`.
+No new memory allocation or video budget change. Authentic controller/travel
+acceptance must be reported separately from these synthetic captures.
 
 ## Validation boundaries
 

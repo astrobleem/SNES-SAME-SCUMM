@@ -58,6 +58,12 @@ class CelMath(unittest.TestCase):
         m.run('ScummV5_Cel_Origin_Far');self.assertTrue(m.c)
 
 class CelComposeMachine(CelMachine):
+    def operand(self, arg):
+        if arg == 'SAME_SCUMM_ACTOR_POSE_BUFFER,x':
+            assert 0 <= self.x < len(self.pixels), 'read outside verified chunk'
+            return self.pixels[self.x]
+        return super().operand(arg)
+
     def __init__(self, plan, scale=(231,231), foot=(100,120), chunk_size=2048):
         super().__init__()
         self.plan = plan
@@ -74,7 +80,14 @@ class CelComposeMachine(CelMachine):
             del self.labels[name]  # ROM metadata reads are service inputs, scaling executes real source.
 
     def service(self, name):
-        if name == 'ScummV5_Cel_Load_Far':
+        if name == 'Same_VideoSurface_WriteIndexedPixel_Far':
+            assert self.writable and self.committed
+            assert 0 <= self.x < 256 * 224
+            assert any(a <= self.x < a+n for a,n,_ in self.captures)
+            self.events.append('draw')
+            self.draws.append((self.x, 1, self.a & 255))
+            self.surface[self.x] = self.a & 255
+        elif name == 'ScummV5_Cel_Load_Far':
             n=self.mem[C+'CURSOR'];cel=self.plan.cels[n]
             for k,a in (('WIDTH','width'),('HEIGHT','height'),('RX','relative_x'),('RY','relative_y'),('MX','move_x'),('MY','move_y')):
                 self.mem[C+k]=getattr(cel,a)&65535
@@ -104,6 +117,31 @@ class CelComposeMachine(CelMachine):
 
 
 class CelPixels(unittest.TestCase):
+    def test_chunked_scaling_skips_unowned_spans_and_preserves_write_gate(self):
+        from types import SimpleNamespace
+        from same.engines.scumm_v5.costume import CostumeCel
+        from tools.actor_pose_plan import compile_cel_pose
+        pose = SimpleNamespace(cels=(CostumeCel(32, 64, -16, -64, 0, 0,
+                                              bytes([1] * 2048)),), draw_to_right=True)
+        plan = compile_cel_pose(pose, (0, 0))
+        single = CelComposeMachine(plan, chunk_size=2048).compose()
+        split = CelComposeMachine(plan, chunk_size=128).compose()
+        self.assertEqual(split.surface, single.surface)
+        self.assertEqual(len(split.draws), len(single.draws))
+        # Directory checks may repeat, but pixel projection must not grow
+        # sixteenfold with the number of individually checked transfers.
+        self.assertLess(split.instructions, single.instructions * 3)
+        for reason in ('busy', 'room', 'costume', 'capture'):
+            m = CelComposeMachine(plan)
+            if reason == 'busy': m.writable = False
+            elif reason == 'room': m.mem['SAME_SCUMM_ACTOR_TICKET_ROOM_EPOCH'] += 1
+            elif reason == 'costume': m.mem['SAME_SCUMM_ACTOR_TICKET_COSTUME_EPOCH'] += 1
+            else: m.fail_capture = 1
+            m.compose()
+            self.assertTrue(m.c, reason)
+            self.assertEqual(m.surface, m.original, reason)
+            self.assertEqual(m.draws, [], reason)
+
     def test_hidden_actor_needs_no_stale_cel_resource_or_ticket(self):
         m = CelMachine()
         m.mem.update(SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE=0,

@@ -4,7 +4,7 @@ Branch scumm-fate-input-callback, base b7f194d. PR16 remains stacked on PR15.
 Recovery worktree and prior evidence untouched. No authentic scaled room2
 acceptance yet. Do not load old-ROM checkpoints into the new image.
 
-Uncommitted source retains per-cel dimensions, signed anchors/movement, source
+Commit6f8db82 retains per-cel dimensions, signed anchors/movement, source
 slots/order and mirror direction in SC5ACT v3 metadata. Native phase-table
 compositor supports independent XY scaling and checked multi-chunk progression;
 legacy flattened v2 remains selectable. Extra state: 68 bytes at7E22B4..22F7;
@@ -23,7 +23,8 @@ Private root: /home/chad/SAME-private-evidence/milestone-d-actor-scaling-2026111
 
 Host phase/representation tests cover1000origins,1000lossless poses,80random
 raster cases and original source-neutral CostumeDecoder data. These are host
-source-instruction execution, NOT emulator evidence. Fullsuite rerun follows test conditional-parser correction; validate44regionsPASS.
+source-instruction execution, NOT emulator evidence. Fullsuite at6f8db82:1652 tests,12skips,OK; validate44regionsPASS.
+Hosted run43386360049 PASS for6f8db82.
 Native validator checks complete generations, no publication while CEL_VALID,
 source-indexed pixels, decodedVRAM/PPU andCGRAM; synthetic local ACKs only.
 
@@ -33,7 +34,16 @@ Cold-scaled-room10 stopped at room0->4 precommit hold,error0. Read-only exact-RO
 room-hold-observation confirms outstanding presentation; hidden actor scale key
 was stale and caused redundant full publications. Corrected; next build/run
 must prove regression. No old-ROM checkpoint reuse. See ACTOR_CEL_SCALING.md.
-Next: coherent checkpoint commit, new-ROM cold checkpoint, taxi/map/college.
+Follow-up removes repeated per-pixel ownership/run checks, recounting all earlier
+Y phases, and drawing scans of other checked chunks. Captures use exact monotonic
+span endpoints. No extra memory. Native optimized control PASSED9captures at
+frame2499 (previous3069),224.764sec, ROMee05c763. No partial publication.
+Authentic optimized ROM in auth-build-icg4sfq1 currently executing cold original
+startup/pickup via cold-scaled-optimized; no old-ROM restore. Prior hidden-key
+ROM reachedroom10 but missed90frame input deadline; that failure is preserved.
+Follow-up validation:1653 tests run,12 skipped,OK; make validate and44-region
+ownership audit PASS; pinned full/synthetic assembly andROM audit PASS.
+Next: finish matching-ROM pickup checkpoint, then taxi/map/college.
 Room2 may require actor5/costume78; multi-actor andzmask remain unverified.
 No unchanged retries, no historical7actionroute, no display/CLI guessing.
 
