@@ -1,3 +1,66 @@
+# Milestone D — callback implemented; destination graphics blocked
+
+Branch `scumm-fate-input-callback`, draft PR16 targeting unchanged PR15.
+Runtime `76d7448f9fe2e61dda7c450193f0b6c673c4b394`; observer/tests
+`44c038bceb33b4417428bfe533772e64940d3e8d`. PR14/15, main, experimental
+baseline tag and separate22-file progression recovery worktree are untouched.
+
+Generic VAR_VERB_SCRIPT is implemented separately from C20/variable33.
+Normal C4 local/global resolution, three argument locals, held-edge ownership,
+checked waits, room invalidation and no duplicate sentence dispatch are tested.
+Adjacent fixes cover cursor52/53, live FindObject, nested-ticket widths and
+retirement, frozen callers, authored cutscene35/36 callbacks, optional absent
+verbs and nested checked-read descendants during EXCD/ENCD. No cache redesign.
+
+One authentic continuous matching-ROM room10 checkpoint continuation now runs
+Use taxi -> room75 -> Barnett College room2. Local204 canonical2018 receives
+[2,0,1] once, executes original local202/object1028 verb10 (canonical783), and
+source requests room2. Newspaper owner/state1/1 persist. Map source/INDEX8/
+VRAM/CGRAM match exactly. Separate cold startup/pickup/inventory generated the
+checkpoint; do not describe the continuation as a continuous cold-start run.
+
+**NOT COMPLETE:** room2 installs and runs entry/local200, but native actor
+composition rejects authored scale231/231 with error16. Exact read-only hooks:
+09:9F9D owner_ok ->09:A38D invalid ->7E2303 write16, no09:9FAC scale_ok.
+The host room.py already implements authentic classic costume scaling. Native
+SC5ACT cooking flattens unscaled cels and loses scale-phase/composition data;
+removing the guard or scaling the flattened bitmap is not a correct fix.
+Room2 has dynamic scale slots; baking only231 cannot qualify continued walking.
+Actor5/costume78 adds an unverified multi-actor requirement. Destination image
+and continued control are NOT_VERIFIED; no new native run is active.
+
+Private evidence root:
+`/home/chad/SAME-private-evidence/milestone-d-input-callback-20261112`
+- `native-lifecycle-null-fence`: actual Nexen PASS, all four nested markers42,
+  error0, held-edge/arguments/cutscene/optional-verb/ancestor controls retained.
+- `cold-lifecycle-room10`: original startup/pickup/inventory PASS; exact-ROM state.
+- `continuous-lifecycle-input-fence`: continuous10->75->2, first failure preserved.
+- `college-scale-guard-hooks`: separate read-only cause proof, not gameplay pass.
+- `college-costume-capacity.json`: private source-backed size census.
+- `source-linkage-lifecycle.json`: all61 runtime files match76d7448 in both builds.
+
+Authentic ROM46480f0d0ec328dfd9ac17d196fa2d85f5e39386afbf86af9a6804c9cd331dd8,
+map fc266c2e40067262e381ee1792c85719b4dc0c05a8c006a26dbca4418c1d23b2,
+package e6cf5c28f36f20c10cb9ef7819a1b278b1067ed3014462cee53d9a63d9772afd,
+build identity cf5a0540c4bd133db247c54c056989b9812f60196dab3da0cbd67b33859f0fbf.
+Build `auth-build-e3wwlobz`; do not restore older-ROM states into this image.
+
+Final local tests:1635 run/1623 passed/12 skipped. Validate,43-region memory
+audit, pinned Poppy and ROM audits pass. Both hosted checks green on44c038b:
+https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43372654120
+Documentation-only publication does not create a new native runtime identity.
+See docs/scumm-toolchain/INPUT_SCRIPT_CALLBACK.md for current evidence/limits.
+
+Native operations: canonical private-Xvfb supervisor only,<=600seconds, one
+MCP client, no unchanged retry. No historical seven-action replay or guest
+story-state writes. Unrelated user Nexen7381/SuperMonkeyIsland processes are
+not ours; do not connect or terminate. All captures/packages remain private.
+Next engineering boundary is source-faithful native costume scaling through
+the existing checked-pose/video interfaces, followed by actual destination
+presentation/control acceptance; do not repeat callback diagnosis.
+
+--- Historical checkpoints retain their original scope ---
+
 # Milestone C camera pipeline — integrated native acceptance
 
 Runtime: 16592b90cbc04bdf6bd325fc772805f3396b8eb4 on

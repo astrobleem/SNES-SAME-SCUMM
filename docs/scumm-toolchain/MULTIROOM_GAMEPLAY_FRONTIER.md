@@ -1,5 +1,14 @@
 # First continuous source-authored room exit
 
+**Current successor checkpoint:** PR16 implements the missing raw input
+callback and observes original room10 ->75 ->2 progression in one matching-ROM
+continuation, with newspaper ownership preserved. Destination player control
+is blocked by the native compositor's unscaled-only contract (authored scale
+231/231). See [INPUT_SCRIPT_CALLBACK.md](INPUT_SCRIPT_CALLBACK.md) for the
+current source/build identities, native proof and precise failure. The text
+below preserves PR15's earlier evidence; its missing-callback finding is
+historical and no longer describes the successor implementation.
+
 Milestone C is functionally qualified in [CAMERA_PIPELINE.md](CAMERA_PIPELINE.md).
 Milestone D has begun; sustained destination gameplay is **not accepted**.
 The runtime is `be553385b7419e5d8d1e6e6fa492ab48e40b80ab`, with the same complete
