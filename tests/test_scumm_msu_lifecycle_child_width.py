@@ -3,12 +3,12 @@
 Service stubs exercise ownership only; the streamed fixture supplies native proof.
 """
 import unittest
-from test_scumm_cutscene_callback_native import CutsceneCallbackNative
+import test_scumm_cutscene_callback_native as native_blocks
 from test_scumm_camera_native_copy import ROOT
 
 
 class LifecycleChildWidthTests(unittest.TestCase):
-    machine = CutsceneCallbackNative.machine
+    machine = native_blocks.CutsceneCallbackNative.machine
     def walker(self, high=0):
         source=(ROOT/'runtime/snes/engines/scumm_v5_msu_lifecycle_far.pasm').read_text()
         body=source.split('ScummV5_M23A_SelectLifecycleChild_Far:',1)[1]

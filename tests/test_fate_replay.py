@@ -1733,6 +1733,28 @@ ScummV5_M23A_FetchProgramByte_Far:
         self.assertEqual(result["press_frames"][0]["advance"]["frames_advanced"], 1)
         self.assertEqual(result["release_frames"][0]["advance"]["frames_advanced"], 1)
 
+    def test_neutral_held_sample_does_not_retire_live_pressed_latch(self) -> None:
+        class SplitNeutralSession(FakeRoom4Session):
+            stale = False
+            def run_frames(self, count):
+                result = super().run_frames(count)
+                if not self.held_buttons and self.values[0x7E2208] == 1 and not self.stale:
+                    self.values[0x7E2204] = 0x0200
+                    self.stale = True
+                return result
+        session = SplitNeutralSession()
+        result = room4_synchronous_input_edge(
+            session, 0x040, lambda before, after: after["x"] == before["x"] - 2,
+        )
+        self.assertEqual(len(result["release_frames"]), 2)
+        self.assertEqual(result["after"]["input_pressed"], 0)
+        self.assertEqual(result["after"]["edge_sequence"], 1)
+        # A genuinely new edge is now safe, without retrying the first action.
+        second = room4_synchronous_input_edge(
+            session, 0x040, lambda before, after: after["x"] == before["x"] - 2,
+        )
+        self.assertEqual(second["after"]["edge_sequence"], 2)
+
     def test_room4_edge_waits_for_dispatch_without_sending_another_press(self) -> None:
         session = FakeRoom4Session()
         session.pending_edge_delay = 1
