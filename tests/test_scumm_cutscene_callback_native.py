@@ -45,3 +45,25 @@ class CutsceneCallbackNative(unittest.TestCase):
                 for slot in range(5):m.ram[m.symbols['SAME_SCUMM_C4_SLOT_STATUS']+slot]=2
                 m.consume()
                 self.assertEqual(list(m.ram[m.symbols['SAME_SCUMM_C4_SLOT_FREEZE_COUNT']:m.symbols['SAME_SCUMM_C4_SLOT_FREEZE_COUNT']+5]),[1,0 if owner==1 else 1,1,0,1])
+
+    def test_live_optional_verb_absence_is_not_resolution_failure(self):
+        source=(ROOT/'runtime/snes/engines/scumm_v5_msu_live_room.pasm').read_text()
+        code=source.split('ScummV5_LiveRoom_ObjectProgramResolve_Far:',1)[1].split('; Controller and direct verb',1)[0]
+        for entry, binding_ok, previous_error in ((0,False,0),(0,False,32),
+                                                   (18,True,0),(18,False,0),(18,False,32)):
+            with self.subTest(entry=entry,binding_ok=binding_ok,previous_error=previous_error):
+                m=self.machine(code);m.symbols['SCUMM_ERR_SCRIPT']=11
+                m.put('SAME_SCUMM_ERROR',previous_error,1);calls=[]
+                def service(name,p,a):
+                    calls.append(name)
+                    if name=='ScummV5_LiveRoom_VerbQuery_Far':
+                        m.put('SAME_SCUMM_VERB_RESULT',entry)
+                        return p & ~32,a # query returns A16
+                    self.assertEqual(name,'ScummV5_Resident_ResolveProgramUnit_Far')
+                    return (p|1 if binding_ok else p & ~1),0xD0
+                m.service=service
+                carry,_=m.consume()
+                self.assertEqual(carry,bool(entry and binding_ok))
+                self.assertEqual(len(calls),2 if entry else 1)
+                self.assertEqual(m.get('SAME_SCUMM_ERROR',1),
+                                 previous_error or (11 if entry and not binding_ok else 0))

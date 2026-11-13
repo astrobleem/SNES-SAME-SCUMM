@@ -63,7 +63,9 @@ def source_files(*, nested_object_wait: bool = False) -> dict[str, bytes]:
         # action on its same carrier. Parent must observe the action's write.
         nested = (b'\x0a\x04\xff\x37\x4d\x00\x0b\xff'
                   + move(115,114,local=True))
-        globals_[1] = global2[:-1] + move(35,6) + move(36,7) + nested + b'\x00'
+        # Optional verb92 is absent: return without error or allocation.
+        absent = b'\x37\x4d\x00\x5c\xff' + move(123,1)
+        globals_[1] = global2[:-1] + absent + move(35,6) + move(36,7) + nested + b'\x00'
         globals_.append(b'\x37\x4d\x00\x5a\xff\x80\x18\xf7\xff')
         globals_.append(b'\x37\x4d\x00\x5b\xff\x00')
         # Authored begin/end callbacks must protect their cutscene caller

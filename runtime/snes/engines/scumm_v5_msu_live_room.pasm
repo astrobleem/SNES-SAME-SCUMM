@@ -3822,7 +3822,7 @@ ScummV5_LiveRoom_VerbQuery_Far__absent:
 ScummV5_LiveRoom_ObjectProgramResolve_Far:
     jsl ScummV5_LiveRoom_VerbQuery_Far
     lda.l SAME_SCUMM_VERB_RESULT
-    beq ScummV5_LiveRoom_ObjectProgramResolve_Far__bad
+    beq ScummV5_LiveRoom_ObjectProgramResolve_Far__absent
     lda.l SCUMM_LIVE_ROOM_TEMP2
     jsl ScummV5_Resident_ResolveProgramUnit_Far
     bcc ScummV5_LiveRoom_ObjectProgramResolve_Far__bad
@@ -3833,8 +3833,19 @@ ScummV5_LiveRoom_ObjectProgramResolve_Far:
 ScummV5_LiveRoom_ObjectProgramResolve_Far__bad:
     sep #$20
     .a8
+    lda.l SAME_SCUMM_ERROR
+    bne ScummV5_LiveRoom_ObjectProgramResolve_Far__absent
     lda #SCUMM_ERR_SCRIPT
     sta.l SAME_SCUMM_ERROR
+    clc
+    rtl
+
+; getVerbEntrypoint == 0 is an ordinary absent optional verb, not a
+; malformed canonical program. StartObject already has a no-entry return.
+; Do not bind or load a body, and never erase an existing engine error.
+ScummV5_LiveRoom_ObjectProgramResolve_Far__absent:
+    sep #$20
+    .a8
     clc
     rtl
 
