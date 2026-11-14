@@ -60,13 +60,15 @@ class ActorSceneFixture(unittest.TestCase):
         self.assertEqual(len(images),4)
         h=EngineHost(p,default_registry(),services=HostServices.create(p,resources=provider));h.boot()
         rendered=[]
-        for stage, state in enumerate((1,2,0),1):
+        for stage, state in enumerate((1,2,2,0),1):
             for _ in range(40):
                 h.tick();slots=[slot for slot in h.engine.state.scripts if slot.number==1]
                 if slots and slots[0].locals[1]==stage:break
             self.assertEqual(slots[0].locals[1],stage)
             self.assertEqual({i:h.engine.state.object_states[i] for i in (8,9)},{8:state,9:1})
-            pixels,masks=compose_objects(room,images,h.engine.state.object_states)
+            self.assertEqual(h.engine._object_owners[8], 1 if stage >= 3 else 0)
+            pixels,masks=compose_objects(room,images,h.engine.state.object_states,
+                                         owners=dict(enumerate(h.engine._object_owners)))
             rendered.append(pixels)
             if state:
                 self.assertEqual(pixels[104*room.width+128],0) # covered source zero

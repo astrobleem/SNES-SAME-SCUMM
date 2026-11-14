@@ -1,3 +1,23 @@
+## Active correction checkpoint
+
+Ownership is not an object-image visibility predicate (pinned ScummVM
+object.cpp drawRoomObject; script_v5 pickup sets state1). Removed the shared
+host/native filter and owner-only image invalidation. Host20 focused/full1709
+tests pass12skips; assembly/validate/audit pass. Native owned fixture four
+complete comparisons pass including ownership transfer, then Codex-parent
+SIGTERM interrupted final hide capture at437s. Overall fixture incomplete,
+cleanup verified; no unchanged retry. Evidence `native-object-owned`.
+
+Fresh corrected authentic ROM is `auth-build-_g9bzdlp` under private E root,
+ROM160bcc6aa9e23511a6980c6f39841d1d840a87202c58e6e0fb082c0a4e89c41b,
+package unchanged b6afddbf486ee26f85bb444cb03060d9606864138e3d1b3ed282657f77a09111.
+`owned-object-startup` running supervised new exact-ROM setup, not E acceptance.
+Prepared private `owned-object-room10-message-fence.py` ends at pickup checkpoint
+before START; `owned-object-room10-ready.py` waits publication then inventory;
+`owned-object-barnett.py` taxi/map creates fresh Barnett checkpoint;
+`office-owned-continuation.py` normal Open34/Walk34/Pickup25 then inventory.
+No old ROM state may be restored. Current objective still office/coat gameplay.
+
 # Milestone E active — checked object imagery native controls pass
 
 Branch scumm-fate-barnett-exploration, draft PR17 on unchanged PR16.
@@ -15,15 +35,30 @@ Earlier failed controls remain preserved and explained in BARNETT_EXPLORATION.
 Local fullsuite1707run/12skipPASS; additional focused descriptor/range tests
 PASS; validate45regionsPASS; pinned Poppy/4MiBROM auditPASS.
 
-New authentic build auth-build-_hd3hqsk from private auth-source-nd8v6d6t:
-ROMc199c9e7401878d336ef9e2225dc92fff75094d8bfd12156c6f773b43125abf5.
-Includes all96 original object-image records and source-required costume21.
-Runtime source matches current checkout. Current supervised fresh-object-startup
-uses cold original source and recorded normal cutscene input to establish a
-matching-ROM setup checkpoint. Check process-result and action.json before
-launching another session. Never restore old D/E states into this ROM.
+Published object checkpoint213b1edd84f0142a5a8d4f33cb94fad4e2c06748 has both
+hosted jobs green/run43580619750. Final local suite1709run/12skipPASS.
+Independent authentic builds _hd3hqsk and wni8ddjt have identical ROM andMSU.
+ROMc199c9e7401878d336ef9e2225dc92fff75094d8bfd12156c6f773b43125abf5,
+MSUb6afddbf486ee26f85bb444cb03060d9606864138e3d1b3ed282657f77a09111.
+Full2203units/all96objectrecords; source-required costume21 included.
+Runtime source identical to published source; private build linkage JSON retained.
 
-Next: commit/push this coherent source checkpoint, observe CI, finish fresh
+Fresh-object-startup reached room10/error0 and saved exact-ROM setup state.
+Fresh-object-room10 stopped by explicit owned-supervisor SIGTERM after the
+observer waited for expired dialogue6 (source advanced to7). No engine-deadlock
+claim. Captured-record test proves the new message-generation observer fence.
+Fresh-object-room10-message-fence then captured both dialogue7 segments and
+verbs with exact source/PPU equality. Original newspaper pickup succeeded1/1.
+It sent inventory input too early: PENDING_VISUAL still1, controller withheld
+edge. Preserved persistent-pickup.state atframe8551; no repeated pickup.
+Current owned supervised run fresh-object-room10-ready restores only that
+matching-ROM state, waits for complete object/actor publication, then opens/
+closes inventory before saving room10-travel-checkpoint. Inspect process-result
+and action.json before launching another session. All prior owned trees clean.
+Private fresh-object-barnett.py now references this new ready-run checkpoint.
+Never restore old D/E states into this ROM. No historical seven-action replay.
+
+Next: finish fresh
 normal Barnett setup then Open34/verb3,Walk-to34/verb10 into room1,Pick up coat25/
 verb11. Isolated original-body oracle is not a native playthrough. Complete
 scene oracle must include captured object states/owners with source OBIM.

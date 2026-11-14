@@ -85,7 +85,10 @@ class ObjectImageTests(unittest.TestCase):
         pixels, masks = compose_objects(r, images, {8: 1, 9: 1})
         self.assertEqual(pixels[:16], bytes([7]) * 8 + bytes([3]) * 8)
         self.assertEqual(masks[0][:2], b'\xff\x40')
-        self.assertEqual(compose_objects(r, images, {8: 1, 9: 1}, owners={9: 1})[0], r.pixels)
+        for owner in (0, 1, 5, 15):
+            with self.subTest(owner=owner):
+                self.assertEqual(compose_objects(r, images, {8: 1, 9: 1},
+                                                 owners={9: owner}), (pixels, masks))
 
     def test_v5_object_height_discards_incomplete_strip_rows(self):
         from same.engines.scumm_v5.object_images import ObjectImage

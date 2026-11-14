@@ -15,6 +15,8 @@ STAGES = (
     ((220,130,231,231,90,1),(160,124,128,200,270,1)),
 )
 
+OBJECT_STAGES = (*STAGES, STAGES[-1])
+
 def source_files(*, masks: bool = False, transitions: bool = False,
                  sound_status_probe: bool = False, cutscene_callback_probe: bool = False,
                  object_images_probe: bool = False) -> dict[str, bytes]:
@@ -108,10 +110,13 @@ def source_files(*, masks: bool = False, transitions: bool = False,
         p.emit('defaults costume ignoreBoxes animation speed',bytes((0x13,actor,8,1,actor,20,22,8,255)))
         if masks:p.emit('foreground plane',bytes((0x13,actor,19,actor,255)))
         p.emit('actor room',bytes((0x2d,actor,1)))
-    for n, actors in enumerate(STAGES,1):
-        if object_images_probe and n > 1:
+    stages = OBJECT_STAGES if object_images_probe else STAGES
+    for n, actors in enumerate(stages,1):
+        if object_images_probe and n in (2,4):
             for _ in range(2):
                 p.emit('idempotent replace or hide source object', bytes((0x07,8,0,2 if n==2 else 0)))
+        if object_images_probe and n == 3:
+            p.emit('owned object retains state-selected room patch', bytes((0x29,8,0,1)))
         for actor, (x,y,sx,sy,facing,frame) in enumerate(actors,1):
             p.emit('scale',bytes((0x13,actor,17,sx,sy,255)))
             p.emit('position',bytes((1,actor))+struct.pack('<hh',x,y))
@@ -128,7 +133,7 @@ def source_files(*, masks: bool = False, transitions: bool = False,
             p.emit('load room',bytes((0x72,target)))
             for actor in (1,2):p.emit('actor room',bytes((0x2d,actor,target)))
             p.wait_ack(n,f'room transition {n}')
-    p.move(0x4001,6 if transitions else len(STAGES)+1);p.emit('stop',b'\0')
+    p.move(0x4001,6 if transitions else len(stages)+1);p.emit('stop',b'\0')
     container=bytearray(ch(b'ROOM',room));script=len(container);container+=ch(b'SCRP',bytes(p.data))
     scripts = [0, script]
     if cutscene_callback_probe:

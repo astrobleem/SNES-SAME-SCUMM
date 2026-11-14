@@ -318,14 +318,7 @@ ObjectImagesVisible_identity:
     .i16
     phx
     tax
-    lda.l SAME_SCUMM_OBJECT_OWNERS,x
-    and #$00FF
-    beq ObjectImagesVisible_owner
-    cmp #$000F
-    bne ObjectImagesVisible_pop_no
-ObjectImagesVisible_owner:
-    .a16
-    .i16
+    ; Local room images follow state/parents, including owned pickup patches.
     lda.l SAME_SCUMM_OBJECT_STATES,x
     and #$000F
     sta.l SAME_SCUMM_OBJECT_IMAGE_TEMP

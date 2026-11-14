@@ -114,7 +114,7 @@ not a claim of stopped CPU state at that instruction.
 The new host OBIM decoder uses IMHD object IDs; OBIM and OBCD resource order
 are not interchangeable. It shares the existing SMAP/ZP decoders, preserves
 codec-specific transparent pixels separately from opaque color zero, and
-composes in reverse local-object order with parent-state/owner filtering.
+composes in reverse local-object order with parent-state filtering.
 Classic v5 object mask strips replace the corresponding background masks.
 State-only invalidations are consumed by the normal host composition tick.
 
@@ -146,7 +146,7 @@ eight palette indexes and foreground-plane bytes per source strip row in
 SAMEPKG `SC5OBJ`. Blocks are at most1024 bytes, each with an independent CRC.
 ROM contains identity, geometry, parent-state and checked-address descriptors,
 not image pixels. All source image states remain represented. Native selection
-uses mutable object state and ownership, source parent chains and reverse
+uses mutable object state, source parent chains and reverse
 local-object painter order. V5 clips object height to complete eight-row units;
 the source-faithful host compositor and cooker now agree on that boundary.
 
@@ -161,7 +161,7 @@ outside it. Its active-metadata extent comparison also rejects limit+1.
 
 Original-source preflight decoded all96 rooms:1372 local object records,
 1329 images,10673 checked blocks and5463776 payload bytes. This is compiler
-coverage, **not native gameplay certification**. State/ownership changes
+coverage, **not native gameplay certification**. State changes
 invalidate a32-bit object generation; staged background installation checks its
 ticket before publication, and actor composition waits for the matching image.
 The current conservative object-state refresh rebuilds the viewport; ordinary
@@ -218,3 +218,36 @@ normally with no surviving owned processes. The faulty package SHA-256 is
 `ed59955ca1886b6eaa4952852589610457327311ef9ca646263d36dd24908491`;
 the ROM/map are the positive control's identities above. This is deliberately
 corrupt test input, not an identity-valid release package.
+
+## Owned room-image correction
+
+A pinned-reference review found that inventory ownership must not suppress a
+local room image. `ScummEngine::drawRoomObject` selects state and parent chains;
+v5 pickup assigns owner=ego and state=1, which may paint the removal patch over
+an object baked into the room background. The initial host and native paths
+shared an incorrect owner filter. Both now retain state-selected owned imagery;
+SetOwner alone no longer advances the room-image generation.
+
+The unowned synthetic captures above remain valid for their scope. Earlier
+private original newspaper captures compared two implementations sharing this
+wrong assumption and do **not** certify the original pickup's complete visual
+result. Their input and ownership observations remain evidence. The
+owned-image fixture adds an explicit ownership transfer while state2 and its
+mask remain installed, followed by a separate state0 hide operation.
+
+`native-object-owned` collected four exact source/INDEX8/PPU/CGRAM captures:
+show, replacement, a second animation step, and the still-visible owned state2
+image. Ownership transfer retained image generation3, as required. The final
+state0 hide capture was **NOT_CAPTURED**: at437.330 seconds the supervisor
+received SIGTERM from its Codex parent; cleanup completed at439.458 seconds
+with no owned survivors. The watchdog did not expire and no engine error was
+observed. The overall four-stage run remains incomplete; this is not a full
+native-suite PASS. The previous unowned hide/restore evidence remains separate.
+
+Local full suite:1709 tests run,12 skipped, no failures (352.233 seconds).
+`make validate`,45-region memory audit, pinned assembly and4MiB ROM audit pass.
+
+- Owned fixture .sfc: `f56f53a12eeee9a42b6786bdd745fe23dc86e0f0fd1a76fc83eb3bbab9ccc793`
+- Owned fixture .map: `65e3a5a54b9d969add2df7b45e0d196b817cd6208036a78c44121b5a3fac9127`
+- Owned fixture .msu: `3d72ec97452f1481b6314ac5e38d5adb3d0310c50916635631e02154dc332f76`
+- Owned fixture .build_identity.json: `5fc2d523831e23c88110037c92687f3733505996ed3f27076e2b8d29f4a74d13`

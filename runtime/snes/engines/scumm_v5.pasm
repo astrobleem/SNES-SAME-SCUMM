@@ -10888,15 +10888,7 @@ ScummV5_Op_SetOwnerOf:
     .a16
     sep #$20
     .a8
-    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && SAME_SCUMM_SCENE_ENABLED
-    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
-    cmp.l SAME_SCUMM_OBJECT_OWNERS,x
-    beq ObjectSetOwner_unchanged
-    jsl ScummV5_ObjectImages_Changed_Far
-ObjectSetOwner_unchanged:
-    .a8
-    .endif
-    .endif
+    ; Ownership changes inventory, not the installed room image state.
     sta.l SAME_SCUMM_OBJECT_OWNERS,x
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_SetOwnerOf__owner_error:

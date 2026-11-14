@@ -117,7 +117,9 @@ def compose_objects(room: ScummV5Room, images: tuple[ObjectImage, ...],
     """v5 reverse-local-order painter with parent-state and clipping semantics.
 
 Classic v5 object masks replace the affected strip, including zero rows; they
-do not use the later HE transparent-mask OR flag.
+do not use the later HE transparent-mask OR flag. Ownership does not hide local
+room imagery: pickup may select an image that covers the baked-in object. The
+optional owners argument is accepted for caller compatibility, not visibility.
 """
     lookup = {(i.object_id, i.state): i for i in images}
     pixels = bytearray(room.pixels)
@@ -126,8 +128,6 @@ do not use the later HE transparent-mask OR flag.
     for obj in reversed(room.objects):
         state = states.get(obj.object_id, 0) & 15
         if not state or not room._parent_chain_visible(obj, states):
-            continue
-        if owners is not None and owners.get(obj.object_id, 15) not in (0, 15):
             continue
         image = lookup.get((obj.object_id, state))
         if image is None:  # Source getObjectImage permits a state without IMxx.

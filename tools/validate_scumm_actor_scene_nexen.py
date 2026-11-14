@@ -53,8 +53,8 @@ def main():
     from fate_replay import advance_bounded
     from validate_scumm_startup42_nexen import verified_symbol_map_for_rom
     from validate_scumm_actor_visual_probe_nexen import read_committed_pose,committed_pose_is_presented,capture_committed_surface,selector_index
-    from examples.resources.scumm_v5.actor_scene_fixture import source_files, STAGES
-    stages = STAGES
+    from examples.resources.scumm_v5.actor_scene_fixture import source_files, STAGES, OBJECT_STAGES
+    stages = OBJECT_STAGES if args.object_images else STAGES
     if args.transitions:
         moved_animated=tuple((*pose[:-1],2) for pose in STAGES[-1])
         stages=(*STAGES,moved_animated,moved_animated)
@@ -177,10 +177,11 @@ def main():
         if args.object_images:
             object_states={int(i):v['state'] for i,v in row['objects'].items()}
             object_owners={int(i):v['owner'] for i,v in row['objects'].items()}
-            assert object_states=={8:1 if row['stage']==1 else 2 if row['stage']==2 else 0,9:1}
+            assert object_states=={8:1 if row['stage']==1 else 2 if row['stage'] in (2,3) else 0,9:1}
+            assert object_owners[8] == (1 if row['stage'] >= 3 else 0)
             rec['objects']=row['objects']
             control=bytes.fromhex(row['object_control'])
-            assert int.from_bytes(control[:4],'little')==row['stage']+1, 'identical object state writes invalidated image'
+            assert int.from_bytes(control[:4],'little')==(2,3,3,4)[row['stage']-1], 'unchanged state or ownership invalidated image'
             assert control[:4]==control[4:8], 'object image generation not installed'
         adapter.render_actors(actors,current_room=1,costume_key=lambda n:f'costume.{n}',object_states=object_states,object_owners=object_owners,project=False)
         rec['actor_snapshots']={str(k):dict(position=v.position,scale=v.scale,facing=v.facing,frame=v.costume_frame,step=v.costume_step,costume=v.costume) for k,v in actors.items()}
