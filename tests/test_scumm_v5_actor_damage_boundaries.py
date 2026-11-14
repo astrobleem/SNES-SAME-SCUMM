@@ -10,13 +10,16 @@ M = 'SAME_SCUMM_ACTOR_'
 D = 'SAME_VIDEO_SURFACE_DAMAGE_'
 
 
-def camera_source(source, enabled=False, cels=False):
+def camera_source(source, enabled=False, cels=False, scene=False):
     """Select the same explicit camera build branch as Poppy, never both."""
     active=[True];result=[]
     for raw in source.splitlines():
         line=raw.split(';',1)[0].strip()
         if line.startswith('.if '):
             condition=line[4:].strip()
+            if condition in ('SAME_SCUMM_SCENE_ENABLED','!SAME_SCUMM_SCENE_ENABLED'):
+                active.append(active[-1] and (scene if not condition.startswith('!') else not scene))
+                continue
             if condition == 'SCUMM_V5_ACTOR_CEL_FORMAT':
                 active.append(active[-1] and cels)
                 continue

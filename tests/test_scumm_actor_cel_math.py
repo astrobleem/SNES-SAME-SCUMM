@@ -3,7 +3,7 @@ from pathlib import Path
 import random
 import unittest
 from same.engines.scumm_v5.room import _scaled_cel_origin, _COSTUME_SCALE_TABLE
-from test_scumm_v5_actor_damage_boundaries import ControllerMachine
+from test_scumm_v5_actor_damage_boundaries import ControllerMachine, camera_source
 
 ROOT = Path(__file__).resolve().parents[1]
 C = 'SAME_SCUMM_CEL_'
@@ -12,7 +12,7 @@ class CelMachine(ControllerMachine):
     def __init__(self):
         super().__init__([])
         self.code, self.labels = [], {}
-        raw = (ROOT/'runtime/snes/engines/scumm_v5_actor_cels.inc.pasm').read_text()
+        raw = camera_source((ROOT/'runtime/snes/engines/scumm_v5_actor_cels.inc.pasm').read_text(), enabled=True,cels=True)
         for line in raw.splitlines():
             line = line.split(';',1)[0].strip()
             if not line or line.startswith('.'):continue
