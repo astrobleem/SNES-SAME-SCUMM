@@ -42,3 +42,56 @@ Adjacent fixes permit an empty trailing SC5LIVE name table whose offset equals
 the checked record length, and accept ordinary idle `putActor` position changes
 with the no-walk-destination sentinel. The publisher runs after movement's
 complete scheduler update; the sentinel does not denote a partial actor.
+
+## Checked foreground masks
+
+SC5MASK stores source z-plane/strip identities and independently checked blocks
+of at most256 source rows. Blocks use zero/raw/count-value representation;
+opaque/background pixels are never modified to bake in masks. The original
+walkbox mask directory accompanies source dimensions and plane identities.
+ROM stores bounds, source identities and CRC descriptors, not mask pixels.
+
+For each actor, the scene captures forceClip, ignoreBoxes, class20 and its
+source-foot box selection with the pose key. The existing room geometry query
+supplies the reverse-order containing box; a nonzero nearest-box adjustment
+is not containment. ForceClip takes priority and is clamped to existing planes.
+Mask lookup uses world coordinates after per-cel scaling, before screen pixels
+are written. Source slot zero stays transparent; opaque output color zero
+remains subject to the same mask and palette rules as other opaque colors.
+
+The provider remains serialized. Mask blocks borrow ACTOR-owned pending
+scratch, validate immutable room/costume tickets and CRC, then decode coverage
+into only the measured free tail after the **completed** underlay journal.
+Each actor releases that temporary coverage before the next actor reuses it.
+Insufficient journal/coverage space returns the existing explicit resource
+error; this is not a claim that every whole-game actor combination fits.
+Room and costume changes drain an outstanding read before scratch reuse.
+
+The masked public fixture passed four complete source/INDEX8/PPU/CGRAM
+comparisons, including two independent planes, overlapping actors, two
+animation steps, facing changes and old-position restoration. Native frame2159,
+227.672sec, normal supervisor exit, no surviving owned processes. Private
+record: `milestone-d-scene-20261113/native-two-actors-mask-bank-fixed`.
+
+Native masked fixture identities:
+
+- .sfc: `f754a0755e792fec4ff1f277b575558f8e1094bb4b0fc725a41838b39ef991bc`
+- .map: `df047196630864256a70a9206f163e9dc53d98805b2c75614c85f9a2209f2709`
+- .msu: `ad225e7b366b20e48cb712da7c9bdc828dc8aa2f1ba1dc0aa534ea6a0f867d3c`
+- .build_identity.json: `758e8c94aae604c1ddfc8e07083e7d6fb65ae82d06748271fd109f8c035c7bac`
+
+The fixture run precedes follow-up scene-key sampling corrections (preserving
+the published primary pose and snapshotting class/box policy). The fresh
+commercial build records those later source bytes separately; its gameplay
+acceptance is not inferred from the fixture.
+
+Full-source preflight:72 rooms contain original masks,7,628 checked blocks,
+162,912 mask-record bytes. Room2's record is2,525 bytes and retains both source
+planes plus21 walkbox mask selectors. Three independent package builds match
+SHA-256 `6d2b070dc8f08a644bafd81aa7b917b925963cc198f6ba2440f416f050117706`
+(14,646,760 bytes). All commercial payloads remain private.
+
+Current local suite:1,668 run,12 skipped,OK; make validate and44-region ownership
+audit PASS. The published pre-mask checkpoint0536e4b has both hosted checks green
+in run43552305237. Hosted CI does not execute Nexen. Later source changes need
+their own hosted check results.

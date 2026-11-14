@@ -1,3 +1,26 @@
+# Active continuation — multi-actor and foreground masks
+
+PR16 `scumm-fate-input-callback`, latest published0536e4b; no PR14/15 changes.
+Two-actor native fixture passed4 complete source/INDEX8/PPU/CGRAM captures.
+Checked z-mask fixture also passed4 complete captures. See
+`docs/scumm-toolchain/ACTOR_SCENE_COMPOSITION.md` for exact ROM/package linkage.
+Follow-up fixes preserve published primary coordinates during sampling and
+capture class/walkbox mask policy in the immutable scene key.
+
+Private evidence root: `/home/chad/SAME-private-evidence/milestone-d-scene-20261113`.
+Fresh authentic ROM `auth-build-iuvn5vwr`, SHA18745e8e9f1b26dad619ff5d714aa528ad1413bbf4807a1dd610f10f575d1e69.
+`cold-scene` is currently running under600sec private supervisor, port7955,
+using genuine original startup/pickup to obtain a new exact-ROM room10 state.
+No old-ROM state was restored. Do not launch a duplicate. No Barnett scene or
+interaction acceptance yet. Inspect process-result and observations before
+continuing. Recovery worktree and baseline tag remain untouched.
+
+Full local suite1668run/12skipped PASS; validate/memory PASS. Hosted checks
+for0536e4b PASS. New mask code needs its own final-head hosted checks.
+All commercial assets/captures stay outside Git. No automatic merge.
+
+--- Prior checkpoint ---
+
 # Active continuation — scaled camera exposure
 
 00c1329 is pushed; hosted run43388407765 passes. Current additive correction

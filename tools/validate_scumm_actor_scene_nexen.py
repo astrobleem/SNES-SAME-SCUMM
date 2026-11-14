@@ -34,6 +34,7 @@ def main():
     ap=argparse.ArgumentParser(description=__doc__)
     for key in ('rom','directory','archive','profile','nexen','native-core','mcp-python','output'):ap.add_argument('--'+key,type=Path,required=True)
     ap.add_argument('--port',type=int,required=True)
+    ap.add_argument('--masks',action='store_true')
 
     args=ap.parse_args()
     if not re.fullmatch(r':\d+',os.environ.get('DISPLAY','')) or not Path(os.environ.get('XAUTHORITY','/missing')).is_file():
@@ -68,7 +69,7 @@ def main():
     assert symbols['SAME_SCUMM_C4_STATE_END'] >= symbols['SAME_SCUMM_C4_SLOT_LOCALS']+25*64
     native=json.loads(args.directory.read_text());boot=next(e for e in native['entries'] if e['identity']=='GlobalProgram(1)')
     source=source_bytes(args.archive)
-    fixture=source_files()
+    fixture=source_files(masks=args.masks)
     assert source=={'game.index':fixture['ATLANTIS/ATLANTIS.000'],'game.data':fixture['ATLANTIS/ATLANTIS.001']},'diagnostic acknowledges only its exact public synthetic source'
     provider=LucasartsScummV5ResourceProvider(MemoryResourceProvider(source),parse_game_policy(load_profile(args.profile,verify_resources=False)))
     assert hashlib.sha256(provider.read('script.1')).hexdigest()==boot['sha256']
@@ -118,7 +119,7 @@ def main():
             d=raw[actor_id*32:(actor_id+1)*32]
             u16=lambda off:int.from_bytes(d[off:off+2],'little')
             assert (u16(0),u16(2),d[6],d[7],u16(4),d[10])==e, (actor_id,d.hex(),e)
-            actors[actor_id]=ActorState(costume=d[8],room=1,visible=bool(d[9]),position=(u16(0),u16(2)),scale=(d[6],d[7]),facing=u16(4),costume_frame=d[10],costume_step=d[12],ignore_boxes=True)
+            actors[actor_id]=ActorState(costume=d[8],room=1,visible=bool(d[9]),position=(u16(0),u16(2)),scale=(d[6],d[7]),facing=u16(4),costume_frame=d[10],costume_step=d[12],ignore_boxes=True,force_clip=d[18])
         adapter.render_actors(actors,current_room=1,costume_key=lambda n:f'costume.{n}',project=False)
         rec['actor_snapshots']={str(k):dict(position=v.position,scale=v.scale,facing=v.facing,frame=v.costume_frame,step=v.costume_step,costume=v.costume) for k,v in actors.items()}
         ox=r.read_u16(sym('SAME_VIDEO_SURFACE_SOURCE_X'));oy=r.read_u16(sym('SAME_VIDEO_SURFACE_SOURCE_Y'))

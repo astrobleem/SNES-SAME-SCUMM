@@ -191,10 +191,8 @@ ScummV5_Scene_LoadAnimation_Far:
     sta.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
     rep #$20
     .a16
-    lda.l SAME_SCUMM_ACTOR_POSE_LAST_X
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_X
-    lda.l SAME_SCUMM_ACTOR_POSE_LAST_Y
-    sta.l SAME_SCUMM_CONTROLLER_RENDER_Y
+    ; Sampling an actor must not mutate the last published primary pose.
+    ; RENDER_X/Y belong exclusively to the completed scene publication.
     lda.l SAME_SCUMM_SCENE_ACTOR
     asl
     asl
@@ -393,6 +391,10 @@ ScummV5_Scene_Snapshot__clear:
     lda.l SAME_SCUMM_PUT_ACTOR_WALKBOX,x
     and #$00FF
     sta.l SAME_SCUMM_SCENE_ROW+$14
+    jsl ScummV5_Scene_SnapshotMaskPolicy_Far
+    rep #$30
+    .a16
+    .i16
     lda.l SAME_SCUMM_SCENE_ROW+$08
     and #$00FF
     bne ScummV5_Scene_Snapshot__costume
@@ -434,10 +436,78 @@ ScummV5_Scene_Snapshot__same:
     .i16
     iny
     iny
-    cpy #$0020
+    cpy #$0018
     bcc ScummV5_Scene_Snapshot__compare
     plp
     rtl
+; Mask policy is part of the immutable scene key, not sampled midway
+; through a checked pose. Class changes therefore dirty the complete scene.
+ScummV5_Scene_SnapshotMaskPolicy_Far:
+    .a16
+    .i16
+    php
+    rep #$30
+    .a16
+    .i16
+    phx
+    lda.l SAME_SCUMM_SCENE_ROW+$09
+    and #$00FF
+    beq ScummV5_Scene_MaskPolicy__done
+    ldx #$0000
+ScummV5_Scene_MaskPolicy__class:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C16_RECORDS,x
+    and #$00FF
+    beq ScummV5_Scene_MaskPolicy__next
+    lda.l SAME_SCUMM_C16_RECORDS+SAME_SCUMM_C16_R_OBJECT,x
+    cmp.l SAME_SCUMM_SCENE_ACTOR
+    bne ScummV5_Scene_MaskPolicy__next
+    lda.l SAME_SCUMM_C16_RECORDS+SAME_SCUMM_C16_R_MASK+2,x
+    and #$0008
+    sta.l SAME_SCUMM_SCENE_ROW+$16
+    bra ScummV5_Scene_MaskPolicy__box
+ScummV5_Scene_MaskPolicy__next:
+    .a16
+    .i16
+    txa
+    clc
+    adc #SAME_SCUMM_C16_RECORD_STRIDE
+    tax
+    cpx #(SAME_SCUMM_C16_RECORD_COUNT*SAME_SCUMM_C16_RECORD_STRIDE)
+    bcc ScummV5_Scene_MaskPolicy__class
+ScummV5_Scene_MaskPolicy__box:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_SCENE_ROW+$12
+    ora.l SAME_SCUMM_SCENE_ROW+$16
+    bne ScummV5_Scene_MaskPolicy__done
+    ; Reuse the installed room's existing reverse-order box query. A zero
+    ; adjustment distance means containment, rather than a nearest-box guess.
+    lda.l SAME_SCUMM_SCENE_ROW+$00
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_X
+    lda.l SAME_SCUMM_SCENE_ROW+$02
+    sec
+    sbc.l SAME_SCUMM_SCENE_ROW+$0E
+    sta.l SAME_SCUMM_PUT_ACTOR_REQUEST_Y
+    jsl ScummV5_PutActor_Adjust_Far
+    rep #$30
+    .a16
+    .i16
+    lda #$00FF
+    sta.l SAME_SCUMM_SCENE_ROW+$14
+    lda.l SAME_SCUMM_PUT_ACTOR_BEST_DISTANCE
+    bne ScummV5_Scene_MaskPolicy__done
+    lda.l SAME_SCUMM_PUT_ACTOR_RESULT_BOX
+    and #$00FF
+    sta.l SAME_SCUMM_SCENE_ROW+$14
+ScummV5_Scene_MaskPolicy__done:
+    .a16
+    .i16
+    plx
+    plp
+    rtl
+
 ScummV5_Scene_LoadSnapshot_Far:
     .a16
     .i16
@@ -559,9 +629,22 @@ ScummV5_Scene_Next__scan:
     lda.l SAME_SCUMM_SCENE_SNAPSHOTS+$09,x
     and #$00FF
     beq ScummV5_Scene_Next__skip
+    lda.l SAME_SCUMM_SCENE_BEST
+    cmp #$FFFF
+    beq ScummV5_Scene_Next__first
     lda.l SAME_SCUMM_SCENE_SNAPSHOTS+$02,x
+    eor #$8000
     cmp.l SAME_SCUMM_SCENE_BEST_Y
     bcs ScummV5_Scene_Next__skip
+    bra ScummV5_Scene_Next__choose
+ScummV5_Scene_Next__first:
+    .a16
+    .i16
+    lda.l SAME_SCUMM_SCENE_SNAPSHOTS+$02,x
+    eor #$8000
+ScummV5_Scene_Next__choose:
+    .a16
+    .i16
     sta.l SAME_SCUMM_SCENE_BEST_Y
     lda.l SAME_SCUMM_SCENE_SCAN
     sta.l SAME_SCUMM_SCENE_BEST
@@ -581,7 +664,29 @@ ScummV5_Scene_Next__skip:
     lda #$0000
     sta.l SAME_SCUMM_SCENE_STARTED
     sta.l SAME_SCUMM_SCENE_ACTOR_DONE
+    sta.l SAME_SCUMM_MASK_STATE
+    sta.l SAME_SCUMM_MASK_PLANE
     sta.l SAME_SCUMM_CEL_CHUNK
+    lda.l SAME_SCUMM_SCENE_PHASE
+    cmp #$0001
+    bne ScummV5_Scene_Next__bounds_ready
+    lda.l SAME_SCUMM_SCENE_ACTOR
+    asl
+    asl
+    asl
+    asl
+    asl
+    tax
+    lda #$FFFF
+    sta.l SAME_SCUMM_SCENE_SNAPSHOTS+$18,x
+    sta.l SAME_SCUMM_SCENE_SNAPSHOTS+$1A,x
+    lda #$0000
+    sta.l SAME_SCUMM_SCENE_SNAPSHOTS+$1C,x
+    sta.l SAME_SCUMM_SCENE_SNAPSHOTS+$1E,x
+ScummV5_Scene_Next__bounds_ready:
+    .a16
+    .i16
+    lda #$0000
     sep #$20
     .a8
     sta.l SAME_SCUMM_ACTOR_POSE_STATE
@@ -744,6 +849,15 @@ ScummV5_Scene_Render__stale:
 ScummV5_Scene_Render__identity:
     .a16
     .i16
+    lda.l SAME_SCUMM_SCENE_PHASE
+    cmp #$0002
+    bne ScummV5_Scene_Render__mask_ready
+    jsl ScummV5_Mask_Ensure_Far
+    bcs ScummV5_Scene_Render__mask_ready
+    jml ScummV5_Scene_Render__done
+ScummV5_Scene_Render__mask_ready:
+    .a16
+    .i16
     jsl ScummV5_ActorPose_Ensure_Far
     bcs ScummV5_Scene_Render__checked
     jml ScummV5_Scene_Render__done
@@ -751,6 +865,19 @@ ScummV5_Scene_Render__checked:
     .a16
     .i16
     jsl ScummV5_ActorPose_Compose_Far
+    php
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ERROR
+    and #$00FF
+    beq ScummV5_Scene_Render__compose_valid
+    plp
+    jsl ScummV5_ActorPose_Cancel_Far
+    jml ScummV5_Scene_Render__done
+ScummV5_Scene_Render__compose_valid:
+    .a16
+    .i16
+    plp
     bcc ScummV5_Scene_Render__actor_complete
     jml ScummV5_Scene_Render__done
 ScummV5_Scene_Render__actor_complete:
@@ -1048,3 +1175,5 @@ ScummV5_Scene_PaletteEpoch__valid:
     lda #$0001
     sta.l SAME_SCUMM_SCENE_DIRTY
     rtl
+
+.include "scumm_v5_actor_masks.inc.pasm"

@@ -15,16 +15,37 @@ STAGES = (
     ((220,130,231,231,90,1),(160,124,128,200,270,1)),
 )
 
-def source_files() -> dict[str, bytes]:
+def source_files(*, masks: bool = False) -> dict[str, bytes]:
     base = camera_files()
     decoded = bytes(b ^ 0x69 for b in base['ATLANTIS/ATLANTIS.001'])
     size = int.from_bytes(decoded[34:38], 'big')
     room = decoded[38:30+size]
+    if masks:
+        # Original-format source z-planes, decoded by the existing ROOM parser.
+        chunks=[];pos=0
+        while pos<len(room):
+            length=int.from_bytes(room[pos+4:pos+8],'big');tag=room[pos:pos+4];payload=room[pos+8:pos+length]
+            if tag==b'RMIM':
+                smap=payload[18:]  # RMIH(10), IM00 header(8), then original SMAP
+                planes=[]
+                for plane in (1,2):
+                    offsets=[];data=bytearray()
+                    for strip in range(80):
+                        offsets.append(8+160+len(data))
+                        column=bytes((0xAA if plane==1 else 0x55) if 16<=strip<31 and 84<=y<122 else 0 for y in range(144))
+                        # Two literal source packets; SC5MASK cooker independently
+                        # chooses its checked raw/RLE block representation.
+                        data+=bytes((127,))+column[:127]+bytes((17,))+column[127:]
+                    planes.append(ch(f'ZP{plane:02d}'.encode(),b''.join(struct.pack('<H',v) for v in offsets)+data))
+                payload=ch(b'RMIH',struct.pack('<H',2))+ch(b'IM00',smap+b''.join(planes))
+            chunks.append(ch(tag,payload));pos+=length
+        room=b''.join(chunks)
     p = Program()
     p.move(0x4000,0);p.move(0x4001,0)
     p.emit('load room',b'\x72\x01')
     for actor in (1,2):
         p.emit('defaults costume ignoreBoxes animation speed',bytes((0x13,actor,8,1,actor,20,22,8,255)))
+        if masks:p.emit('foreground plane',bytes((0x13,actor,19,actor,255)))
         p.emit('actor room',bytes((0x2d,actor,1)))
     for n, actors in enumerate(STAGES,1):
         for actor, (x,y,sx,sy,facing,frame) in enumerate(actors,1):
@@ -46,12 +67,12 @@ def source_files() -> dict[str, bytes]:
            +ch(b'DCOS',directory(bytes((0,1,1)),(0,*costs)))+ch(b'DSOU',directory(b'',[])))
     return {f'ATLANTIS/ATLANTIS.{n:03}':bytes(b^0x69 for b in raw) for n,raw in enumerate((index,data))}
 
-def write_archive(path: Path) -> None:
+def write_archive(path: Path, *, masks: bool = False) -> None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as archive:
-        for name,data in source_files().items():
+        for name,data in source_files(masks=masks).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             archive.writestr(info,data)
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('output',type=Path)
-    write_archive(parser.parse_args().output)
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('output',type=Path);parser.add_argument('--masks',action='store_true')
+    args=parser.parse_args();write_archive(args.output,masks=args.masks)

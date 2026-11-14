@@ -1069,7 +1069,15 @@ else
                               --reserved-bank 24)
     fi
     if [[ "${SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER:-0}" == "1" ]]; then
-        ROOM_GENERATOR_ARGS+=(--reserved-bank 13)
+        ROOM_GENERATOR_ARGS+=(--reserved-bank 13 --reserved-bank 84)
+        # Actor descriptors are immutable ROM metadata, with compiler-measured
+        # span/cel bank coverage. Never let subsequent room allocation alias it.
+        while read -r actor_metadata_bank; do
+            ROOM_GENERATOR_ARGS+=(--reserved-bank "$actor_metadata_bank")
+        done < <("$PYTHON" -c 'import re,sys; print("\n".join(re.findall(r"^\.bank (\d+)$",open(sys.argv[1]).read(),re.M)))' "$ACTOR_POSE_INCLUDE")
+        if [[ "${SAME_SCUMM_ACTOR_SCENE:-0}" == "1" ]]; then
+            ROOM_GENERATOR_ARGS+=(--reserved-bank 85)
+        fi
     fi
     if [[ "${SAME_BUILD_M24RB:-0}" == "1" || "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
         # The far room-service closure is fixed in banks 9 and 83 for both

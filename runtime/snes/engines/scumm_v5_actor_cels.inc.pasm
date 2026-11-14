@@ -1000,6 +1000,14 @@ ScummV5_Cel_Compose__capture_right:
 ScummV5_Cel_Compose__draw:
     .a16
     .i16
+    .if SAME_SCUMM_SCENE_ENABLED
+    jsl ScummV5_Mask_Pixel_Far
+    bcc ScummV5_Cel_Compose__unmasked
+    jml ScummV5_Cel_Compose__advance
+ScummV5_Cel_Compose__unmasked:
+    .a16
+    .i16
+    .endif
     lda.l SAME_SCUMM_ACTOR_SPAN_SOURCE
     clc
     adc.l SAME_SCUMM_CEL_LOOP
@@ -1075,6 +1083,9 @@ ScummV5_Cel_Compose__row_done:
     lda.l SAME_SCUMM_CEL_Y
     xba
     ora.l SAME_SCUMM_ACTOR_CLIP_LEFT
+    .if SAME_SCUMM_SCENE_ENABLED
+    jsl ScummV5_Mask_CaptureBounds_Far
+    .endif
     jsl Same_VideoSurface_CaptureActorRun_Far
     bcc ScummV5_Cel_Compose__next_span
     jml ScummV5_Cel_Compose__invalid
