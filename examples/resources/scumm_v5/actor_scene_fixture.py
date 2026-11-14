@@ -19,7 +19,7 @@ OBJECT_STAGES = (*STAGES, STAGES[-1])
 
 def source_files(*, masks: bool = False, transitions: bool = False,
                  sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
-                 object_images_probe: bool = False, absent_animation_probe: bool = False) -> dict[str, bytes]:
+                 object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False) -> dict[str, bytes]:
     base = camera_files()
     decoded = bytes(b ^ 0x69 for b in base['ATLANTIS/ATLANTIS.001'])
     size = int.from_bytes(decoded[34:38], 'big')
@@ -44,6 +44,15 @@ def source_files(*, masks: bool = False, transitions: bool = False,
                 payload=ch(b'RMIH',struct.pack('<H',2))+ch(b'IM00',smap+b''.join(planes))
             chunks.append(ch(tag,payload));pos+=length
         room=b''.join(chunks)
+    if walkbox_mask_probe:
+        if not masks:
+            raise ValueError('walkbox mask probe requires original source masks')
+        # Box zero stays inaccessible; box one covers the room and selects
+        # plane one and scale231. Actor two still uses explicit force_clip=2.
+        old = struct.pack('<hhhhhhhhBBH',0,0,639,0,639,143,0,143,0,0,255)
+        new = struct.pack('<hhhhhhhhBBH',0,0,639,0,639,143,0,143,1,0,231)
+        assert room.count(old) == 1
+        room = room.replace(old, new, 1)
     if object_images_probe:
         room = room.replace(ch(b'RMHD', struct.pack('<HHH', 640, 144, 0)),
                             ch(b'RMHD', struct.pack('<HHH', 640, 144, 2)), 1)
@@ -122,7 +131,9 @@ def source_files(*, masks: bool = False, transitions: bool = False,
             for _ in range(2):p.emit('idempotent source object state',bytes((0x07,identity,0,1)))
     for actor in (1,2):
         p.emit('defaults costume ignoreBoxes animation speed',bytes((0x13,actor,8,1,actor,20,22,8,255)))
-        if masks:p.emit('foreground plane',bytes((0x13,actor,19,actor,255)))
+        if walkbox_mask_probe and actor == 1:
+            p.emit('source walkbox masking',bytes((0x13,actor,21,19,0,255)))
+        elif masks:p.emit('foreground plane',bytes((0x13,actor,19,actor,255)))
         p.emit('actor room',bytes((0x2d,actor,1)))
     stages = OBJECT_STAGES if object_images_probe else STAGES
     for n, actors in enumerate(stages,1):
@@ -185,11 +196,11 @@ def source_files(*, masks: bool = False, transitions: bool = False,
 
 def write_archive(path: Path, *, masks: bool = False, transitions: bool = False,
                   sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
-                  object_images_probe: bool = False, absent_animation_probe: bool = False) -> None:
+                  object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False) -> None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as archive:
         for name,data in source_files(masks=masks,transitions=transitions,
                                       sound_status_probe=sound_status_probe, cutscene_callback_probe=cutscene_callback_probe, room_hook_probe=room_hook_probe,
-                                      object_images_probe=object_images_probe, absent_animation_probe=absent_animation_probe).items():
+                                      object_images_probe=object_images_probe, absent_animation_probe=absent_animation_probe, walkbox_mask_probe=walkbox_mask_probe).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             archive.writestr(info,data)
 
@@ -200,6 +211,7 @@ if __name__=='__main__':
     parser.add_argument('--room-hook-probe', action='store_true')
     parser.add_argument('--object-images-probe', action='store_true')
     parser.add_argument('--absent-animation-probe', action='store_true')
+    parser.add_argument('--walkbox-mask-probe', action='store_true')
     args=parser.parse_args();write_archive(args.output,masks=args.masks,transitions=args.transitions,
                                          sound_status_probe=args.sound_status_probe, cutscene_callback_probe=args.cutscene_callback_probe, room_hook_probe=args.room_hook_probe,
-                                         object_images_probe=args.object_images_probe, absent_animation_probe=args.absent_animation_probe)
+                                         object_images_probe=args.object_images_probe, absent_animation_probe=args.absent_animation_probe, walkbox_mask_probe=args.walkbox_mask_probe)

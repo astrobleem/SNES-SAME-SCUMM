@@ -4830,3 +4830,22 @@ Firstfullsuite1729/12skip failed obsoleteC28resource/scaling-empty/bitset
 expectations; fixed withactualfixturecostume andsource-no-op expectations.
 Focused13tests PASS; correctedfullsuite running (absent-animation-corrected-full-tests.log).
 E remains NOT_COMPLETE; do not publish a gameplay pass fromthese controls.
+
+Current correction: authentic ROM59b8b3a3 verb image differed65 masked pixels.
+Bounded matching-state trace proves native actor1 walkbox1 incorrectly selects
+plane3 (source1); wrong-plane host prediction exactly reproduces all native
+pixels. Poppy emitted direct-page D5/B5 for intended DBR reads. Two `.w` fixes
+assemble DD/BD, with compiled-byte validator and negative tests.
+Walkbox fixture first failed safely because FollowBoxes applied source scale255
+and overflowed existing underlay; source fixture corrected to231, unchanged
+production fix. Current native-walkbox-scaled-mask uses scene-build-b7cg2xb7,
+ROM56515ad1, running four source/PPU captures. Authentic build auth-build-adeba7mp
+ROMf341110e is assembled/audited, package unchangedb6afddbf; no native authentic
+run yet. Prepared mask-* setup scripts use this exact identity/new ports.
+Full suite for3d8dc12 passed1730/12skip; both CI jobs pass43595360909.
+Current mask correction full suite and native gate are pending. Do not reuse
+an old-ROM state or label these ongoing controls Milestone E acceptance.
+
+Native walkbox gate now PASSED four exact images, frame2146, cleanup complete.
+Fresh mask-startup uses ROMf341110e; next mask-room10-pickup/ready/barnett then
+mask-office-continuation, each bounded and identity-bound. No E gameplay pass yet.

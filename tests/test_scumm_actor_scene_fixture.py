@@ -126,3 +126,25 @@ class ActorSceneFixture(unittest.TestCase):
         for a in actors.values():a.force_clip=0
         adapter.render_actors(actors,current_room=1,costume_key=lambda n:f'costume.{n}',project=False)
         self.assertGreater(sum(a!=b for a,b in zip(masked,adapter.logical_surface.pixels)),100)
+
+    def test_walkbox_mask_probe_uses_source_box_not_forced_plane(self):
+        root=Path(__file__).resolve().parents[1]
+        p=load_profile(root/'examples/profiles/scumm_v5_game_analysis_fixture.json',verify_resources=False)
+        p=replace(p,options={**p.options,'headless_presentation':True})
+        files=source_files(masks=True,walkbox_mask_probe=True,absent_animation_probe=True)
+        provider=LucasartsScummV5ResourceProvider(MemoryResourceProvider({
+            'game.index':files['ATLANTIS/ATLANTIS.000'],
+            'game.data':files['ATLANTIS/ATLANTIS.001']}),parse_game_policy(p))
+        h=EngineHost(p,default_registry(),services=HostServices.create(p,resources=provider));h.boot()
+        for _ in range(30):
+            h.tick();slots=[slot for slot in h.engine.state.scripts if slot.number==1]
+            if slots and slots[0].locals[1]==1:break
+        self.assertEqual(slots[0].locals[1],1)
+        a=h.engine.state.actors[1]
+        self.assertFalse(a.ignore_boxes)
+        self.assertEqual(a.force_clip,0)
+        self.assertEqual(h.engine._video.room.walkboxes[1].mask,1)
+        self.assertEqual(h.engine._video.walkbox_at(*a.position).index,1)
+        self.assertEqual(h.engine.state.actors[2].force_clip,2)
+        self.assertEqual(a.costume_frame,1)
+        self.assertEqual(a.scale,(231,231))

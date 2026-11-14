@@ -175,7 +175,9 @@ MaskEnsure_box_present:
  lda.l SCUMM_MSU1_MASK_ROOM_ADDRESS+$0E,x
  tax
  lda.l SAME_SCUMM_MASK_INDEX
- cmp $0000,x
+ ; X is a ROM pointer in DBR, not a direct-page displacement. Force
+ ; absolute addressing: Poppy otherwise emits D5/B5 for these low literals.
+ cmp.w $0000,x
  bcc MaskEnsure_box_in_range
  jml MaskEnsure_error
 MaskEnsure_box_in_range:
@@ -185,7 +187,7 @@ MaskEnsure_box_in_range:
  clc
  adc.l SAME_SCUMM_MASK_INDEX
  tax
- lda $0002,x
+ lda.w $0002,x
  and #$00FF
 MaskEnsure_plane:
     .a16

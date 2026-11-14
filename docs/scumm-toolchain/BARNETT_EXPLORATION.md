@@ -421,3 +421,42 @@ record is absent. Its prior blank-image stage was not valid evidence of a
 source-authored clear. Explicit limb-clear records remain distinct and tested.
 The focused corrected regressions pass; full-suite requalification is recorded
 separately rather than relabeling the first failed run.
+
+## Walkbox-selected foreground plane correction
+
+The fresh ROM59b8b3a3 setup stopped before newspaper pickup at its first verb
+menu image: error0, exact INDEX8/PPU agreement, but65 source-image differences.
+The complete actor snapshots selected walkbox1 for actor1; the source selects
+plane1 and occludes those65 pixels. No gameplay or graphics PASS was inferred.
+
+A matching-ROM read-only trace captured actor1 in the actual draw phase2 with
+verified mask state7 and **plane3**, not1. The initial frame trace ended before
+that boundary and is explicitly NOT_VERIFIED. Both sessions exited normally
+with no owned survivors. Re-composing the captured source scene with the known
+incorrect plane3 reproduces every native pixel; this is a defect prediction,
+not an alternative acceptance oracle.
+
+Pinned assembly encoded `cmp $0000,x` / `lda $0002,x` as direct-page opcodes
+D5/B5. Those instructions ignore the intended ROM data bank. Explicit `.w`
+forces absolute-indexed DD/BD for both the count and selector. No buffer,
+resource format, selector or renderer architecture changed. The validator now
+checks the actual assembled bytes, and negative tests reject both old opcodes.
+
+The new copyright-free scene uses source walkbox1/plane1 for actor1 and explicit
+plane2 for actor2, retaining overlapping scaled animation and absent-animation
+requests. Its first experimental source box retained default scale255; ordinary
+putActor correctly applied that scale and the larger underlay failed safely
+before mask rendering. The corrected fixture supplies source box scale231,
+matching its intended scene geometry. That failed run is retained, not retried
+unchanged or counted as native mask acceptance.
+
+Native walkbox regression passes four complete source/INDEX8/PPU/CGRAM captures
+with no pixel differences. ROM `56515ad1ab11ef3eb8db1757cd4abfa6ec5607d37455f3e6af8e16891a5d579d`;
+map `f33b1f41e27de232ba3f3786f2a69dad324099869e65d42bbb8b34744f3391d0`;
+package `3dbf0b257e464119fa863ee93dc54c642badd8c277ee038c6a0ede6d4c2d1442`.
+Private run `native-walkbox-scaled-mask` completed normally in225.963s,
+final frame2146, cleanup complete, zero survivors. Pinned assembly, ROM audit,
+47-region ownership audit and15 focused host tests pass. The corrected authentic
+ROM `f341110e4e8ec67b0bce6c2fa1da0398f77a91db8c616252d522732ec525f31b`
+retains the identical full-source package; its fresh gameplay qualification is
+ongoing. Milestone E is still **NOT_COMPLETE**.

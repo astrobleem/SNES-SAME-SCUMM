@@ -30,6 +30,26 @@ class Reads:
     def read_u16(self,address):return int.from_bytes(self.read_memory('snesMemory',address,2),'little')
 
 
+def verify_mask_box_addressing(rom, symbols):
+    """Check actual pinned assembly, not just source .w spelling.
+
+    Zero-page-indexed D5/B5 silently ignore DBR. These reads must be
+    absolute-indexed DD/BD to reach the checked directory's ROM bank.
+    """
+    if not symbols.get('SCUMM_MSU1_MASK_COUNT'):
+        return
+    address=lambda name:symbols[name].to_bytes(3,'little')
+    prefix=(b'\xaf'+address('SAME_SCUMM_MASK_ROOM_ROW')+b'\xaa\xbf'+
+            (symbols['SCUMM_MSU1_MASK_ROOM_ADDRESS']+14).to_bytes(3,'little')+
+            b'\xaa\xaf'+address('SAME_SCUMM_MASK_INDEX'))
+    assert rom.count(prefix)==1, 'mask box directory instruction identity'
+    offset=rom.index(prefix)+len(prefix)
+    assert rom[offset:offset+3]==b'\xdd\x00\x00', 'mask box count must use absolute DBR addressing'
+    lookup=(b'\x8a\x18\x6f'+address('SAME_SCUMM_MASK_INDEX')+
+            b'\xaa\xbd\x02\x00\x29\xff\x00')
+    assert lookup in rom[offset:offset+32], 'mask selector must use absolute DBR addressing'
+
+
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
     for key in ('rom','directory','archive','profile','nexen','native-core','mcp-python','output'):ap.add_argument('--'+key,type=Path,required=True)
@@ -38,6 +58,7 @@ def main():
     ap.add_argument('--transitions',action='store_true')
     ap.add_argument('--object-images',action='store_true')
     ap.add_argument('--absent-animation',action='store_true')
+    ap.add_argument('--walkbox-mask',action='store_true')
     ap.add_argument('--expect-object-crc-error',type=Path,metavar='FAULT_MANIFEST')
     ap.add_argument('--expect-mask-crc-error',type=Path,metavar='FAULT_MANIFEST',
                     help='negative control: isolated package with one intentionally corrupt checked mask block')
@@ -78,6 +99,7 @@ def main():
     listing=args.rom.with_suffix('.lst').read_text()
     symbols={n:int(v,16) for n,v in re.findall(r'^; ([A-Z][A-Z0-9_]*)\s+= \$([0-9A-Fa-f]+)\s+\(Constant\)',listing,re.M)}
     assert symbols['SCUMM_V5_ACTOR_CEL_FORMAT']==1
+    verify_mask_box_addressing(args.rom.read_bytes(), symbols)
     # C4 public ABI: 25 slots, 32 u16 locals each. Check contiguous allocation.
     assert symbols['SAME_SCUMM_C4_STATE_END'] >= symbols['SAME_SCUMM_C4_SLOT_LOCALS']+25*64
     native=json.loads(args.directory.read_text());boot=next(e for e in native['entries'] if e['identity']=='GlobalProgram(1)')
@@ -85,7 +107,7 @@ def main():
     if not expected_lifecycle <= {e['identity'] for e in native['entries']}:
         raise RuntimeError('scene fixture requires executable room entry/exit; cook with --executable')
     source=source_bytes(args.archive)
-    fixture=source_files(masks=args.masks,transitions=args.transitions,object_images_probe=args.object_images,absent_animation_probe=args.absent_animation)
+    fixture=source_files(masks=args.masks,transitions=args.transitions,object_images_probe=args.object_images,absent_animation_probe=args.absent_animation,walkbox_mask_probe=args.walkbox_mask)
     assert source=={'game.index':fixture['ATLANTIS/ATLANTIS.000'],'game.data':fixture['ATLANTIS/ATLANTIS.001']},'diagnostic acknowledges only its exact public synthetic source'
     provider=LucasartsScummV5ResourceProvider(MemoryResourceProvider(source),parse_game_policy(load_profile(args.profile,verify_resources=False)))
     assert hashlib.sha256(provider.read('script.1')).hexdigest()==boot['sha256']
@@ -172,7 +194,7 @@ def main():
             d=raw[actor_id*32:(actor_id+1)*32]
             u16=lambda off:int.from_bytes(d[off:off+2],'little')
             assert (u16(0),u16(2),d[6],d[7],u16(4),d[10])==e, (actor_id,d.hex(),e)
-            actors[actor_id]=ActorState(costume=d[8],room=1,visible=bool(d[9]),position=(u16(0),u16(2)),scale=(d[6],d[7]),facing=u16(4),costume_frame=d[10],costume_step=d[12],ignore_boxes=True,force_clip=d[18])
+            actors[actor_id]=ActorState(costume=d[8],room=1,visible=bool(d[9]),position=(u16(0),u16(2)),scale=(d[6],d[7]),facing=u16(4),costume_frame=d[10],costume_step=d[12],ignore_boxes=bool(d[19]),force_clip=d[18])
         object_states = None
         object_owners = None
         if args.object_images:
