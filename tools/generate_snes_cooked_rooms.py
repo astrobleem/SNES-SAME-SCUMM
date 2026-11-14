@@ -970,10 +970,17 @@ def main() -> int:
                 raise RuntimeError("cooked-room manifests disagree on global-object owners")
             global_owners = bytes(source_owners)
             classes_name = global_spec.get("classes_output")
+            if classes_name is None and manifest.get("source_scope") == "ALL_AVAILABLE_EXECUTABLES":
+                raise RuntimeError("whole-source manifest omits initial object classes; regenerate with the source cooker")
             if classes_name is not None:
                 source_classes = (manifest_path.parent / classes_name).read_bytes()
                 if len(source_classes) != int(global_spec["count"]) * 4:
                     raise RuntimeError(f"{manifest_path}: global-object class count differs")
+                expected_classes = global_spec.get("classes_sha256")
+                if expected_classes is not None and hashlib.sha256(source_classes).hexdigest() != expected_classes:
+                    raise RuntimeError(f"{manifest_path}: global-object class checksum differs")
+                if len(source_classes) > 0x8000:
+                    raise RuntimeError("initial object-class metadata exceeds one checked-addressable ROM bank")
                 candidate_classes = tuple(
                     int.from_bytes(source_classes[index:index + 4], "little")
                     for index in range(0, len(source_classes), 4)
@@ -2304,27 +2311,14 @@ def main() -> int:
         # leaving that shared reference undefined.
         data_lines.append("ScummV5_Verb_Record_0_Count = $0000")
         append_room_table("ScummV5_Verb_Record_0_Entries", b"\0" * 6)
-    # C16 is a bounded sparse runtime table.  A Fate profile can describe
-    # more initially-classed objects than the runtime can hold at once; keep
-    # Keep a small mutation reserve for authored setClass operations.  The
-    # generated source order is object-id order, so the low-id startup/object
-    # set stays stable and the bounded omission is explicit in the count.
-    # Keep a real dynamic reserve for authored room-entry setClass operations.
-    # The full DOBJ contains more nonzero records than the 512-record runtime
-    # table can hold; consuming all but sixteen slots made a burst of room-82
-    # randomized actor classes fail nondeterministically at the first
-    # setClass.  Preserve the source-order seed while reserving 32 records for
-    # ordinary runtime mutations.
-    initial_class_items = [
-        (index, value) for index, value in enumerate(global_classes) if value
-    ][:0x01E0]
+    # Source defaults are immutable ROM metadata; the 512 WRAM records hold
+    # only mutations. Never truncate the source namespace to mutable capacity.
+    initial_class_count = len(global_classes) if any(global_classes) else 0
+    initial_class_bytes = b"".join(struct.pack("<I", value) for value in global_classes[:initial_class_count])
     if args.pack_source_tables:
         append_room_table("ScummV5_SetState_InitialStates", bytes(global_states))
         append_room_table("ScummV5_ObjectOwner_InitialOwners", bytes(global_owners))
-        append_room_table("ScummV5_ObjectClass_Initial",
-                          b"".join(struct.pack("<HHH", index, value & 0xFFFF,
-                                               (value >> 16) & 0xFFFF)
-                                  for index, value in initial_class_items))
+        append_room_table("ScummV5_ObjectClass_Initial", initial_class_bytes)
         append_room_table("ScummV5_GetActorFacing_InitialAngles",
                           b"".join(struct.pack("<H", value & 0xFFFF)
                                   for value in actor_facings))
@@ -2332,17 +2326,16 @@ def main() -> int:
                           b"".join(struct.pack("<HH", x & 0xFFFF, y & 0xFFFF)
                                   for x, y in actor_positions))
         append_room_table("ScummV5_GetActorWalkbox_InitialBoxes", bytes(actor_walkboxes))
-        data_lines.append("ScummV5_ObjectClass_InitialCount = $%04X" % len(initial_class_items))
+        data_lines.append("ScummV5_ObjectClass_InitialCount = $%04X" % initial_class_count)
     else:
         bank = next_free_bank(bank)
         data_lines.extend((f".bank {bank}", ".org $8000"))
         data_lines.extend((
             "ScummV5_SetState_InitialStates:", rows(global_states),
             "ScummV5_ObjectOwner_InitialOwners:", rows(global_owners),
-            "ScummV5_ObjectClass_InitialCount = $%04X" % len(initial_class_items),
+            "ScummV5_ObjectClass_InitialCount = $%04X" % initial_class_count,
             "ScummV5_ObjectClass_Initial:",
-            *[f"    .word ${index:04X},${value & 0xFFFF:04X},${(value >> 16) & 0xFFFF:04X}"
-              for index, value in initial_class_items],
+            rows(initial_class_bytes),
             "ScummV5_GetActorFacing_InitialAngles:",
             "    .word " + ",".join(f"${value:04X}" for value in actor_facings),
             "ScummV5_GetActorWalkbox_InitialPositions:",
@@ -2556,32 +2549,21 @@ def main() -> int:
         "ScummV5_ObjectClass_LoadInitial_Far__clear:", "    .a16", "    .i16",
         "    sta.l SAME_SCUMM_C16_RECORDS,x", "    inx", "    inx",
         "    cpx #$1000", "    bcc ScummV5_ObjectClass_LoadInitial_Far__clear",
-        "    lda #$0000", "    sta.l SAME_SCUMM_C16_MASK_OFFSET",
-        "    sta.l SAME_SCUMM_C16_RECORD_OFFSET",
-        "ScummV5_ObjectClass_LoadInitial_Far__copy:",
-        "    .a16", "    .i16",
-        "    lda.l SAME_SCUMM_C16_MASK_OFFSET",
-        "    cmp #(ScummV5_ObjectClass_InitialCount * 6)",
-        "    bcs ScummV5_ObjectClass_LoadInitial_Far__done",
-        "    tax", "    lda.l ScummV5_ObjectClass_Initial,x",
-        "    pha", "    lda.l SAME_SCUMM_C16_RECORD_OFFSET", "    tax",
-        "    pla", "    sta.l SAME_SCUMM_C16_RECORDS+2,x",
-        "    lda #$0001", "    sta.l SAME_SCUMM_C16_RECORDS,x",
-        "    lda.l SAME_SCUMM_C16_MASK_OFFSET", "    clc", "    adc #$0002",
-        "    tax", "    lda.l ScummV5_ObjectClass_Initial,x",
-        "    pha", "    lda.l SAME_SCUMM_C16_RECORD_OFFSET", "    tax", "    pla",
-        "    sta.l SAME_SCUMM_C16_RECORDS+4,x",
-        "    lda.l SAME_SCUMM_C16_MASK_OFFSET", "    clc", "    adc #$0004",
-        "    tax", "    lda.l ScummV5_ObjectClass_Initial,x",
-        "    pha", "    lda.l SAME_SCUMM_C16_RECORD_OFFSET", "    tax", "    pla",
-        "    sta.l SAME_SCUMM_C16_RECORDS+6,x",
-        "    lda.l SAME_SCUMM_C16_MASK_OFFSET", "    clc", "    adc #$0006",
-        "    sta.l SAME_SCUMM_C16_MASK_OFFSET",
-        "    lda.l SAME_SCUMM_C16_RECORD_OFFSET", "    clc", "    adc #$0008",
-        "    sta.l SAME_SCUMM_C16_RECORD_OFFSET",
-        "    bra ScummV5_ObjectClass_LoadInitial_Far__copy",
         "ScummV5_ObjectClass_LoadInitial_Far__done:",
         "    sep #$20", "    .a8", "    lda #$01", "    sta.l SAME_SCUMM_C16_INITIALIZED", "    rtl",
+        "ScummV5_ObjectClass_QueryInitial_Far:",
+        "; C16_OBJECT -> A16 low mask, Y16 high mask. No allocation or mutation.",
+        "    rep #$30", "    .a16", "    .i16",
+        "    lda.l SAME_SCUMM_C16_OBJECT", "    cmp #ScummV5_ObjectClass_InitialCount",
+        "    bcs ScummV5_ObjectClass_QueryInitial_Far__absent",
+        "    asl", "    asl", "    tax",
+        # Pinned Poppy drops bank relocation for Label+2 long operands.
+        # Keep the plain banked label and move the index to the high word.
+        "    inx", "    inx", "    lda.l ScummV5_ObjectClass_Initial,x", "    tay",
+        "    dex", "    dex",
+        "    lda.l ScummV5_ObjectClass_Initial,x", "    rtl",
+        "ScummV5_ObjectClass_QueryInitial_Far__absent:", "    .a16", "    .i16",
+        "    lda #$0000", "    ldy #$0000", "    rtl",
         "ScummV5_ObjectClass_ApplyScenarioOverlay_Far:",
         "    sep #$20", "    .a8",
         f"    lda #${len(scenario_class_overlays):02X}",
@@ -2590,7 +2572,7 @@ def main() -> int:
     for overlay_index, (object_id, mask) in enumerate(scenario_class_overlays):
         data_lines.extend((
             "    rep #$20", "    .a16", f"    lda #${object_id:04X}",
-            "    sta.l SAME_SCUMM_C16_OBJECT", "    jsl ScummV5_C16_FindRecord_Far",
+            "    sta.l SAME_SCUMM_C16_OBJECT", "    jsl ScummV5_C16_EnsureRecord_Far",
             "    lda.l SAME_SCUMM_C16_RECORD_OFFSET", "    cmp #$FFFF",
             f"    beq ScummV5_ObjectClass_ApplyScenarioOverlay_Far__next_{overlay_index}",
             "    tax", f"    lda.l SAME_SCUMM_C16_RECORDS+4,x", "    ora #${:04X}".format(mask & 0xFFFF),
@@ -3029,12 +3011,8 @@ def main() -> int:
         "ScummV5_Generic_Object_IsTouchable_Far:",
         "; A16=object ID; C=set iff class32 is absent. Preserve caller widths/X/Y.",
         "    php", "    rep #$30", "    .a16", "    .i16", "    phx", "    phy",
-        "    sta.l SAME_SCUMM_C16_OBJECT", "    jsl ScummV5_C16_FindRecord_Far",
-        "    rep #$30", "    .a16", "    .i16",
-        "    lda.l SAME_SCUMM_C16_RECORD_OFFSET", "    cmp #$FFFF",
-        "    beq ScummV5_Generic_Object_IsTouchable_Far__yes",
-        "    tax", "    lda.l SAME_SCUMM_C16_RECORDS+SAME_SCUMM_C16_R_MASK+2,x",
-        "    and #$8000", "    beq ScummV5_Generic_Object_IsTouchable_Far__yes",
+        "    sta.l SAME_SCUMM_C16_OBJECT", "    jsl ScummV5_C16_QueryMask_Far",
+        "    tya", "    and #$8000", "    beq ScummV5_Generic_Object_IsTouchable_Far__yes",
         "    ply", "    plx", "    plp", "    clc", "    rtl",
         "ScummV5_Generic_Object_IsTouchable_Far__yes:",
         "    ply", "    plx", "    plp", "    sec", "    rtl",

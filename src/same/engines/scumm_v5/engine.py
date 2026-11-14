@@ -568,6 +568,7 @@ class ScummV5Engine(Engine):
         self._presentation_dirty = False
         self._presentation_rebuild = False
         self._background_needs_redraw = False
+        self._default_object_classes: dict[int, set[int]] = {}
         self._num_global_objects = _MAX_OBJECT_STATES
         self._num_global_scripts = 200
         self._object_owners = bytes(_MAX_OBJECT_STATES)
@@ -870,10 +871,16 @@ class ScummV5Engine(Engine):
             self._num_global_objects = len(globals_.states)
             self._num_global_scripts = context.services.resources.global_script_count
             self._object_owners = globals_.owners
+            self._default_object_classes = {
+                i: {bit + 1 for bit in range(32) if mask & (1 << bit)}
+                for i, mask in enumerate(globals_.classes) if mask
+            }
         else:
             self._num_global_objects = _MAX_OBJECT_STATES
             self._num_global_scripts = int(context.profile.options.get("num_global_scripts", 200))
             self._object_owners = bytes(self._num_global_objects)
+        if not isinstance(context.services.resources, LucasartsScummV5ResourceProvider):
+            self._default_object_classes = {}
         self._default_object_owners = bytes(self._object_owners)
         if not 0 <= self._num_global_scripts <= 256:
             raise ResourceError("SCUMM global script count must be in 0..256")
@@ -1098,7 +1105,7 @@ class ScummV5Engine(Engine):
                     self.state.actors,
                     current_room=self.state.current_room,
                     costume_key=lambda costume: self._resource_key("costume", costume),
-                    object_classes=self.state.object_classes,
+                    object_classes=self._effective_object_classes(),
                     object_states=self.state.object_states,
                     object_owners=dict(enumerate(self._object_owners)),
                     project=False,
@@ -2397,6 +2404,24 @@ class ScummV5Engine(Engine):
         self.state.camera_moving_to_actor = False
         return False
 
+    def _object_class_set(self, object_id: int) -> set[int]:
+        """Effective classes: immutable source defaults plus bounded mutations."""
+        return self.state.object_classes.get(
+            object_id, self._default_object_classes.get(object_id, set()))
+
+    def _store_object_class_set(self, object_id: int, classes: set[int]) -> None:
+        if classes == self._default_object_classes.get(object_id, set()):
+            self.state.object_classes.pop(object_id, None)
+            return
+        if object_id not in self.state.object_classes and len(self.state.object_classes) >= _MAX_CLASS_OBJECTS:
+            raise EngineExecutionError(
+                f"SCUMM setClass exceeds {_MAX_CLASS_OBJECTS} modified objects")
+        # Empty is meaningful: it overrides nonempty source defaults.
+        self.state.object_classes[object_id] = set(classes)
+
+    def _effective_object_classes(self) -> dict[int, set[int]]:
+        return {**self._default_object_classes, **self.state.object_classes}
+
     def _op_set_class(self, slot: ScriptSlot, context: EngineContext) -> bool:
         """Apply canonical v5 object-class selectors to bounded sparse state."""
         del context
@@ -2407,27 +2432,19 @@ class ScummV5Engine(Engine):
                 return False
             raw_class = self._word_for_flags(slot, selector, 0x80) & 0xFFFF
             if raw_class == 0:
-                self.state.object_classes.pop(object_id, None)
+                self._store_object_class_set(object_id, set())
                 continue
             class_id = raw_class & 0x7F
             if not 1 <= class_id <= 32:
                 raise EngineExecutionError(
                     f"SCUMM setClass class {class_id} is outside 1..32"
                 )
-            classes = self.state.object_classes.get(object_id)
+            classes = set(self._object_class_set(object_id))
             if raw_class & 0x80:
-                if classes is None:
-                    if len(self.state.object_classes) >= _MAX_CLASS_OBJECTS:
-                        raise EngineExecutionError(
-                            f"SCUMM setClass exceeds {_MAX_CLASS_OBJECTS} modified objects"
-                        )
-                    classes = set()
-                    self.state.object_classes[object_id] = classes
                 classes.add(class_id)
-            elif classes is not None:
+            else:
                 classes.discard(class_id)
-                if not classes:
-                    del self.state.object_classes[object_id]
+            self._store_object_class_set(object_id, classes)
 
     def _op_set_object_name(self, slot: ScriptSlot, context: EngineContext) -> bool:
         """Retain the authored encoded name for an object identity."""
@@ -2456,7 +2473,7 @@ class ScummV5Engine(Engine):
                 raise EngineExecutionError(
                     f"SCUMM ifClassOfIs class {class_id} is outside 1..32"
                 )
-            present = class_id in self.state.object_classes.get(object_id, set())
+            present = class_id in self._object_class_set(object_id)
             # Bit 7 is the required-present form; an unflagged selector
             # requires that the class be absent.
             if bool(raw_class & 0x80) != present:
@@ -2874,11 +2891,9 @@ class ScummV5Engine(Engine):
             raise EngineExecutionError(
                 f"SCUMM pickup object {object_id} is outside global range"
             )
-        classes = self.state.object_classes.get(object_id)
-        if classes is None and len(self.state.object_classes) >= _MAX_CLASS_OBJECTS:
-            raise EngineExecutionError(
-                f"SCUMM pickup exceeds {_MAX_CLASS_OBJECTS} modified class objects"
-            )
+        classes = set(self._object_class_set(object_id))
+        classes.add(32)  # kObjectClassUntouchable; validate before owner mutation
+        self._store_object_class_set(object_id, classes)
         if source_room == 0:
             source_room = self.state.current_room
         if source_room == self.state.current_room:
@@ -2887,10 +2902,6 @@ class ScummV5Engine(Engine):
         owners[object_id] = self.state.variables[1] & 0xFF  # VAR_EGO
         self._object_owners = bytes(owners)
         self.state.object_states[object_id] = 1
-        if classes is None:
-            classes = set()
-            self.state.object_classes[object_id] = classes
-        classes.add(32)  # kObjectClassUntouchable
         self.state.object_draw_queue.clear()
         self._actors_dirty = True
         self._background_needs_redraw = True
@@ -3492,7 +3503,7 @@ class ScummV5Engine(Engine):
                 actor is None
                 or not actor.visible
                 or actor.room != self.state.current_room
-                or 32 in self.state.object_classes.get(actor_id, set())
+                or 32 in self._object_class_set(actor_id)
             ):
                 continue
             left, top, right, bottom = actor.hitbox
@@ -4016,7 +4027,7 @@ class ScummV5Engine(Engine):
         by_index = {item.local_index: item for item in self.state.room_objects.values()}
         found = 0
         for item in sorted(self.state.room_objects.values(), key=lambda entry: entry.local_index):
-            if 32 in self.state.object_classes.get(item.object_id, set()):
+            if 32 in self._object_class_set(item.object_id):
                 continue
             current = item
             visited: set[int] = set()
@@ -5199,7 +5210,7 @@ class ScummV5Engine(Engine):
                 raise SaveFormatError("SCUMM save object-class id is invalid") from exc
             if str(object_id) != object_key or not 0 <= object_id <= 0xFFFF:
                 raise SaveFormatError("SCUMM save object-class entry is invalid")
-            if not isinstance(classes_raw, list) or not classes_raw:
+            if not isinstance(classes_raw, list) or (not classes_raw and not self._default_object_classes.get(object_id)):
                 raise SaveFormatError("SCUMM save object-class list is invalid")
             classes = [int(value) for value in classes_raw]
             if (

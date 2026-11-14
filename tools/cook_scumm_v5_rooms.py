@@ -162,6 +162,9 @@ def main() -> int:
     global_states_output.write_bytes(provider.global_objects.states)
     global_owners_output = args.output_dir / "global-object-owners.bin"
     global_owners_output.write_bytes(provider.global_objects.owners)
+    global_classes = b"".join(value.to_bytes(4, "little") for value in provider.global_objects.classes)
+    global_classes_output = args.output_dir / "global-object-classes.bin"
+    global_classes_output.write_bytes(global_classes)
     records = []
     for room_number in selected_rooms:
         key = f"room.{room_number}"
@@ -300,6 +303,8 @@ def main() -> int:
             "states_sha256": sha(provider.global_objects.states),
             "owners_output": global_owners_output.name,
             "owners_sha256": sha(provider.global_objects.owners),
+            "classes_output": global_classes_output.name,
+            "classes_sha256": sha(global_classes),
         },
         "records": records,
         "global_scripts": global_scripts,

@@ -94,7 +94,7 @@ class StripMachine(ServiceMachine):
             elif op=='lsr':
                 p=(p&~1)|(a&1);result=(a&mask)>>1
             elif op in ('eor','eor.l'):result=(a&mask)^v
-            elif op=='and':result=(a&mask)&v
+            elif op in ('and','and.l'):result=(a&mask)&v
             elif op=='ora.l':result=(a&mask)|v
             elif op=='inc':result=(a&mask)+1
             elif op=='dec':result=(a&mask)-1

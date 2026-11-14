@@ -273,7 +273,7 @@ class ScummV5EngineTests(unittest.TestCase):
         generator = (ROOT / "tools/generate_snes_cooked_rooms.py").read_text()
         runtime = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
 
-        self.assertIn('"    jsl ScummV5_C16_FindRecord_Far"', generator)
+        self.assertIn('"    jsl ScummV5_C16_EnsureRecord_Far"', generator)
         self.assertNotIn(
             '"    sta.l SAME_SCUMM_C16_OBJECT", "    jsr ScummV5_C16_FindRecord"',
             generator,
@@ -2187,6 +2187,34 @@ class ScummV5EngineTests(unittest.TestCase):
         host.tick()
         self.assertEqual(host.engine.inspect_state()["object_classes"], {"300": [2, 3]})
         self.assertEqual(saved.schema, 6)
+
+    def test_source_class_clear_override_save_and_restore_to_default(self) -> None:
+        host = self._host(bytes.fromhex(
+            "5d 8403 01 0000 ff 80 "
+            "5d 8403 01 8100 01 a000 ff 80"))
+        host.engine._default_object_classes = {i: {1, 32} for i in range(1000)}
+        host.tick()
+        self.assertEqual(host.engine._object_class_set(900), set())
+        self.assertEqual(host.engine.state.object_classes, {900: set()})
+        self.assertEqual(host.engine._object_class_set(999), {1, 32})
+        host.save(0)
+        host.tick()
+        self.assertEqual(host.engine.state.object_classes, {})
+        self.assertEqual(host.engine._object_class_set(900), {1, 32})
+        host.load(0)
+        self.assertEqual(host.engine.state.object_classes, {900: set()})
+        host.tick()
+        self.assertEqual(host.engine.state.object_classes, {})
+
+    def test_source_classes_do_not_consume_mutation_capacity(self) -> None:
+        host = self._host(bytes.fromhex("5d 8403 01 a000 ff 80"))
+        host.engine._default_object_classes = {i: {32} for i in range(1000)}
+        host.engine.state.object_classes = {i: {1} for i in range(512)}
+        host.tick()  # Setting an already-present source bit needs no allocation.
+        self.assertEqual(len(host.engine.state.object_classes), 512)
+        with self.assertRaisesRegex(EngineExecutionError, "512 modified objects"):
+            host.engine._store_object_class_set(900, set())
+        self.assertEqual(host.engine._object_class_set(900), {32})
 
     def test_set_object_name_direct_variable_control_text_and_save(self) -> None:
         script = bytes((

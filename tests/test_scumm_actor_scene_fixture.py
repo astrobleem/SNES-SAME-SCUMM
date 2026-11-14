@@ -25,7 +25,9 @@ class ActorSceneFixture(unittest.TestCase):
             host.tick()
             if host.engine.state.variables[154] == 0x1357:
                 break
-        self.assertEqual(host.engine.state.variables[150:158], [0, 8, 9, 8, 0x1357, 8, 0, 0])
+        self.assertEqual(host.engine.state.variables[150:158], [0, 8, 9, 8, 0x1357, 8, 0, 7])
+        self.assertEqual(len(host.engine._default_object_classes), 1000)
+        self.assertEqual(host.engine.state.object_classes, {})
 
     def test_cutscene_callbacks_use_normal_nested_global_arguments(self):
         root = Path(__file__).resolve().parents[1]

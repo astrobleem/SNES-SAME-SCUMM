@@ -4963,3 +4963,16 @@ No native change. Generic observer predicate/test added. Final continuous
 run office-room-bound-continuation uses the same Barnett state and corrected
 font oracle, port8093. New full suite and validate running. No coat pass yet.
 Both hosted jobs passed ed6d376 in run43601748173.
+
+
+2026-11-14 office continuation: active branch scumm-fate-office-progression,
+PR18 stacked on accepted PR17. Prior Milestone E office/coat acceptance remains
+valid; not a whole-game completion claim. New dirty source-default class
+correction has a native PASS at frame368 (ROM87430628, private class-defaults/
+native-classes-bank), all32-bit host/instruction regressions and zero override
+reclamation. Initial width and bank-relocation native failures are preserved.
+Fresh full-source build class-defaults/auth-build-mex8gntw is in progress; use
+new full-cooked manifest retaining all1395 class masks. Never reuse old ROM
+states. Next: fresh source-correct setup, then office Open21/Pickup22 under
+normal input with scene click Y strictly below virtual-screen bottom144.
+No old seven-action replay; recovery worktree untouched. New jar NOT_ACCEPTED.

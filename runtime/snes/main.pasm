@@ -646,6 +646,7 @@ Same_Tad_BlankSong:
 ; Cutscene lifecycle callbacks are not a controller build dependency.
 .if SAME_BUILD_SCUMM_ROOM_SERVICE
 .include "engines/scumm_v5_cutscene_callbacks.inc.pasm"
+.include "engines/scumm_v5_classes_far.inc.pasm"
 .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 .include "engines/scumm_v5_room_hooks.inc.pasm"
 .endif

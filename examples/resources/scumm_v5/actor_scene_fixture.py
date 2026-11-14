@@ -107,7 +107,19 @@ def source_files(*, masks: bool = False, transitions: bool = False,
                                             32 if enabled else 160, 0, 255)))
         def find(variable):
             p.emit('find overlapping room objects', bytes((0x35, variable, 0, 130, 110)))
-        touchable(8, False); touchable(9, False); find(150)
+        find(150)  # source defaults hide both objects before any mutation
+        def class_op(identity, value):
+            p.emit('class source override', b'\x5d'+struct.pack('<H',identity)+b'\x01'+struct.pack('<H',value)+b'\xff')
+        def expect_class(value):
+            p.emit('query source/override above old sparse seed limit',
+                   b'\x1d'+struct.pack('<H',900)+b'\x01'+struct.pack('<H',value)+b'\xff\x03\x00')
+            p.emit('count verified predicate', b'\x46\x9d\x00')
+        expect_class(160)
+        class_op(900,32); expect_class(32); expect_class(129)
+        class_op(900,160); expect_class(160)
+        class_op(900,0); expect_class(1); expect_class(32)
+        class_op(900,129); class_op(900,160); expect_class(160)
+
         touchable(8, True); find(151)
         touchable(8, False); touchable(9, True); find(152)
         touchable(8, True); find(153)
@@ -215,7 +227,13 @@ def source_files(*, masks: bool = False, transitions: bool = False,
         data=ch(b'LECF',ch(b'LOFF',loff)+first+second)
     else:
         data=ch(b'LECF',ch(b'LOFF',bytes((1,1))+struct.pack('<I',30))+ch(b'LFLF',container))
-    index=(ch(b'DOBJ',struct.pack('<H',256)+bytes(1280))
+    object_count=1024 if hit_test_probe else 256
+    initial_classes=[0]*object_count
+    if hit_test_probe:
+        initial_classes[:1000]=[0x80000000]*1000
+        initial_classes[900]=0x80000001
+    dobj=struct.pack('<H',object_count)+bytes(object_count)+b''.join(struct.pack('<I',mask) for mask in initial_classes)
+    index=(ch(b'DOBJ',dobj)
            +ch(b'DSCR',directory(bytes((0,)+(1,)*(len(scripts)-1)),scripts))
            +ch(b'DCOS',directory(bytes((0,1,1)),(0,*costs)))+ch(b'DSOU',directory(b'',[])))
     return {f'ATLANTIS/ATLANTIS.{n:03}':bytes(b^0x69 for b in raw) for n,raw in enumerate((index,data))}

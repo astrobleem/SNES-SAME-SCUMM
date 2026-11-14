@@ -27,8 +27,8 @@ No retries of that implementation or gameplay-state writes were used.
 The generated room-service hit test had rectangle checks but no mutable-class
 filter. The standalone host interpreter's `findObject` already filtered32.
 The correction queries the existing C16 table after a rectangle match,
-preserving source record order, caller X/Y and width state. Missing C16 records
-mean no classes. Ownership alone is not a touchability predicate. No name,
+preserving source record order, caller X/Y and width state. At that checkpoint, missing C16 records meant no classes; the follow-up below
+corrects that incomplete source-initialization contract. Ownership alone is not a touchability predicate. No name,
 object ID, room ID or game title selects the behavior; no memory is allocated.
 The host room-adapter helper now accepts the same class predicate.
 
@@ -57,3 +57,43 @@ Native jar pickup/renaming is NOT_VERIFIED at this source checkpoint.
 Private reports, commands, source/build linkage and interrupted-run evidence:
 `/home/chad/SAME-private-evidence/office-progression-20261114/`.
 No proprietary source payloads, packages, ROMs or captures enter Git.
+
+## Source-class defaults correction
+
+A fresh-ROM office continuation exposed the remaining omission: the cooker
+emitted initial object states and owners but omitted original DOBJ class masks.
+The full source contains 1,395 masks, 994 nonzero. Loading those into 512 mutable
+C16 slots would also exceed capacity; truncating them is not correct.
+
+The cooker now retains the complete checked-by-hash class metadata. Native ROM
+lookup stores dense immutable u32 defaults (5,580 bytes for this source), while
+existing C16 WRAM holds only bounded mutations. Queries fall back to source
+only when no override is present. An explicit zero override hides nonzero
+source classes; restoring the source mask reclaims the mutable record. Actual
+mutation exhaustion still fails explicitly. No additional WRAM or code-cache
+storage is used. All-source manifests missing class metadata are rejected and
+must be recooked. Legacy class-less synthetic inputs retain zero defaults.
+
+Host and native membership, set/clear, pickup, hit testing, and actor mask
+policy use effective classes. Host save/load preserves meaningful zero
+mutations. The source package executable bodies and room payloads are not
+modified to obtain these semantics.
+
+The extended copyright-free native control contains 1,024 source masks
+(1,000 nonzero), overlapping objects, and queries/mutations of object900 beyond
+the former proposed sparse seeding bound. It passes at frame368 with
+`[0,8,9,8,0x1357,8,0,7]`, error0, zero remaining overrides, and no BRK or
+executable-WRAM mirror writes. ROM:
+`87430628c58d0f2d4612c5d338e3c896643bf8e6a991ac4b6ffb286d0eee187f`.
+Native execution took15.437 seconds; the supervisor cleaned up its owned tree.
+
+Two earlier controls are preserved as failures: an assembler width declaration
+encoded a word comparison as a byte, and `BankedLabel+2` lost the ROM bank.
+Both are corrected. The native observer now also verifies the actual word
+comparison and both banked load operands before launching. Source instruction
+model tests alone did not establish correct assembler output.
+
+This qualifies the generic class correction, not the authentic jar action.
+Fresh source-default ROM setup and office continuation remain in progress;
+previous-ROM states will not be reused. Evidence is under the private
+`office-progression-20261114/class-defaults` directory.

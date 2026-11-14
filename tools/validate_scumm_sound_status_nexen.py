@@ -36,7 +36,22 @@ report={'hypothesis':'Original bytecode status queries read logical sound owners
 if a.case == 'cutscene-callback':
  report.update(hypothesis='C19 callback enters ordinary C4 retirement with X8; both callback activations must complete with original locals and no BRK or cache writes', expected=[2,0x1234,0,0,0x1357,0,0,0], case=a.case)
 if a.case == 'object-hit-test':
- report.update(hypothesis='Live-room findObject skips mutable class32 objects, preserves source ordering and does not confuse ownership with touchability', expected=[0,8,9,8,0x1357,8,0,0], case=a.case, exit_condition='sentinel, first error,4096frames or180seconds')
+ report.update(hypothesis='Live-room findObject uses immutable source classes and bounded overrides, preserves ordering and does not confuse ownership with touchability', expected=[0,8,9,8,0x1357,8,0,7], case=a.case, exit_condition='sentinel, first error,4096frames or180seconds')
+ # Check actual assembler encodings too: the source instruction model cannot
+ # detect an immediate-width mismatch or a lost bank on Label+2 relocation.
+ image=rom.read_bytes()
+ def rom_at(address,length):
+  offset=((address>>16)&0x7f)*0x8000+(address&0x7fff)
+  return image[offset:offset+length]
+ query=rom_at(symbols['ScummV5_C16_QueryMask'],32)
+ assert b'\xc9\xff\xff\xf0' in query, 'C16 comparison must encode a word'
+ bridge=rom_at(symbols['ScummV5_C16_QueryInitial'],7)
+ assert bridge[:3]==b'\xc2\x30\x22'
+ target=int.from_bytes(bridge[3:6],'little')
+ source_query=rom_at(target,32)
+ load=b'\xbf'+constant('ScummV5_ObjectClass_Initial_Address').to_bytes(3,'little')
+ assert source_query.count(load)==2, 'both class words must load from the source ROM bank'
+ report['assembled_class_query']={'address':target,'bytes':source_query.hex(),'mask_query':query.hex()}
 if a.case == 'room-hooks':
  report.update(hypothesis='Before/after global room hooks run in source order around EXCD/ENCD through checked C4 activations', expected=[6,1,2,3,0x1357,4,1,5], case=a.case, exit_condition='sentinel, first error, 4096frames or180seconds')
 def save():(out/'report.json').write_text(json.dumps(report,indent=2)+'\n')
@@ -63,6 +78,11 @@ try:
    if error:report['cpu']=s.get_cpu_state();save();raise RuntimeError('native SCUMM error')
    if values[4]==0x1357:
     assert values==report['expected'],values
+    if a.case=='object-hit-test':
+     classes=s.read_memory('snesMemory',constant('SAME_SCUMM_C16_RECORDS'),4096)
+     report['mutable_class_records']=sum(bool(classes[i]) for i in range(0,4096,8))
+     assert report['mutable_class_records']==0, 'restored source defaults must reclaim overrides'
+     report['source_class_count']=constant('ScummV5_ObjectClass_InitialCount')
     assert not report['invalid_execution_events'], 'native BRK or executable WRAM alias write'
     report['result']='NATIVE_OBJECT_HIT_TEST_MATCH' if a.case == 'object-hit-test' else 'NATIVE_ROOM_HOOK_ORDER_MATCH' if a.case == 'room-hooks' else 'NATIVE_CUTSCENE_CALLBACK_MATCH' if a.case == 'cutscene-callback' else 'NATIVE_SOUND_STATUS_QUERY_MATCH';save();break
    if time.monotonic()-begin>(180 if a.case in ('room-hooks', 'object-hit-test') else 90):raise TimeoutError('native observation wall budget')
