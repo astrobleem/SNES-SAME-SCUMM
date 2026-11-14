@@ -1,5 +1,10 @@
 # Office inventory continuation
 
+**Current bounded acceptance:** original Barnett-to-office gameplay now opens
+the ice box, acquires and renames the jar, displays readable inventory and
+continues walking. See the final acceptance below; earlier failed/qualified
+observations remain historical, not alternative passes.
+
 This work continues from Milestone E in PR17. The historical office/coat
 checkpoint is preserved, but its coat reachability is qualified below after
 restoring omitted source classes; it is not a whole-game completion boundary.
@@ -159,3 +164,93 @@ no ACK is sent on behalf of an expired segment. The first BRK hook was
 asynchronous; the installed MCP server does not provide the separately
 documented exact-execution-stop tool. Neither record is described as an exact
 callee-return capture. No camera correction was made from the timeout.
+
+## Corrected-ROM continuous acceptance
+
+Native runtime `2bdea03b8f3c810fb327c0350fea93c72f9f20c6` completes one
+uninterrupted exact-ROM continuation, frames21496–28661. Its legitimate Barnett
+checkpoint already has door34 opened by normal controller input in setup.
+There is one initial restoration and none during the accepted segment; this
+is not cold-start acceptance or a splice of the earlier focused sessions.
+
+| Normal player action | Original executable | Observed result |
+| --- | --- | --- |
+| Walk through door34 | room2 object34, verb10, PC50, canonical232 | Original exit/entry lifecycle reaches office room1 |
+| Open ice box21 | room1 object21, verb3, PC76, canonical168 | Door28 state0→1, bit213 false→true, jar becomes touchable |
+| Pick up jar22 | room1 object22, verb11, PC151, canonical169 | Owner15→1, state0→1, encoded name becomes `jar of mayonnaise` |
+| Open/select inventory, close it | Normal controller menu | Original renamed entry visibly presented; 290 contrasting text pixels |
+| Walk again | Original sentence/input scripts | Ego(199,134), room1 RUNNING, input ready, error0 |
+
+The final newspaper remains owner/state1/1. Coat25 stays owner15/state0; no
+untouchable class is bypassed. The original-body host oracle predicts the
+same door, jar, bit213, name and preserved newspaper results. It covers both
+values of the original description predicates, but is isolated body execution,
+not a host end-to-end playthrough. Captured activations include canonical232
+atPC50/64/115,168 atPC76/81/255, and169 atPC151/293.
+
+Five completed captures (office entry, original ice-box continuation text,
+opened ice box, jar inventory, and continued walking) have zero complete
+source/INDEX8/decoded-PPU differences and matching CGRAM. The readable original
+response is “Guess I should have cleaned it out.” with568 contrasting pixels.
+The first short ice-box segment and the mayonnaise description expired before
+completed capture and remain **NOT_VERIFIED** visually. The inventory's compact
+13-character label is `jar of mayonn`; the full underlying original name is
+preserved. The final walking image uses the actual captured pose, not an
+invented standing animation.
+
+The supervised session completes in557.513 seconds under the unchanged600-second
+process-tree deadline, with normal exit and no owned survivors. The7165 emulated
+frames include the whole route, authored movement, checked resources, presentation
+and observational pacing; this is not a device-throughput or60Hz claim.
+
+### Exact artifacts
+
+| Artifact | SHA-256 |
+| --- | --- |
+| ROM | `c4b2b3b36fa730a85afd03da4114d0821c00dbf4454d4091ac921ad0f2511c76` |
+| Map | `93ddd7ad88c4f9aac57a20920b05cf322354467577e18bb5a39c0081213800d4` |
+| SAMEPKG | `b6afddbf486ee26f85bb444cb03060d9606864138e3d1b3ed282657f77a09111` |
+| Build identity | `b62dad3dbfd0da1df60d8f44a548d38a2613c94b2eb3e0a071ca473d887a9212` |
+
+All160 tracked runtime/host-engine/compiler files match the isolated assembled
+source snapshot byte-for-byte. Later evidence documentation does not change
+ROM bytes or retroactively alter build identity. All2203 canonical ProgramUnits
+and the original deterministic package remain intact. No replacement story
+scripts, gameplay writes, commercial payload commits or new title-specific
+production hooks were used.
+
+Persistent private evidence is in `class-defaults/name-fixed/continuous-final`
+under the root above: complete action journal, source/PPU comparisons, original
+controller command, captures, state/ROM identities and supervisor cleanup.
+`name-fixed/acceptance.json` indexes their hashes and source linkage.
+
+### Preserved observer failures
+
+The first continuous attempt stopped before pickup: coarse cursor release
+landed atx253, outside the jar's source rectangle256–271. The corrected target
+uses its interior; this was a replay placement error, not an engine defect.
+A focused pickup subsequently proved the native rename and continued walking,
+but its menu predicate captured an older blank HUD while text state2 was still
+pending. Its original report is preserved and explicitly qualified by
+`post-capture-qualification.json`; it is not readable-inventory acceptance.
+The final observer requires the expected encoded menu through the existing
+text-composition/commit predicate. The old capture fails that predicate offline.
+Actual final images were inspected after emulator cleanup. Source comparisons
+run from immutable captures after the owned session closes, still within the
+same600-second supervisor. No timeout was extended.
+
+### Validation and remaining scope
+
+Local runtime tests:1753 run,1741 passed,12 skipped. `make validate`,47-region
+WRAM/BW-RAM audit, pinned Poppy assembly and4MiB ROM audit pass. Both required
+hosted jobs pass on runtime2bdea03 in
+[run43629978507](https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43629978507).
+The final documentation head receives its own checks. Hosted assembly is not
+Nexen execution. PR18 remains draft and additive on PR17, with no automatic merge.
+
+This qualifies the requested bounded Milestone E gameplay scope using a
+source-faithful persistent action. It does not qualify the old coat reachability,
+all office puzzles, later dynamic dependencies, full sound realization, portable
+native saves, physical hardware or whole-game completion. Full object refresh
+and presentation remain slow. Whole-game readiness remains NOT_READY; that label
+is a capability boundary, not evidence that the completed bounded route failed.

@@ -4995,3 +4995,23 @@ Open21/Pickup22/inventory/control. No historical seven-action route.
 Full tests/name-full-tests.log running; name-validate.log passed47regions.
 Native exact-exec-stop tool unsupported; asynchronous trace records preserved.
 Camera hypothesis was removed before publication; no renderer changes.
+
+
+2026-11-14 corrected original office progression ACCEPTED:
+Runtime2bdea03, PR18/scumm-fate-office-progression; docs-only follow-up pending.
+Exact ROMc4b2b3b3/map93ddd7ad/packageb6afddbf/buildidentityb62dad3d.
+Private class-defaults/name-fixed/continuous-final: one matching-ROM Barnett
+checkpoint (door already opened normally), frames21496–28661, Walk34->room1,
+Open21->door28state1/bit213, Pickup22->owner1/state1/name jar of mayonnaise,
+readable inventory290pixels, close, continued walk Ego199,134, RUNNING/error0.
+Five whole-scene/font/PPU/CGRAM comparisons exact;557.513sec cleanup complete.
+Newspaper1/1;coat15/0 unchanged. Historical coat acceptance is qualified because
+its ROM omitted source classes. Do not call it authentic reachable pickup.
+Expired first icebox and mayonnaise dialogue are visually NOT_VERIFIED.
+Focused jar report's blank menu image is qualified separately; final continuous
+menu fence checks actual expected text and completed publication, images viewed.
+1753 localtests/12skips;validate47regions/pinnedassembly/ROMauditPASS.
+Runtime hostedrun43629978507 bothPASS. Final doc head needs ownCI.
+No gameplay writes/second restore/seven-action replay/recovery modifications.
+The bounded Milestone E route is complete. Whole game remains unqualified;
+no further branch exploration or automatic merges are implied by this proof.
