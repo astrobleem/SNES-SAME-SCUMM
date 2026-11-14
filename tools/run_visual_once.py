@@ -97,11 +97,24 @@ def run_once(command: list[str], out: Path, *, seconds: float = 600,
     known: dict[int, int] = {}
     timed_out = interrupted = False
     result: int | None = None
+    signal_events: list[dict] = []
+    cleanup_survivors: list[dict] = []
+    child = None
     # SIGTERM is a normal supervisor stop, not permission to orphan Xvfb or
     # a detached emulator. Convert it to the same bounded cleanup as Ctrl-C.
     def interrupted_by_signal(signum, frame):
+        signal_events.append({
+            'number': signum, 'name': signal.Signals(signum).name,
+            'elapsed_seconds': round(time.monotonic() - began, 6),
+            'supervisor_pid': os.getpid(),
+            'direct_child_pid': None if child is None else child.pid,
+            'direct_child_returncode': None if child is None else child.poll(),
+            # Python's signal handler does not expose siginfo.si_pid/si_uid.
+            'sender': 'NOT_CAPTURED',
+        })
         raise KeyboardInterrupt
-    previous_term = signal.signal(signal.SIGTERM, interrupted_by_signal)
+    previous_signals = {sig: signal.signal(sig, interrupted_by_signal)
+                        for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
         log = (out / 'process.log').open('wb')
         with log:
@@ -122,7 +135,8 @@ def run_once(command: list[str], out: Path, *, seconds: float = 600,
                 interrupted = True
             finally:
                 # A second termination request cannot interrupt descendant cleanup.
-                signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                for sig in previous_signals:
+                    signal.signal(sig, signal.SIG_IGN)
                 known.update(_descendants(os.getpid()))
                 _signal_known(known, signal.SIGTERM)
                 deadline = time.monotonic() + grace
@@ -153,8 +167,15 @@ def run_once(command: list[str], out: Path, *, seconds: float = 600,
                         time.sleep(0.025)
                     else:
                         known.pop(pid, None)
+                table = _proc_table()
+                cleanup_survivors = [
+                    {'pid': pid, 'start_ticks': start}
+                    for pid, start in known.items()
+                    if table.get(pid, (None, None))[1] == start
+                ]
     finally:
-        signal.signal(signal.SIGTERM, previous_term)
+        for sig, handler in previous_signals.items():
+            signal.signal(sig, handler)
     exit_code = 124 if timed_out else 130 if interrupted else int(result if result is not None else 1)
     report = {
         'schema': 'astra-diagnostic-process-v1',
@@ -166,6 +187,16 @@ def run_once(command: list[str], out: Path, *, seconds: float = 600,
         'timed_out': timed_out,
         'interrupted': interrupted,
         'attempts': 1,
+        'termination_reason': ('supervisor_deadline' if timed_out else
+                               'supervisor_signal' if signal_events else
+                               'supervisor_interrupt_without_signal_record' if interrupted else
+                               'validator_signal' if result is not None and result < 0 else
+                               'normal_exit' if result == 0 else 'validator_failure'),
+        'signals': signal_events,
+        'validator_returncode_before_cleanup': result,
+        'direct_child_returncode_after_cleanup': None if child is None else child.returncode,
+        'cleanup_survivors': cleanup_survivors,
+        'cleanup_complete': not cleanup_survivors,
         'native_acceptance': 'NOT_INFERRED_FROM_PROCESS_EXIT',
         'scope': 'Read the actual validator report; exit zero is not image correctness.'
     }

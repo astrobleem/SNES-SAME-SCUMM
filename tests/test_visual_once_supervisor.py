@@ -50,7 +50,12 @@ class VisualSupervisorTests(unittest.TestCase):
                 out, err = p.communicate(timeout=5)
                 self.assertEqual(p.returncode, 130, err)
                 self.assertFalse(Path(f'/proc/{child_pid}').exists())
-                self.assertTrue(json.loads((root/'process-result.json').read_text())['interrupted'])
+                report=json.loads((root/'process-result.json').read_text())
+                self.assertTrue(report['interrupted'])
+                self.assertEqual(report['termination_reason'],'supervisor_signal')
+                self.assertEqual(report['signals'][0]['name'],'SIGTERM')
+                self.assertEqual(report['signals'][0]['sender'],'NOT_CAPTURED')
+                self.assertTrue(report['cleanup_complete'])
             finally:
                 if p.poll() is None:
                     p.send_signal(signal.SIGTERM);p.communicate(timeout=5)
@@ -63,3 +68,16 @@ class VisualSupervisorTests(unittest.TestCase):
             self.assertEqual(p.returncode,124,err)
             report=json.loads((root/'process-result.json').read_text())
             self.assertTrue(report['timed_out']);self.assertEqual(report['attempts'],1)
+
+    def test_observer_failure_is_distinct_from_signal_and_deadline(self):
+        for code in (0,7):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as d:
+                root=Path(d)/'run'
+                p=self.run_command(root,[sys.executable,'-c',f'raise SystemExit({code})'])
+                _,err=p.communicate(timeout=8)
+                self.assertEqual(p.returncode,code,err)
+                report=json.loads((root/'process-result.json').read_text())
+                self.assertEqual(report['termination_reason'],'normal_exit' if code==0 else 'validator_failure')
+                self.assertEqual(report['validator_returncode_before_cleanup'],code)
+                self.assertEqual(report['signals'],[])
+                self.assertTrue(report['cleanup_complete'])
