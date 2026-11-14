@@ -424,6 +424,18 @@ def capture_committed_surface(session, directory: Path, label: str, *,
     return record
 
 
+def indexed_text_room_is_current(text: bytes, pose: dict) -> bool:
+    """Associate retained text with its room lifetime, not just visible=1.
+
+    Room replacement can discard an overlay while retaining its old bytes.
+    This is only an identity check; matching text still needs the publication
+    fence and independent source-font/pixel comparison.
+    """
+    return (len(text) >= 0x68
+            and int.from_bytes(text[0x64:0x66], 'little') == pose['room']
+            and int.from_bytes(text[0x66:0x68], 'little') == pose['surface_room_generation'])
+
+
 def indexed_text_request_is_composed(text: bytes, raw: bytes, pose: dict,
                                      expected: bytes, *, after_generation: int) -> bool:
     """Reject pending/new raw text paired with a previous surface generation.
@@ -442,7 +454,7 @@ def indexed_text_request_is_composed(text: bytes, raw: bytes, pose: dict,
     delta = (generation - after_generation) & 0xFFFF
     if phase != 1 or word(0x38) != 1 or not 0 < delta < 0x8000 or not word(0x68):
         return False
-    if word(0x64) != pose['room'] or word(0x66) != pose['surface_room_generation']:
+    if not indexed_text_room_is_current(text, pose):
         return False
     pending = pose['backend_pending_generation']
     if generation != pending:
@@ -483,7 +495,7 @@ def indexed_text_committed_candidate(text: bytes, raw: bytes, pose: dict,
         return False
     if not word(0x38) or not word(0x68):
         return False
-    if word(0x64) != pose['room'] or word(0x66) != pose['surface_room_generation']:
+    if not indexed_text_room_is_current(text, pose):
         return False
     length = word(0x24)
     return length == len(expected) and len(raw) >= length and raw[:length] == expected

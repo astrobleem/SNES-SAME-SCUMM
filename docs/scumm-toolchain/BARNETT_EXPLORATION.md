@@ -1,7 +1,55 @@
-# Barnett exploration — Milestone E in progress
+# Barnett office exploration — Milestone E accepted
 
-Milestone D remains accepted at `0740cbca`. This successor work does not
-requalify the taxi/map trip or claim the office is playable yet.
+Milestone D remains accepted at `0740cbca`. Milestone E now qualifies one
+continuous original-controller continuation from Barnett room2 into the office
+(room1), original coat pickup, readable inventory and continued cursor input.
+This is a matching-ROM checkpoint continuation, not a cold-start playthrough.
+The source remains the external DOS-CD archive; no story or guest-state writes.
+
+## Accepted continuation
+
+`office-input-fenced` runs frame19381→25681 in one emulator session. Normal
+input opens door34 (verb3/PC65), walks through it (verb10/PC50), and picks up
+coat25 (verb11/PC53). The original coat carrier activation is observed. Its
+owner changes15→1, state remains0, and classes26/32 match the isolated host
+oracle. Newspaper141 remains owner/state1/1. The inventory visibly lists
+`>coat` and `newspaper`; after closing it, a right-controller edge moves the
+cursor135→137 and the original Open caption is readable. Final room1 is
+RUNNING, error0, input ready, Ego(104,130).
+
+Three completed generations—destination, acquired inventory and continued
+control—have zero full source/INDEX8/decoded-PPU differences and zero CGRAM
+byte differences. Inventory has174 visible-contrast pixels; the final source
+caption has56. The empty initial HUD is correct for its room lifetime and is
+not presented as readable-dialogue evidence. The optional owned-coat Look
+response remains host-only; it was not needed or executed in this acceptance.
+
+Supervisor:445.881 seconds, normal exit,600-second limit, no survivors.
+No intervening state restoration occurs. The starting checkpoint SHA-256 is
+`6a94b2c461989ad55db79580722c87595fdef2a7f4d6a446e1ef5cdc4e91bf53`.
+Runtime source is `ed6d376b62b9f25e3839899e4696211687a02811`; all68 nongenerated
+runtime files match the private build snapshot. ROM/map/package identities
+are recorded below. The later observer/evidence change does not change ROM.
+
+Evidence is private under
+`/home/chad/SAME-private-evidence/milestone-e-exploration-20261114/office-input-fenced/`.
+Its `process-result.json` contains the exact supervised command; observations
+contain the identity-bound journal, snapshots, three source comparisons,
+font comparisons and actual native images. No commercial captures enter Git.
+
+Local validation:1737 tests run,12 skipped; make validate,47-region ownership
+audit, pinned Poppy and4MiB ROM audit pass. Both hosted checks passed runtime
+ed6d376 in [run43601748173](https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43601748173).
+Final observer/evidence HEAD checks are linked from PR17 separately.
+
+The wall-clock diagnostic duration is not a device-throughput or
+60Hz gameplay claim:6300 emulated frames include authored movement, checked
+object refresh, presentation and observer waits. Full object-state refresh
+remains expensive. No unrelated performance change was made. Broader office
+puzzles, native owned-coat description, partial-limb animation semantics,
+full sound realization and portable saves remain outside this acceptance.
+No new engine blocker remains demonstrated on the accepted route; whole-game
+readiness remains NOT_READY.
 
 ## Source-selected route
 
@@ -10,11 +58,11 @@ state1 and clears walkbox16's flags before rebuilding the movement matrix.
 Walk-to (verb10, PC50) loads room1 at PC62 only when the door is open.
 An isolated original-body host control verifies the open operation.
 
-The candidate persistent action in room1 is Pick up coat (object25, verb11,
+The accepted persistent action in room1 is Pick up coat (object25, verb11,
 PC53): ordinary pickup, global10, state0, classes26/32. The isolated host
 control yields owner15→1 and preserves newspaper141 ownership. This is a
 semantic oracle, **not evidence of native reachability or a host playthrough**.
-The exact eventual input/state must come from the installed original room.
+The native continuation above independently verifies reachability and state.
 
 ## Observed exit failure and correction
 
@@ -551,3 +599,36 @@ unchanged package `b6afddbf486ee26f85bb444cb03060d9606864138e3d1b3ed282657f77a09
 and build identity `f80e47e0539a2ffc85dcccae4a12729171214b2b043ecf17bdab4c926df08215`.
 All68 nongenerated runtime files match its private build snapshot. Gameplay
 qualification is pending; synthetic controls do not certify the office route.
+
+## Office scene oracle lifetime correction
+
+Authentic ROMc1a75bd7 passes original startup, newspaper pickup, taxi/map and
+the complete Barnett scene. The map marker now matches its source palette.
+The first continuous office attempt opens door34, enters room1 with error0
+and places Indy at(170,125), then stops on75 HUD differences. The capture
+contains retained text for room2/epoch6 while the scene is room1/epoch7.
+The engine correctly discarded that stale overlay; the private font oracle
+had checked only VISIBLE and incorrectly rendered the previous sentence.
+
+The generic observer now exposes the existing room/epoch association as a
+shared predicate, with a synthetic regression for room changes and revisits.
+An offline copy of the original failed capture compares the correct empty
+HUD and the entire original scene with zero source/INDEX8/PPU differences.
+The initial failed report remains intact. Empty HUD equality is not readable
+dialogue acceptance. The corrected continuous office/coat control must still
+show the new inventory and owned description. No native bytes changed and no
+new ROM or taxi replay is needed for this observer correction.
+
+## Bounded-control outcomes retained
+
+The first room-ready setup used an occupied MCP port8080 and failed before
+restore. Existing unrelated services were untouched; explicit port allocation
+corrected the environment. An expanded continuous control reached the coat
+and exact scene but hit its540-second observer input budget while selecting
+an optional Look action. Another attempt was externally terminated by
+SIGTERM from Codex; supervisor signal attribution and cleanup are preserved.
+A shorter control then exposed a harness edge sent during pending visual
+refresh. The final harness waits for the actual existing resource-ready
+condition before pressing, uses shortest normal menu navigation and compares
+three necessary complete images. It does not increase deadlines, resend
+failed edges, bypass native input ownership or change game timing.

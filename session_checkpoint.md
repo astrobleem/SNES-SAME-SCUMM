@@ -1,3 +1,35 @@
+# Milestone E — continuous office gameplay accepted
+
+Branch: scumm-fate-barnett-exploration; draft PR17 on unchanged PR16.
+Native runtime: ed6d376b62b9f25e3839899e4696211687a02811.
+ROM c1a75bd77d0af4dd75460d9c75a232975499433e056e3f7f8ce71a7d39134372.
+Evidence root: /home/chad/SAME-private-evidence/milestone-e-exploration-20261114.
+
+`office-input-fenced` PASS: one uninterrupted matching-ROM Barnett continuation,
+frame19381→25681. Normal Open34/Walk34 enters office1; Pickup25 yields owner1,
+state0,classes26/32. Newspaper141 remains1/1. Readable coat/newspaper inventory,
+close and cursor135→137, final error0/RUNNING/ready, Ego104,130.
+Three complete source/INDEX8/PPU/CGRAM comparisons pass. Supervisor445.881s,
+normal exit, cleanup complete. No guest writes or intermediate restoration.
+Optional owned-coat Look is host-only and not part of the accepted route.
+
+Current observer correction excludes stale room2/epoch6 HUD bytes from the
+room1/epoch7 image; the failed capture passes exact offline re-evaluation.
+No runtime change/rebuild for that observer fix. Earlier failed controls and
+signal/timeout reports remain preserved. Do not replay setup to test reports.
+
+1737 tests run,12 skipped; validate and47-region ownership audit pass.
+Pinned assembly and4MiB ROM audit pass. Runtime ed6d376 hosted checks pass
+run43601748173. Final observer/evidence commit checks must finish before handoff.
+Completed PR14→15→16 history and progression recovery worktree untouched.
+No automatic merge. Whole-game NOT_READY. Details: BARNETT_EXPLORATION.md.
+
+Prior chronological checkpoint notes preserved in Git and the private copy
+session-checkpoint-before-milestone-e-acceptance.md. Stop gameplay here; finish
+publication/CI and return the bounded Milestone E result.
+
+## Preserved prior checkpoint history
+
 ## Active office continuation
 
 `owned-map-scene-fence` PASS setup: map and complete Barnett matchsource/PPU,
@@ -4895,3 +4927,13 @@ then checked-office-continuation. No earlier ROM states are compatible.
 Final positive native control PASS4 exact images at frame2144;227.104s,
 cleanup complete. Fresh checked-startup now running on auth c1a75bd7.
 Milestone E remains NOT COMPLETE until the office/coat continuation passes.
+
+Latest boundary: checked-barnett passes full scene on c1a75bd7; matching
+checkpoint fresh-barnett-checkpoint is valid. checked-office-continuation
+opens door34 and enters room1 error0. Its75-pixel HUD failure was an oracle
+room-lifetime mismatch (text room2/epoch6 vs scene room1/epoch7); saved capture
+passes exact full-image comparison offline with stale overlay excluded.
+No native change. Generic observer predicate/test added. Final continuous
+run office-room-bound-continuation uses the same Barnett state and corrected
+font oracle, port8093. New full suite and validate running. No coat pass yet.
+Both hosted jobs passed ed6d376 in run43601748173.

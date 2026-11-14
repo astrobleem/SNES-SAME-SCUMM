@@ -121,6 +121,17 @@ class CommittedPoseObserverTests(unittest.TestCase):
         with self.assertRaises(ValueError):probe.indexed_contrast_pixels(b'abc',cgram,background_index=256)
 
 
+    def test_retained_visible_text_does_not_cross_room_lifetimes(self):
+        text = bytearray(128)
+        for offset, value in ((0x64, 7), (0x66, 8), (0x68, 1)):
+            text[offset:offset+2] = value.to_bytes(2, 'little')
+        for room, epoch, expected in ((7,8,True), (9,8,False),
+                                       (7,9,False), (9,9,False)):
+            self.assertEqual(probe.indexed_text_room_is_current(text, {
+                'room': room, 'surface_room_generation': epoch}), expected)
+        self.assertFalse(probe.indexed_text_room_is_current(text[:0x67], {
+            'room': 7, 'surface_room_generation': 8}))
+
     def test_requested_text_cannot_borrow_old_caption_pixels(self):
         text=bytearray(128);expected=b'Look at lamp';pose={'room':4,
             'surface_room_generation':2,'backend_pending_generation':65}
