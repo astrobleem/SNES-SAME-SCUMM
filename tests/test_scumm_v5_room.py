@@ -555,6 +555,10 @@ class ScummV5RawRoomTests(unittest.TestCase):
         self.assertEqual(
             room.hit_test_object(8, 8, object_owners={101: 1}).object_id, 100,
         )
+        self.assertEqual(room.hit_test_object(8, 8, object_owners={100: 1}).object_id, 100)
+        self.assertEqual(room.hit_test_object(8, 8, object_classes={100: {32}}).object_id, 101)
+        self.assertIsNone(room.hit_test_object(8, 8, object_classes={100: {32}, 101: {32}}))
+        self.assertEqual(room.hit_test_object(8, 8, object_classes={100: {6}}).object_id, 100)
 
     def test_authored_verb_directory_excludes_only_the_fallback_entry(self) -> None:
         header = struct.pack("<HBBBBBBhhB", 100, 1, 1, 1, 1, 0, 0, 0, 0, 0)

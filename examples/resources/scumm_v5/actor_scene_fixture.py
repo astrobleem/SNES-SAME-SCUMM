@@ -19,7 +19,9 @@ OBJECT_STAGES = (*STAGES, STAGES[-1])
 
 def source_files(*, masks: bool = False, transitions: bool = False,
                  sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
-                 object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False, one_shot_limb_probe: bool = False) -> dict[str, bytes]:
+                 object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False, one_shot_limb_probe: bool = False, hit_test_probe: bool = False) -> dict[str, bytes]:
+    if hit_test_probe:
+        object_images_probe = True
     base = camera_files()
     decoded = bytes(b ^ 0x69 for b in base['ATLANTIS/ATLANTIS.001'])
     size = int.from_bytes(decoded[34:38], 'big')
@@ -97,6 +99,24 @@ def source_files(*, masks: bool = False, transitions: bool = False,
         room = room.replace(ch(b'EXCD', b'\0'),
             ch(b'EXCD', copy(151, 150)+write(150, 2)+b'\0'))
     p = Program()
+    if hit_test_probe:
+        p.emit('install original room objects', b'\x72\x01')
+        p.emit('visible parent state', bytes((0x07, 8, 0, 1)))
+        def touchable(identity, enabled):
+            p.emit('mutable class32', bytes((0x5d, identity, 0, 1,
+                                            32 if enabled else 160, 0, 255)))
+        def find(variable):
+            p.emit('find overlapping room objects', bytes((0x35, variable, 0, 130, 110)))
+        touchable(8, False); touchable(9, False); find(150)
+        touchable(8, True); find(151)
+        touchable(8, False); touchable(9, True); find(152)
+        touchable(8, True); find(153)
+        # Ownership alone is not a hit-test predicate. Only class32 changes
+        # touchability; absent C16 rows mean no classes, not unselectable.
+        p.emit('change owner without class mutation', bytes((0x29, 8, 0, 1)))
+        find(155)
+        touchable(8, False); touchable(9, False); find(156)
+        p.move(154, 0x1357); p.emit('probe complete', b'\0')
     if room_hook_probe:
         p.emit('initial room without hooks', b'\x72\x01')
         for variable, number in ((30,2),(31,3),(28,4),(29,5)):p.move(variable,number)
@@ -202,11 +222,11 @@ def source_files(*, masks: bool = False, transitions: bool = False,
 
 def write_archive(path: Path, *, masks: bool = False, transitions: bool = False,
                   sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
-                  object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False, one_shot_limb_probe: bool = False) -> None:
+                  object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False, one_shot_limb_probe: bool = False, hit_test_probe: bool = False) -> None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as archive:
         for name,data in source_files(masks=masks,transitions=transitions,
                                       sound_status_probe=sound_status_probe, cutscene_callback_probe=cutscene_callback_probe, room_hook_probe=room_hook_probe,
-                                      object_images_probe=object_images_probe, absent_animation_probe=absent_animation_probe, walkbox_mask_probe=walkbox_mask_probe, one_shot_limb_probe=one_shot_limb_probe).items():
+                                      object_images_probe=object_images_probe, absent_animation_probe=absent_animation_probe, walkbox_mask_probe=walkbox_mask_probe, one_shot_limb_probe=one_shot_limb_probe, hit_test_probe=hit_test_probe).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             archive.writestr(info,data)
 
@@ -219,6 +239,7 @@ if __name__=='__main__':
     parser.add_argument('--absent-animation-probe', action='store_true')
     parser.add_argument('--walkbox-mask-probe', action='store_true')
     parser.add_argument('--one-shot-limb-probe', action='store_true')
+    parser.add_argument('--hit-test-probe', action='store_true')
     args=parser.parse_args();write_archive(args.output,masks=args.masks,transitions=args.transitions,
                                          sound_status_probe=args.sound_status_probe, cutscene_callback_probe=args.cutscene_callback_probe, room_hook_probe=args.room_hook_probe,
-                                         object_images_probe=args.object_images_probe, absent_animation_probe=args.absent_animation_probe, walkbox_mask_probe=args.walkbox_mask_probe, one_shot_limb_probe=args.one_shot_limb_probe)
+                                         object_images_probe=args.object_images_probe, absent_animation_probe=args.absent_animation_probe, walkbox_mask_probe=args.walkbox_mask_probe, one_shot_limb_probe=args.one_shot_limb_probe, hit_test_probe=args.hit_test_probe)

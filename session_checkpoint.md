@@ -1,3 +1,29 @@
+# Active continuation — office inventory and onward gameplay
+
+User resumed the broader playable-game mission after E. Do not stop solely
+because the previous bounded E acceptance is complete. Branch
+scumm-fate-office-progression starts at575d021, preserving PR17 and recovery.
+Private evidence: /home/chad/SAME-private-evidence/office-progression-20261114.
+
+Original office Open21/PC76 reveals jar22; Pickup22/PC151 changes owner to1,
+state1, classes16/32 and original name "jar of mayonnaise". Isolated host
+original-body cases agree for both authored text predicates.
+First exact-ROM office continuation exposed a real generic hit-test defect:
+class32 floor object30 intercepted a normal Walk click and sent Ego toward
+its default object point. Stopped the owned supervisor at95.382s; cleanup
+complete. No unchanged retry or game-state writes.
+
+Generated room-service hit testing now queries existing mutable C16 class32
+before returning a rectangle match. Host room helper receives the same class
+contract; ownership alone is not exclusion. Synthetic Nexen accepts
+[0,8,9,8,0x1357,8,0,0] atframe360,error0,17.976s including cleanup.
+Authentic corrected ROMc90b8812 is assembled/audited; fresh matching setup is
+underway because the previous ROM's state cannot be restored into it.
+Continue to the new office sequence after focused conformance/full tests.
+No acceptance of new jar gameplay yet; no automatic merge.
+
+## Preserved Milestone E checkpoint
+
 # Milestone E — continuous office gameplay accepted
 
 Branch: scumm-fate-barnett-exploration; draft PR17 on unchanged PR16.
