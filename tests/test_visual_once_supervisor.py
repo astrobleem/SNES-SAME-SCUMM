@@ -26,7 +26,8 @@ class VisualSupervisorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)/'run'
             p = self.run_command(root, [sys.executable, '-c',
-                'import os;assert "DISPLAY" not in os.environ;assert "XAUTHORITY" not in os.environ'])
+                'import os,signal;assert "DISPLAY" not in os.environ;assert "XAUTHORITY" not in os.environ;'
+                'assert not {signal.SIGTERM,signal.SIGINT}&signal.pthread_sigmask(signal.SIG_BLOCK,[])'])
             out, err = p.communicate(timeout=8)
             self.assertEqual(p.returncode, 0, err)
             self.assertEqual(json.loads((root/'process-result.json').read_text())['attempts'], 1)
@@ -54,7 +55,8 @@ class VisualSupervisorTests(unittest.TestCase):
                 self.assertTrue(report['interrupted'])
                 self.assertEqual(report['termination_reason'],'supervisor_signal')
                 self.assertEqual(report['signals'][0]['name'],'SIGTERM')
-                self.assertEqual(report['signals'][0]['sender'],'NOT_CAPTURED')
+                self.assertEqual(report['signals'][0]['sender']['pid'],os.getpid())
+                self.assertEqual(report['signals'][0]['sender']['uid'],os.getuid())
                 self.assertTrue(report['cleanup_complete'])
             finally:
                 if p.poll() is None:

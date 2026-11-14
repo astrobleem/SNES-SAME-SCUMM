@@ -102,19 +102,20 @@ def run_once(command: list[str], out: Path, *, seconds: float = 600,
     child = None
     # SIGTERM is a normal supervisor stop, not permission to orphan Xvfb or
     # a detached emulator. Convert it to the same bounded cleanup as Ctrl-C.
-    def interrupted_by_signal(signum, frame):
+    def interrupted_by_signal(signum, frame, sender='NOT_CAPTURED'):
         signal_events.append({
             'number': signum, 'name': signal.Signals(signum).name,
             'elapsed_seconds': round(time.monotonic() - began, 6),
             'supervisor_pid': os.getpid(),
             'direct_child_pid': None if child is None else child.pid,
             'direct_child_returncode': None if child is None else child.poll(),
-            # Python's signal handler does not expose siginfo.si_pid/si_uid.
-            'sender': 'NOT_CAPTURED',
+            # The startup handler has no siginfo; the supervision loop does.
+            'sender': sender,
         })
         raise KeyboardInterrupt
     previous_signals = {sig: signal.signal(sig, interrupted_by_signal)
                         for sig in (signal.SIGTERM, signal.SIGINT)}
+    previous_mask = None
     try:
         log = (out / 'process.log').open('wb')
         with log:
@@ -122,7 +123,22 @@ def run_once(command: list[str], out: Path, *, seconds: float = 600,
             try:
                 child = subprocess.Popen(argv, env=env, stdout=log, stderr=subprocess.STDOUT,
                                          start_new_session=True)
+                # Block only in the supervisor, AFTER spawning the child. Its
+                # descendants must retain ordinary signal delivery for cleanup.
+                # sigtimedwait preserves sender identity instead of mistaking an
+                # external stop for an emulator failure or our own deadline.
+                previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, previous_signals)
                 while True:
+                    info = signal.sigtimedwait(previous_signals, 0)
+                    if info is not None:
+                        try:
+                            sender_name = Path(f'/proc/{info.si_pid}/comm').read_text().strip()
+                        except OSError:
+                            sender_name = 'NOT_CAPTURED'
+                        interrupted_by_signal(info.si_signo, None, {
+                            'pid': info.si_pid, 'uid': info.si_uid,
+                            'code': info.si_code, 'process_name': sender_name,
+                        })
                     known.update(_descendants(os.getpid()))
                     result = child.poll()
                     if result is not None:
@@ -174,6 +190,10 @@ def run_once(command: list[str], out: Path, *, seconds: float = 600,
                     if table.get(pid, (None, None))[1] == start
                 ]
     finally:
+        # Cleanup installed SIG_IGN before touching descendants. Restore the
+        # mask while those dispositions still apply, then restore handlers.
+        if previous_mask is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         for sig, handler in previous_signals.items():
             signal.signal(sig, handler)
     exit_code = 124 if timed_out else 130 if interrupted else int(result if result is not None else 1)

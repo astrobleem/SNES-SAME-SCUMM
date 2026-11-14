@@ -293,3 +293,31 @@ hosted jobs pass on b01e26c in [run43560251770](https://github.com/astrobleem/SN
 Hosted checks do not execute Nexen. The authentic taxi/map/college continuation
 uses this exact-ROM checkpoint and is reported independently; no old-ROM state
 is substituted and the checkpoint prefix is not claimed as one cold session.
+
+## Authentic Barnett scene boundary
+
+The exact text-lease ROM above now passes a complete room2 source/INDEX8/PPU/
+CGRAM comparison in `college-presented-control`, frame17416. Captured source
+poses contain Indy/costume1/frame3/facing180 at50/50 (41 visible pixels), and
+actor5/costume78/frame3/facing90 at255/255 (178 visible pixels). The original
+plane1 hides four actor5 pixels. These counts now have native full-image proof;
+they are no longer only an offline prediction. Room2 is RUNNING/error0 and
+newspaper owner/state remain1/1.
+
+This is an exact-ROM checkpoint continuation, not yet a continuous taxi-through-
+interaction acceptance. Earlier observers stopped during measurable camera and
+scene progress, not a demonstrated deadlock. `college-pipeline-observer` records
+both actors completing, scene acknowledgement, then checked camera reads. The
+fine-polling observer reached its200sec observation budget; batched polling later
+hit its2200-frame cap at a complete queued image. Both failed observations remain
+preserved. Generation fences were not relaxed. The subsequent completed image
+matched exactly.
+
+The walking continuation was externally interrupted: SIGTERM reached the
+supervisor after36.282sec, with no deadline expiry, followed by complete owned
+process cleanup. Sender identity was not captured by that version. The launcher
+now uses parent-only `sigtimedwait` after child creation to record signal sender
+PID/UID/code and process name. Child signal masks remain unblocked; process-only
+tests verify signal provenance, detached-child cleanup, failure classification,
+deadlines and desktop-environment removal. This operational correction does not
+change the ROM or claim the interrupted gameplay control passed.

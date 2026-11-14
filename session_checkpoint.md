@@ -29,10 +29,16 @@ cold-scene-text-lease PASSED five exact scene/text captures,590.929sec,cleanup c
 First two original dialogue captures and verb menu pass source/INDEX8/PPU/CGRAM.
 Second dialogue includes the clipped actor11 pose; queued text remains pending
 while scene owns damage. Normal pickup/inventory close checkpoint frame8769, newspaper1/1,error0.
-travel-text-lease.py is now running from that exact-ROM room10-travel-checkpoint;
-port7976 under600sec canonical supervisor. Never restore older ROM states. Its goal is continuous original taxi,
-map callback, room2 complete scene, normal walk and automobile Look-at response.
-Previous session cleanup verified; unrelated Nexen port7381 remains untouched.
+travel-text-lease reached2 RUNNING/error0 and preserved inventory, but its
+presentation observation expired. Read-only96frame trace disproved a stuck
+scene: both actors completed then camera advanced. Subsequent college-presented-
+control passes the full Barnett source/INDEX8/PPU/CGRAM image atframe17416:
+Indy50/50,41pixels; actor5/costume78,178visible/4occluded bysourceplane1.
+Walking interrupted by externalSIGTERM36.282sec; cleanup complete, sender unknown.
+Launcher now captures sender identity via parent-only sigtimedwait (4process tests
+PASS). college-player-input is a bounded exact-ROM continuation from the verified
+room2 scene; port7988. No continuous taxi-through-interaction proof yet.
+0125dbc hostedrun43561170331 bothjobsPASS. Recovery untouched.
 
 Full suite text-lease:1684run/12skips,OK,344.609sec.
 make validate/44regions, pinned full assembly and4MiB ROM audit pass.
