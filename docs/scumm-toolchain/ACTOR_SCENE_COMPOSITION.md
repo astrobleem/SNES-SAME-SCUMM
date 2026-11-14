@@ -171,3 +171,24 @@ ROM SHA-256: `e9042479207e2dfd80e36941625227d78278dad063e85db5e04e6de129e9bae9`.
 The supervisor recorded validator failure after 568.281 seconds, no deadline
 or external signal, complete cleanup and no survivors. The captured state is
 preserved; it must not be restored into the corrected ROM.
+
+### Checked-mask native rejection
+
+`native-mask-crc-cleanup-fence` changes one six-byte RLE mask block in an
+isolated copyright-free package, retaining the original descriptor CRC.
+Nexen observes provider CRC error 6 and SCUMM resource error 16 at frame 718.
+The synchronous underlay rollback is still executing at that frame boundary;
+by frame 734 the scene phase and composition fence are zero. Completed scene
+count remains zero. No corrupt mask scene is published. The supervisor exits
+normally after 53.292 seconds with complete cleanup and no surviving children.
+This is a rejection control, not a successful graphics capture.
+
+The preceding `native-mask-crc-public` observer incorrectly required rollback
+to have completed at the first error-byte observation. Its failed assertion is
+preserved. The corrected observer allows at most 32 frames for actual cleanup
+and continues to reject any scene publication throughout that interval.
+
+Fault package SHA-256:
+`14c4c951cc2fefe06202686790008385b7f473135511db56217235b74548d119`.
+The private fault manifest retains the original package hash, exact block
+identity, package offset, size and expected CRC. Original package is intact.

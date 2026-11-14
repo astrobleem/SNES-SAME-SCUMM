@@ -35,8 +35,12 @@ def main():
     for key in ('rom','directory','archive','profile','nexen','native-core','mcp-python','output'):ap.add_argument('--'+key,type=Path,required=True)
     ap.add_argument('--port',type=int,required=True)
     ap.add_argument('--masks',action='store_true')
+    ap.add_argument('--expect-mask-crc-error',type=Path,metavar='FAULT_MANIFEST',
+                    help='negative control: isolated package with one intentionally corrupt checked mask block')
 
     args=ap.parse_args()
+    if args.expect_mask_crc_error and not args.masks:
+        ap.error('mask CRC control requires the original masked fixture')
     if not re.fullmatch(r':\d+',os.environ.get('DISPLAY','')) or not Path(os.environ.get('XAUTHORITY','/missing')).is_file():
         ap.error('canonical private Xvfb supervisor required')
     sys.path.insert(0,str(args.mcp_python))
@@ -82,6 +86,18 @@ def main():
     args.output.mkdir(parents=True,exist_ok=False)
     report=dict(result='NOT_VERIFIED',hypothesis='Ordered checked cels reproduce source phase scaling at255,231,asymmetric,mirrored and clipped poses; multichunk publication is complete and old pixels restore.',expected='8 acknowledged stages; 9 source/INDEX8/VRAM/CGRAM matches including two animation steps; error0',exit_condition='first failed boundary or all captures;540sec internal/600sec supervisor',kind='COPYRIGHT_FREE_NATIVE_SCALING',identities={ext:sha(args.rom.with_suffix(ext)) for ext in ('.sfc','.map','.msu','.build_identity.json')},archive_sha256=sha(args.archive),boot_identity=boot,samples=[],captures=[],acknowledgements=[])
     report.update(hypothesis='Two independently scaled/animated source actors compose in source Y/ID order and restore their overlapping old coverage.',expected='3 staged scene captures plus a second animated scene; complete source/INDEX8/PPU/CGRAM equality',kind='COPYRIGHT_FREE_NATIVE_ACTOR_SCENE')
+    if args.expect_mask_crc_error:
+        import zlib
+        fault=json.loads(args.expect_mask_crc_error.read_text())
+        package=args.rom.with_suffix('.msu').read_bytes()
+        block=fault['block'];offset=int(block['package_offset']);length=int(block['length'])
+        assert sha(args.rom.with_suffix('.msu'))==fault['fault_package_sha256']
+        assert fault['source_package_sha256']!=fault['fault_package_sha256']
+        assert 0<=offset<=len(package)-length and 0<length<=256
+        assert zlib.crc32(package[offset:offset+length])&0xffffffff != int(block['crc32'],16)
+        report.update(kind='COPYRIGHT_FREE_NATIVE_MASK_CRC_REJECTION',fault_manifest=fault,
+                      hypothesis='A corrupt checked mask block cannot publish any part of the first actor scene',
+                      expected='SCUMM resource error16 and provider CRC error6; zero completed actor scenes')
     def save():
         p=args.output/'report.pending.json';p.write_text(json.dumps(report,indent=2)+'\n');p.replace(args.output/'report.json')
     started=time.monotonic()
@@ -107,7 +123,7 @@ def main():
             if row['scene_phase'] in (1,2) and previous['scene_phase'] in (1,2):
                 assert pose['surface_next_generation']==previous['pose']['surface_next_generation'], 'partial scene publication'
                 assert pose['composition_active'], 'incomplete scene lost owner'
-        if row['frame']>100 and pose['error']:raise RuntimeError(f"SCUMM error{pose['error']} stage{stage}")
+        if row['frame']>100 and pose['error'] and not args.expect_mask_crc_error:raise RuntimeError(f"SCUMM error{pose['error']} stage{stage}")
         if time.monotonic()-started>540 or row['frame']>12000:raise TimeoutError('bounded native control deadline')
         return r,row
     def compare(session,r,row,expected,label):
@@ -149,6 +165,26 @@ def main():
     try:
         with ms.McpSession(rom=args.rom,mesen=args.nexen,cwd=args.rom.parent,port=args.port,boot_wait=2,socket_timeout=12,stderr_log=args.output/'nexen.stderr.log') as session:
             session.pause();session.set_input(0,1)
+            if args.expect_mask_crc_error:
+                first_error_frame = None
+                for _ in range(500):
+                    r,row=sample(session)
+                    if row['pose']['error']:
+                        report['msu_error']=r.read_u8(sym('SAME_MSU1_ERROR'))
+                        assert row['pose']['error']==16 and report['msu_error']==6
+                        assert row['scene_generation']==0, 'failed actor scene was published'
+                        # An emulated frame stop can interrupt the synchronous
+                        # underlay rollback after the error byte is written.
+                        # Observe cleanup completion, never infer it from error.
+                        if first_error_frame is None:
+                            first_error_frame = row['frame']
+                            report['first_error_frame'] = first_error_frame
+                        if row['scene_phase']==0 and not row['pose']['composition_active']:
+                            report['result']='NATIVE_MASK_CRC_REJECTED_BEFORE_SCENE_PUBLICATION';save()
+                            return 0
+                        assert row['frame'] - first_error_frame < 32, 'mask failure cleanup did not finish'
+                    advance_bounded(session,8)
+                raise TimeoutError('expected checked mask rejection not observed')
             for stage,expected in enumerate(stages,1):
                 seen=set();first=None; previous_generation=report['captures'][-1]['scene_generation'] if report['captures'] else 0
                 while True:
