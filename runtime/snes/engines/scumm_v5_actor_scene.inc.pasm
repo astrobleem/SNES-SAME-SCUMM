@@ -842,6 +842,9 @@ ScummV5_Scene_Render__begun:
     lda #$0001
     sta.l SAME_SCUMM_SCENE_PHASE
     sta.l SAME_SCUMM_CURSOR_COMPOSING
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    sta.l SAME_VIDEO_SURFACE_COMPOSITION_OWNER
+    .endif
     sep #$20
     .a8
     sta.l SAME_SCUMM_CEL_VALID
@@ -955,6 +958,9 @@ ScummV5_Scene_Render__submitted:
     sta.l SAME_SCUMM_SCENE_PHASE
     lda #$0000
     sta.l SAME_SCUMM_CURSOR_COMPOSING
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    sta.l SAME_VIDEO_SURFACE_COMPOSITION_OWNER
+    .endif
     sep #$20
     .a8
     sta.l SAME_SCUMM_CEL_VALID
@@ -1104,6 +1110,9 @@ ScummV5_Scene_Abort__clear:
     sta.l SAME_SCUMM_SCENE_PHASE
     sta.l SAME_SCUMM_SCENE_INITIALIZED
     sta.l SAME_SCUMM_CURSOR_COMPOSING
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    sta.l SAME_VIDEO_SURFACE_COMPOSITION_OWNER
+    .endif
     sep #$20
     .a8
     sta.l SAME_SCUMM_CEL_VALID

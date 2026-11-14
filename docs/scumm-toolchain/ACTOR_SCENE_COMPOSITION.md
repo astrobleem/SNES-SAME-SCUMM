@@ -244,3 +244,27 @@ resource identity/lifecycle/revisit handling, not different-room artwork.
 Runtime source matches `cfcc07e`; build snapshot is separately recorded.
 Full local suite: 1,681 run, 12 skipped, OK. Validation and 44-region ownership
 audit pass. Authentic Barnett acceptance remains separate and pending.
+
+
+## Shared scene/text damage ownership
+
+The fresh `cold-room-owner` authentic run exposed a concrete publication bug,
+not an emulator timeout: at generation21 the queued INDEX8 image contained
+actor11's clipped costume, but the committed PPU lacked1,994 pixels at
+x225..255/y39..166. CGRAM matched. The shared damage rectangle had been
+replaced by the subtitle rectangle during asynchronous actor composition.
+ROM `03e2b677a64c53eb40150519c90b8fcc8e5ed7066d17d1276c244959b945a24a`;
+the failed capture and complete supervisor cleanup remain in private evidence.
+
+The indexed overlay now respects a neutral composition-ownership word at
+text-state offset `$6C` inside its existing128-byte carrier allocation. Scene
+begin claims it; successful PRESENT submission or cancellation releases it.
+Text admission, pending composition and hide all consult that fence before
+changing shared damage or pixels. Queued original text retains its immutable
+request. Surface writability remains available to the owning compositor;
+no new framebuffer, cache allocation, DMA budget or script timing change.
+
+`test_scene_text_ownership` executes the production fence and checks writable,
+backend-busy and owned states, all three text entry paths, and scene lifetime
+release. These are host source-execution tests, not native acceptance. The
+corrected authentic build is recorded separately; its native result is pending.
