@@ -4,33 +4,23 @@
 ; Return A=1/C=0 while the recorded child is still waiting, A=0/C=0 when the
 ; room lifecycle may continue, or C=1 after stale ownership/child failure.
 ScummV5_M23A_RunPendingLifecycleChild_FarEntry:
-    sep #$20
+    ; The direct ENCD/EXCD runner owns slot zero, but its checked-read child
+    ; may itself have parked at StartScript. Service the deepest exact ticket,
+    ; not the first parent repeatedly. No unrelated activation runs here.
+    jsl ScummV5_M23A_SelectLifecycleChild_Far
+    bcc ScummV5_M23A_RunPendingLifecycleChild_FarEntry__selected
+    jmp ScummV5_M23A_RunPendingLifecycleChild_FarEntry__stale
+ScummV5_M23A_RunPendingLifecycleChild_FarEntry__selected:
     .a8
-    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT
+    cmp #$00
     bne ScummV5_M23A_RunPendingLifecycleChild_FarEntry__has_child
     jmp ScummV5_M23A_RunPendingLifecycleChild_FarEntry__no_child
 ScummV5_M23A_RunPendingLifecycleChild_FarEntry__has_child:
     .a8
-    dec
-    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
-    bcc ScummV5_M23A_RunPendingLifecycleChild_FarEntry__slot_valid
-    jmp ScummV5_M23A_RunPendingLifecycleChild_FarEntry__stale
-ScummV5_M23A_RunPendingLifecycleChild_FarEntry__slot_valid:
-    .a8
-    sta.l SAME_SCUMM_C4_SCAN_SLOT
-    ; TAX into X16 copies the hidden accumulator B byte even in A8 mode.
-    ; A prior camera/message wait can leave a nonzero high byte here.
-    rep #$30
-    .a16
     .i16
-    and #$00FF
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_C4_SLOT_PROGRAM,x
-    cmp.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM
-    beq ScummV5_M23A_RunPendingLifecycleChild_FarEntry__identity_valid
-    jmp ScummV5_M23A_RunPendingLifecycleChild_FarEntry__stale
+    ; Y is the immediate ticket owner. Keep it on the native stack across
+    ; VM calls, which are allowed to overwrite all scheduler scratch fields.
+    phy
 ScummV5_M23A_RunPendingLifecycleChild_FarEntry__identity_valid:
     .a8
     lda.l SAME_SCUMM_C4_SLOT_STATUS,x
@@ -49,8 +39,7 @@ ScummV5_M23A_RunPendingLifecycleChild_FarEntry__not_stopped:
     jmp ScummV5_M23A_RunPendingLifecycleChild_FarEntry__clear
 ScummV5_M23A_RunPendingLifecycleChild_FarEntry__needs_service:
     .a8
-    ; Run only the exact child retained by the M23B nesting frame.  The
-    ; lifecycle parent remains slot zero and is rehydrated on the next pass.
+    ; Run the selected descendant. Slot zero is rehydrated on every return.
     lda.l SAME_SCUMM_C4_SCAN_SLOT
     sta.l SAME_SCUMM_C4_CURRENT_SLOT
     rep #$30
@@ -105,10 +94,19 @@ ScummV5_M23A_RunPendingLifecycleChild_FarEntry__run_not_running:
     jmp ScummV5_M23A_RunPendingLifecycleChild_FarEntry__still_waiting
 
 ScummV5_M23A_RunPendingLifecycleChild_FarEntry__clear:
+    rep #$10
+    .i16
     .a8
+    ply
+    tyx
     lda #$00
-    sta.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT
-    sta.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    sta.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    ; A descendant reached its source boundary. Its immediate parent must
+    ; resume next, before the lifecycle root is allowed past StartScript.
+    cpx #$0000
+    beq ScummV5_M23A_RunPendingLifecycleChild_FarEntry__restore_parent
+    jmp ScummV5_M23A_RunPendingLifecycleChild_FarEntry__wait_unstacked
 ScummV5_M23A_RunPendingLifecycleChild_FarEntry__restore_parent:
     .a8
     lda #$00
@@ -139,6 +137,10 @@ ScummV5_M23A_RunPendingLifecycleChild_FarEntry__no_child:
     rtl
 
 ScummV5_M23A_RunPendingLifecycleChild_FarEntry__still_waiting:
+    rep #$10
+    .i16
+    ply
+ScummV5_M23A_RunPendingLifecycleChild_FarEntry__wait_unstacked:
     .a8
     lda #SCUMM_VM_WAIT_RESOURCE
     sta.l SAME_SCUMM_C4_SLOT_STATUS
@@ -163,6 +165,10 @@ ScummV5_M23A_RunPendingLifecycleChild_FarEntry__still_waiting:
     rtl
 
 ScummV5_M23A_RunPendingLifecycleChild_FarEntry__child_error:
+    rep #$10
+    .i16
+    ply
+ScummV5_M23A_RunPendingLifecycleChild_FarEntry__error_unstacked:
     .a8
     lda #SCUMM_VM_ERROR
     sta.l SAME_SCUMM_C4_SLOT_STATUS
@@ -189,4 +195,70 @@ ScummV5_M23A_RunPendingLifecycleChild_FarEntry__stale:
     .a8
     lda #SCUMM_ERR_RESOURCE
     jsl ScummV5_M23A_SetError_FarThunk
-    jmp ScummV5_M23A_RunPendingLifecycleChild_FarEntry__child_error
+    jmp ScummV5_M23A_RunPendingLifecycleChild_FarEntry__error_unstacked
+
+; A8/X16/Y16: A=1, X=child, Y=immediate parent, C=0; A=0 if no
+; lifecycle dependency; C=1 for out-of-range, stale selector, or cyclic chain.
+; The hop bound is the existing C4 capacity. All addresses remain slot-bounded.
+ScummV5_M23A_SelectLifecycleChild_Far:
+    rep #$30
+    .a16
+    .i16
+    ldx #$0000
+    ldy #SCUMM_V5_MAX_SCRIPT_SLOTS
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT
+    bne ScummV5_M23A_SelectLifecycleChild__edge
+    clc
+    rtl
+ScummV5_M23A_SelectLifecycleChild__edge:
+    .a8
+    .i16
+    dec
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_M23A_SelectLifecycleChild__invalid
+    sta.l SAME_SCUMM_C4_SCAN_SLOT
+    phx
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_PROGRAM,x
+    pha
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C4_SCAN_SLOT
+    and #$00FF
+    tax
+    sep #$20
+    .a8
+    pla
+    cmp.l SAME_SCUMM_C4_SLOT_PROGRAM,x
+    bne ScummV5_M23A_SelectLifecycleChild__stale
+    lda.l SAME_SCUMM_C4_SLOT_STATUS,x
+    cmp #SCUMM_VM_WAIT_RESOURCE
+    bne ScummV5_M23A_SelectLifecycleChild__chosen
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    beq ScummV5_M23A_SelectLifecycleChild__chosen
+    ; Preserve the child in X while discarding its parent's saved index.
+    rep #$20
+    .a16
+    pla
+    sep #$20
+    .a8
+    dey
+    beq ScummV5_M23A_SelectLifecycleChild__invalid
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
+    bra ScummV5_M23A_SelectLifecycleChild__edge
+ScummV5_M23A_SelectLifecycleChild__chosen:
+    .a8
+    .i16
+    ply
+    lda #$01
+    clc
+    rtl
+ScummV5_M23A_SelectLifecycleChild__stale:
+    .a8
+    .i16
+    plx
+ScummV5_M23A_SelectLifecycleChild__invalid:
+    .a8
+    sec
+    rtl

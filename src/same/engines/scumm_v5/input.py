@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import IntEnum
 
 from ...services import InputEvent, InputEventType
 
@@ -107,3 +108,23 @@ class ScummV5InputAdapter:
         elif event.type is InputEventType.QUIT:
             self.state.quit_requested = True
         return self.state
+
+
+class ClickArea(IntEnum):
+    """SCUMM v5 runInputScript ABI, not a semantic sentence verb."""
+
+    VERB = 1
+    SCENE = 2
+    INVENTORY = 3
+    KEY = 4
+    SENTENCE = 5
+
+
+@dataclass(frozen=True, slots=True)
+class InputScriptRequest:
+    serial: int
+    room_epoch: int
+    script: int
+    area: ClickArea
+    value: int
+    mode: int

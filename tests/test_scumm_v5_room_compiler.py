@@ -403,6 +403,24 @@ class ScummV5RoomCompilerTests(unittest.TestCase):
         self.assertEqual(dependency.source_pc, 0)
         self.assertIn("variable-indirect", dependency.expression or "")
 
+    def test_normalized_actor_commands_retain_resource_dependencies(self) -> None:
+        compilation = _compile(1, source_rooms()[1])
+        script = decode_script(
+            bytes((0x13, 1, 1, 78, 3, 9, 0x81, 12, 0, 0xff, 0)),
+            identity="room.1/ENCD-actors", kind="ENCD", number=None,
+            room=1, resource_key="room.1", game_name="synthetic-conformance",
+            source_member="fixture", resource_offset=0, source_offset=500)
+        report = analyze_room(replace(compilation.room_ir, objects=(), scripts=(script,)),
+                              global_script_count=200)
+        self.assertEqual({(d.kind, d.target) for d in report.static_dependencies},
+                         {('costume', 78), ('sound', 9)})
+        self.assertEqual([(d.kind, d.target) for d in report.dynamic_dependencies],
+                         [('costume', None)])
+        from same.engines.scumm_v5.room_compiler import actor_resource_references
+        references = list(actor_resource_references(dict(script.instructions[0].operands)))
+        self.assertEqual(len(references), 3)
+        self.assertEqual([subop for subop, _ in references], [1, 3, 1])
+
     def test_load_room_with_ego_decodes_all_direct_and_variable_forms(self) -> None:
         cases = (
             (0x24, bytes((0x53, 0x03, 63)), 851, 63),

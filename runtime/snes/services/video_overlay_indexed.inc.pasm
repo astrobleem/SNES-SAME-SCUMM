@@ -45,6 +45,10 @@ SAME_TEXT_ROOM = SAME_VIDEO_TEXT_STATE+$64
 SAME_TEXT_ROOM_GENERATION = SAME_VIDEO_TEXT_STATE+$66
 SAME_TEXT_VISIBLE = SAME_VIDEO_TEXT_STATE+$68
 SAME_TEXT_TALK_GENERATION = SAME_VIDEO_TEXT_STATE+$6A
+; Existing 128-byte overlay allocation. An asynchronous scene producer owns
+; shared INDEX8 damage until its complete PRESENT is queued or it rolls back.
+; Queued text remains immutable while this lease is held.
+SAME_VIDEO_SURFACE_COMPOSITION_OWNER = SAME_VIDEO_TEXT_STATE+$6C
 
 Same_VideoOverlay_Reset_Far:
     .a16
@@ -116,6 +120,22 @@ Same_Text_Frame_done:
     plp
     rtl
 
+; Neutral producer fence: the owning scene still uses surface CanWrite while
+; composing, but other indexed producers may not overwrite its damage or
+; publish any of its partially drawn pixels.
+Same_VideoOverlay_CanCompose_Far:
+    php
+    rep #$20
+    .a16
+    lda.l SAME_VIDEO_SURFACE_COMPOSITION_OWNER
+    bne Same_VideoOverlay_CanCompose__owned
+    plp
+    jml Same_VideoSurface_CanWrite_Far
+Same_VideoOverlay_CanCompose__owned:
+    plp
+    sec
+    rtl
+
 Same_VideoOverlay_CanWrite_Far:
     .a16
     .i16
@@ -127,7 +147,7 @@ Same_VideoOverlay_CanWrite_Far:
     lda.l SAME_VIDEO_SURFACE_PENDING_VISUAL
     and #$00FF
     bne Same_Text_CanWrite_no
-    jsl Same_VideoSurface_CanWrite_Far
+    jsl Same_VideoOverlay_CanCompose_Far
     bcs Same_Text_CanWrite_no
     rep #$20
     .a16
@@ -314,7 +334,7 @@ Same_Text_Process_owner_ready:
     lda.l SAME_VIDEO_SURFACE_ROOM_GENERATION
     cmp.l SAME_TEXT_ROOM_GENERATION
     bne Same_Text_Process_stale
-    jsl Same_VideoSurface_CanWrite_Far
+    jsl Same_VideoOverlay_CanCompose_Far
     bcc Same_Text_Process_capacity
     jmp Same_Text_busy
 Same_Text_Process_capacity:
@@ -423,7 +443,7 @@ Same_Text_ProcessHide_Far:
     lda.l SAME_VIDEO_SURFACE_ROOM_GENERATION
     cmp.l SAME_TEXT_ROOM_GENERATION
     bne Same_Text_Hide_stale
-    jsl Same_VideoSurface_CanWrite_Far
+    jsl Same_VideoOverlay_CanCompose_Far
     bcc Same_Text_Hide_capacity
     jmp Same_Text_busy
 Same_Text_Hide_stale:

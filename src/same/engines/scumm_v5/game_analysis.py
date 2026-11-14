@@ -18,7 +18,7 @@ from ...profile import EngineProfile
 from .resources import LucasartsScummV5ResourceProvider
 from .room_compiler import (
     RoomBundleCompilation, ScriptIR, _static_value, compile_room_payload,
-    decode_script, profile_game_identity, sha256,
+    decode_script, profile_game_identity, sha256, actor_resource_references,
 )
 from .residency import build_residency_plan
 from .program_units import build_program_unit_model, build_residency_manifest
@@ -910,11 +910,7 @@ def build_dependency_graph(
                                    expression=None if resource is not None else "resource operand is indirect",
                                    domain="resource"))
             elif operation == "actor_ops":
-                for selector in operands.get("selectors", []):
-                    subop = int(selector["subop"])
-                    if subop not in (1, 3):
-                        continue
-                    raw = selector["values"][0] if selector.get("values") else None
+                for subop, raw in actor_resource_references(operands):
                     number = _direct(raw)
                     target = f"{'Costume' if subop == 1 else 'Sound'}({number})" if number is not None else None
                     _ensure_resource_reference_node(
@@ -1677,8 +1673,8 @@ def analyze_game(
                                    for command in operands.get("commands", []))
             sound_refs += instruction.operation in {"start_sound", "stop_sound", "start_music"}
             if instruction.operation == "actor_ops":
-                costume_refs += sum(int(selector["subop"]) == 1
-                                    for selector in operands.get("selectors", []))
+                costume_refs += sum(subop == 1
+                                    for subop, _ in actor_resource_references(operands))
     census = {
         "schema": "same_scumm_v5_resource_census_v1",
         "counts": {**dict(sorted(resource_counts.items())), "object": object_count,

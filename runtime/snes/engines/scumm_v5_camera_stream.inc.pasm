@@ -735,6 +735,10 @@ ScummV5_Camera_ServiceForeground_Far:
     ; publication. A changed actor also draws the cursor in its PRESENT.
     sep #$20
     .a8
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    lda.l SAME_SCUMM_CEL_VALID
+    bne ScummV5_Camera_ServiceForeground__actor
+    .endif
     lda.l SAME_SCUMM_CURSOR_PENDING
     ora.l SAME_SCUMM_CURSOR_PENDING+1
     ora.l SAME_SCUMM_CURSOR_COMPOSING
@@ -746,6 +750,13 @@ ScummV5_Camera_ServiceForeground__actor:
     jsl ScummV5_Controller_RenderActor_Far
     sep #$20
     .a8
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    ; Between checked chunks POSE_STATE is idle, but INDEX8 contains an
+    ; incomplete pose. Do not admit camera I/O/publication until its owner
+    ; has consumed every chunk and released the composition transaction.
+    lda.l SAME_SCUMM_CEL_VALID
+    bne ScummV5_Camera_ServiceForeground__done
+    .endif
     lda.l SAME_SCUMM_ACTOR_POSE_STATE
     bne ScummV5_Camera_ServiceForeground__done
     lda.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
@@ -796,6 +807,12 @@ ScummV5_Camera_ServicePending__retained_wait:
     jsl Same_VideoSurface_ScrollPresented_Far
     bcs ScummV5_Camera_ServicePending__retained_pending
     jsl ScummV5_Camera_InstallGeometry_Far
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    ; Newly exposed source pixels may belong to a previously clipped actor.
+    ; Reuse complete in-view poses, but recompose incomplete coverage before
+    ; claiming that the next foreground turn is served.
+    jsl ScummV5_Cel_CameraCommitted_Far
+    .endif
     sep #$20
     .a8
     lda #$00

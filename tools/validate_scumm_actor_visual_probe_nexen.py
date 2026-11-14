@@ -243,16 +243,15 @@ def read_committed_pose(session, *, cursor_base: int) -> dict:
     }
 
 
-def committed_pose_is_presented(state: dict, *, expected_room: int | None = None,
-                                 expected_x: int | None = None,
-                                 expected_y: int | None = None,
-                                 expected_frame: int | None = None) -> bool:
-    """Fence a committed actor while a different pose may be fetching."""
+def committed_surface_is_presented(state: dict, *, expected_room: int | None = None) -> bool:
+    """Fence a settled room image, including rooms whose actor is hidden.
+
+    This certifies publication ownership, not source-pixel or actor fidelity.
+    """
     generation = state["surface_next_generation"]
     return bool(
         state["error"] == 0 and state["lifecycle"] == 2
-        and state["actor_render_valid"] == 1 and state["actor_render_visible"] == 1
-        and state["actor_render_generation"] != 0 and not state["actor_render_retry"]
+        and not state["actor_render_retry"]
         and not state["composition_active"] and generation != 0
         and generation == state["backend_pending_generation"] == state["backend_committed_generation"]
         and state["backend_pending_generation_hi"] == state["backend_committed_generation_hi"] == 0
@@ -262,6 +261,18 @@ def committed_pose_is_presented(state: dict, *, expected_room: int | None = None
         and state["surface_pending_visual"] == 0
         and state["room"] == state["surface_room"] == state["surface_presented_room"]
         and (expected_room is None or state["room"] == expected_room)
+    )
+
+
+def committed_pose_is_presented(state: dict, *, expected_room: int | None = None,
+                                 expected_x: int | None = None,
+                                 expected_y: int | None = None,
+                                 expected_frame: int | None = None) -> bool:
+    """Fence a committed visible actor while a different pose may be fetching."""
+    return bool(
+        committed_surface_is_presented(state, expected_room=expected_room)
+        and state["actor_render_valid"] == 1 and state["actor_render_visible"] == 1
+        and state["actor_render_generation"] != 0
         and (expected_x is None or state["actor_position_source_room"][0] == expected_x)
         and (expected_y is None or state["actor_position_source_room"][1] == expected_y)
         and (expected_frame is None or state["actor_render_pose_frame"] == expected_frame)
@@ -310,7 +321,8 @@ def capture_committed_surface(session, directory: Path, label: str, *,
                               expected_room: int | None = None,
                               expected_x: int | None = None,
                               expected_y: int | None = None,
-                              expected_frame: int | None = None) -> dict:
+                              expected_frame: int | None = None,
+                              require_visible_actor: bool = True) -> dict:
     """Capture a paused committed surface without consulting pending pose data.
 
     Bounds are omitted. Optional source_foot must be supplied from independently
@@ -320,10 +332,15 @@ def capture_committed_surface(session, directory: Path, label: str, *,
     require(bool(label) and Path(label).name == label and label not in ('.', '..'),
             "capture label must be a single filename component")
     state = read_committed_pose(session, cursor_base=cursor_base)
-    require(committed_pose_is_presented(state, expected_room=expected_room,
-                                       expected_x=expected_x, expected_y=expected_y,
-                                       expected_frame=expected_frame),
-            f"committed actor presentation fence is not satisfied: {state}")
+    if require_visible_actor:
+        ready = committed_pose_is_presented(state, expected_room=expected_room,
+                                           expected_x=expected_x, expected_y=expected_y,
+                                           expected_frame=expected_frame)
+    else:
+        require(all(v is None for v in (expected_x, expected_y, expected_frame, source_foot)),
+                "room-only capture cannot certify an actor pose or foot")
+        ready = committed_surface_is_presented(state, expected_room=expected_room)
+    require(ready, f"committed presentation fence is not satisfied: {state}")
     pixels = read_logical_indexed_surface(session)
     palette = session.read_memory("snesMemory", PALETTE, 768)
     vram = session.read_memory("snesVideoRam", 0, 0x10000)
@@ -344,6 +361,9 @@ def capture_committed_surface(session, directory: Path, label: str, *,
                 accepted_frame=state["actor_render_pose_frame"],
                 accepted_step=state["actor_render_pose_step"],
                 accepted_direction=direction_index_for_facing(state["actor_render_facing"]))
+    if not require_visible_actor:
+        for field in ("accepted_frame", "accepted_step", "accepted_direction"):
+            pose.pop(field)
     pose["builtin_cursor"] = {
         "valid": read_u16(cursor, 0), "logical_x": read_u16(cursor, 2),
         "logical_y": read_u16(cursor, 4), "id": read_u16(cursor, 6),
@@ -364,7 +384,8 @@ def capture_committed_surface(session, directory: Path, label: str, *,
     expected_cgram = encode_cgram(tuple(tuple(palette[i:i+3]) for i in range(0, 768, 3)))
     record = {
         "label": label, "pose": pose,
-        "presentation_fence": "committed-render-key-paused-state",
+        "presentation_fence": ("committed-render-key-paused-state" if require_visible_actor
+                               else "committed-room-surface-paused-state"),
         "indexed_surface_sha256": hashlib.sha256(pixels).hexdigest(),
         "ppu_indexed_differences": sum(a != b for a,b in zip(ppu_pixels, pixels)),
         "cgram_difference_bytes": sum(a != b for a,b in zip(cgram, expected_cgram)),

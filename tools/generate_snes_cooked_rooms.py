@@ -20,6 +20,7 @@ from same.engines.scumm_v5.program_storage import (
 )
 from same.engines.scumm_v5.live_room_resources import encode_live_room_sections
 from same.engines.scumm_v5.room_visual import decode_room_visual
+from same.engines.scumm_v5.room_masks import encode_room_masks
 from same.engines.scumm_v5.room import decode_room
 
 
@@ -1190,6 +1191,10 @@ def main() -> int:
             records.append({
                 "room": decoded.room, "flags": decoded.flags, "raw": raw,
                 "visual_raw": visual_raw,
+                "mask_raw": (encode_room_masks(room=decoded.room, width=decoded_room.width,
+                    height=decoded_room.height, planes=decoded_room.zplanes, walkbox_masks=bytes(box.mask for box in decoded_room.walkboxes),
+                    source_room_sha256=hashlib.sha256(decoded.room_payload).hexdigest())
+                    if decoded_room.zplanes else None),
                 "checksum": decoded.compact_checksum, "scripts": script_records,
                 "entry": next((x["id"] for x in script_records if x["kind_name"] == "ENCD"), 0),
                 "exit": next((x["id"] for x in script_records if x["kind_name"] == "EXCD"), 0),
@@ -1819,6 +1824,8 @@ def main() -> int:
                 diagnostic_live_route_validation_resources
             ),
             room_visual_resources=room_visual_resources,
+            room_mask_resources={int(r['room']): r['mask_raw'] for r in records
+                                 if args.msu1_live_room_resources and r.get('mask_raw')},
             visual_reserved_bottom=args.visual_reserved_bottom,
             visual_projection=args.visual_projection,
             rom_bank=args.msu1_program_directory_bank,
@@ -1865,6 +1872,9 @@ def main() -> int:
         hold_after_started_global_program = int(match["id"])
 
     reserved_banks = set(args.reserved_bank)
+    if args.msu1_program_storage_dir is not None and program_storage.get('mask_records'):
+        mask_blocks = sum(len(r['blocks']) for r in program_storage['mask_records'])
+        reserved_banks.update(range(96, 97 + (mask_blocks + 2047) // 2048))
     if args.msu1_program_storage_dir is not None:
         reserved_banks.add(args.msu1_projection_directory_bank)
 

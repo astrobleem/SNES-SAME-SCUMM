@@ -622,13 +622,30 @@ Same_Tad_BlankSong:
 .if SAME_BUILD_SCUMM_DYNAMIC_PROGRAM_RESIDENCY
 .include "engines/scumm_v5_resident_resolver.pasm"
 .endif
-.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
-.include "engines/scumm_v5_msu_programs.pasm"
-.endif
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
 .include "engines/scumm_v5_msu_live_room.pasm"
 .endif
+.if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+; Live-room builds already select bank84 here. Keep the complete checked
+; cache service together in that far bank; bank9's controller/resolver closure
+; must not overflow when source-cel actor transactions are enabled.
+.include "engines/scumm_v5_msu_programs.pasm"
+.endif
 .include "engines/scumm_v5_camera_far.pasm"
+.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+.if SCUMM_V5_ACTOR_CEL_FORMAT
+.include "engines/scumm_v5_actor_cels.inc.pasm"
+.endif
+.endif
+.if SAME_BUILD_SCUMM_CONTROLLER
+; Cold input allocation shares the existing far service bank, rather than
+; expanding the bank-9 controller/resolver closure beyond a LoROM window.
+.include "engines/scumm_v5_input_script.inc.pasm"
+.endif
+; Cutscene lifecycle callbacks are not a controller build dependency.
+.if SAME_BUILD_SCUMM_ROOM_SERVICE
+.include "engines/scumm_v5_cutscene_callbacks.inc.pasm"
+.endif
 .if SAME_VIDEO_BACKEND_LEGACY
 .include "services/video_k1_far.pasm"
 .endif
@@ -675,4 +692,9 @@ ScummV5_M24RB_FarCodeEnd:
 .org $8000
 .include "generated/msu1_package.inc.pasm"
 .include "services/storage_msu1_crc_table.inc.pasm"
+.endif
+
+; Scene code owns a separate bank; do not relocate preceding far closures.
+.if SAME_SCUMM_SCENE_ENABLED
+.include "engines/scumm_v5_actor_scene.inc.pasm"
 .endif

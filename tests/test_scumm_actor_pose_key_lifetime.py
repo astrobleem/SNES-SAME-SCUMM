@@ -44,3 +44,17 @@ class PoseKeyLifetimeTests(unittest.TestCase):
             n.put('SAME_SCUMM_ACTOR_POSE_LOOP_LENGTH',3,1)
             for expected in (1,2,0):
                 n.run();self.assertEqual(n.get('SAME_SCUMM_ACTOR_POSE_DESIRED_STEP',1),expected)
+
+    def test_idle_put_actor_position_is_a_complete_snapshot(self):
+        source=(ROOT/'runtime/snes/engines/scumm_v5_controller_far.pasm').read_text()
+        prefix='ScummV5_Controller_PublishActorVisual__'
+        block=source.split(prefix+'check_destination:',1)[1].split(prefix+'destination_valid:',1)[0]
+        block=block.replace(prefix+'standing','Test_Done')
+        block=block.replace(prefix+'destination_valid','Test_Done')
+        m=self.machine(block)
+        m.put('SAME_SCUMM_CONTROLLER_DESIRED_DEST',65535,2)
+        m.put('SAME_SCUMM_CONTROLLER_DESIRED_X',220,2)
+        m.put('SAME_SCUMM_CONTROLLER_RENDER_X',150,2)
+        m.run()
+        self.assertEqual(m.get('SAME_SCUMM_CONTROLLER_DESIRED_X',2),220)
+        self.assertNotIn(prefix+'done',block)

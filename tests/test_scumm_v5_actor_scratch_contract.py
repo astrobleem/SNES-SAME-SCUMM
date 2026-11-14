@@ -118,6 +118,8 @@ ScummV5_MsuProgram_EnsureSelected_Far__pending:
         actor = (ROOT/'runtime/snes/engines/scumm_v5_controller_far.pasm').read_text()
         admission = actor.split('ScummV5_ActorPose_Ensure__provider:', 1)[1].split(
             'ScummV5_ActorPose_Ensure__find:', 1)[0]
+        from test_scumm_v5_actor_damage_boundaries import camera_source
+        admission=camera_source(admission, enabled=True,cels=True)
         visual = (ROOT/'runtime/snes/engines/scumm_v5_visual.pasm').read_text()
         late = visual.split('ScummV5_Visual_Frame_Far:', 1)[1].split(
             '.elseif SAME_BUILD_SCUMM_CONTROLLER_FIXTURE', 1)[0]
@@ -192,6 +194,8 @@ ScummV5_MsuProgram_ReconcileRead_Far__error:
         source = (ROOT/'runtime/snes/engines/scumm_v5_controller_far.pasm').read_text()
         block = source.split('ScummV5_ActorPose_Ensure__provider:', 1)[1].split(
             'ScummV5_ActorPose_Ensure__find:', 1)[0]
+        from test_scumm_v5_actor_damage_boundaries import camera_source
+        block=camera_source(block,enabled=True,cels=True)
         # Execute the production admission instructions. The lookup sentinel
         # stands in for its first writes to the shared provider descriptor.
         block += """

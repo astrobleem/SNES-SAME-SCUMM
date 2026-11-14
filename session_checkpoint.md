@@ -1,3 +1,217 @@
+# Milestone D qualified — final review checkpoint
+
+The multi-actor/mask Barnett objective is complete for its bounded native scope.
+One uninterrupted exact-ROM checkpoint continuation (not cold startup) runs
+room10→75→2, original taxi/map callback, normal walk, Look at automobile,
+readable original response and acknowledgement. Final(460,107),error0,RUNNING,
+newspaper1/1,talk inactive,cutscene0. No guest gameplay writes.
+
+Evidence root /home/chad/SAME-private-evidence/milestone-d-scene-20261113:
+continuous-college-near-car,526.759sec,normal exit,no owned survivors.
+Five complete source/INDEX8/PPU comparisons and independent original palette/
+CGRAM comparisons have zero differences. Manifest milestone-d-acceptance.json,
+SHA256SUMS milestone-d-SHA256SUMS. Full details ACTOR_SCENE_COMPOSITION.md.
+Separate longer-walk/response proof is preserved, not spliced into that session.
+Earlier interrupted and budget-limited attempts remain classified accurately.
+
+Runtime still b01e26c, authentic ROM f17b4a82 (full hashes in linked document),
+all65 runtime files match the private assembly snapshot. Supervisor sender
+provenance correction cd7859e has full suite1684run/12skip PASS, validate44regions
+PASS and both hosted jobs PASS run43562798692. Final documentation commit must
+receive its own hosted checks. No native session active. Recovery untouched.
+PR16 scumm-fate-input-callback stays stacked on PR15; no automatic merge.
+Performance, larger scene capacities, broader resources and hardware remain
+limitations. Whole-game NOT_READY. Do not replay accepted gameplay just to
+regenerate reports. Finish publication/check verification and hand off.
+
+--- Historical continuation records ---
+
+# Active continuation — Milestone D multi-actor/masks
+
+Branch scumm-fate-input-callback / draft PR16, stacked on unchanged PR15.
+Published b01e26c9865e00e52dce9e0f43ab9d60d9764609. Milestone D NOT COMPLETE.
+Private evidence root: /home/chad/SAME-private-evidence/milestone-d-scene-20261113.
+Recovery worktree /tmp/same-msu1-fate-room4.hqQ8VD untouched.
+
+Generic native acceptance: masked two-actor fixture passes six exact complete
+source/INDEX8/VRAM/CGRAM captures, including room1→2→1. Runtime cfcc07e,
+ROM e448fa318851623190fd2f10c153dd64de1b36a3c4535865a696eb523a62b909,
+run native-mask-transitions-executable,369.559sec, normal cleanup. Native mask
+CRC rejection error16/provider6 passes through completed rollback, scenes0.
+Exact identities and previous failed experiments: ACTOR_SCENE_COMPOSITION.md.
+
+Corrections after expanded costume closure: full32-bit scene successor fence;
+retire scene ownership before preflight and post-EXCD active metadata reuse;
+now a neutral overlay composition lease prevents asynchronous text from replacing
+actor damage. The last failure cold-room-owner had source=INDEX8 but PPU lacked
+1994 clipped actor11 pixels. It is preserved, not relabeled a pass.
+
+Current authentic ROM f17b4a8278536f94a459dc937ce9375de15de0f59fec0fb3017400a4ddc38a45
+in auth-build-qaod54z8; private source auth-source-lu0kpoly matches all65 tracked
+nongenerated runtime files at b01e26c. Map c14aa6ff570d2d6b87547f55fa36fa29211682251763e8d4b0417c434019ee63.
+Package6c89fe42ca36707391e0aa59524d67c124bda8dc65a7b0b8f3c737895c9dd237,
+14933323bytes,2203canonical IDs unchanged,11costumes/1097poses. Independent
+expanded package builds match. Identity19248c1b4bbaf85eef51c4abb60db319ef348ae80176e56b26926cd795d15ff5.
+
+cold-scene-text-lease PASSED five exact scene/text captures,590.929sec,cleanup complete.
+First two original dialogue captures and verb menu pass source/INDEX8/PPU/CGRAM.
+Second dialogue includes the clipped actor11 pose; queued text remains pending
+while scene owns damage. Normal pickup/inventory close checkpoint frame8769, newspaper1/1,error0.
+travel-text-lease reached2 RUNNING/error0 and preserved inventory, but its
+presentation observation expired. Read-only96frame trace disproved a stuck
+scene: both actors completed then camera advanced. Subsequent college-presented-
+control passes the full Barnett source/INDEX8/PPU/CGRAM image atframe17416:
+Indy50/50,41pixels; actor5/costume78,178visible/4occluded bysourceplane1.
+Walking interrupted by externalSIGTERM36.282sec; cleanup complete, sender unknown.
+Launcher now captures sender identity via parent-only sigtimedwait (4process tests
+PASS). college-player-input is a bounded exact-ROM continuation from the verified
+room2 scene; port7988. No continuous taxi-through-interaction proof yet.
+0125dbc hostedrun43561170331 bothjobsPASS. Recovery untouched.
+
+Full suite text-lease:1684run/12skips,OK,344.609sec.
+make validate/44regions, pinned full assembly and4MiB ROM audit pass.
+Hosted b01e26c run43560251770 both required jobs PASS; hosted does not run Nexen.
+Latest runtime feature changes already pushed. No automatic merge.
+
+# Active continuation — scaled camera exposure
+
+00c1329 is pushed; hosted run43388407765 passes. Current additive correction
+retains unclipped pose bounds and blocks camera admission between checked actor
+chunks. Synthetic native-camera-exposure-fenced PASSED7 full-image captures,
+260.475sec; failed preceding partial-publication trace preserved. State now72B.
+Focused31tests, memory44regions, pinned full/synthetic assembly andROM audits
+pass. Fullsuite:1656 run,12 skipped,OK (1644 executed). make validate PASS.
+
+Authentic00c1329 trip10→75→2 reached RUNNING,error0,newspaper1/1; camera completed
+in read-only matching-ROM continuation. Source comparison exposed missing41
+Indy pixels from offscreen cached pose, plus178 additional actor5 pixels.
+The new camera correction is synthetic-native verified, not yet authentic.
+Fresh source auth-source-qwd_c4zm / build auth-build-n1iphkww;
+ROM2cd18ce9781f10687d26f157560904eda8c1bcd6ac549f5e811c9672a24961a7.
+Private cold-scaled-exposure was INTERRUPTED after17.029sec, exit130, atroom68
+frame672/error0. Supervisor recorded interrupted=true, not timeout; signal source
+NOT_CAPTURED. No owned processes remain. No matching new-ROM checkpoint exists.
+Do not repeat unchanged. No old ROM state reuse or gameplay writes.
+Remaining full-scene blocker: generic multiple-actor composition and checked
+z-mask consumption. Do not report whole-scene or Barnett interaction acceptance.
+Recovery untouched; no changes to PR14/15, no automatic merge.
+
+--- Previous checkpoint (historical status) ---
+
+# Milestone D — source-cel scaling integration in progress
+
+Branch scumm-fate-input-callback, base b7f194d. PR16 remains stacked on PR15.
+Recovery worktree and prior evidence untouched. No authentic scaled room2
+acceptance yet. Do not load old-ROM checkpoints into the new image.
+
+Commit6f8db82 retains per-cel dimensions, signed anchors/movement, source
+slots/order and mirror direction in SC5ACT v3 metadata. Native phase-table
+compositor supports independent XY scaling and checked multi-chunk progression;
+legacy flattened v2 remains selectable. Extra state: 68 bytes at7E22B4..22F7;
+no pixel buffer or code-cache lease. Existing camera-viewport path only.
+
+Private root: /home/chad/SAME-private-evidence/milestone-d-actor-scaling-20261113
+- native-scaled-cels-1 stopped after cold-state initialization/key defects.
+- native-scaled-cels-2 final255/231 matched, but cursor color publication exposed
+  intermediate multi-chunk pixels; overall NOT_ACCEPTED. Asymmetric final
+  INDEX8 matched but PPU differed200pixels. Do not promote those narrow results.
+- native-scaled-cels-3 PASSED (9 captures,287.248sec); it ran with cursor exclusion and camera-foreground
+  continuation fix. Completed255/231/asymmetric/mirrored surfaces match source,
+  INDEX8,VRAM/CGRAM. All8stages completed, including2animation keys; zero differences.
+  ROM0f618437cb0436c193cc0cc4a4fd80988f40b7f85aff0b233221758abfbd2b16;
+  build fixture-build-7o1x3cbm, source fixture-source-la4hxgq9.
+
+Host phase/representation tests cover1000origins,1000lossless poses,80random
+raster cases and original source-neutral CostumeDecoder data. These are host
+source-instruction execution, NOT emulator evidence. Fullsuite at6f8db82:1652 tests,12skips,OK; validate44regionsPASS.
+Hosted run43386360049 PASS for6f8db82.
+Native validator checks complete generations, no publication while CEL_VALID,
+source-indexed pixels, decodedVRAM/PPU andCGRAM; synthetic local ACKs only.
+
+Native3 is pre-relocation/hidden-key follow-up source, not the final build.
+Full-source ROMae2efc7e assembled/audited after cache-service bank relocation.
+Cold-scaled-room10 stopped at room0->4 precommit hold,error0. Read-only exact-ROM
+room-hold-observation confirms outstanding presentation; hidden actor scale key
+was stale and caused redundant full publications. Corrected; next build/run
+must prove regression. No old-ROM checkpoint reuse. See ACTOR_CEL_SCALING.md.
+Follow-up removes repeated per-pixel ownership/run checks, recounting all earlier
+Y phases, and drawing scans of other checked chunks. Captures use exact monotonic
+span endpoints. No extra memory. Native optimized control PASSED9captures at
+frame2499 (previous3069),224.764sec, ROMee05c763. No partial publication.
+Authentic optimized ROM in auth-build-icg4sfq1 currently executing cold original
+startup/pickup via cold-scaled-optimized; no old-ROM restore. Prior hidden-key
+ROM reachedroom10 but missed90frame input deadline; that failure is preserved.
+Follow-up validation:1653 tests run,12 skipped,OK; make validate and44-region
+ownership audit PASS; pinned full/synthetic assembly andROM audit PASS.
+Next: finish matching-ROM pickup checkpoint, then taxi/map/college.
+Room2 may require actor5/costume78; multi-actor andzmask remain unverified.
+No unchanged retries, no historical7actionroute, no display/CLI guessing.
+
+--- Prior checkpoint ---
+
+# Milestone D — callback implemented; destination graphics blocked
+
+Branch `scumm-fate-input-callback`, draft PR16 targeting unchanged PR15.
+Runtime `76d7448f9fe2e61dda7c450193f0b6c673c4b394`; observer/tests
+`44c038bceb33b4417428bfe533772e64940d3e8d`. PR14/15, main, experimental
+baseline tag and separate22-file progression recovery worktree are untouched.
+
+Generic VAR_VERB_SCRIPT is implemented separately from C20/variable33.
+Normal C4 local/global resolution, three argument locals, held-edge ownership,
+checked waits, room invalidation and no duplicate sentence dispatch are tested.
+Adjacent fixes cover cursor52/53, live FindObject, nested-ticket widths and
+retirement, frozen callers, authored cutscene35/36 callbacks, optional absent
+verbs and nested checked-read descendants during EXCD/ENCD. No cache redesign.
+
+One authentic continuous matching-ROM room10 checkpoint continuation now runs
+Use taxi -> room75 -> Barnett College room2. Local204 canonical2018 receives
+[2,0,1] once, executes original local202/object1028 verb10 (canonical783), and
+source requests room2. Newspaper owner/state1/1 persist. Map source/INDEX8/
+VRAM/CGRAM match exactly. Separate cold startup/pickup/inventory generated the
+checkpoint; do not describe the continuation as a continuous cold-start run.
+
+**NOT COMPLETE:** room2 installs and runs entry/local200, but native actor
+composition rejects authored scale231/231 with error16. Exact read-only hooks:
+09:9F9D owner_ok ->09:A38D invalid ->7E2303 write16, no09:9FAC scale_ok.
+The host room.py already implements authentic classic costume scaling. Native
+SC5ACT cooking flattens unscaled cels and loses scale-phase/composition data;
+removing the guard or scaling the flattened bitmap is not a correct fix.
+Room2 has dynamic scale slots; baking only231 cannot qualify continued walking.
+Actor5/costume78 adds an unverified multi-actor requirement. Destination image
+and continued control are NOT_VERIFIED; no new native run is active.
+
+Private evidence root:
+`/home/chad/SAME-private-evidence/milestone-d-input-callback-20261112`
+- `native-lifecycle-null-fence`: actual Nexen PASS, all four nested markers42,
+  error0, held-edge/arguments/cutscene/optional-verb/ancestor controls retained.
+- `cold-lifecycle-room10`: original startup/pickup/inventory PASS; exact-ROM state.
+- `continuous-lifecycle-input-fence`: continuous10->75->2, first failure preserved.
+- `college-scale-guard-hooks`: separate read-only cause proof, not gameplay pass.
+- `college-costume-capacity.json`: private source-backed size census.
+- `source-linkage-lifecycle.json`: all61 runtime files match76d7448 in both builds.
+
+Authentic ROM46480f0d0ec328dfd9ac17d196fa2d85f5e39386afbf86af9a6804c9cd331dd8,
+map fc266c2e40067262e381ee1792c85719b4dc0c05a8c006a26dbca4418c1d23b2,
+package e6cf5c28f36f20c10cb9ef7819a1b278b1067ed3014462cee53d9a63d9772afd,
+build identity cf5a0540c4bd133db247c54c056989b9812f60196dab3da0cbd67b33859f0fbf.
+Build `auth-build-e3wwlobz`; do not restore older-ROM states into this image.
+
+Final local tests:1635 run/1623 passed/12 skipped. Validate,43-region memory
+audit, pinned Poppy and ROM audits pass. Both hosted checks green on44c038b:
+https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43372654120
+Documentation-only publication does not create a new native runtime identity.
+See docs/scumm-toolchain/INPUT_SCRIPT_CALLBACK.md for current evidence/limits.
+
+Native operations: canonical private-Xvfb supervisor only,<=600seconds, one
+MCP client, no unchanged retry. No historical seven-action replay or guest
+story-state writes. Unrelated user Nexen7381/SuperMonkeyIsland processes are
+not ours; do not connect or terminate. All captures/packages remain private.
+Next engineering boundary is source-faithful native costume scaling through
+the existing checked-pose/video interfaces, followed by actual destination
+presentation/control acceptance; do not repeat callback diagnosis.
+
+--- Historical checkpoints retain their original scope ---
+
 # Milestone C camera pipeline — integrated native acceptance
 
 Runtime: 16592b90cbc04bdf6bd325fc772805f3396b8eb4 on

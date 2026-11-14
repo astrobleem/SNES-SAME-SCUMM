@@ -63,6 +63,32 @@ def observer(session, directory):
 
 
 class CommittedPoseObserverTests(unittest.TestCase):
+    def test_hidden_actor_room_capture_does_not_certify_actor(self):
+        s = Session()
+        s.put(0x7E5E51, 0, 1)
+        s.put(probe.ACTOR_STATE+0x7D, 0, 2)
+        state = probe.read_committed_pose(s, cursor_base=CURSOR)
+        self.assertTrue(probe.committed_surface_is_presented(state, expected_room=4))
+        self.assertFalse(probe.committed_pose_is_presented(state))
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(RuntimeError):
+                probe.capture_committed_surface(s, Path(directory), 'actor', cursor_base=CURSOR)
+            record = probe.capture_committed_surface(s, Path(directory), 'room',
+                cursor_base=CURSOR, expected_room=4, require_visible_actor=False)
+            self.assertEqual(record['presentation_fence'], 'committed-room-surface-paused-state')
+            self.assertNotIn('accepted_frame', record['pose'])
+            self.assertEqual(record['ppu_indexed_differences'], 0)
+            self.assertEqual(record['cgram_difference_bytes'], 0)
+            with self.assertRaisesRegex(RuntimeError, 'cannot certify'):
+                probe.capture_committed_surface(s, Path(directory), 'invalid',
+                    cursor_base=CURSOR, require_visible_actor=False, expected_frame=3)
+        for change in (dict(mode3_inflight_count=1), dict(surface_pending_visual=1),
+                       dict(surface_room=5), dict(backend_committed_generation=64),
+                       dict(backend_committed_generation_hi=1), dict(composition_active=1),
+                       dict(actor_render_retry=1), dict(event_count=1)):
+            with self.subTest(change=change):
+                self.assertFalse(probe.committed_surface_is_presented(dict(state, **change)))
+
     def test_visible_contrast_is_separate_from_pixel_equality_and_slot_zero(self):
         cgram=bytearray(512)
         self.assertEqual(probe.indexed_contrast_pixels(bytes((0,1,178)),cgram),0)

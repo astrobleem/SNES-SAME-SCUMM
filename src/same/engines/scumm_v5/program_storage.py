@@ -598,6 +598,7 @@ def build_program_storage(
     diagnostic_allow_invalid_live_route: bool = False,
     diagnostic_live_route_validation_resources: Mapping[int, bytes] | None = None,
     room_visual_resources: Mapping[int, bytes] | None = None,
+    room_mask_resources: Mapping[int, bytes] | None = None,
     visual_reserved_bottom: int = 0,
     visual_projection: str = "aspect-fit",
     rom_bank: int | None = None,
@@ -946,6 +947,23 @@ def build_program_storage(
             "path": visual_file.name, "alignment": 1,
             "flags": ["streamable", "read_only"],
         })
+    from .room_masks import decode_room_masks, native_directory as mask_native_directory
+    mask_rows = []
+    mask_payload = bytearray()
+    if room_mask_resources:
+        if 'SC5MASK' in used_section_names:
+            raise ValueError('SC5MASK section already owned by prefix')
+        for room_id, raw_mask in sorted(room_mask_resources.items()):
+            mask = decode_room_masks(raw_mask, expected_room=room_id)
+            mask_rows.append(dict(room=room_id, width=mask.width, height=mask.height,
+                planes=len(mask.planes), walkbox_masks=list(mask.walkbox_masks), source_room_sha256=mask.source_room_sha256,
+                section_relative_offset=len(mask_payload), length=len(raw_mask),
+                sha256=mask.record_sha256, blocks=[dict(b) for b in mask.blocks]))
+            mask_payload.extend(raw_mask)
+        mask_file = output_dir / 'scumm-room-masks.bin'
+        mask_file.write_bytes(mask_payload)
+        package_sections.append(dict(name='SC5MASK',kind='SCVZ',path=mask_file.name,
+                                     alignment=1,flags=['streamable','read_only']))
     room_directory_count = max(
         max(room_by_id, default=-1), max(source_room_by_id, default=-1),
         max(live_by_id, default=-1),
@@ -1010,6 +1028,12 @@ def build_program_storage(
             row["palette_package_offset"] = visual_section.offset + int(row["palette_relative_offset"])
             row["pixel_package_offset"] = visual_section.offset + int(row["pixel_relative_offset"])
 
+    mask_section = next((row for row in package_info.sections if row.name == 'SC5MASK'), None)
+    for row in mask_rows:
+        row['package_offset'] = mask_section.offset + row['section_relative_offset']
+        for block in row['blocks']:
+            block['package_offset'] = row['package_offset'] + block['offset'] if block['length'] else 0
+    mask_include = mask_native_directory(mask_rows)
     directory_bytes = _canonical_json(directory)
     result: dict[str, object] = {
         "schema": "same_scumm_v5_msu1_program_storage_v5" if pack_small else PROGRAM_STORAGE_SCHEMA,
@@ -1062,6 +1086,9 @@ def build_program_storage(
         "visual_resource_bytes": len(visual_payload),
         "visual_section": None if visual_section is None else visual_section.to_dict(),
         "visual_records": visual_rows,
+        "mask_records": mask_rows,
+        "mask_resource_bytes": len(mask_payload),
+        "mask_section": None if mask_section is None else mask_section.to_dict(),
         "max_cached_body_bytes": max_cached_body_bytes,
         "records": rows,
         "package_sha256": hashlib.sha256(package_path.read_bytes()).hexdigest(),
@@ -1072,6 +1099,6 @@ def build_program_storage(
             rows, room_rows, room_directory_count, rom_bank,
             live_room_rows, live_route_rows, live_room_chunks, visual_rows,
             page_indices, page_records, page_directory_bank, projection_directory_bank,
-        ), encoding="ascii",
+        ) + mask_include, encoding="ascii",
     )
     return result

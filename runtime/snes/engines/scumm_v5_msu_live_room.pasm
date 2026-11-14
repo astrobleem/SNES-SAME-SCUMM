@@ -52,6 +52,16 @@ ScummV5_MsuLiveRoom_Start_Far:
     sep #$20
     .a8
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SAME_SCUMM_SCENE_ENABLED
+    ; A scene owns its underlay between transfers too, when scratch is NONE.
+    ; Retire it before incoming resources can reuse either metadata alias.
+    lda.l SAME_SCUMM_SCENE_PHASE
+    beq ScummV5_MsuLiveRoom_Start_Far__scene_retired
+    jsl ScummV5_ActorPose_Cancel_Far
+    jmp ScummV5_MsuLiveRoom_Start_Far__wait
+ScummV5_MsuLiveRoom_Start_Far__scene_retired:
+    .a8
+    .endif
     ; Room lifecycle has priority over transient costume transfers. Mark the
     ; actor ticket stale and let the provider drain before this service claims
     ; the shared pending bytes.
@@ -2145,6 +2155,10 @@ ScummV5_LiveRoom_Validate_Far__names_order_ok:
     .a16
     cmp.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$30
     bcc ScummV5_LiveRoom_Validate_Far__names_bound_ok
+    ; A room with no objects/locals/bundle payload has empty trailing tables
+    ; exactly at total_size. Nonempty rows still require their length byte
+    ; and payload within object-walk below; equality does not permit a read.
+    beq ScummV5_LiveRoom_Validate_Far__names_bound_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__names_bound_ok:
     .a16
@@ -3822,7 +3836,7 @@ ScummV5_LiveRoom_VerbQuery_Far__absent:
 ScummV5_LiveRoom_ObjectProgramResolve_Far:
     jsl ScummV5_LiveRoom_VerbQuery_Far
     lda.l SAME_SCUMM_VERB_RESULT
-    beq ScummV5_LiveRoom_ObjectProgramResolve_Far__bad
+    beq ScummV5_LiveRoom_ObjectProgramResolve_Far__absent
     lda.l SCUMM_LIVE_ROOM_TEMP2
     jsl ScummV5_Resident_ResolveProgramUnit_Far
     bcc ScummV5_LiveRoom_ObjectProgramResolve_Far__bad
@@ -3833,8 +3847,19 @@ ScummV5_LiveRoom_ObjectProgramResolve_Far:
 ScummV5_LiveRoom_ObjectProgramResolve_Far__bad:
     sep #$20
     .a8
+    lda.l SAME_SCUMM_ERROR
+    bne ScummV5_LiveRoom_ObjectProgramResolve_Far__absent
     lda #SCUMM_ERR_SCRIPT
     sta.l SAME_SCUMM_ERROR
+    clc
+    rtl
+
+; getVerbEntrypoint == 0 is an ordinary absent optional verb, not a
+; malformed canonical program. StartObject already has a no-entry return.
+; Do not bind or load a body, and never erase an existing engine error.
+ScummV5_LiveRoom_ObjectProgramResolve_Far__absent:
+    sep #$20
+    .a8
     clc
     rtl
 

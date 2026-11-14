@@ -90,6 +90,127 @@ class PosePlan:
         return tuple(result)
 
 
+@dataclass(frozen=True)
+class CelPlan:
+    """One source cel; gaps in its row spans are transparent source slot zero."""
+
+    width: int
+    height: int
+    relative_x: int
+    relative_y: int
+    move_x: int
+    move_y: int
+    spans: tuple[SpanRef, ...]
+
+
+@dataclass(frozen=True)
+class CelPosePlan:
+    draw_to_right: bool
+    cels: tuple[CelPlan, ...]
+    palette: tuple[int, ...]
+    data: bytes
+
+    def chunks(self, capacity: int = 2048) -> tuple[Chunk, ...]:
+        _integer(capacity, 1, 2048, 'transfer capacity')
+        return tuple(Chunk(raw, (), zlib.crc32(raw) & 0xffffffff,
+                           sha256(raw).hexdigest())
+                     for start in range(0, len(self.data), capacity)
+                     for raw in (self.data[start:start + capacity],))
+
+    def decoded_cels(self) -> tuple[object, ...]:
+        """Reconstruct the decoder's column-major samples without flattening."""
+        from same.engines.scumm_v5.costume import CostumeCel
+        if not 1 <= len(self.palette) <= 256:
+            raise PoseError('palette must contain 1..256 entries')
+        for value in self.palette:
+            _integer(value, 0, 255, 'palette value')
+        result = []
+        cursor = samples = dx = dy = 0
+        for cel in self.cels:
+            _integer(cel.width, 1, 512, 'cel width')
+            _integer(cel.height, 1, 512, 'cel height')
+            samples += cel.width * cel.height
+            if samples > 4_194_304:
+                raise PoseError('decoded pose exceeds host sample budget')
+            for name in ('relative_x', 'relative_y', 'move_x', 'move_y'):
+                _integer(getattr(cel, name), -32768, 32767, name)
+            _integer(dx + cel.relative_x, -32768, 32767, 'accumulated cel x')
+            _integer(dy + cel.relative_y, -32768, 32767, 'accumulated cel y')
+            dx = _integer(dx + cel.move_x, -32768, 32767, 'accumulated limb x')
+            dy = _integer(dy - cel.move_y, -32768, 32767, 'accumulated limb y')
+            pixels = bytearray(cel.width * cel.height)
+            previous = (-1, -1)
+            for span in cel.spans:
+                if (not 0 <= span.y < cel.height or not 0 <= span.x < cel.width
+                        or not 1 <= span.length <= cel.width - span.x
+                        or (span.y, span.x) <= previous
+                        or span.offset != cursor
+                        or cursor + span.length > len(self.data)):
+                    raise PoseError('noncanonical cel span or payload coverage')
+                if previous[0] == span.y and previous[1] >= span.x:
+                    raise PoseError('overlapping cel spans')
+                for x, slot in enumerate(self.data[cursor:cursor + span.length], span.x):
+                    if not 0 < slot < len(self.palette):
+                        raise PoseError('invalid opaque source slot')
+                    pixels[x * cel.height + span.y] = slot
+                cursor += span.length
+                previous = (span.y, span.x + span.length - 1)
+            result.append(CostumeCel(cel.width, cel.height, cel.relative_x,
+                                    cel.relative_y, cel.move_x, cel.move_y, bytes(pixels)))
+        if cursor != len(self.data):
+            raise PoseError('unreferenced cel payload bytes')
+        return tuple(result)
+
+
+def compile_cel_pose(pose: PoseLike, palette: Sequence[int], *,
+                     max_decoded_samples: int = 4_194_304) -> CelPosePlan:
+    """Retain cel geometry/order and opaque source slots, independent of scale.
+
+    Row spans compact transparent samples; their coordinates remain SOURCE cel
+    coordinates. Reordering rows within a cel is valid only if the compositor
+    retains increasing source-column overwrite order for each sampled row.
+    No colors are mapped here and no overlapping cels are flattened.
+    """
+    if not 1 <= len(palette) <= 256:
+        raise PoseError('palette must contain 1..256 entries')
+    colors = tuple(_integer(v, 0, 255, 'palette value') for v in palette)
+    _integer(max_decoded_samples, 1, 16_777_216, 'sample budget')
+    cels = []
+    data = bytearray()
+    samples = dx = dy = 0
+    for cel in pose.cels:
+        width = _integer(cel.width, 1, 512, 'cel width')
+        height = _integer(cel.height, 1, 512, 'cel height')
+        samples += width * height
+        if samples > max_decoded_samples:
+            raise PoseError('decoded pose exceeds host sample budget')
+        geometry = tuple(_integer(getattr(cel, name), -32768, 32767, name)
+                         for name in ('relative_x', 'relative_y', 'move_x', 'move_y'))
+        rx, ry, mx, my = geometry
+        # These sums are the native signed anchor contract, not a cropped box.
+        _integer(dx + rx, -32768, 32767, 'accumulated cel x')
+        _integer(dy + ry, -32768, 32767, 'accumulated cel y')
+        dx = _integer(dx + mx, -32768, 32767, 'accumulated limb x')
+        dy = _integer(dy - my, -32768, 32767, 'accumulated limb y')
+        pixels = bytes(cel.pixels)
+        if len(pixels) != width * height or any(v >= len(colors) for v in pixels):
+            raise PoseError('invalid cel pixel length or source slot')
+        spans = []
+        for y in range(height):
+            x = 0
+            while x < width:
+                if pixels[x * height + y] == 0:
+                    x += 1
+                    continue
+                start, offset = x, len(data)
+                while x < width and pixels[x * height + y]:
+                    data.append(pixels[x * height + y])
+                    x += 1
+                spans.append(SpanRef(start, y, offset, x - start))
+        cels.append(CelPlan(width, height, *geometry, tuple(spans)))
+    return CelPosePlan(bool(pose.draw_to_right), tuple(cels), colors, bytes(data))
+
+
 def _integer(value: int, lo: int, hi: int, label: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or not lo <= value <= hi:
         raise PoseError(f'{label} must be an integer in {lo}..{hi}')

@@ -267,6 +267,9 @@ ScummV5_M24RB_Far_ScheduleLocal__found:
     sta.l SAME_SCUMM_C4_SCAN_SLOT
     sta.l SAME_SCUMM_C4_LAST_ALLOCATED
     sta.l SAME_SCUMM_SCENARIO_M24RB_ALLOC_CHOSEN
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_NewActivation_Far
+    .endif
     lda #SCUMM_VM_RUNNING
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda #SAME_M24RB_LOCAL_SCRIPT
@@ -925,6 +928,12 @@ ScummV5_M24RB_Far_CommitRoom__old_bundle_released:
 ScummV5_M24RB_Far_CommitRoom__begin_live_install:
     .a8
     .if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    .if SAME_SCUMM_SCENE_ENABLED
+    ; EXCD may have animated the outgoing room after preflight. Restore any
+    ; unpublished scene while its metadata/journal are still valid, before
+    ; revoking that allocation. The read owner drains separately below.
+    jsl ScummV5_ActorPose_Cancel_Far
+    .endif
     ; Re-fetch every independently CRC'd chunk only after EXCD and outgoing
     ; activation retirement. The active record is not valid until all chunks,
     ; structural tables, and external routes pass validation.
@@ -2030,6 +2039,10 @@ ScummV5_M25A_RunNestedChild__parent_mode_packed:
     lda.l SAME_SCUMM_M23B_NEST_DEPTH
     dec
     jsr ScummV5_M25A_NestFrameX
+    ; NestFrameX returns A16/X16. Tickets and selectors are bytes: a word
+    ; store here overwrites the next parent's ticket with the child selector.
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_M23B_NEST_FRAMES,x
     and #$7F
     tax
@@ -2133,6 +2146,21 @@ ScummV5_M25A_RunNestedChild__restore_mode:
     beq ScummV5_M25A_RunNestedChild__msu_parent_wait
     cmp #$02
     beq ScummV5_M25A_RunNestedChild__msu_parent_error
+    ; runScriptNested resumes a live caller only when it is not frozen. A
+    ; child can freeze that caller before its first authored yield. Preserve
+    ; the saved post-call PC; let the normal C4 unfreeze path resume it later.
+    sep #$10
+    .i8
+    lda.l SAME_SCUMM_C4_PARENT_SLOT
+    tax
+    lda.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
+    beq ScummV5_M25A_RunNestedChild__msu_parent_unfrozen
+    lda #SCUMM_VM_YIELDED
+    sta.l SAME_SCUMM_STATUS
+    sta.l SAME_SCUMM_C4_SLOT_STATUS,x
+    bra ScummV5_M25A_RunNestedChild__msu_parent_ready
+ScummV5_M25A_RunNestedChild__msu_parent_unfrozen:
+    .a8
     ; The child may have reclaimed the suspended caller's page.  Re-resolve
     ; the parent's canonical selector only after its owning slot and logical
     ; PC have been restored.

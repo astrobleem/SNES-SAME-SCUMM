@@ -206,6 +206,34 @@ ScummV5_Engine_Boot__clear_c4:
     inx
     cpx #SAME_SCUMM_C4_STATE_SIZE
     bcc ScummV5_Engine_Boot__clear_c4
+    .if SAME_BUILD_SCUMM_CONTROLLER
+    lda #$0000
+    ldx #$0000
+ScummV5_Input_Reset__loop:
+    .a16
+    .i16
+    sta.l SAME_SCUMM_INPUT_BASE,x
+    inx
+    inx
+    cpx #(SAME_SCUMM_INPUT_END-SAME_SCUMM_INPUT_BASE)
+    bcc ScummV5_Input_Reset__loop
+    .endif
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    ; WRAM powers up undefined; a random partial-transaction flag must never
+    ; freeze the actor snapshot or authorize reuse of an uncaptured underlay.
+    lda #$0000
+    ldx #$0000
+ScummV5_Cel_Reset__loop:
+    .a16
+    .i16
+    sta.l SAME_SCUMM_CEL_STATE_BASE,x
+    inx
+    inx
+    cpx #(SAME_SCUMM_CEL_STATE_END-SAME_SCUMM_CEL_STATE_BASE)
+    bcc ScummV5_Cel_Reset__loop
+    .endif
+    .endif
     sep #$20
     .a8
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
@@ -850,6 +878,9 @@ ScummV5_Engine_Frame__skip_caller_recorded:
     lda #SCUMM_C2_FIXTURE_C19_CUTSCENE
     sta.l SAME_SCUMM_FIXTURE_REQUEST
     jmp ScummV5_Engine_Frame__fixture_check
+    .endif
+    .if SAME_BUILD_SCUMM_CONTROLLER
+    jsl ScummV5_Input_Process_Far
     .endif
     jsr ScummV5_AdvanceTimers
     ; Embedded opcode fixtures use global2 as scratch, without the outer-loop
@@ -2239,6 +2270,17 @@ ScummV5_Engine_Frame__start_runnable:
 ScummV5_Engine_Frame__next:
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    ; A checked-code wait is not a source yield. Keep cutSceneScriptIndex
+    ; while its callback runs; clear it when the original caller resumes.
+    lda.l SAME_SCUMM_C4_CURRENT_SLOT
+    cmp.l SAME_SCUMM_C19_SCRIPT_INDEX
+    bne ScummV5_Engine_Frame__cutscene_context_ready
+    lda #$FF
+    sta.l SAME_SCUMM_C19_SCRIPT_INDEX
+ScummV5_Engine_Frame__cutscene_context_ready:
+    .a8
+    .endif
     lda.l SAME_SCUMM_C18_NESTED
     beq ScummV5_Engine_Frame__outer_next
     dec
@@ -3611,6 +3653,13 @@ ScummV5_C4_Scheduler_Frame__remaining_slots:
     jmp ScummV5_C4_Scheduler_Frame__complete
 ScummV5_C4_Scheduler_Frame__slot_in_range:
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_NestedAdmission_Far
+    bcc ScummV5_C4_Scheduler_Frame__nested_admitted
+    jmp ScummV5_C4_Scheduler_Frame__advance
+ScummV5_C4_Scheduler_Frame__nested_admitted:
+    lda.l SAME_SCUMM_C4_SCHED_SLOT
+    .endif
     ; The preceding slot may have loaded a word-indexed PC into X.  The
     ; scheduler index is a byte slot number here; clear the index high byte
     ; before every byte-table lookup, not only on the first pass.
@@ -8124,6 +8173,9 @@ ScummV5_Op_CutsceneDispatch__override:
     jmp ScummV5_Op_BeginOverride
 
 ScummV5_Op_Cutscene:
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    jsl ScummV5_Cutscene_ClearArgs_Far
+    .endif
     rep #$20
     .a16
     lda #$0000
@@ -8192,6 +8244,17 @@ ScummV5_Op_Cutscene__variable_ok:
     .a16
     sta.l SAME_SCUMM_OPERAND
 ScummV5_Op_Cutscene__value_ready:
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C4_ARG_COUNT
+    and #$00FF
+    asl
+    tax
+    lda.l SAME_SCUMM_OPERAND
+    sta.l SAME_SCUMM_C4_ARGS,x
+    .endif
     sep #$20
     .a8
     lda.l SAME_SCUMM_C4_ARG_COUNT
@@ -8250,7 +8313,11 @@ ScummV5_Op_Cutscene__depth_room:
     lda.l SAME_SCUMM_C19_STACK_POINTER
     sta.l $7E5688
     .endif
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    jml ScummV5_Cutscene_StartCallback_Far
+    .else
     jmp ScummV5_Engine_Frame__next
+    .endif
 
 ScummV5_Op_EndCutscene:
     sep #$20
@@ -8344,6 +8411,10 @@ ScummV5_Op_EndCutscene__second_depth_done:
     tax
 ScummV5_Op_EndCutscene__override_done:
     .a16
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    lda.l SAME_SCUMM_C19_DATA,x
+    sta.l SAME_SCUMM_C19_ARGUMENT0
+    .endif
     lda #$0000
     sta.l SAME_SCUMM_C19_OVERRIDE_PC,x
     sep #$20
@@ -8370,7 +8441,11 @@ ScummV5_Op_EndCutscene__override_done:
     sta.l $7E569D
     sep #$20
     .endif
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    jml ScummV5_Cutscene_EndCallback_Far
+    .else
     jmp ScummV5_Engine_Frame__next
+    .endif
 
 ScummV5_Op_BeginOverride:
     .a8
@@ -11419,6 +11494,9 @@ ScummV5_Op_ActorOps__palette:
     lda.l SAME_SCUMM_FETCH_BYTE
     sta.l SAME_SCUMM_C14_ACTORS,x
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SAME_SCUMM_SCENE_ENABLED
+    jsl ScummV5_Scene_PaletteChanged_Far
+    .else
     ; The renderer's override-valid bits are separate from color values so
     ; palette index zero (and output color $FF) remain representable.
     lda.l SAME_SCUMM_C14_ACTOR
@@ -11465,6 +11543,7 @@ ScummV5_Op_ActorOps__palette_generation_ready:
     .a8
     lda #$00
     sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    .endif
 ScummV5_Op_ActorOps__palette_done:
     .a8
     .endif
@@ -11853,6 +11932,20 @@ ScummV5_Op_FindObject__x_ok:
 ScummV5_Op_FindObject__y_ok:
     .a16
     sta.l SAME_SCUMM_C30_Y
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    ; Live/ROM room-service builds already install authoritative object rows
+    ; for the controller. The opcode must query those same room records,
+    ; not the isolated C21 conformance fixture's three dummy objects.
+    sta.l SAME_SCUMM_INTERACTION_Y
+    lda.l SAME_SCUMM_C30_X
+    sta.l SAME_SCUMM_INTERACTION_X
+    jsl ScummV5_Generic_Object_HitTest_Far
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_INTERACTION_OBJECT
+    jsr ScummV5_WriteResultValue
+    jmp ScummV5_Engine_Frame__next
+    .endif
     lda #$0000
     sta.l SAME_SCUMM_C30_RECORD_OFFSET
 ScummV5_Op_FindObject__scan:
@@ -12702,6 +12795,9 @@ ScummV5_C14_DefaultActor:
     lda #$00
     jsr ScummV5_C14_SetExplicitAnimation
     jsr ScummV5_C14_BaseX
+    .if SAME_SCUMM_SCENE_ENABLED
+    jsl ScummV5_Scene_DefaultActor_Far
+    .else
     lda.l SAME_SCUMM_C14_ACTOR
     cmp #SCUMM_V5_ACTOR_RENDER_ID
     bne ScummV5_C14_DefaultActor__palette_mask_done
@@ -12722,6 +12818,7 @@ ScummV5_C14_DefaultActor__palette_generation_ready:
     .a8
     lda #$00
     sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    .endif
 ScummV5_C14_DefaultActor__palette_mask_done:
     .a8
     .endif
@@ -17488,6 +17585,9 @@ ScummV5_Op_StartScript__alloc_trace_done:
     ; is mutable and therefore cannot identify the lifecycle continuation.
     jsl ScummV5_M23A_CaptureLifecycleChainTarget_FarEntry
     .endif
+    .if SAME_BUILD_SCUMM_MSU1_PROGRAMS
+    jsl ScummV5_MsuProgram_NewActivation_Far
+    .endif
     lda #SCUMM_VM_RUNNING
     sta.l SAME_SCUMM_C4_SLOT_STATUS,x
     lda.l SAME_SCUMM_CONDITION
@@ -17765,6 +17865,12 @@ ScummV5_Op_StartScript__nested_ok:
     jmp ScummV5_Engine_Frame__complete_success
 ScummV5_Op_StartScript__nested_resource_ready:
     .a8
+    lda.l SAME_SCUMM_STATUS
+    cmp #SCUMM_VM_YIELDED
+    bne ScummV5_Op_StartScript__nested_caller_ready
+    jmp ScummV5_Engine_Frame__complete_success
+ScummV5_Op_StartScript__nested_caller_ready:
+    .a8
     .endif
     .if SAME_BUILD_SCUMM_ROOM_SERVICE && SCUMM_V5_HOLD_AFTER_STARTED_GLOBAL_ENABLED
     lda.l SAME_SCUMM_C4_LAST_ALLOCATED
@@ -17916,7 +18022,10 @@ ScummV5_Op_FreezeScripts:
     .a8
     lda.l SAME_SCUMM_PROGRAM_SELECT
     cmp #SCUMM_C2_FIXTURE_C20_DO_SENTENCE
-    beq ScummV5_Op_FreezeScripts__c20
+    bne ScummV5_Op_FreezeScripts__ordinary
+    brl ScummV5_Op_FreezeScripts__c20
+ScummV5_Op_FreezeScripts__ordinary:
+    .a8
     lda.l SAME_SCUMM_RETURN_MODE
     bne ScummV5_Op_FreezeScripts__c5
     lda #SCUMM_ERR_SCRIPT
@@ -17929,7 +18038,11 @@ ScummV5_Op_FreezeScripts__c5:
 ScummV5_Op_FreezeScripts__flag_ok:
     .a8
     sta.l SAME_SCUMM_CONDITION
-    beq ScummV5_Op_FreezeScripts__unfreeze
+    bne ScummV5_Op_FreezeScripts__freeze_begin
+    brl ScummV5_Op_FreezeScripts__unfreeze
+ScummV5_Op_FreezeScripts__freeze_begin:
+    .a8
+    .i16
     ldx #$0000
 ScummV5_Op_FreezeScripts__freeze_scan:
     .a8
@@ -17958,6 +18071,23 @@ ScummV5_Op_FreezeScripts__freeze_next:
     inx
     cpx #SCUMM_V5_MAX_SCRIPT_SLOTS
     bcc ScummV5_Op_FreezeScripts__freeze_scan
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    ; Canonical freezeScripts exempts the beginCutscene caller while the
+    ; authored start callback executes, including checked-code suspension.
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C19_SCRIPT_INDEX
+    and #$00FF
+    cmp #SCUMM_V5_MAX_SCRIPT_SLOTS
+    bcs ScummV5_Op_FreezeScripts__cutscene_owner_done
+    tax
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_C4_SLOT_FREEZE_COUNT,x
+ScummV5_Op_FreezeScripts__cutscene_owner_done:
+    .endif
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_FreezeScripts__unfreeze:
     .a8
@@ -18330,6 +18460,14 @@ ScummV5_Op_CursorCommand__color_store:
 ScummV5_Op_CursorCommand__error:
     jmp ScummV5_Op__error
 ScummV5_Op_CursorCommand__done:
+    ; v5 publishes these script-visible values after every cursor command.
+    ; Hover/input scripts read them, independently of the rendered cursor.
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_C7_CURSOR_STATE
+    sta.l SAME_SCUMM_VARIABLES+(52 * 2)
+    lda.l SAME_SCUMM_C7_USERPUT_STATE
+    sta.l SAME_SCUMM_VARIABLES+(53 * 2)
     sep #$20
     .a8
     lda #$2C

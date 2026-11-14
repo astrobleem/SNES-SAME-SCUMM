@@ -2490,7 +2490,7 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(host.engine.inspect_state()["scripts"][0]["pc"], 11)
         host.tick(input_word=0x0040)
         skipped = host.engine.inspect_state()
-        self._assert_variables(skipped, {"8": 9})
+        self._assert_variables(skipped, {"8": 9, "20": 160, "21": 100, "44": 160, "45": 100})
         self.assertEqual(skipped["cutscenes"]["stack_pointer"], 0)
         self.assertEqual(skipped["scripts"][0]["cutscene_override"], 0)
 
@@ -2526,7 +2526,7 @@ class ScummV5EngineTests(unittest.TestCase):
 
         host.tick(input_word=0x0040)
         skipped = host.engine.inspect_state()
-        self._assert_variables(skipped, {"4": 1, "5": 1, "8": 9})
+        self._assert_variables(skipped, {"4": 1, "5": 1, "8": 9, "20": 160, "21": 100, "44": 160, "45": 100})
         self.assertEqual(
             skipped["cutscenes"]["sentinel"],
             {"data": 0, "override_pc": None, "override_slot": None},

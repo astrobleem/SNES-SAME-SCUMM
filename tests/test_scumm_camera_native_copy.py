@@ -15,7 +15,9 @@ def select_actor_path(text, enabled=False):
     active=[True];arms=[];result=[]
     for line in text.splitlines():
         directive=line.strip()
-        if directive == '.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER':
+        if directive == '.if SCUMM_V5_ACTOR_CEL_FORMAT':
+            arms.append(False);active.append(False)
+        elif directive == '.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER':
             arms.append(enabled);active.append(active[-1] and enabled)
         elif directive == '.else':
             active[-1]=active[-2] and not arms[-1]
@@ -65,7 +67,9 @@ class StripMachine(ServiceMachine):
                 addr=value(arg.removesuffix(',x'))+(x if arg.endswith(',x') else 0)
                 v=self.get(addr,bits//8)
             if op=='rep':p&=~v
-            elif op=='sep':p|=v
+            elif op=='sep':
+                p|=v
+                if p&16:x&=255;y&=255
             elif op in ('lda','lda.l'):result=v
             elif op=='sta.l':self.put(addr,a&mask,bits//8);written.extend(range(addr,addr+bits//8))
             elif op=='sta' and arg.startswith('['):
@@ -90,24 +94,26 @@ class StripMachine(ServiceMachine):
             elif op=='xba':result=((a&255)<<8)|(a>>8)
             elif op=='ldx':x=v
             elif op=='ldy':y=v
-            elif op=='cpx':
-                delta=x-v;p=(p&~0x83)|int(delta>=0)|(2 if delta==0 else 0)|(128 if delta&32768 else 0)
+            elif op in ('cpx','cpy'):
+                delta=(x if op=='cpx' else y)-v;p=(p&~0x83)|int(delta>=0)|(2 if delta==0 else 0)|(128 if delta&32768 else 0)
             elif op=='txa':result=x
             elif op=='tya':result=y
-            elif op=='tax':x=a&65535
-            elif op=='tay':y=a&65535
+            elif op=='tax':x=a&(255 if p&16 else 65535)
+            elif op=='tay':y=a&(255 if p&16 else 65535)
             elif op=='tyx':x=y
             elif op=='inx':x=(x+1)&65535
             elif op=='iny':y=(y+1)&65535
+            elif op=='dey':
+                y=(y-1)&(255 if p&16 else 65535);p=(p&~0x82)|(2 if y==0 else 0)|(128 if y&(128 if p&16 else 32768) else 0)
             elif op=='dex':x=(x-1)&65535;p=(p&~0x82)|(2 if x==0 else 0)|(128 if x&32768 else 0)
             elif op=='php':stack.append((p,8))
             elif op=='plp':p,width=stack.pop();assert width==8
             elif op=='pha':stack.append((a,bits))
             elif op=='pla':result,width=stack.pop();assert width==bits
-            elif op=='phy':stack.append((y,16))
-            elif op=='ply':y,width=stack.pop();assert width==16
-            elif op=='phx':stack.append((x,16))
-            elif op=='plx':x,width=stack.pop();assert width==16
+            elif op=='phy':stack.append((y,8 if p&16 else 16))
+            elif op=='ply':y,width=stack.pop();assert width==(8 if p&16 else 16)
+            elif op=='phx':stack.append((x,8 if p&16 else 16))
+            elif op=='plx':x,width=stack.pop();assert width==(8 if p&16 else 16)
             elif op in ('jsl','jsr'):
                 if arg in self.labels:returns.append(pc);pc=self.labels[arg]
                 else:p,a=self.service(arg,p,a);written.extend(self.service_writes);self.service_writes=[]

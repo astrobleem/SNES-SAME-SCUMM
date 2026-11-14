@@ -73,7 +73,7 @@ the distinction between synthetic fixtures and authentic game resources.
   repository's documented invocation or an existing working validator.
 - Never inherit or use the user's `DISPLAY` or `XAUTHORITY`, reconnect to
   MobaXterm, or treat the user's desktop as a test environment.
-- Use only the project's canonical supervised emulator launcher with its own
+- Use only `tools/run_visual_once.py`, the project's canonical supervised emulator launcher, with its own
   private Xvfb display and MCP port. Nexen is the default for automated native
   acceptance requiring MCP; Mesen is reserved for explicitly selected
   independent validation.

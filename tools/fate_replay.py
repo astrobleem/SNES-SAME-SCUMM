@@ -562,7 +562,10 @@ def controller_synchronous_input_edge(
                     release_frames.append({
                         "advance": advance, "state_at_frame_end": current
                     })
-                    if not (current["input_held"] & press_bits):
+                    # NMI may expose neutral held bits before the engine's
+                    # input poll has consumed the previous pressed latch.
+                    # The next edge's entry guard requires BOTH to be clear.
+                    if not (current["input_held"] or current["input_pressed"]):
                         released = current
                         break
                 if released is None:

@@ -10,13 +10,19 @@ M = 'SAME_SCUMM_ACTOR_'
 D = 'SAME_VIDEO_SURFACE_DAMAGE_'
 
 
-def camera_source(source, enabled=False):
+def camera_source(source, enabled=False, cels=False, scene=False):
     """Select the same explicit camera build branch as Poppy, never both."""
     active=[True];result=[]
     for raw in source.splitlines():
         line=raw.split(';',1)[0].strip()
         if line.startswith('.if '):
             condition=line[4:].strip()
+            if condition in ('SAME_SCUMM_SCENE_ENABLED','!SAME_SCUMM_SCENE_ENABLED'):
+                active.append(active[-1] and (scene if not condition.startswith('!') else not scene))
+                continue
+            if condition == 'SCUMM_V5_ACTOR_CEL_FORMAT':
+                active.append(active[-1] and cels)
+                continue
             if condition not in ('SCUMM_MSU1_CAMERA_VIEWPORT','!SCUMM_MSU1_CAMERA_VIEWPORT'):
                 raise AssertionError('unmodeled build condition '+condition)
             yes=enabled if not condition.startswith('!') else not enabled
@@ -169,8 +175,8 @@ class ControllerMachine:
         else:
             raise AssertionError(name)
 
-    def run(self):
-        pc = 0
+    def run(self, entry=None, preserve_a=True):
+        pc = 0 if entry is None else self.labels[entry]
         for _ in range(2000000):
             self.instructions += 1
             if self.call_returns:
@@ -233,9 +239,16 @@ class ControllerMachine:
             elif op in ('asl', 'lsr'):
                 self.c = bool(self.a & (1 << (self.width - 1) if op == 'asl' else 1))
                 result = self.a << 1 if op == 'asl' else (self.a & mask) >> 1
-            elif op == 'inx':
-                self.x = (self.x + 1) & ((1 << self.iwidth) - 1)
-                self.z, self.n = self.x == 0, bool(self.x & (1 << (self.iwidth - 1)))
+            elif op in ('inx', 'iny'):
+                name = op[-1]
+                v = (getattr(self, name) + 1) & ((1 << self.iwidth) - 1)
+                setattr(self, name, v)
+                self.z, self.n = v == 0, bool(v & (1 << (self.iwidth - 1)))
+            elif op in ('ldx', 'ldy'):
+                setattr(self, op[-1], value)
+                self.z, self.n = value == 0, bool(value & (1 << (self.iwidth - 1)))
+            elif op == 'txa':
+                result = self.x
             elif op == 'tya':
                 result = self.y
             elif op == 'cld':
@@ -264,7 +277,9 @@ class ControllerMachine:
                     pc = self.call_returns.pop()
                     continue
                 assert self.stack == [0x54, 0x90, 0xCA], self.stack
-                assert (self.a, self.x, self.y) == self.initial
+                assert (self.x, self.y) == self.initial[1:]
+                if preserve_a:
+                    assert self.a == self.initial[0]
                 assert self.width == self.iwidth == 8
                 assert self.decimal and self.db == 0x87
                 return self
