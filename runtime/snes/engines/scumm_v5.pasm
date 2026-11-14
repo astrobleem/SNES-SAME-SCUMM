@@ -6479,21 +6479,10 @@ ScummV5_Op_IfClassOfIs__class_nonzero:
     jmp ScummV5_Op_IfClassOfIs__invalid
 ScummV5_Op_IfClassOfIs__class_valid:
     .a16
-    jsr ScummV5_C16_FindRecord
-    lda.l SAME_SCUMM_C16_RECORD_OFFSET
-    cmp #$FFFF
-    beq ScummV5_Op_IfClassOfIs__absent
-    jsr ScummV5_C16_ClassAddress
-    rep #$30
-    .a16
-    .i16
-    lda.l SAME_SCUMM_C16_MASK_OFFSET
-    tax
+    jsr ScummV5_C16_TestClass
+    bcc ScummV5_Op_IfClassOfIs__absent
     sep #$20
     .a8
-    lda.l SAME_SCUMM_C16_RECORDS,x
-    and.l SAME_SCUMM_C16_BIT_MASK
-    beq ScummV5_Op_IfClassOfIs__absent
     lda #$01
     bra ScummV5_Op_IfClassOfIs__membership_ready
 ScummV5_Op_IfClassOfIs__absent:
@@ -6659,17 +6648,17 @@ ScummV5_Op_SetClass__class_nonzero:
     bcc ScummV5_Op_SetClass__class_valid
     jmp ScummV5_Op_SetClass__invalid
 ScummV5_Op_SetClass__class_valid:
-    jsr ScummV5_C16_FindRecord
+    jsr ScummV5_C16_TestClass
     sep #$20
     .a8
     lda.l SAME_SCUMM_C16_CLASS
     bmi ScummV5_Op_SetClass__set
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_C16_RECORD_OFFSET
-    cmp #$FFFF
-    bne ScummV5_Op_SetClass__clear_present
+    bcs ScummV5_Op_SetClass__clear_needed
     jmp ScummV5_Op_SetClass__selector_loop
+ScummV5_Op_SetClass__clear_needed:
+    jsr ScummV5_C16_EnsureRecord
+    bcc ScummV5_Op_SetClass__clear_present
+    jmp ScummV5_Op_SetClass__invalid
 ScummV5_Op_SetClass__clear_present:
     jsr ScummV5_C16_ClassAddress
     rep #$30
@@ -6686,22 +6675,12 @@ ScummV5_Op_SetClass__clear_present:
     jsr ScummV5_C16_FreeIfEmpty
     jmp ScummV5_Op_SetClass__selector_loop
 ScummV5_Op_SetClass__set:
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_C16_RECORD_OFFSET
-    cmp #$FFFF
-    bne ScummV5_Op_SetClass__set_address
-    lda.l SAME_SCUMM_C16_FREE_OFFSET
-    cmp #$FFFF
-    beq ScummV5_Op_SetClass__invalid
-    sta.l SAME_SCUMM_C16_RECORD_OFFSET
-    tax
-    lda.l SAME_SCUMM_C16_OBJECT
-    sta.l SAME_SCUMM_C16_RECORDS+SAME_SCUMM_C16_R_OBJECT,x
-    sep #$20
-    .a8
-    lda #$01
-    sta.l SAME_SCUMM_C16_RECORDS+SAME_SCUMM_C16_R_PRESENT,x
+    bcc ScummV5_Op_SetClass__set_needed
+    jmp ScummV5_Op_SetClass__selector_loop
+ScummV5_Op_SetClass__set_needed:
+    jsr ScummV5_C16_EnsureRecord
+    bcc ScummV5_Op_SetClass__set_address
+    jmp ScummV5_Op_SetClass__invalid
 ScummV5_Op_SetClass__set_address:
     jsr ScummV5_C16_ClassAddress
     rep #$30
@@ -6714,17 +6693,28 @@ ScummV5_Op_SetClass__set_address:
     lda.l SAME_SCUMM_C16_RECORDS,x
     ora.l SAME_SCUMM_C16_BIT_MASK
     sta.l SAME_SCUMM_C16_RECORDS,x
+    jsr ScummV5_C16_FreeIfEmpty
     jmp ScummV5_Op_SetClass__selector_loop
 ScummV5_Op_SetClass__clear_all:
-    jsr ScummV5_C16_FindRecord
-    rep #$20
-    .a16
-    lda.l SAME_SCUMM_C16_RECORD_OFFSET
-    cmp #$FFFF
-    bne ScummV5_Op_SetClass__clear_all_present
+    jsr ScummV5_C16_QueryMask
+    sta.l SAME_SCUMM_C16_MASK_OFFSET
+    tya
+    ora.l SAME_SCUMM_C16_MASK_OFFSET
+    bne ScummV5_Op_SetClass__clear_all_needed
     jmp ScummV5_Op_SetClass__selector_loop
+ScummV5_Op_SetClass__clear_all_needed:
+    jsr ScummV5_C16_EnsureRecord
+    bcc ScummV5_Op_SetClass__clear_all_present
+    jmp ScummV5_Op_SetClass__invalid
 ScummV5_Op_SetClass__clear_all_present:
-    jsr ScummV5_C16_ClearRecord
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C16_RECORD_OFFSET
+    tax
+    lda #$0000
+    sta.l SAME_SCUMM_C16_RECORDS+4,x
+    sta.l SAME_SCUMM_C16_RECORDS+6,x
+    jsr ScummV5_C16_FreeIfEmpty
     jmp ScummV5_Op_SetClass__selector_loop
 ScummV5_Op_SetClass__done:
     jmp ScummV5_Engine_Frame__next
@@ -6741,6 +6731,120 @@ ScummV5_Op_SetClass__invalid:
 ; Generated room/scenario data lives in a separate LoROM bank.  Keep the
 ; bank-local implementation below, but expose the normal JSL/RTL adapter for
 ; generated far helpers rather than letting them issue a bank-relative JSR.
+; Immutable source defaults do not consume mutable C16 slots. Query returns
+; the effective u32 mask in A16(low)/Y16(high), with no allocation.
+ScummV5_C16_QueryMask_Far:
+    jsr ScummV5_C16_QueryMask
+    rtl
+ScummV5_C16_QueryMask:
+    jsr ScummV5_C16_FindRecord
+    ; FindRecord returns A16/X16. Reassert assembler width after the
+    ; preceding byte-sized opcode error exit (JSR does not track widths).
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C16_RECORD_OFFSET
+    cmp #$FFFF
+    beq ScummV5_C16_QueryMask__source
+    tax
+    lda.l SAME_SCUMM_C16_RECORDS+6,x
+    tay
+    lda.l SAME_SCUMM_C16_RECORDS+4,x
+    rts
+ScummV5_C16_QueryMask__source:
+    jsr ScummV5_C16_QueryInitial
+    rts
+ScummV5_C16_QueryInitial:
+    rep #$30
+    .a16
+    .i16
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE
+    jsl ScummV5_ObjectClass_QueryInitial_Far
+    .else
+    lda #$0000
+    ldy #$0000
+    .endif
+    rts
+
+; C16_OBJECT and class 1..32 -> carry membership. Preserve raw class selector.
+ScummV5_C16_TestClass_Far:
+    jsr ScummV5_C16_TestClass
+    rtl
+ScummV5_C16_TestClass:
+.if SAME_BUILD_SCUMM_ROOM_SERVICE
+    jsl ScummV5_C16_SourceTestClass_Far
+    rts
+.else
+    jsr ScummV5_C16_QueryMask
+    .a16
+    .i16
+    pha
+    lda.l SAME_SCUMM_C16_CLASS
+    and #$007F
+    dec
+    cmp #$0010
+    bcs ScummV5_C16_TestClass__high
+    tax
+    pla
+    bra ScummV5_C16_TestClass__shift
+ScummV5_C16_TestClass__high:
+    .a16
+    .i16
+    and #$000F
+    tax
+    pla
+    tya
+ScummV5_C16_TestClass__shift:
+    .a16
+    .i16
+    cpx #$0000
+    beq ScummV5_C16_TestClass__bit
+    lsr
+    dex
+    bra ScummV5_C16_TestClass__shift
+ScummV5_C16_TestClass__bit:
+    lsr
+    rts
+
+.endif
+
+; Allocate only for an actual mutation, seeded with the complete source mask.
+; Carry set is explicit exhaustion; no partially initialized record is live.
+ScummV5_C16_EnsureRecord_Far:
+    jsr ScummV5_C16_EnsureRecord
+    rtl
+ScummV5_C16_EnsureRecord:
+.if SAME_BUILD_SCUMM_ROOM_SERVICE
+    jsl ScummV5_C16_SourceEnsureRecord_Far
+    rts
+.else
+    jsr ScummV5_C16_FindRecord
+    lda.l SAME_SCUMM_C16_RECORD_OFFSET
+    cmp #$FFFF
+    bne ScummV5_C16_EnsureRecord__ready
+    lda.l SAME_SCUMM_C16_FREE_OFFSET
+    cmp #$FFFF
+    beq ScummV5_C16_EnsureRecord__full
+    sta.l SAME_SCUMM_C16_RECORD_OFFSET
+    tax
+    phx
+    jsr ScummV5_C16_QueryInitial
+    plx
+    sta.l SAME_SCUMM_C16_RECORDS+4,x
+    tya
+    sta.l SAME_SCUMM_C16_RECORDS+6,x
+    lda.l SAME_SCUMM_C16_OBJECT
+    sta.l SAME_SCUMM_C16_RECORDS+2,x
+    lda #$0001
+    sta.l SAME_SCUMM_C16_RECORDS,x
+ScummV5_C16_EnsureRecord__ready:
+    clc
+    rts
+ScummV5_C16_EnsureRecord__full:
+    sec
+    rts
+
+.endif
+
 ScummV5_C16_FindRecord_Far:
     jsr ScummV5_C16_FindRecord
     rtl
@@ -6828,13 +6932,20 @@ ScummV5_C16_ClearRecord:
     rts
 
 ScummV5_C16_FreeIfEmpty:
+    ; Historical name retained. Reclaim only when equal to source defaults,
+    ; not merely zero: a zero mask can override nonzero source classes.
     rep #$30
     .a16
     .i16
     lda.l SAME_SCUMM_C16_RECORD_OFFSET
     tax
-    lda.l SAME_SCUMM_C16_RECORDS+4,x
-    ora.l SAME_SCUMM_C16_RECORDS+6,x
+    phx
+    jsr ScummV5_C16_QueryInitial
+    plx
+    cmp.l SAME_SCUMM_C16_RECORDS+4,x
+    bne ScummV5_C16_FreeIfEmpty__done
+    tya
+    cmp.l SAME_SCUMM_C16_RECORDS+6,x
     bne ScummV5_C16_FreeIfEmpty__done
     jsr ScummV5_C16_ClearRecord
 ScummV5_C16_FreeIfEmpty__done:
@@ -6858,21 +6969,10 @@ ScummV5_C16_AddUntouchable__ready:
     .a16
     lda #$00A0 ; set bit plus class 32
     sta.l SAME_SCUMM_C16_CLASS
-    jsr ScummV5_C16_FindRecord
-    lda.l SAME_SCUMM_C16_RECORD_OFFSET
-    cmp #$FFFF
-    bne ScummV5_C16_AddUntouchable__record_ready
-    lda.l SAME_SCUMM_C16_FREE_OFFSET
-    cmp #$FFFF
-    beq ScummV5_C16_AddUntouchable__full
-    sta.l SAME_SCUMM_C16_RECORD_OFFSET
-    tax
-    lda.l SAME_SCUMM_C16_OBJECT
-    sta.l SAME_SCUMM_C16_RECORDS+SAME_SCUMM_C16_R_OBJECT,x
-    sep #$20
-    .a8
-    lda #$01
-    sta.l SAME_SCUMM_C16_RECORDS+SAME_SCUMM_C16_R_PRESENT,x
+    jsr ScummV5_C16_TestClass
+    bcs ScummV5_C16_AddUntouchable__already
+    jsr ScummV5_C16_EnsureRecord
+    bcs ScummV5_C16_AddUntouchable__full
 ScummV5_C16_AddUntouchable__record_ready:
     jsr ScummV5_C16_ClassAddress
     rep #$30
@@ -6885,6 +6985,7 @@ ScummV5_C16_AddUntouchable__record_ready:
     lda.l SAME_SCUMM_C16_RECORDS,x
     ora.l SAME_SCUMM_C16_BIT_MASK
     sta.l SAME_SCUMM_C16_RECORDS,x
+ScummV5_C16_AddUntouchable__already:
     clc
     bra ScummV5_C16_AddUntouchable__return
 ScummV5_C16_AddUntouchable__full:
@@ -11842,16 +11943,10 @@ ScummV5_Op_ActorFromPos__room:
     lda.l SAME_SCUMM_C29_ACTOR
     and #$00FF
     sta.l SAME_SCUMM_C16_OBJECT
-    jsr ScummV5_C16_FindRecord
-    lda.l SAME_SCUMM_C16_RECORD_OFFSET
-    cmp #$FFFF
-    beq ScummV5_Op_ActorFromPos__bounds
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_C16_RECORDS+SAME_SCUMM_C16_R_MASK+3,x
-    and #$80
-    beq ScummV5_Op_ActorFromPos__bounds
+    lda #$0020
+    sta.l SAME_SCUMM_C16_CLASS
+    jsr ScummV5_C16_TestClass
+    bcc ScummV5_Op_ActorFromPos__bounds
     jmp ScummV5_Op_ActorFromPos__next
 ScummV5_Op_ActorFromPos__bounds:
     rep #$30
@@ -12012,16 +12107,10 @@ ScummV5_Op_FindObject__id_present:
     .a16
     .i16
     sta.l SAME_SCUMM_C16_OBJECT
-    jsr ScummV5_C16_FindRecord
-    lda.l SAME_SCUMM_C16_RECORD_OFFSET
-    cmp #$FFFF
-    beq ScummV5_Op_FindObject__hierarchy
-    tax
-    sep #$20
-    .a8
-    lda.l SAME_SCUMM_C16_RECORDS+SAME_SCUMM_C16_R_MASK+3,x
-    and #$80
-    beq ScummV5_Op_FindObject__hierarchy
+    lda #$0020
+    sta.l SAME_SCUMM_C16_CLASS
+    jsr ScummV5_C16_TestClass
+    bcc ScummV5_Op_FindObject__hierarchy
     jmp ScummV5_Op_FindObject__next
 ScummV5_Op_FindObject__hierarchy:
     rep #$20

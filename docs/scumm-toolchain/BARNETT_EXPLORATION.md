@@ -1,5 +1,12 @@
 # Barnett office exploration — Milestone E accepted
 
+> Evidence qualification: the historical coat pickup below used a ROM missing
+> original DOBJ class defaults. Correct source defaults keep coat25 untouchable
+> at that checkpoint; this is not source-faithful reachable coat acceptance.
+> The preserved observations remain historical evidence. See
+> [OFFICE_PROGRESSION.md](OFFICE_PROGRESSION.md) and additive PR18 for the class
+> correction and original ice-box/jar continuation. Do not force coat state.
+
 Milestone D remains accepted at `0740cbca`. Milestone E now qualifies one
 continuous original-controller continuation from Barnett room2 into the office
 (room1), original coat pickup, readable inventory and continued cursor input.

@@ -458,32 +458,20 @@ ScummV5_Scene_SnapshotMaskPolicy_Far:
     .a16
     .i16
     phx
+    phy
     lda.l SAME_SCUMM_SCENE_ROW+$09
     and #$00FF
     beq ScummV5_Scene_MaskPolicy__done
-    ldx #$0000
-ScummV5_Scene_MaskPolicy__class:
-    .a16
-    .i16
-    lda.l SAME_SCUMM_C16_RECORDS,x
-    and #$00FF
-    beq ScummV5_Scene_MaskPolicy__next
-    lda.l SAME_SCUMM_C16_RECORDS+SAME_SCUMM_C16_R_OBJECT,x
-    cmp.l SAME_SCUMM_SCENE_ACTOR
-    bne ScummV5_Scene_MaskPolicy__next
-    lda.l SAME_SCUMM_C16_RECORDS+SAME_SCUMM_C16_R_MASK+2,x
-    and #$0008
+    lda.l SAME_SCUMM_SCENE_ACTOR
+    sta.l SAME_SCUMM_C16_OBJECT
+    lda #$0014 ; source class20 controls foreground-mask behavior
+    sta.l SAME_SCUMM_C16_CLASS
+    jsl ScummV5_C16_TestClass_Far
+    lda #$0000
+    bcc ScummV5_Scene_MaskPolicy__store_class
+    lda #$0008
+ScummV5_Scene_MaskPolicy__store_class:
     sta.l SAME_SCUMM_SCENE_ROW+$16
-    bra ScummV5_Scene_MaskPolicy__box
-ScummV5_Scene_MaskPolicy__next:
-    .a16
-    .i16
-    txa
-    clc
-    adc #SAME_SCUMM_C16_RECORD_STRIDE
-    tax
-    cpx #(SAME_SCUMM_C16_RECORD_COUNT*SAME_SCUMM_C16_RECORD_STRIDE)
-    bcc ScummV5_Scene_MaskPolicy__class
 ScummV5_Scene_MaskPolicy__box:
     .a16
     .i16
@@ -512,6 +500,7 @@ ScummV5_Scene_MaskPolicy__box:
 ScummV5_Scene_MaskPolicy__done:
     .a16
     .i16
+    ply
     plx
     plp
     rtl

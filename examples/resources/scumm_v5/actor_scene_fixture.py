@@ -19,7 +19,9 @@ OBJECT_STAGES = (*STAGES, STAGES[-1])
 
 def source_files(*, masks: bool = False, transitions: bool = False,
                  sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
-                 object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False, one_shot_limb_probe: bool = False) -> dict[str, bytes]:
+                 object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False, one_shot_limb_probe: bool = False, hit_test_probe: bool = False) -> dict[str, bytes]:
+    if hit_test_probe:
+        object_images_probe = True
     base = camera_files()
     decoded = bytes(b ^ 0x69 for b in base['ATLANTIS/ATLANTIS.001'])
     size = int.from_bytes(decoded[34:38], 'big')
@@ -97,6 +99,47 @@ def source_files(*, masks: bool = False, transitions: bool = False,
         room = room.replace(ch(b'EXCD', b'\0'),
             ch(b'EXCD', copy(151, 150)+write(150, 2)+b'\0'))
     p = Program()
+    if hit_test_probe:
+        p.emit('install original room objects', b'\x72\x01')
+        p.emit('visible parent state', bytes((0x07, 8, 0, 1)))
+        def touchable(identity, enabled):
+            p.emit('mutable class32', bytes((0x5d, identity, 0, 1,
+                                            32 if enabled else 160, 0, 255)))
+        def find(variable):
+            p.emit('find overlapping room objects', bytes((0x35, variable, 0, 130, 110)))
+        find(150)  # source defaults hide both objects before any mutation
+        def class_op(identity, value):
+            p.emit('class source override', b'\x5d'+struct.pack('<H',identity)+b'\x01'+struct.pack('<H',value)+b'\xff')
+        def expect_class(value):
+            p.emit('query source/override above old sparse seed limit',
+                   b'\x1d'+struct.pack('<H',900)+b'\x01'+struct.pack('<H',value)+b'\xff\x03\x00')
+            p.emit('count verified predicate', b'\x46\x9d\x00')
+        expect_class(160)
+        class_op(900,32); expect_class(32); expect_class(129)
+        class_op(900,160); expect_class(160)
+        class_op(900,0); expect_class(1); expect_class(32)
+        class_op(900,129); class_op(900,160); expect_class(160)
+
+        touchable(8, True); find(151)
+        touchable(8, False); touchable(9, True); find(152)
+        touchable(8, True); find(153)
+        # Ownership alone is not a hit-test predicate. Only class32 changes
+        # touchability; absent C16 rows mean no classes, not unselectable.
+        p.emit('change owner without class mutation', bytes((0x29, 8, 0, 1)))
+        find(155)
+        touchable(8, False); touchable(9, False); find(156)
+        # Exercise the real far inline-name parser after class/hit operations.
+        # Its bank-local byte writer must return through RTS, including the
+        # bounded-cache discard path. Encoded control parameters include zero.
+        p.emit('rename with original encoded controls',
+               b'\x54\x08\x00Fixture\xff\x04\x00\x01 lamp\x00')
+        p.emit('bounded long name', b'\x54\x09\x00'+b'x'*40+b'\x00')
+        p.emit('empty name', b'\x54\x0a\x00\x00')
+        p.emit('31 byte name', b'\x54\x0b\x00'+b'y'*30+b'\x00')
+        p.emit('32 byte name', b'\x54\x0c\x00'+b'z'*31+b'\x00')
+        p.emit('consume uncached name without alias',
+               b'\x54'+struct.pack('<H',1500)+b'Uncached\x00')
+        p.move(154, 0x1357); p.emit('probe complete', b'\0')
     if room_hook_probe:
         p.emit('initial room without hooks', b'\x72\x01')
         for variable, number in ((30,2),(31,3),(28,4),(29,5)):p.move(variable,number)
@@ -195,18 +238,24 @@ def source_files(*, masks: bool = False, transitions: bool = False,
         data=ch(b'LECF',ch(b'LOFF',loff)+first+second)
     else:
         data=ch(b'LECF',ch(b'LOFF',bytes((1,1))+struct.pack('<I',30))+ch(b'LFLF',container))
-    index=(ch(b'DOBJ',struct.pack('<H',256)+bytes(1280))
+    object_count=1024 if hit_test_probe else 256
+    initial_classes=[0]*object_count
+    if hit_test_probe:
+        initial_classes[:1000]=[0x80000000]*1000
+        initial_classes[900]=0x80000001
+    dobj=struct.pack('<H',object_count)+bytes(object_count)+b''.join(struct.pack('<I',mask) for mask in initial_classes)
+    index=(ch(b'DOBJ',dobj)
            +ch(b'DSCR',directory(bytes((0,)+(1,)*(len(scripts)-1)),scripts))
            +ch(b'DCOS',directory(bytes((0,1,1)),(0,*costs)))+ch(b'DSOU',directory(b'',[])))
     return {f'ATLANTIS/ATLANTIS.{n:03}':bytes(b^0x69 for b in raw) for n,raw in enumerate((index,data))}
 
 def write_archive(path: Path, *, masks: bool = False, transitions: bool = False,
                   sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
-                  object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False, one_shot_limb_probe: bool = False) -> None:
+                  object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False, one_shot_limb_probe: bool = False, hit_test_probe: bool = False) -> None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as archive:
         for name,data in source_files(masks=masks,transitions=transitions,
                                       sound_status_probe=sound_status_probe, cutscene_callback_probe=cutscene_callback_probe, room_hook_probe=room_hook_probe,
-                                      object_images_probe=object_images_probe, absent_animation_probe=absent_animation_probe, walkbox_mask_probe=walkbox_mask_probe, one_shot_limb_probe=one_shot_limb_probe).items():
+                                      object_images_probe=object_images_probe, absent_animation_probe=absent_animation_probe, walkbox_mask_probe=walkbox_mask_probe, one_shot_limb_probe=one_shot_limb_probe, hit_test_probe=hit_test_probe).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             archive.writestr(info,data)
 
@@ -219,6 +268,7 @@ if __name__=='__main__':
     parser.add_argument('--absent-animation-probe', action='store_true')
     parser.add_argument('--walkbox-mask-probe', action='store_true')
     parser.add_argument('--one-shot-limb-probe', action='store_true')
+    parser.add_argument('--hit-test-probe', action='store_true')
     args=parser.parse_args();write_archive(args.output,masks=args.masks,transitions=args.transitions,
                                          sound_status_probe=args.sound_status_probe, cutscene_callback_probe=args.cutscene_callback_probe, room_hook_probe=args.room_hook_probe,
-                                         object_images_probe=args.object_images_probe, absent_animation_probe=args.absent_animation_probe, walkbox_mask_probe=args.walkbox_mask_probe, one_shot_limb_probe=args.one_shot_limb_probe)
+                                         object_images_probe=args.object_images_probe, absent_animation_probe=args.absent_animation_probe, walkbox_mask_probe=args.walkbox_mask_probe, one_shot_limb_probe=args.one_shot_limb_probe, hit_test_probe=args.hit_test_probe)

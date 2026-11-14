@@ -477,6 +477,21 @@ def indexed_contrast_pixels(indexed: bytes, cgram: bytes, *, background_index: i
     return sum(colors[index] != colors[background_index] for index in indexed)
 
 
+def dialogue_segment_is_current(state: dict, segment: int, *,
+                                expected_room: int, expected_generation: int,
+                                expected_segment: int) -> bool:
+    """Whether a bounded observer may still wait for this authored segment.
+
+    A sequencer can advance or expire while composition is pending. Abandon
+    that observation as unverified; never acknowledge a successor on behalf
+    of the expired segment. This is a lifetime guard, NOT a rendering fence
+    or evidence that any pixels were presented.
+    """
+    return (state['room'] == expected_room and bool(state['talk_active'])
+            and state['talk_generation'] == expected_generation
+            and segment == expected_segment)
+
+
 def indexed_text_committed_candidate(text: bytes, raw: bytes, pose: dict,
                                      expected: bytes, *, after_generation: int) -> bool:
     """Candidate for independent pixel validation after the queue fence passed.

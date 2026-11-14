@@ -277,6 +277,7 @@ class ScummV5Room:
         *,
         object_states: Mapping[int, int] | None = None,
         object_owners: Mapping[int, int] | None = None,
+        object_classes: Mapping[int, set[int]] | None = None,
     ) -> "ScummV5RoomObject | None":
         """Return the frontmost selectable CDHD containing a room point.
 
@@ -284,13 +285,16 @@ class ScummV5Room:
         record wins).  Parent-state visibility is part of the CDHD semantics;
         CDHD flag $80 means parent state 1, otherwise the low nibble is the
         required parent state.  A CDHD flag is not a generic hidden bit.
+        Class 32 is the mutable untouchability predicate. Ownership alone is
+        not a selection predicate; object_owners remains an API-compatible
+        argument but is not used to hide source room objects.
         """
         for item in self.objects:
             if not item.selectable or not item.contains_point(x, y):
                 continue
-            if object_states is not None and not self._parent_chain_visible(item, object_states):
+            if object_classes is not None and 32 in object_classes.get(item.object_id, set()):
                 continue
-            if object_owners is not None and object_owners.get(item.object_id, 0):
+            if object_states is not None and not self._parent_chain_visible(item, object_states):
                 continue
             return item
         return None
@@ -1444,6 +1448,7 @@ class ScummV5RoomAdapter:
         *,
         object_states: Mapping[int, int] | None = None,
         object_owners: Mapping[int, int] | None = None,
+        object_classes: Mapping[int, set[int]] | None = None,
     ) -> ScummV5RoomObject | None:
         """Resolve a logical cursor point using the active room projection."""
         if self.room is None:
@@ -1452,6 +1457,7 @@ class ScummV5RoomAdapter:
             *self.room_point_from_cursor(logical_x, logical_y),
             object_states=object_states,
             object_owners=object_owners,
+            object_classes=object_classes,
         )
 
     def inspect(self) -> Mapping[str, object]:

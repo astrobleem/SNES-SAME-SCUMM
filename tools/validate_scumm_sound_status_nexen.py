@@ -15,7 +15,7 @@ parser.add_argument('--nexen',type=Path,required=True)
 parser.add_argument('--mcp-python-root',type=Path,required=True)
 parser.add_argument('--core',type=Path,required=True)
 parser.add_argument('--port',type=int,required=True)
-parser.add_argument('--case', choices=('sound-status', 'cutscene-callback', 'room-hooks'), default='sound-status')
+parser.add_argument('--case', choices=('sound-status', 'cutscene-callback', 'room-hooks', 'object-hit-test'), default='sound-status')
 a=parser.parse_args()
 if not re.fullmatch(r':[0-9]+(?:\.[0-9]+)?', os.environ.get('DISPLAY', '')) or not Path(os.environ.get('XAUTHORITY', '/nonexistent')).is_file():
  raise RuntimeError('requires the canonical private-Xvfb supervisor; no display fallback')
@@ -35,6 +35,28 @@ ms.validate_mesen_build=validate
 report={'hypothesis':'Original bytecode status queries read logical sound ownership and publish VAR_SOUNDRESULT through the existing interpreter','expected':[0,1,0,0,0x1357,1,0,0],'exit_condition':'sentinel, first SCUMM error, 512 frames or 90 seconds','kind':'COPYRIGHT_FREE_NATIVE_CONFORMANCE','guest_writes':0,'result':'NOT_VERIFIED','identities':{s:sha(rom.with_suffix(s)) for s in ('.sfc','.map','.msu','.build_identity.json')},'samples':[]}
 if a.case == 'cutscene-callback':
  report.update(hypothesis='C19 callback enters ordinary C4 retirement with X8; both callback activations must complete with original locals and no BRK or cache writes', expected=[2,0x1234,0,0,0x1357,0,0,0], case=a.case)
+if a.case == 'object-hit-test':
+ report.update(hypothesis='Live-room findObject uses immutable source classes and bounded overrides, preserves ordering and does not confuse ownership with touchability', expected=[0,8,9,8,0x1357,8,0,7], case=a.case, exit_condition='sentinel, first error,4096frames or180seconds')
+ # Check actual assembler encodings too: the source instruction model cannot
+ # detect an immediate-width mismatch or a lost bank on Label+2 relocation.
+ image=rom.read_bytes()
+ def rom_at(address,length):
+  offset=((address>>16)&0x7f)*0x8000+(address&0x7fff)
+  return image[offset:offset+length]
+ query=rom_at(symbols['ScummV5_C16_QueryMask'],32)
+ assert b'\xc9\xff\xff\xf0' in query, 'C16 comparison must encode a word'
+ bridge=rom_at(symbols['ScummV5_C16_QueryInitial'],7)
+ assert bridge[:3]==b'\xc2\x30\x22'
+ target=int.from_bytes(bridge[3:6],'little')
+ source_query=rom_at(target,32)
+ load=b'\xbf'+constant('ScummV5_ObjectClass_Initial_Address').to_bytes(3,'little')
+ assert source_query.count(load)==2, 'both class words must load from the source ROM bank'
+ name_call=rom_at(symbols['ScummV5_Op_SetObjectName'],4)
+ assert name_call[0]==0x22, 'dynamic rename must use its far adapter'
+ name_bank=int.from_bytes(name_call[1:4],'little') & 0xff0000
+ # Poppy's human-readable map reports label offsets, not their ROM bank.
+ assert rom_at(name_bank | symbols['ScummV5_ObjectNameCache_StoreByte_Far__done'],1)==b'\x60', 'bank-local JSR name writer must return with RTS'
+ report['assembled_class_query']={'address':target,'bytes':source_query.hex(),'mask_query':query.hex()}
 if a.case == 'room-hooks':
  report.update(hypothesis='Before/after global room hooks run in source order around EXCD/ENCD through checked C4 activations', expected=[6,1,2,3,0x1357,4,1,5], case=a.case, exit_condition='sentinel, first error, 4096frames or180seconds')
 def save():(out/'report.json').write_text(json.dumps(report,indent=2)+'\n')
@@ -45,7 +67,7 @@ try:
   brk_hook=s.add_exec_hook(symbols['brk_handler'])
   alias_hook=s.add_write_hook(0x001000,0x001fff)
   report['invalid_execution_events']=[]
-  for _ in range(512 if a.case == 'room-hooks' else 64):
+  for _ in range(512 if a.case in ('room-hooks', 'object-hit-test') else 64):
    advance_bounded(s,8)
    raw=s.read_memory('snesMemory',variables+300,16);values=[int.from_bytes(raw[i:i+2],'little') for i in range(0,16,2)]
    frame=s.get_state()['frameCount'];error=s.read_u8(0x7E2303)
@@ -61,9 +83,23 @@ try:
    if error:report['cpu']=s.get_cpu_state();save();raise RuntimeError('native SCUMM error')
    if values[4]==0x1357:
     assert values==report['expected'],values
+    if a.case=='object-hit-test':
+     classes=s.read_memory('snesMemory',constant('SAME_SCUMM_C16_RECORDS'),4096)
+     report['mutable_class_records']=sum(bool(classes[i]) for i in range(0,4096,8))
+     assert report['mutable_class_records']==0, 'restored source defaults must reclaim overrides'
+     report['source_class_count']=constant('ScummV5_ObjectClass_InitialCount')
+     names=constant('SAME_SCUMM_OBJECT_NAMES');lengths=constant('SAME_SCUMM_OBJECT_NAME_LENGTH')
+     expected_names={8:b'Fixture\xff\x04\x00\x01 lamp\x00',9:b'x'*31+b'\x00',
+                     10:b'\x00',11:b'y'*30+b'\x00',12:b'z'*31+b'\x00'}
+     report['encoded_names']={}
+     for identity,expected_name in expected_names.items():
+      length=s.read_u8(lengths+identity)
+      actual=s.read_memory('snesMemory',names+identity*32,length)
+      report['encoded_names'][str(identity)]={'length':length,'hex':actual.hex()}
+      assert actual==expected_name,(identity,actual,expected_name)
     assert not report['invalid_execution_events'], 'native BRK or executable WRAM alias write'
-    report['result']='NATIVE_ROOM_HOOK_ORDER_MATCH' if a.case == 'room-hooks' else 'NATIVE_CUTSCENE_CALLBACK_MATCH' if a.case == 'cutscene-callback' else 'NATIVE_SOUND_STATUS_QUERY_MATCH';save();break
-   if time.monotonic()-begin>(180 if a.case == 'room-hooks' else 90):raise TimeoutError('native observation wall budget')
+    report['result']='NATIVE_OBJECT_HIT_TEST_MATCH' if a.case == 'object-hit-test' else 'NATIVE_ROOM_HOOK_ORDER_MATCH' if a.case == 'room-hooks' else 'NATIVE_CUTSCENE_CALLBACK_MATCH' if a.case == 'cutscene-callback' else 'NATIVE_SOUND_STATUS_QUERY_MATCH';save();break
+   if time.monotonic()-begin>(180 if a.case in ('room-hooks', 'object-hit-test') else 90):raise TimeoutError('native observation wall budget')
   else:raise TimeoutError('native observation frame budget')
 except BaseException as exc:report['failure']=f'{type(exc).__name__}: {exc}';save();raise
 finally:report['elapsed_seconds']=time.monotonic()-begin;save()

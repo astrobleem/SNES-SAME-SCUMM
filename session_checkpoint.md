@@ -1,3 +1,29 @@
+# Active continuation — office inventory and onward gameplay
+
+User resumed the broader playable-game mission after E. Do not stop solely
+because the previous bounded E acceptance is complete. Branch
+scumm-fate-office-progression starts at575d021, preserving PR17 and recovery.
+Private evidence: /home/chad/SAME-private-evidence/office-progression-20261114.
+
+Original office Open21/PC76 reveals jar22; Pickup22/PC151 changes owner to1,
+state1, classes16/32 and original name "jar of mayonnaise". Isolated host
+original-body cases agree for both authored text predicates.
+First exact-ROM office continuation exposed a real generic hit-test defect:
+class32 floor object30 intercepted a normal Walk click and sent Ego toward
+its default object point. Stopped the owned supervisor at95.382s; cleanup
+complete. No unchanged retry or game-state writes.
+
+Generated room-service hit testing now queries existing mutable C16 class32
+before returning a rectangle match. Host room helper receives the same class
+contract; ownership alone is not exclusion. Synthetic Nexen accepts
+[0,8,9,8,0x1357,8,0,0] atframe360,error0,17.976s including cleanup.
+Authentic corrected ROMc90b8812 is assembled/audited; fresh matching setup is
+underway because the previous ROM's state cannot be restored into it.
+Continue to the new office sequence after focused conformance/full tests.
+No acceptance of new jar gameplay yet; no automatic merge.
+
+## Preserved Milestone E checkpoint
+
 # Milestone E — continuous office gameplay accepted
 
 Branch: scumm-fate-barnett-exploration; draft PR17 on unchanged PR16.
@@ -4937,3 +4963,55 @@ No native change. Generic observer predicate/test added. Final continuous
 run office-room-bound-continuation uses the same Barnett state and corrected
 font oracle, port8093. New full suite and validate running. No coat pass yet.
 Both hosted jobs passed ed6d376 in run43601748173.
+
+
+2026-11-14 office continuation: active branch scumm-fate-office-progression,
+PR18 stacked on accepted PR17. Prior Milestone E office/coat acceptance remains
+valid; not a whole-game completion claim. New dirty source-default class
+correction has a native PASS at frame368 (ROM87430628, private class-defaults/
+native-classes-bank), all32-bit host/instruction regressions and zero override
+reclamation. Initial width and bank-relocation native failures are preserved.
+Fresh full-source build class-defaults/auth-build-mex8gntw is in progress; use
+new full-cooked manifest retaining all1395 class masks. Never reuse old ROM
+states. Next: fresh source-correct setup, then office Open21/Pickup22 under
+normal input with scene click Y strictly below virtual-screen bottom144.
+No old seven-action replay; recovery worktree untouched. New jar NOT_ACCEPTED.
+
+
+2026-11-14 continuing office progression, NOT blocked/NOT complete:
+HEAD before next commit f74a037 (PR18); progression recovery untouched.
+Qualify prior coat acceptance: initial DOBJ classes were absent; corrected
+ROM33e69ca3 preserves coat25 owner15/state0/class32. Do not force coat pickup.
+Fresh setup in private office-progression-20261114/class-defaults passes
+startup/pickup/ready/barnett/office-ready. Open21 succeeds; jar pickup transfers
+owner/state1/1 but crashes at native SetObjectName (VMopcode54 PC275). Fixed
+JSR/RTL mismatch plus cached-name count. Native synthetic name-length control
+passes frame376, ROM3c0bdfe5, all names/classes, noBRK/alias, cleanup complete.
+Observer segment-lifetime guard added; no rendering pass inferred from expiry.
+New authentic build auth-build-r6vyzz2l/source auth-source-_7_ngtoc in progress.
+Do not restore old33e69 states into it. Next: new matching-ROM setup via saved
+startup/pickup/ready/barnett procedures, then continuous Barnett->office->
+Open21/Pickup22/inventory/control. No historical seven-action route.
+Full tests/name-full-tests.log running; name-validate.log passed47regions.
+Native exact-exec-stop tool unsupported; asynchronous trace records preserved.
+Camera hypothesis was removed before publication; no renderer changes.
+
+
+2026-11-14 corrected original office progression ACCEPTED:
+Runtime2bdea03, PR18/scumm-fate-office-progression; docs-only follow-up pending.
+Exact ROMc4b2b3b3/map93ddd7ad/packageb6afddbf/buildidentityb62dad3d.
+Private class-defaults/name-fixed/continuous-final: one matching-ROM Barnett
+checkpoint (door already opened normally), frames21496–28661, Walk34->room1,
+Open21->door28state1/bit213, Pickup22->owner1/state1/name jar of mayonnaise,
+readable inventory290pixels, close, continued walk Ego199,134, RUNNING/error0.
+Five whole-scene/font/PPU/CGRAM comparisons exact;557.513sec cleanup complete.
+Newspaper1/1;coat15/0 unchanged. Historical coat acceptance is qualified because
+its ROM omitted source classes. Do not call it authentic reachable pickup.
+Expired first icebox and mayonnaise dialogue are visually NOT_VERIFIED.
+Focused jar report's blank menu image is qualified separately; final continuous
+menu fence checks actual expected text and completed publication, images viewed.
+1753 localtests/12skips;validate47regions/pinnedassembly/ROMauditPASS.
+Runtime hostedrun43629978507 bothPASS. Final doc head needs ownCI.
+No gameplay writes/second restore/seven-action replay/recovery modifications.
+The bounded Milestone E route is complete. Whole game remains unqualified;
+no further branch exploration or automatic merges are implied by this proof.

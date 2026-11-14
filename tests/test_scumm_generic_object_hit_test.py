@@ -56,7 +56,7 @@ class HitMachine:
         address = self.symbols[name] if isinstance(name, str) else name
         return sum(self.mem.get(address+i, 0) << (8*i) for i in range(size))
 
-    def run(self, count, dirty, point, selected=None):
+    def run(self, count, dirty, point, selected=None, untouchable=()):
         self.put('SAME_SCUMM_SETSTATE_LOCAL_COUNT', count, 1)
         self.put('SAME_SCUMM_SETSTATE_DIRTY_COUNT', dirty, 1)
         self.put('SAME_SCUMM_INTERACTION_X', point[0])
@@ -99,6 +99,11 @@ class HitMachine:
                 carry, zero = (a & mask) >= value, (a & mask) == value
             elif op == 'clc': carry = False
             elif op == 'sec': carry = True
+            elif op == 'jsl' and arg == PREFIX+'IsTouchable_Far':
+                # This runner isolates rectangle/table bounds. Execute the
+                # real C16 lookup and width/stack contract in
+                # test_scumm_object_hit_native; Nexen covers the integrated VM.
+                carry = (a & mask) not in untouchable
             elif op in ('bne', 'beq', 'bcc', 'bcs', 'brl'):
                 if {'bne': not zero, 'beq': zero, 'bcc': not carry, 'bcs': carry}.get(op, True): pc = self.labels[arg]
             elif op == 'rtl':
@@ -132,6 +137,12 @@ class GenericObjectHitTests(unittest.TestCase):
         for point, hit in (((0,20),True), ((1,22),True), ((2,21),False),
                            ((0,23),False), ((0,19),False)):
             self.assertEqual(m.run(1, 255, point), (hit, int(hit)))
+
+    def test_rejected_touchability_continues_within_local_table_bounds(self):
+        m = HitMachine()
+        for index in (0, 199):
+            self.assertEqual(m.run(200, 255, (index*3+1, 22),
+                                   untouchable=(index+1,)), (False, 0))
 
     def test_adjacent_validate_selected_widening_and_last_flags_read(self):
         m = HitMachine()
