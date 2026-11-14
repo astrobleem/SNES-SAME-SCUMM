@@ -1118,12 +1118,13 @@ class ScummV5RoomAdapter:
         self._camera_xstart: int | None = None
         self.composition_surface: IndexedSurface | None = None
         self.actor_draws: list[dict[str, object]] = []
+        self.object_images = ()
 
     def render(self, room_key: str, *, room_data: bytes | None = None) -> str:
-        room = decode_room(
-            self.context.services.resource_read(room_key) if room_data is None else room_data,
-            key=room_key,
-        )
+        raw = self.context.services.resource_read(room_key) if room_data is None else room_data
+        room = decode_room(raw, key=room_key)
+        from .object_images import decode_object_images
+        self.object_images = () if raw.startswith(_COOKED_MAGIC) else decode_object_images(raw, room)
         backdrop_palette = [(0, 0, 0)] * 256
         backdrop_palette[: len(room.palette)] = room.palette
         backdrop = IndexedSurface.wrap(
@@ -1151,6 +1152,8 @@ class ScummV5RoomAdapter:
         current_room: int,
         costume_key: Callable[[int], str],
         object_classes: Mapping[int, set[int]] | None = None,
+        object_states: Mapping[int, int] | None = None,
+        object_owners: Mapping[int, int] | None = None,
         project: bool = True,
     ) -> str:
         """Recompose the raw room and visible actors' current costume poses."""
@@ -1162,6 +1165,13 @@ class ScummV5RoomAdapter:
             raise ResourceError("SCUMM room actors cannot render before their room")
         surface = self.logical_surface
         surface.blit_surface(self.backdrop_surface)
+        zplanes = self.room.zplanes
+        if object_states is not None and self.object_images:
+            from .object_images import compose_objects
+            pixels, zplanes = compose_objects(self.room, self.object_images, object_states,
+                                              owners=object_owners)
+            surface.blit_surface(IndexedSurface.wrap(self.room.width, self.room.height,
+                                                     self.room.width, pixels))
         self.actor_draws = []
         for actor_id, actor in sorted(
             actors.items(), key=lambda item: (getattr(item[1], "position")[1], item[0])
@@ -1202,11 +1212,11 @@ class ScummV5RoomAdapter:
             setattr(actor, "walkbox", 0xFF if walkbox is None else walkbox.index)
             classes = set() if object_classes is None else object_classes.get(actor_id, set())
             if force_clip > 0:
-                z_plane = min(force_clip, len(self.room.zplanes))
+                z_plane = min(force_clip, len(zplanes))
             elif 20 in classes or bool(getattr(actor, "ignore_boxes")) or walkbox is None:
                 z_plane = 0
             else:
-                z_plane = min(walkbox.mask, len(self.room.zplanes))
+                z_plane = min(walkbox.mask, len(zplanes))
             strip_count = self.room.width // 8
             for cel in pose.cels:
                 relative_x = x_move + cel.relative_x
@@ -1236,7 +1246,7 @@ class ScummV5RoomAdapter:
                         ):
                             masked = bool(
                                 z_plane
-                                and self.room.zplanes[z_plane - 1][
+                                and zplanes[z_plane - 1][
                                     column_y * strip_count + target_x // 8
                                 ] & (0x80 >> (target_x & 7))
                             )

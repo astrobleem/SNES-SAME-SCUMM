@@ -15,7 +15,8 @@ STAGES = (
     ((220,130,231,231,90,1),(160,124,128,200,270,1)),
 )
 
-def source_files(*, masks: bool = False, transitions: bool = False) -> dict[str, bytes]:
+def source_files(*, masks: bool = False, transitions: bool = False,
+                 sound_status_probe: bool = False) -> dict[str, bytes]:
     base = camera_files()
     decoded = bytes(b ^ 0x69 for b in base['ATLANTIS/ATLANTIS.001'])
     size = int.from_bytes(decoded[34:38], 'big')
@@ -41,6 +42,26 @@ def source_files(*, masks: bool = False, transitions: bool = False) -> dict[str,
             chunks.append(ch(tag,payload));pos+=length
         room=b''.join(chunks)
     p = Program()
+    if sound_status_probe:
+        def query(sound, result):
+            p.emit('queued status', bytes((0x4c, 0, 13, 0, 0, sound, 0, 255)))
+            p.emit('flush', bytes((0x4c, 0, 255, 255, 255)))
+            p.emit('copy VAR_SOUNDRESULT', bytes((0x9a, result, 0, 56, 0)))
+        query(64, 150)
+        p.emit('start logical SFX', bytes((0x1c, 64)))
+        query(64, 151)
+        query(0, 152)
+        p.emit('stop logical SFX', bytes((0x3c, 64)))
+        query(64, 153)
+        p.emit('queue start', bytes((0x4c, 0, 8, 0, 0, 64, 0, 255)))
+        p.emit('flush start', bytes((0x4c, 0, 255, 255, 255)))
+        query(64, 155)
+        p.emit('queue stop all', bytes((0x4c, 0, 10, 0, 255)))
+        p.emit('flush stop all', bytes((0x4c, 0, 255, 255, 255)))
+        p.emit('mutating result', bytes((0x9a, 156, 0, 56, 0)))
+        query(64, 157)
+        p.move(154, 0x1357)
+        p.emit('probe complete', b'\0')
     p.move(0x4000,0);p.move(0x4001,0)
     p.emit('load room',b'\x72\x01')
     for actor in (1,2):
@@ -82,12 +103,16 @@ def source_files(*, masks: bool = False, transitions: bool = False) -> dict[str,
            +ch(b'DCOS',directory(bytes((0,1,1)),(0,*costs)))+ch(b'DSOU',directory(b'',[])))
     return {f'ATLANTIS/ATLANTIS.{n:03}':bytes(b^0x69 for b in raw) for n,raw in enumerate((index,data))}
 
-def write_archive(path: Path, *, masks: bool = False, transitions: bool = False) -> None:
+def write_archive(path: Path, *, masks: bool = False, transitions: bool = False,
+                  sound_status_probe: bool = False) -> None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as archive:
-        for name,data in source_files(masks=masks,transitions=transitions).items():
+        for name,data in source_files(masks=masks,transitions=transitions,
+                                      sound_status_probe=sound_status_probe).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             archive.writestr(info,data)
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('output',type=Path);parser.add_argument('--masks',action='store_true');parser.add_argument('--transitions',action='store_true')
-    args=parser.parse_args();write_archive(args.output,masks=args.masks,transitions=args.transitions)
+    parser.add_argument('--sound-status-probe', action='store_true')
+    args=parser.parse_args();write_archive(args.output,masks=args.masks,transitions=args.transitions,
+                                         sound_status_probe=args.sound_status_probe)

@@ -895,6 +895,18 @@ class ScummV5EmbeddedAudioAdapter:
             return owner.state in ("requested", "deferred", "active", "paused", "fading")
         return int(sound) == self.music_id or int(sound) in self.active_sfx
 
+    def sound_status(self, sound: int) -> int:
+        """Retain iMUSE's distinction between a player and a queued start."""
+        owner = self.logical_compiled.get(int(sound))
+        if owner is not None and owner.state == "deferred":
+            return 2 if any(
+                not item.consumed and item.owner_generation == self._compiled_generation
+                and len(item.payload) == 2 and item.payload[0] == 8
+                and item.payload[1] == int(sound)
+                for item in self._deferred
+            ) else 0
+        return int(self.is_running(sound))
+
     def _invalidate_compiled_generation(self) -> None:
         generation = self._compiled_generation
         self._deferred = [item for item in self._deferred

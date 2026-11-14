@@ -2802,8 +2802,10 @@ class ScummV5EngineTests(unittest.TestCase):
         # must therefore emit a real SEP; `.a8` alone is assembler metadata.
         source = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
         dispatch_error = source.split("ScummV5_C25_Flush__dispatch_error:", 1)[1]
-        diagnostic = dispatch_error.split("SAME_SCUMM_SCENARIO_C25_ERROR_SITE", 1)[1]
-        self.assertIn("sep #$20", diagnostic[:160].lower())
+        diagnostic = dispatch_error.split("SAME_SCUMM_SCENARIO_C25_ERROR_SITE", 1)[0]
+        # Check the instructions entering the store, not an unrelated routine
+        # which happens to follow it in the assembly source.
+        self.assertIn("sep #$20", diagnostic[-200:].lower())
 
     def test_far_room_service_sound_flush_uses_frame_tail_transfer(self) -> None:
         source = (ROOT / "runtime/snes/engines/scumm_v5.pasm").read_text()
@@ -3377,6 +3379,7 @@ class ScummV5EngineTests(unittest.TestCase):
         def traced(slot, context):
             start = slot.pc - 1
             result = original(slot, context)
+            self.assertTrue(host.engine._background_needs_redraw)
             observed.append((start, slot.pc))
             return result
 
@@ -3387,7 +3390,9 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertEqual(host.engine.state.room_objects[590].state, 255)
         self.assertEqual(host.engine.state.object_states[591], 7)
         self.assertEqual(host.engine.state.object_draw_queue, [])
-        self.assertTrue(host.engine._background_needs_redraw)
+        # The instruction invalidates; the same tick's presentation consumes
+        # that invalidation. It must not force redraws on subsequent idle ticks.
+        self.assertFalse(host.engine._background_needs_redraw)
 
     def test_set_state_zero_one_overwrite_invalid_and_truncated(self) -> None:
         host = self._host(bytes.fromhex("07 64 00 00 07 64 00 01 07 65 00 ff 80"))

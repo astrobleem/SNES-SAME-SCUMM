@@ -2067,6 +2067,7 @@ SAME_SCUMM_M23C_ERROR_PROGRAM             = $7FF95A ; program at invalid branch
 SAME_SCUMM_M23C_ERROR_OPCODE              = $7FF95B ; opcode at invalid branch
 SAME_SCUMM_M23C_ACTIVE_SFX                = $7FF95C ; 256 logical ids as bits
 SAME_SCUMM_M23C_ACTIVE_SFX_SIZE           = $0020
+SAME_SCUMM_LOGICAL_SFX_END               = $7FF97C ; runtime ownership, also used by M23C
 SAME_SCUMM_M23C_TRACE                     = $7FF97C ; 32 x (program,u16 PC,opcode)
 SAME_SCUMM_M23C_TRACE_STRIDE              = $0004
 SAME_SCUMM_M23C_TRACE_CAPACITY            = $0020

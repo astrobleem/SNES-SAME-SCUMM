@@ -22,6 +22,7 @@ MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 # Intervals are half-open. Their endpoints are ownership boundaries declared
 # in memory.pasm; unrelated ownership overlap fails closed.
 REGIONS = (
+    ("logical_sound_ownership", "SAME_SCUMM_M23C_ACTIVE_SFX", "SAME_SCUMM_LOGICAL_SFX_END"),
     ("kernel_dma_ring", "SAME_DMA_QUEUE", "SAME_DMA_QUEUE_END"),
     ("scumm_input_callback", "SAME_SCUMM_INPUT_BASE", "SAME_SCUMM_INPUT_END"),
     ("actor_cel_state", "SAME_SCUMM_CEL_STATE_BASE", "SAME_SCUMM_CEL_STATE_END"),

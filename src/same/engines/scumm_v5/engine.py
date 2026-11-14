@@ -1091,7 +1091,7 @@ class ScummV5Engine(Engine):
             self._presentation_dirty = False
             self._presentation_rebuild = False
             return
-        rebuild = self._actors_dirty or self._presentation_rebuild
+        rebuild = self._actors_dirty or self._presentation_rebuild or self._background_needs_redraw
         if rebuild and isinstance(self._video, ScummV5RoomAdapter):
             if not context.profile.options.get("headless_actor_presentation", False):
                 self._video.render_actors(
@@ -1099,6 +1099,8 @@ class ScummV5Engine(Engine):
                     current_room=self.state.current_room,
                     costume_key=lambda costume: self._resource_key("costume", costume),
                     object_classes=self.state.object_classes,
+                    object_states=self.state.object_states,
+                    object_owners=dict(enumerate(self._object_owners)),
                     project=False,
                 )
         elif rebuild and not context.profile.options.get("headless_actor_presentation", False):
@@ -1126,6 +1128,7 @@ class ScummV5Engine(Engine):
             self.state.room_hash = context.services.video.surface.hash()
         self._presentation_dirty = False
         self._presentation_rebuild = False
+        self._background_needs_redraw = False
 
     def _advance_actor_movement(self) -> None:
         if not isinstance(self._video, ScummV5RoomAdapter) or self._video.room is None:
@@ -2112,6 +2115,9 @@ class ScummV5Engine(Engine):
         self.state.sound_queue = []
         for command in queued:
             self._dispatch_sound_command(context, command)
+            # v5 Sound::processSoundQues publishes each command's signed
+            # return through VAR_SOUNDRESULT, including read-only queries.
+            self.state.variables[56] = self.state.sound_result
             self.state.sound_history.append(list(command))
             if len(self.state.sound_history) > _MAX_SOUND_HISTORY:
                 del self.state.sound_history[:-_MAX_SOUND_HISTORY]
@@ -2225,6 +2231,15 @@ class ScummV5Engine(Engine):
             else:
                 self._audio.stop_sfx(arguments[1])
             self.state.sound_result = 0
+        elif command == 13:
+            if len(arguments) != 2 or not 0 <= arguments[1] <= 0xFFFF:
+                raise EngineExecutionError("SCUMM soundKludge status operands are invalid")
+            sound = arguments[1]
+            if sound == 0xFFFF:
+                raise EngineExecutionError("SCUMM first-active iMUSE player ordering is not represented")
+            self.state.sound_result = (
+                self._audio.sound_status(sound) if sound and self._audio is not None else 0
+            )
         elif command in (2, 3):
             # iMUSE compatibility commands 2 and 3 are accepted no-ops in
             # the canonical v5 desktop driver.  They carry the command word
