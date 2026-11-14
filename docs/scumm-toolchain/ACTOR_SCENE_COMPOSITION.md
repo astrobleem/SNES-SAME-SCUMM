@@ -1,4 +1,10 @@
-# Multi-actor scene transaction — native checkpoint
+# Multi-actor scenes and masks — bounded Barnett acceptance
+
+**Milestone D functional/native scope is qualified.** The final section records
+one uninterrupted original taxi/map/Barnett checkpoint continuation, walking,
+object response and exact completed scene comparisons. Performance and
+whole-game limitations remain explicit. Earlier experiments below retain their
+original scope and failures.
 
 The opt-in `SAME_SCUMM_ACTOR_SCENE=1` path enumerates the 32 C14 actors,
 keeps per-actor pose/animation/palette identity, and composes visible actors in
@@ -321,3 +327,89 @@ PID/UID/code and process name. Child signal masks remain unblocked; process-only
 tests verify signal provenance, detached-child cleanup, failure classification,
 deadlines and desktop-environment removal. This operational correction does not
 change the ROM or claim the interrupted gameplay control passed.
+
+
+## Qualified continuous Barnett gameplay
+
+`continuous-college-near-car` runs one owned Nexen session from the legitimate
+exact-ROM room10 before-taxi state, frame9147 through18392. It exits normally
+in526.759sec under the unchanged600sec supervisor, with complete cleanup.
+This is **one checkpoint continuation**, not a spliced recording or cold start.
+The starting state already contains the newspaper acquired through original
+input; its SHA256 is
+`8b9342081acc20aefba1e78c83a01c96f64feaf32c4edecd542b6f021da21c6a`.
+
+Normal controller input executes Use taxi, selects Barnett College on the map,
+walks on the source room's empty ground, selects Look at automobile, and
+acknowledges the original readable response. No guest gameplay writes, replaced
+story scripts or forced scales participate. The room sequence is10→75→2.
+The map ticket is[2,0,1]; original local204/canonical2018 executes, followed by
+object1028/canonical783. The destination action uses original object36/canonical234,
+verb9. Its full original OBCD hash matches the host interpreter's body:
+`ac5b168d9247d8ee191436e709766b22a1268064680081c2389234c4005cd124`.
+The host independently emits the same45 encoded bytes (including terminator
+and inline controls), with visible text “Well, well-- transportation.”
+
+Five completed captures have zero source/INDEX8/decoded-PPU differences:
+
+| Capture | Source snapshot frame | Completed PPU frame |
+|---|---:|---:|
+| Original taxi dialogue |10046|10051|
+| Travel map |11005|11007|
+| Complete Barnett scene |17335|17405|
+| Walking-animation scene |17801|17812|
+| Original automobile response |18369|18374|
+
+The immutable queued source snapshot is distinct from later live actor state.
+The walking-animation image is not relabeled a final standing pose. The final
+response scene contains Indy at(460,107),facing90,scale50/50 and actor5's own
+costume78 with the original plane1 occlusion. All five captures also match the
+original ROOM palette byte-for-byte and independently packed source CGRAM
+(768/512bytes); comparison is not limited to native palette versus native PPU.
+The full image checks include old footprints, camera, cursor and original-font
+HUD. Final room2 remains RUNNING/error0, callback4/user control restored,
+talk inactive, cutscene depth0, and newspaper owner/state1/1.
+
+The nearby floor choice is source-backed: no object hit, original adjustment
+to street box11 and direct route from box13. The submitted coordinate resolves
+to(462,105); the original subsequent object action moves to(460,107). A separate
+exact-ROM control also walks the longer original route to(422,124), verifying
+plane2 hides67 Indy pixels while actor5 retains178 visible/4 occluded pixels.
+That separate control is not spliced into the continuous proof.
+
+The first continuous attempt used the long route and reached the scene/walk
+comparison but exhausted its input-observation budget before the object action.
+It remains a failed complete-session acceptance. The final control changes the
+normal floor choice, not script timing, puzzle state, watchdog or image fence.
+
+### Limits and reproducibility
+
+The final nearby walk takes182 emulated frames from accepted input to the
+completed walking-animation image; Look takes425 frames to the readable response,
+including original approach/scheduling/resource work. The separate long route
+measured2111 and2563frames respectively. These are end-to-end observations,
+not raw MSU throughput or proof of smooth60Hz animation. Performance remains a
+limitation; no unrelated camera/cache redesign was made for this milestone.
+
+All native runtime files still match b01e26c and the ROM/map/package/build hashes
+above. Later commits contain process supervision and evidence, not a newly
+claimed native rebuild. Current full suite:1684run,12skipped,OK (1672 executed),
+338.839sec; validate and44-region ownership audit PASS. Pinned assembly and ROM
+identity remain unchanged. Both hosted jobs pass for cd7859e in
+[run43562798692](https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43562798692).
+Hosted CI is not Nexen execution; the documentation commit receives its own checks.
+
+Persistent private evidence includes `milestone-d-acceptance.json`,
+`milestone-d-SHA256SUMS`, the exact build and source-linkage records, original
+controller journal, screenshots, indexed/VRAM/CGRAM captures and independent
+source-palette and semantic comparisons. These artifacts are not in Git.
+The new-history extension/binary/credential-pattern audit found no flags;
+this is a scoped hygiene audit, not an exhaustive secret guarantee.
+
+The scene implementation enumerates32 actors but native conformance establishes
+bounded tested combinations, not arbitrary large scenes. Journal/mask capacity
+still fails explicitly when the audited active tail is insufficient. The
+experimental package has11 costumes/1097 poses, not every dynamic whole-game
+resource. Broader semantics, graphics/resource coverage, audio, portable saves
+and physical hardware remain unqualified. **Whole-game NOT_READY.** No new
+production FATE-specific hooks. PR16 remains stacked on unchanged PR15; no merge.

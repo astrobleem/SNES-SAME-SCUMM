@@ -1,3 +1,31 @@
+# Milestone D qualified — final review checkpoint
+
+The multi-actor/mask Barnett objective is complete for its bounded native scope.
+One uninterrupted exact-ROM checkpoint continuation (not cold startup) runs
+room10→75→2, original taxi/map callback, normal walk, Look at automobile,
+readable original response and acknowledgement. Final(460,107),error0,RUNNING,
+newspaper1/1,talk inactive,cutscene0. No guest gameplay writes.
+
+Evidence root /home/chad/SAME-private-evidence/milestone-d-scene-20261113:
+continuous-college-near-car,526.759sec,normal exit,no owned survivors.
+Five complete source/INDEX8/PPU comparisons and independent original palette/
+CGRAM comparisons have zero differences. Manifest milestone-d-acceptance.json,
+SHA256SUMS milestone-d-SHA256SUMS. Full details ACTOR_SCENE_COMPOSITION.md.
+Separate longer-walk/response proof is preserved, not spliced into that session.
+Earlier interrupted and budget-limited attempts remain classified accurately.
+
+Runtime still b01e26c, authentic ROM f17b4a82 (full hashes in linked document),
+all65 runtime files match the private assembly snapshot. Supervisor sender
+provenance correction cd7859e has full suite1684run/12skip PASS, validate44regions
+PASS and both hosted jobs PASS run43562798692. Final documentation commit must
+receive its own hosted checks. No native session active. Recovery untouched.
+PR16 scumm-fate-input-callback stays stacked on PR15; no automatic merge.
+Performance, larger scene capacities, broader resources and hardware remain
+limitations. Whole-game NOT_READY. Do not replay accepted gameplay just to
+regenerate reports. Finish publication/check verification and hand off.
+
+--- Historical continuation records ---
+
 # Active continuation — Milestone D multi-actor/masks
 
 Branch scumm-fate-input-callback / draft PR16, stacked on unchanged PR15.
