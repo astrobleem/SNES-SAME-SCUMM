@@ -18,7 +18,7 @@ STAGES = (
 OBJECT_STAGES = (*STAGES, STAGES[-1])
 
 def source_files(*, masks: bool = False, transitions: bool = False,
-                 sound_status_probe: bool = False, cutscene_callback_probe: bool = False,
+                 sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
                  object_images_probe: bool = False) -> dict[str, bytes]:
     base = camera_files()
     decoded = bytes(b ^ 0x69 for b in base['ATLANTIS/ATLANTIS.001'])
@@ -73,7 +73,21 @@ def source_files(*, masks: bool = False, transitions: bool = False,
                         content+=ch(f'ZP{plane:02d}'.encode(),struct.pack('<HHH',14,16,18)+bytes((0xA0,0xF0 if state==1 else 0))*3)
                 states+=ch(f'IM{state:02X}'.encode(),content)
             room+=ch(b'OBIM',ch(b'IMHD',struct.pack('<8H',identity,2,2 if masks else 0,0,0,0,24,32))+states)
+    if room_hook_probe:
+        transitions = True
+        def write(n, v): return b'\x1a'+struct.pack('<HH', n, v)
+        def copy(n, v): return b'\x9a'+struct.pack('<HH', n, v)
+        room = room.replace(ch(b'ENCD', b'\0'),
+            ch(b'ENCD', copy(155, 150)+write(150, 5)+b'\0'))
+        room = room.replace(ch(b'EXCD', b'\0'),
+            ch(b'EXCD', copy(151, 150)+write(150, 2)+b'\0'))
     p = Program()
+    if room_hook_probe:
+        p.emit('initial room without hooks', b'\x72\x01')
+        for variable, number in ((30,2),(31,3),(28,4),(29,5)):p.move(variable,number)
+        p.emit('ordered room lifecycle', b'\x72\x02')
+        p.move(154,0x1357)
+        p.emit('probe complete',b'\0')
     if cutscene_callback_probe:
         p.move(35, 2)
         p.move(36, 2)
@@ -141,6 +155,14 @@ def source_files(*, masks: bool = False, transitions: bool = False,
         # Each callback executes through the ordinary nested global resolver.
         # Increment a count and copy the inherited local0 argument.
         container += ch(b'SCRP', bytes.fromhex('4696009a97000040a0'))
+    if room_hook_probe:
+        for body in (
+            copy(156,4)+write(150,1)+b'\0',
+            copy(152,150)+write(150,3)+b'\0',
+            copy(153,150)+write(150,4)+b'\0',
+            copy(157,150)+write(150,6)+b'\0',
+        ):
+            scripts.append(len(container));container+=ch(b'SCRP',body)
     costs=[]
     for actor in (1,2):
         raw=bytearray(costume())
@@ -158,11 +180,11 @@ def source_files(*, masks: bool = False, transitions: bool = False,
     return {f'ATLANTIS/ATLANTIS.{n:03}':bytes(b^0x69 for b in raw) for n,raw in enumerate((index,data))}
 
 def write_archive(path: Path, *, masks: bool = False, transitions: bool = False,
-                  sound_status_probe: bool = False, cutscene_callback_probe: bool = False,
+                  sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
                   object_images_probe: bool = False) -> None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as archive:
         for name,data in source_files(masks=masks,transitions=transitions,
-                                      sound_status_probe=sound_status_probe, cutscene_callback_probe=cutscene_callback_probe,
+                                      sound_status_probe=sound_status_probe, cutscene_callback_probe=cutscene_callback_probe, room_hook_probe=room_hook_probe,
                                       object_images_probe=object_images_probe).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             archive.writestr(info,data)
@@ -171,7 +193,8 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('output',type=Path);parser.add_argument('--masks',action='store_true');parser.add_argument('--transitions',action='store_true')
     parser.add_argument('--sound-status-probe', action='store_true')
     parser.add_argument('--cutscene-callback-probe', action='store_true')
+    parser.add_argument('--room-hook-probe', action='store_true')
     parser.add_argument('--object-images-probe', action='store_true')
     args=parser.parse_args();write_archive(args.output,masks=args.masks,transitions=args.transitions,
-                                         sound_status_probe=args.sound_status_probe, cutscene_callback_probe=args.cutscene_callback_probe,
+                                         sound_status_probe=args.sound_status_probe, cutscene_callback_probe=args.cutscene_callback_probe, room_hook_probe=args.room_hook_probe,
                                          object_images_probe=args.object_images_probe)

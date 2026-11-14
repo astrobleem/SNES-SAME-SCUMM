@@ -4767,9 +4767,29 @@ omit the visible retained guard column. Correction and six exact native backend
 captures are documented in BARNETT_EXPLORATION.md. No office acceptance yet.
 
 Private root /home/chad/SAME-private-evidence/milestone-e-exploration-20261114.
-New authentic source auth-source-1ouur0uf/build auth-build-4ti711x_, ROMacf41f42,
-pinned assembly/4MiB audit pass. refresh-startup creates legitimate matching-ROM
-state via the recorded original input prefix; do not restore an old-ROM state.
+Final authentic source auth-source-mnok1n17/build auth-build-m8dgk8fb, ROM4c12dd2f,
+runtime54de301; pinned assembly/4MiB audit pass. coherent-startup creates legitimate
+matching-ROM state via the recorded original input prefix; do not restore an old-ROM state.
+coherent-room10-pickup exits normally at350.2s with no owned survivors. Settled
+scene, Barnett setup, and office continuation remain separate acceptance boundaries.
+Final host suite1714 run/12skipped passes; both hosted jobs pass c61cd87 in
+run43588105126. c61cd87 changes only the scene-lease test extraction boundary.
 Then use the recorded pickup/ready/Barnett setup once and continue door34→room1,
 coat25 Pickup11 then Look9. Only normal input; preserve newspaper141. Recovery
 worktree untouched. Do not treat synthetic backend acceptance as Milestone E.
+
+Active correction: generic VAR30/31/28/29 room lifecycle hooks and VAR_ROOM4.
+Door-open from coherent-office-continuation PASSED full pixels; room1 entry
+failed because missing exit hook left prior-room predicate stale. No coat pass.
+Native room-hook fixture initially caught ENCD ordering, a newly allocated
+reset-diagnostic alias (fixed, audit now47regions), and existing normalizer
+fall-through (fixed). Latest fixture build scene-build-eswmbq8b; private
+native-room-hooks-entryfix running bounded. Production instructions have host
+ownership/status regressions. Full suite corrected rerun in progress; prior
+run1723/12skip had5 failures now fixed (save restore mutation and fixture
+variables now reserved for canonical room semantics). Do not claim E complete.
+
+Native hook fixture PASSED at928frames,39.676s/normal cleanup, noBRK/cachealias.
+Build scene-build-eswmbq8b, report native-room-hooks-entryfix/observations/report.json.
+Authentic rebuild auth-build-5te2p7a_ / auth-source-q30_1rmb is in progress.
+Use new hooks-* setup evidence, never restore4c12 states into this new ROM.

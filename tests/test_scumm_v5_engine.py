@@ -1200,7 +1200,7 @@ class ScummV5EngineTests(unittest.TestCase):
         state = host.engine.inspect_state()
         self.assertEqual(host.engine.state.current_room, 2)
         self._assert_variables(state, {
-            "1": 1, "15": 100, "17": 101, "19": 1, "20": 101, "21": 2,
+            "1": 1, "4": 2, "15": 100, "17": 101, "19": 1, "20": 101, "21": 2,
         })
         self.assertEqual(host.engine.state.variables[16], 0)
         self.assertEqual(host.engine.state.variables[18], 0)

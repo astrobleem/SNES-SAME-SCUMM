@@ -313,3 +313,53 @@ Evidence: private `milestone-e-exploration-20261114/native-retained-object-refre
 The supervisor exits normally after54.322 seconds with no owned survivors.
 This backend control does not qualify office gameplay. A rebuilt authentic ROM
 requires fresh matching state; the failed prior-ROM office capture is preserved.
+
+Final correction validation:1714 tests run,12 skipped, no failures (373.779s).
+Both hosted jobs pass on c61cd87 in [run43588105126](https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43588105126).
+The preceding full-suite run exposed a test extractor that stopped at the first
+8-bit width switch before the scene lease release; its boundary now follows
+pose retirement. Production instructions were unchanged by that test correction.
+Authentic rebuilt ROM4c12dd2f contains runtime54de301. Matching-ROM setup is in
+progress; these test/build results do not establish office gameplay acceptance.
+
+### Office entry lifecycle frontier (Milestone E, not accepted)
+
+The matching-ROM `4c12dd2f…` continuation opened original door34 and matched
+its complete source/INDEX8/PPU/CGRAM image. Normal Walk-to entered room1 with
+error0, but the office scene did not qualify: Indy remained in the old room
+and the sentence region differed. No native coat pickup was accepted.
+
+Source tracing identified missing standard v5 room callbacks: VAR30 before
+EXCD, VAR31 after EXCD, VAR28 before ENCD, VAR29 after ENCD. The original exit
+callback records VAR_ROOM4 into a game variable used by the office entry.
+Neither the old host nor native room installer published VAR_ROOM4 correctly.
+The correction uses ordinary zero-argument script activations and the existing
+checked resolver. Source yields release the lifecycle; checked-code waits do
+not. Restoring a host save preserves its saved variables and does not rerun hooks.
+
+The synthetic native ordering fixture also exposed an existing normalizer
+fall-through: the still-inside-ENCD branch reached the completion block. Its
+corrected branch preserves a waiting entry. An explicit source-yield boundary
+preserves the ENCD continuation while allowing its post-entry callback.
+
+Hook tickets occupy eight bytes at `$7FF4D3–$7FF4DA`, after reset diagnostics.
+The ownership audit now includes reset diagnostics and resolves symbolic size
+aliases. Negative regression moves the ticket onto the diagnostic allocation
+and requires rejection. The earlier overlapping experimental allocation and
+failed hook-order native traces remain in private evidence; they are not passes.
+
+Public conformance source is `actor_scene_fixture.py --room-hook-probe`.
+`test_scumm_room_hooks.py` checks semantic order and nested/yielding scripts;
+`test_scumm_room_hook_native.py` executes bounded production instruction blocks
+with service stubs (host evidence, not Nexen). The native validator requires
+all eight original-bytecode witnesses, not merely process exit or error0.
+
+Native hook-order acceptance: `NATIVE_ROOM_HOOK_ORDER_MATCH`, frame928, error0,
+all eight witnesses `[6,1,2,3,4951,4,1,5]`. Private run
+`native-room-hooks-entryfix` exited normally in39.676s with cleanup complete.
+ROM `3a63165a63d1970de0db16e519a60596e9ef60e3d27b9face731e59b59d2d9c4`;
+map `f4a172d1794089aea9698c3315fc61ba1447a66b032d855bfa76b8192a64a778`;
+package `c04c57cccc3123ca9608945ca1569e4d94df8bf4c4004d6718e85328ba3eb070`.
+The fixture deliberately disables small-program grouping to exercise checked
+code waits between callbacks. This is lifecycle conformance, not FATE gameplay.
+Authentic office/coat acceptance remains outstanding on the corrected runtime.

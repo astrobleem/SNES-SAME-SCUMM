@@ -205,10 +205,12 @@ ScummV5_M23A_SelectLifecycleChild_Far:
     .a16
     .i16
     ldx #$0000
+; Additional entry for a normal C4 lifecycle-hook root (X16).
+ScummV5_M23A_SelectPendingChild_Far:
     ldy #SCUMM_V5_MAX_SCRIPT_SLOTS
     sep #$20
     .a8
-    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT
+    lda.l SAME_SCUMM_MSU_PENDING_CHILD_SLOT,x
     bne ScummV5_M23A_SelectLifecycleChild__edge
     clc
     rtl

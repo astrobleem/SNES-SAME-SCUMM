@@ -22,6 +22,8 @@ MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
 # Intervals are half-open. Their endpoints are ownership boundaries declared
 # in memory.pasm; unrelated ownership overlap fails closed.
 REGIONS = (
+    ("reset_diagnostics", "SAME_RESET_DIAG_BASE", "SAME_RESET_DIAG_END"),
+    ("room_hook_tickets", "SAME_SCUMM_ROOM_HOOK_BASE", "SAME_SCUMM_ROOM_HOOK_END"),
     ("logical_sound_ownership", "SAME_SCUMM_M23C_ACTIVE_SFX", "SAME_SCUMM_LOGICAL_SFX_END"),
     ("kernel_dma_ring", "SAME_DMA_QUEUE", "SAME_DMA_QUEUE_END"),
     ("scumm_input_callback", "SAME_SCUMM_INPUT_BASE", "SAME_SCUMM_INPUT_END"),
@@ -91,18 +93,22 @@ REGIONS = (
 
 def symbols() -> dict[str, int]:
     result: dict[str, int] = {}
-    aliases: dict[str, tuple[str, int]] = {}
+    aliases: dict[str, tuple[str, int | str]] = {}
     for line in MEMORY.read_text(encoding="utf-8").splitlines():
         match = re.match(r"\s*([A-Z][A-Z0-9_]*)\s*=\s*\$([0-9A-Fa-f]+)(?:\s|$)", line)
         if match:
             result[match.group(1)] = int(match.group(2), 16)
         else:
-            alias = re.match(r"\s*([A-Z][A-Z0-9_]*)\s*=\s*([A-Z][A-Z0-9_]*)(?:\s*\+\s*\$([0-9A-Fa-f]+))?(?:\s*(?:;.*)?)$", line)
+            alias = re.match(r"\s*([A-Z][A-Z0-9_]*)\s*=\s*([A-Z][A-Z0-9_]*)(?:\s*\+\s*(\$[0-9A-Fa-f]+|[A-Z][A-Z0-9_]*))?(?:\s*(?:;.*)?)$", line)
             if alias:
-                aliases[alias.group(1)] = (alias.group(2), int(alias.group(3) or '0', 16))
+                offset = alias.group(3)
+                aliases[alias.group(1)] = (alias.group(2),
+                    int(offset[1:], 16) if offset and offset.startswith('$') else offset or 0)
     for _ in range(len(aliases)):
-        added = {name: result[target] + offset for name, (target, offset) in aliases.items()
-                 if name not in result and target in result}
+        added = {name: result[target] + (result[offset] if isinstance(offset, str) else offset)
+                 for name, (target, offset) in aliases.items()
+                 if name not in result and target in result
+                 and (not isinstance(offset, str) or offset in result)}
         if not added:
             break
         result.update(added)

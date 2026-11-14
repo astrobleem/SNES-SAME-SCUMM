@@ -139,6 +139,9 @@ ScummV5_Engine_Boot__clear_m23a:
     sta.l SAME_SCUMM_M23A_RETURN_SLOT
     sta.l SAME_SCUMM_M23A_RETURN_MODE
     sta.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    jsl ScummV5_RoomHook_Reset_Far
+    .endif
     .endif
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     ; Actor and movement service records live outside the compact VM-state
@@ -1036,6 +1039,18 @@ ScummV5_Engine_Frame__title_start_done:
     rts
 ScummV5_Engine_Frame__not_blocked:
     .a8
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    jsl ScummV5_RoomHook_Tick_Far
+    bcc ScummV5_Engine_Frame__room_hook_checked
+    jmp ScummV5_Engine_Frame__m23a_error
+ScummV5_Engine_Frame__room_hook_checked:
+    .a8
+    cmp #$00
+    beq ScummV5_Engine_Frame__room_hook_idle
+    jmp ScummV5_Engine_Frame__m23a_wait
+ScummV5_Engine_Frame__room_hook_idle:
+    .a8
+    .endif
     jsl ScummV5_M23A_NormalizeEntryLifecycle_Far
     .endif
     .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
@@ -3307,6 +3322,9 @@ ScummV5_Engine_Frame__outer_complete_success:
 ScummV5_Engine_Frame__room_exit_yield_commit_ok:
     jmp ScummV5_Op_Stop__m23a_exit_commit_ok
 ScummV5_Engine_Frame__room_exit_yield_done:
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    jsl ScummV5_RoomHook_EntryBoundary_Far
+    .endif
     .endif
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && SAME_SCUMM_SCENARIO_SOURCE_ACTOR_STATE
     jsl ScummV5_Scenario_Fixture_EnsureActor2Room42_Far

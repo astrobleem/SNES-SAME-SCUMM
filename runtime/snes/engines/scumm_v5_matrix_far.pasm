@@ -117,6 +117,7 @@ ScummV5_M23A_NormalizeEntryLifecycle_Far:
 ScummV5_M23A_NormalizeEntryLifecycle_Far__done16:
     sep #$20
     .a8
+    bra ScummV5_M23A_NormalizeEntryLifecycle_Far__done
 ScummV5_M23A_NormalizeEntryLifecycle_Far__complete:
     .a8
     lda.l SAME_SCUMM_M25_PHASE_NORMALIZE_COMMITS

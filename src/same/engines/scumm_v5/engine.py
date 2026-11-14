@@ -4376,6 +4376,28 @@ class ScummV5Engine(Engine):
         decoded = decode_room(context.services.resource_read(key), key=key)
         return dict(decoded.local_scripts)
 
+    def _run_room_hook(self, context: EngineContext, variable: int) -> None:
+        """Run v5's authored before/after room hook through ordinary runScript.
+
+        These globals are independent of the ROOM's ENCD/EXCD bodies. A source
+        yield returns to startScene; a surviving global resumes normally later.
+        Read each variable at its invocation, since earlier hooks may change it.
+        """
+        number = self.state.variables[variable]
+        if not number:
+            return
+        if not 0 < number < 256:
+            raise EngineExecutionError(f"SCUMM room hook {variable} has invalid script {number}")
+        child = self._allocate_script_slot(
+            context, number, [], freeze_resistant=False, recursive=False,
+        )
+        self._room_lifecycle_event(
+            "room_hook_scheduled", self.state.current_room,
+            variable=variable, script=child.resource_key,
+        )
+        if self._in_tick:
+            self._execute_slot(child, context)
+
     def _load_room(
         self,
         context: EngineContext,
@@ -4427,6 +4449,8 @@ class ScummV5Engine(Engine):
                 record_sha256=None if record is None else record.record_sha256,
             )
         old_room = self.state.current_room
+        if not preserve_local_scripts:
+            self._run_room_hook(context, 30)
         if not preserve_local_scripts and self._room_exit is not None:
             exit_slot = ScriptSlot(
                 self._room_exit.identity, self._room_exit.program,
@@ -4442,6 +4466,7 @@ class ScummV5Engine(Engine):
                     "old_exit_completed", old_room, script=self._room_exit.identity
                 )
         if not preserve_local_scripts:
+            self._run_room_hook(context, 31)
             for script in self.state.scripts:
                 if script.active and script.room is not None:
                     if script.cutscene_override:
@@ -4474,6 +4499,8 @@ class ScummV5Engine(Engine):
             self.state.room_objects.clear()
             self.state.object_draw_queue.clear()
             self.state.current_room = 0
+            if not preserve_local_scripts:
+                self.state.variables[4] = 0  # v5 VAR_ROOM, after outgoing hooks.
             self._room_scripts = {}
             self._room_script_descriptors = {}
             self._room_entry = None
@@ -4516,6 +4543,8 @@ class ScummV5Engine(Engine):
         }
         self.state.object_draw_queue.clear()
         self.state.current_room = room
+        if not preserve_local_scripts:
+            self.state.variables[4] = room
         self._room_lifecycle_event("new_room_activated", room)
         self.state.room_ops.room_width = adapter.room.width
         # Restore reconstructs resources without re-entering the scene.
@@ -4546,6 +4575,8 @@ class ScummV5Engine(Engine):
                 "exit_script_registered", room, script=self._room_exit.identity,
                 source_map=self._room_exit.runtime_map(0),
             )
+        if not preserve_local_scripts:
+            self._run_room_hook(context, 28)
         if self._room_entry is not None:
             entry_slot = ScriptSlot(
                 self._room_entry.identity, self._room_entry.program,
@@ -4566,6 +4597,8 @@ class ScummV5Engine(Engine):
                     source_map=self._room_entry.runtime_map(0),
                 )
                 self._execute_slot(entry_slot, context)
+        if not preserve_local_scripts:
+            self._run_room_hook(context, 29)
         context.services.debug.marker("scumm_v5.room", room)
 
     def save_state(self, context: EngineContext) -> bytes:
