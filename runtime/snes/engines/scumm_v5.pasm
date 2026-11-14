@@ -75,6 +75,7 @@ ScummV5_Engine_Boot:
     sta.l SAME_SCUMM_C18_NESTED
     .if SAME_BUILD_SCUMM_M19
     sta.l SAME_SCUMM_ACTIVE_MUSIC
+    jsr ScummV5_Sfx_Reset
     .endif
     .if SAME_BUILD_SCUMM_M20
     rep #$20
@@ -138,6 +139,9 @@ ScummV5_Engine_Boot__clear_m23a:
     sta.l SAME_SCUMM_M23A_RETURN_SLOT
     sta.l SAME_SCUMM_M23A_RETURN_MODE
     sta.l SAME_SCUMM_M23A_REQUEST_API_ACTIVE
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    jsl ScummV5_RoomHook_Reset_Far
+    .endif
     .endif
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     ; Actor and movement service records live outside the compact VM-state
@@ -281,6 +285,11 @@ ScummV5_Engine_Boot__scenario_root_latch_ready:
     jsr ScummV5_C25_ResetState
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_SetState_Reset_Far
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && SAME_SCUMM_SCENE_ENABLED
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    jsl ScummV5_ObjectImages_Reset_Far
+    .endif
+    .endif
     .endif
     .if SAME_BUILD_SCUMM_M23B
     .if SAME_BUILD_SCUMM_M25A_VALIDATOR || SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
@@ -1030,6 +1039,18 @@ ScummV5_Engine_Frame__title_start_done:
     rts
 ScummV5_Engine_Frame__not_blocked:
     .a8
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    jsl ScummV5_RoomHook_Tick_Far
+    bcc ScummV5_Engine_Frame__room_hook_checked
+    jmp ScummV5_Engine_Frame__m23a_error
+ScummV5_Engine_Frame__room_hook_checked:
+    .a8
+    cmp #$00
+    beq ScummV5_Engine_Frame__room_hook_idle
+    jmp ScummV5_Engine_Frame__m23a_wait
+ScummV5_Engine_Frame__room_hook_idle:
+    .a8
+    .endif
     jsl ScummV5_M23A_NormalizeEntryLifecycle_Far
     .endif
     .if SAME_BUILD_SCUMM_SYNTHETIC_BOOTSTRAP
@@ -3301,6 +3322,9 @@ ScummV5_Engine_Frame__outer_complete_success:
 ScummV5_Engine_Frame__room_exit_yield_commit_ok:
     jmp ScummV5_Op_Stop__m23a_exit_commit_ok
 ScummV5_Engine_Frame__room_exit_yield_done:
+    .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+    jsl ScummV5_RoomHook_EntryBoundary_Far
+    .endif
     .endif
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE && SAME_SCUMM_SCENARIO_SOURCE_ACTOR_STATE
     jsl ScummV5_Scenario_Fixture_EnsureActor2Room42_Far
@@ -4825,6 +4849,11 @@ ScummV5_C4_RunAllocatedNoParent_FarEntry:
 ; Stop every live global/local script with the requested number. A8 holds the
 ; number on entry. Script zero is handled by the opcode as self-stop.
 ScummV5_C4_StopNumber:
+    ; Cutscene callbacks tail-enter StartScript after C19's byte-indexed
+    ; bookkeeping. Establish the scanner's width before its first immediate:
+    ; an assembler .i16 declaration alone cannot clear the CPU's X flag.
+    rep #$10
+    .i16
     sep #$20
     .a8
     sta.l SAME_SCUMM_CONDITION
@@ -10877,6 +10906,7 @@ ScummV5_Op_SetOwnerOf:
     .a16
     sep #$20
     .a8
+    ; Ownership changes inventory, not the installed room image state.
     sta.l SAME_SCUMM_OBJECT_OWNERS,x
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_SetOwnerOf__owner_error:
@@ -10930,6 +10960,11 @@ ScummV5_Op_PickupObject:
     sep #$20
     .a8
     sta.l SAME_SCUMM_OBJECT_OWNERS,x
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && SAME_SCUMM_SCENE_ENABLED
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    jsl ScummV5_ObjectImages_Changed_Far
+    .endif
+    .endif
     lda #$01
     sta.l SAME_SCUMM_OBJECT_STATES,x
     jmp ScummV5_Engine_Frame__next
@@ -11322,7 +11357,15 @@ ScummV5_Op_ActorOps__costume:
     lda.l SAME_SCUMM_CONDITION
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_COSTUME,x
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    ; A new classic costume starts with its source init chore, never an old
+    ; costume's explicit request. Missing later records preserve this chore.
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_INIT_FRAME,x
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
+    lda #$01
+    .else
     lda #$00
+    .endif
     jsr ScummV5_C14_SetExplicitAnimation
     .endif
     brl ScummV5_Op_ActorOps__loop
@@ -11695,11 +11738,19 @@ ScummV5_Op_AnimateActor__store:
     .a8
     jsr ScummV5_C14_BaseX
     lda.l SAME_SCUMM_FETCH_BYTE
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    jsl ScummV5_ActorAnimation_Admission_Far
+    bcs ScummV5_Op_AnimateActor__observe_direction
+    .endif
+    .endif
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     lda #$01
     jsr ScummV5_C14_SetExplicitAnimation
     .endif
+ScummV5_Op_AnimateActor__observe_direction:
+    .a8
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_ActorFacing_ObserveAnimate_Far
     .endif
@@ -14257,6 +14308,12 @@ ScummV5_C25_Flush__copy_history:
     bra ScummV5_C25_Flush__copy_history
 
 ScummV5_C25_Flush__dispatch:
+    ; Supported mutating commands return zero; queries replace this result.
+    ; Publish each record independently, never retain an earlier query value.
+    rep #$20
+    .a16
+    lda #$0000
+    sta.l SAME_SCUMM_VARIABLES+$70
     .if SAME_BUILD_SCUMM_SCENARIO_FIXTURE
     sep #$20
     .a8
@@ -14427,6 +14484,11 @@ ScummV5_C25_Flush__not_encoded_stop_sound:
     jmp ScummV5_C25_Flush__stop_sound
 ScummV5_C25_Flush__not_stop_sound:
     .a16
+    cmp #$000D
+    bne ScummV5_C25_Flush__not_status
+    jmp ScummV5_C25_Flush__sound_status
+ScummV5_C25_Flush__not_status:
+    .a16
     cmp #$000A
     beq ScummV5_C25_Flush__dispatch_stop_all
     cmp #$000B
@@ -14480,6 +14542,68 @@ ScummV5_C25_Flush__dispatch_error__not_010E_low:
     .endif
     jml ScummV5_C25_Error
 
+; Class-zero status query. Use the same logical ownership as $7C, never a
+; converted song number or a hardcoded room/sound result. The current native
+; ownership ABI covers 256 IDs; reject wider/first-player queries rather than
+; truncating a word into an unrelated live ID.
+ScummV5_C25_Flush__sound_status:
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C25_LAST_COUNT
+    cmp #$02
+    beq ScummV5_C25_Flush__sound_status_count
+    jml ScummV5_C25_Error
+ScummV5_C25_Flush__sound_status_count:
+    rep #$30
+    .a16
+    .i16
+    lda.l SAME_SCUMM_C25_LAST_WORDS+2
+    cmp #$0100
+    bcc ScummV5_C25_Flush__sound_status_id
+    jml ScummV5_C25_Error
+ScummV5_C25_Flush__sound_status_id:
+    .a16
+    cmp #$0000
+    beq ScummV5_C25_Flush__sound_status_false
+    sta.l SAME_SCUMM_OPERAND
+    lda.l SAME_SCUMM_ACTIVE_MUSIC
+    and #$00FF
+    cmp.l SAME_SCUMM_OPERAND
+    beq ScummV5_C25_Flush__sound_status_true
+    .if SAME_BUILD_SCUMM_M19
+    lda.l SAME_SCUMM_OPERAND
+    and #$0007
+    tax
+    sep #$20
+    .a8
+    lda.l ScummV5_C7_BitMasks,x
+    sta.l SAME_SCUMM_C16_BIT_MASK
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_OPERAND
+    lsr
+    lsr
+    lsr
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_M23C_ACTIVE_SFX,x
+    and.l SAME_SCUMM_C16_BIT_MASK
+    bne ScummV5_C25_Flush__sound_status_true
+    .endif
+ScummV5_C25_Flush__sound_status_false:
+    rep #$20
+    .a16
+    lda #$0000
+    bra ScummV5_C25_Flush__sound_status_write
+ScummV5_C25_Flush__sound_status_true:
+    rep #$20
+    .a16
+    lda #$0001
+ScummV5_C25_Flush__sound_status_write:
+    sta.l SAME_SCUMM_VARIABLES+$70 ; VAR_SOUNDRESULT (56), word ABI
+    jmp ScummV5_C25_Flush__command_done
+
 ScummV5_C25_Flush__compat_noop:
     sep #$20
     .a8
@@ -14487,7 +14611,10 @@ ScummV5_C25_Flush__compat_noop:
     ; The queued record contains the command word itself. Commands 2/3
     ; have no operands, so their canonical record length is one word.
     cmp #$01
-    bne ScummV5_C25_Flush__dispatch_error
+    beq ScummV5_C25_Flush__compat_count_ok
+    jmp ScummV5_C25_Flush__dispatch_error
+ScummV5_C25_Flush__compat_count_ok:
+    .a8
     ; No audio packet is generated: these commands only update iMUSE's
     ; desktop-side control state, which has no independent SNES equivalent.
     jmp ScummV5_C25_Flush__command_done
@@ -15333,7 +15460,7 @@ ScummV5_C25_FarCall_EmitAudio:
     rtl
 .if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
 ScummV5_C25_FarCall_SetSfxActive:
-.if SAME_BUILD_SCUMM_M23C == 0
+.if SAME_BUILD_SCUMM_M19 == 0
     clc
     rtl
 .else
@@ -15442,6 +15569,45 @@ ScummV5_C25_EmitAudio:
     ; this is an ABI restoration, not M21-specific cleanup.
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_M19
+    bcs ScummV5_C25_EmitAudio__done
+    phx
+    lda.l SAME_SCUMM_C25_SELECTOR
+    cmp #SAME_AUDIO_OP_SFX_PLAY
+    beq ScummV5_C25_EmitAudio__start
+    cmp #SAME_AUDIO_OP_SFX_STOP
+    bne ScummV5_C25_EmitAudio__accepted
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_OPERAND
+    cmp #$FFFF
+    beq ScummV5_C25_EmitAudio__stop_all
+    cmp #$0100
+    bcs ScummV5_C25_EmitAudio__accepted
+    sep #$20
+    .a8
+    jsr ScummV5_M23C_ClearSfxActive
+    bra ScummV5_C25_EmitAudio__accepted
+ScummV5_C25_EmitAudio__stop_all:
+    jsr ScummV5_Sfx_Reset
+    bra ScummV5_C25_EmitAudio__accepted
+ScummV5_C25_EmitAudio__start:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_OPERAND
+    cmp #$0100
+    bcs ScummV5_C25_EmitAudio__accepted
+    sep #$20
+    .a8
+    jsr ScummV5_M23C_SetSfxActive
+ScummV5_C25_EmitAudio__accepted:
+    sep #$20
+    .a8
+    plx
+    clc
+ScummV5_C25_EmitAudio__done:
+    .a8
+    .endif
     rts
 
 .if SAME_BUILD_SCUMM_M21 || SAME_BUILD_M24RB
@@ -16341,25 +16507,48 @@ ScummV5_Op_StopMusic__queued:
     .endif
     jmp ScummV5_Engine_Frame__next
 
-.if SAME_BUILD_SCUMM_M23C
+.if SAME_BUILD_SCUMM_M19
 ; Bounded 256-bit logical SFX ownership used by canonical isSoundRunning.
 ; Input A8 is the logical sound id. Helpers preserve no scratch registers.
+; Ownership is a runtime service, independent of the historical M23C fixture.
+ScummV5_Sfx_Reset:
+    rep #$10
+    .i16
+    sep #$20
+    .a8
+    lda #$00
+    ldx #$0000
+ScummV5_Sfx_Reset__loop:
+    .a8
+    .i16
+    sta.l SAME_SCUMM_M23C_ACTIVE_SFX,x
+    inx
+    cpx #SAME_SCUMM_M23C_ACTIVE_SFX_SIZE
+    bcc ScummV5_Sfx_Reset__loop
+    rts
 ScummV5_M23C_SfxAddress:
     sep #$20
     .a8
     sta.l SAME_SCUMM_FETCH_BYTE
-    and #$07
-    rep #$10
+    rep #$30
+    .a16
     .i16
+    and #$0007
     tax
+    sep #$20
+    .a8
     lda.l ScummV5_C7_BitMasks,x
     sta.l SAME_SCUMM_C16_BIT_MASK
+    rep #$20
+    .a16
     lda.l SAME_SCUMM_FETCH_BYTE
+    and #$00FF
     lsr
     lsr
     lsr
-    and #$1F
     tax
+    sep #$20
+    .a8
     rts
 ScummV5_M23C_SetSfxActive:
     jsr ScummV5_M23C_SfxAddress
@@ -16426,7 +16615,7 @@ ScummV5_Op_StartSound__m24rb_normal:
     bcc ScummV5_Op_StartSound__queued
     jmp ScummV5_Op__service_error
 ScummV5_Op_StartSound__queued:
-    .if SAME_BUILD_SCUMM_M23C
+    .if SAME_BUILD_SCUMM_M19
     sep #$20
     .a8
     lda.l SAME_SCUMM_CONDITION
@@ -16458,7 +16647,7 @@ ScummV5_Op_StopSound__operand_ok:
     bcc ScummV5_Op_StopSound__queued
     jmp ScummV5_Op__service_error
 ScummV5_Op_StopSound__queued:
-    .if SAME_BUILD_SCUMM_M23C
+    .if SAME_BUILD_SCUMM_M19
     sep #$20
     .a8
     lda.l SAME_SCUMM_CONDITION
@@ -16489,7 +16678,7 @@ ScummV5_Op_IsSoundRunning__sound_ok:
     beq ScummV5_Op_IsSoundRunning__false
     cmp.l SAME_SCUMM_ACTIVE_MUSIC
     beq ScummV5_Op_IsSoundRunning__true
-    .if SAME_BUILD_SCUMM_M23C
+    .if SAME_BUILD_SCUMM_M19
     jsr ScummV5_M23C_TestSfxActive
     beq ScummV5_Op_IsSoundRunning__false
     bra ScummV5_Op_IsSoundRunning__true

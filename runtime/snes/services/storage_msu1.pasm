@@ -488,7 +488,6 @@ Same_Msu1_ReadBegin__bwram_active_extent_no_overflow:
     .a16
     cmp #SAME_SCUMM_LIVE_ROOM_ACTIVE_SIZE+1
     bcc Same_Msu1_ReadBegin__bwram_active_range_ok
-    beq Same_Msu1_ReadBegin__bwram_active_range_ok
     sep #$20
     .a8
     lda #$32 ; active-room extent exceeds the owned BWRAM buffer
@@ -560,19 +559,24 @@ Same_Msu1_ReadBegin__dest_palette_ok:
     cmp #>SAME_BWRAM_LIVE_ROOM_PALETTE_STAGE
     beq Same_Msu1_ReadBegin__dest_palette_high_ok
 Same_Msu1_ReadBegin__check_pending_address:
-    .a8
-    lda.l SAME_MSU1_DESTINATION
-    cmp #<SAME_BWRAM_LIVE_ROOM_PENDING
-    bne Same_Msu1_ReadBegin__dest_invalid
-    lda.l SAME_MSU1_DESTINATION+1
-    cmp #>SAME_BWRAM_LIVE_ROOM_PENDING
-    bne Same_Msu1_ReadBegin__dest_invalid
-Same_Msu1_ReadBegin__dest_pending_high_ok:
     rep #$20
     .a16
-    lda.l SAME_MSU1_DEST_CAPACITY
-    ; Bind the provider limit to the packed carrier allocation rather than
-    ; duplicating a fixed room-resource staging limit here.
+    ; A caller may lease a disjoint subrange of the same audited pending
+    ; allocation. Check the entire half-open extent, not just its base.
+    lda.l SAME_MSU1_DESTINATION
+    cmp #SAME_BWRAM_LIVE_ROOM_PENDING&$FFFF
+    bcs Same_Msu1_ReadBegin__dest_pending_high_ok
+    jml Same_Msu1_ReadBegin__capacity_error16
+Same_Msu1_ReadBegin__dest_pending_high_ok:
+    .a16
+    sec
+    sbc #SAME_BWRAM_LIVE_ROOM_PENDING&$FFFF
+    clc
+    adc.l SAME_MSU1_DEST_CAPACITY
+    bcc Same_Msu1_ReadBegin__dest_pending_no_wrap
+    jml Same_Msu1_ReadBegin__capacity_error16
+Same_Msu1_ReadBegin__dest_pending_no_wrap:
+    .a16
     cmp #SAME_BWRAM_LIVE_ROOM_PENDING_SIZE+1
     bcc Same_Msu1_ReadBegin__dest_pending_capacity_ok16
     jml Same_Msu1_ReadBegin__capacity_error16

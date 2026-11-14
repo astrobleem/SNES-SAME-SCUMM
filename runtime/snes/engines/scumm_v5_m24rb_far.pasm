@@ -313,6 +313,18 @@ ScummV5_M24RB_Far_ScheduleLocal__error:
 ScummV5_M24RB_Far_CommitNullRoom:
     sep #$20
     .a8
+    lda #$02
+    jsl ScummV5_RoomHook_Arm_Far
+    bcc ScummV5_M24RB_Far_CommitNullRoom__hook_checked
+    rts
+ScummV5_M24RB_Far_CommitNullRoom__hook_checked:
+    .a8
+    cmp #$00
+    beq ScummV5_M24RB_Far_CommitNullRoom__hook_ready
+    clc
+    rts
+ScummV5_M24RB_Far_CommitNullRoom__hook_ready:
+    .a8
     jsl ScummV5_M24RB_FarCall_ResetSentenceQueue
     rep #$10
     .i16
@@ -378,6 +390,11 @@ ScummV5_M24RB_Far_CommitNullRoom__bundle_released:
     sta.l SAME_SCUMM_M23A_ACTIVE_ROOM
     sta.l SAME_SCUMM_MATRIX_DYNAMIC_VALID
     sta.l SAME_SCUMM_C22_CURRENT_ROOM
+    sta.l SAME_SCUMM_VARIABLES+(4 * 2)
+    pha
+    lda #$00
+    sta.l SAME_SCUMM_VARIABLES+(4 * 2)+1
+    pla
     lda #$FF
     sta.l SAME_SCUMM_M23A_ACTIVE_RECORD
     lda #$01
@@ -456,6 +473,17 @@ ScummV5_M24RB_Far_RequestRoom__coalesced:
     clc
     rts
 ScummV5_M24RB_Far_RequestRoom__new:
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_ROOM_HOOK_EPOCH
+    inc
+    sta.l SAME_SCUMM_ROOM_HOOK_EPOCH
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_ROOM_HOOK_DONE
+    sta.l SAME_SCUMM_ROOM_HOOK_KIND
+    sta.l SAME_SCUMM_ROOM_HOOK_AFTER_ENTRY
     lda.l $7E5450
     inc
     sta.l $7E5450
@@ -582,6 +610,18 @@ ScummV5_M24RB_Far_RequestRoom__queued:
 ; Called only after the storage backend has completed all record checks.
 ScummV5_M24RB_Far_ResourceReady:
     sep #$20
+    .a8
+    lda #$01
+    jsl ScummV5_RoomHook_Arm_Far
+    bcc ScummV5_M24RB_Far_ResourceReady__hook_checked
+    rts
+ScummV5_M24RB_Far_ResourceReady__hook_checked:
+    .a8
+    cmp #$00
+    beq ScummV5_M24RB_Far_ResourceReady__hook_ready
+    clc
+    rts
+ScummV5_M24RB_Far_ResourceReady__hook_ready:
     .a8
     lda.l SAME_SCUMM_M23A_PENDING_ROOM
     bne ScummV5_M24RB_Far_ResourceReady__check_active
@@ -752,6 +792,18 @@ ScummV5_M24RB_Far_EndRoomScript__done:
 
 ScummV5_M24RB_Far_CommitRoom:
     sep #$20
+    .a8
+    lda #$02
+    jsl ScummV5_RoomHook_Arm_Far
+    bcc ScummV5_M24RB_Far_CommitRoom__hook_checked
+    rts
+ScummV5_M24RB_Far_CommitRoom__hook_checked:
+    .a8
+    cmp #$00
+    beq ScummV5_M24RB_Far_CommitRoom__hook_ready
+    clc
+    rts
+ScummV5_M24RB_Far_CommitRoom__hook_ready:
     .a8
     lda.l SAME_SCUMM_M23A_PENDING_ROOM
     bne ScummV5_M24RB_Far_CommitRoom__resource_room
@@ -1041,6 +1093,11 @@ ScummV5_M24RB_Far_CommitRoom__new_bundle_loaded:
     lda.l SAME_SCUMM_M23A_PENDING_ROOM
     sta.l SAME_SCUMM_M23A_ACTIVE_ROOM
     sta.l SAME_SCUMM_C22_CURRENT_ROOM
+    sta.l SAME_SCUMM_VARIABLES+(4 * 2)
+    pha
+    lda #$00
+    sta.l SAME_SCUMM_VARIABLES+(4 * 2)+1
+    pla
 .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
     jsl ScummV5_LiveRoom_PublishVisual_Far
     bcc ScummV5_M24RB_Far_CommitRoom__live_visual_published
@@ -1580,7 +1637,12 @@ ScummV5_M24RB_Far_CommitRoom__accessor_witness_done:
     lda #$01
     sta.l SAME_SCUMM_CONTROLLER_ROOM_READY
     .endif
-    clc
+    ; ENCD owns slot zero but has not executed yet. Run the pre-entry hook
+    ; first through a separate ordinary activation, then resume phase2.
+    lda #$01
+    sta.l SAME_SCUMM_ROOM_HOOK_AFTER_ENTRY
+    lda #$03
+    jsl ScummV5_RoomHook_Arm_Far
     rts
 
 ; Proper long-call entry points. Internal lifecycle calls remain same-bank

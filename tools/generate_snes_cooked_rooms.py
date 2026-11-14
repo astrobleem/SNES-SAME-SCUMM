@@ -21,6 +21,8 @@ from same.engines.scumm_v5.program_storage import (
 from same.engines.scumm_v5.live_room_resources import encode_live_room_sections
 from same.engines.scumm_v5.room_visual import decode_room_visual
 from same.engines.scumm_v5.room_masks import encode_room_masks
+from same.engines.scumm_v5.object_images import decode_object_images
+from same.engines.scumm_v5.object_image_storage import compile_room_object_strips
 from same.engines.scumm_v5.room import decode_room
 
 
@@ -589,7 +591,11 @@ def main() -> int:
         "--backend-directory-output", type=Path,
         help="emit canonical ProgramUnit IDs with actual code bank/offset descriptors",
     )
+    parser.add_argument('--msu1-object-images', action='store_true',
+                        help='Cook checked state-selected original object-image strips (experimental consumer)')
     args = parser.parse_args()
+    if args.msu1_object_images and (not args.msu1_live_room_resources or args.visual_projection != 'camera-viewport'):
+        parser.error('--msu1-object-images requires live resources and camera-viewport projection')
     if args.dynamic_program_residency and not args.far_programs:
         parser.error("--dynamic-program-residency requires --far-programs")
     if args.msu1_program_storage_dir and not args.dynamic_program_residency:
@@ -1191,6 +1197,9 @@ def main() -> int:
             records.append({
                 "room": decoded.room, "flags": decoded.flags, "raw": raw,
                 "visual_raw": visual_raw,
+                "object_image_resource": (compile_room_object_strips(decoded.room, decoded_room,
+                    decode_object_images(decoded.room_payload, decoded_room))
+                    if args.msu1_object_images else None),
                 "mask_raw": (encode_room_masks(room=decoded.room, width=decoded_room.width,
                     height=decoded_room.height, planes=decoded_room.zplanes, walkbox_masks=bytes(box.mask for box in decoded_room.walkboxes),
                     source_room_sha256=hashlib.sha256(decoded.room_payload).hexdigest())
@@ -1826,6 +1835,8 @@ def main() -> int:
             room_visual_resources=room_visual_resources,
             room_mask_resources={int(r['room']): r['mask_raw'] for r in records
                                  if args.msu1_live_room_resources and r.get('mask_raw')},
+            room_object_resources={int(r['room']): r['object_image_resource'] for r in records
+                                   if r.get('object_image_resource')},
             visual_reserved_bottom=args.visual_reserved_bottom,
             visual_projection=args.visual_projection,
             rom_bank=args.msu1_program_directory_bank,
@@ -1872,6 +1883,10 @@ def main() -> int:
         hold_after_started_global_program = int(match["id"])
 
     reserved_banks = set(args.reserved_bank)
+    object_banks = set(program_storage.get('object_image_directory_banks', ())) if args.msu1_program_storage_dir is not None else set()
+    if object_banks & reserved_banks:
+        raise RuntimeError(f'object descriptor banks overlap reserved ROM: {sorted(object_banks & reserved_banks)}')
+    reserved_banks.update(object_banks)
     if args.msu1_program_storage_dir is not None and program_storage.get('mask_records'):
         mask_blocks = sum(len(r['blocks']) for r in program_storage['mask_records'])
         reserved_banks.update(range(96, 97 + (mask_blocks + 2047) // 2048))

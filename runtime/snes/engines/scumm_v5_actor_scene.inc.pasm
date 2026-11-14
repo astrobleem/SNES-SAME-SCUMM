@@ -764,6 +764,25 @@ ScummV5_Scene_Render_Far:
 ScummV5_Scene_Render__lifecycle_ready:
     .a16
     .i16
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    lda.l SAME_SCUMM_SCENE_PHASE
+    cmp #$0004
+    beq ObjectSceneEpoch_current
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION
+    cmp.l SAME_SCUMM_OBJECT_IMAGE_APPLIED
+    bne ObjectSceneEpoch_stale
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION+2
+    cmp.l SAME_SCUMM_OBJECT_IMAGE_APPLIED+2
+    beq ObjectSceneEpoch_current
+ObjectSceneEpoch_stale:
+    .a16
+    .i16
+    jsl ScummV5_ActorPose_Cancel_Far
+    jml ScummV5_Scene_Render__done
+ObjectSceneEpoch_current:
+    .a16
+    .i16
+    .endif
     lda.l SAME_SCUMM_SCENE_PHASE
     cmp #$0004
     bne ScummV5_Scene_Render__not_wait
@@ -881,6 +900,16 @@ ScummV5_Scene_Render__mask_ready:
     .i16
     jsl ScummV5_ActorPose_Ensure_Far
     bcs ScummV5_Scene_Render__checked
+    ; Pending I/O keeps the scene transaction; a fatal checked read must
+    ; unwind its underlay/composition owner before the VM stops on the error.
+    lda.l SAME_SCUMM_ERROR
+    and #$00FF
+    bne ScummV5_Scene_Render__checked_error
+    jml ScummV5_Scene_Render__done
+ScummV5_Scene_Render__checked_error:
+    .a16
+    .i16
+    jsl ScummV5_ActorPose_Cancel_Far
     jml ScummV5_Scene_Render__done
 ScummV5_Scene_Render__checked:
     .a16
@@ -944,12 +973,44 @@ ScummV5_Scene_Render__present:
 ScummV5_Scene_Render__cursor:
     .a16
     .i16
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    lda.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
+    cmp #$0002
+    bne ObjectScenePresent_damage
+    jsl Same_VideoSurface_PushDirtyPresent_Far
+    bra ObjectScenePresent_result
+ObjectScenePresent_damage:
+    .a16
+    .i16
+    .endif
     jsl Same_VideoSurface_PushDamagePresent_Far
+ObjectScenePresent_result:
+    .a16
+    .i16
     bcc ScummV5_Scene_Render__submitted
     jml ScummV5_Scene_Render__done
 ScummV5_Scene_Render__submitted:
     .a16
     .i16
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    lda.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
+    cmp #$0002
+    bne ObjectScenePresent_no_camera_recheck
+    ; Full object replacement kept the installed transform while source
+    ; reads were outstanding. Preserve a newer canonical camera target even
+    ; if it stopped moving before this complete scene was submitted.
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+    rep #$20
+    .a16
+ObjectScenePresent_no_camera_recheck:
+    .a16
+    .i16
+    lda #$0000
+    sta.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
+    .endif
     lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION
     sta.l SAME_SCUMM_SCENE_PRESENT
     lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION+2
@@ -1104,6 +1165,18 @@ ScummV5_Scene_Abort_Far:
 ScummV5_Scene_Abort__clear:
     .a16
     .i16
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_OBJECT_IMAGE_MODE
+    beq ObjectSceneAbort_camera_owned
+    lda #$0000
+    sta.l SAME_SCUMM_OBJECT_IMAGE_STATE
+    sta.l SAME_SCUMM_OBJECT_IMAGE_MODE
+ObjectSceneAbort_camera_owned:
+    .a16
+    .i16
+    .endif
     rep #$20
     .a16
     lda #$0000

@@ -2990,12 +2990,17 @@ ScummV5_ActorPose_Ensure__return:
     ply
     plx
     pla
-    plp
+    ; RESULT is one byte, adjacent to LOOP_START. Inspect it before restoring
+    ; an A16 caller; a nonzero loop offset must never admit pending raw pixels.
+    sep #$20
+    .a8
     lda.l SAME_SCUMM_ACTOR_POSE_RESULT
     beq ScummV5_ActorPose_Ensure__carry_clear
+    plp
     sec
     rtl
 ScummV5_ActorPose_Ensure__carry_clear:
+    plp
     clc
     rtl
 

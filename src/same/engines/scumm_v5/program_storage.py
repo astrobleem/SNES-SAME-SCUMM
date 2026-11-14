@@ -599,6 +599,7 @@ def build_program_storage(
     diagnostic_live_route_validation_resources: Mapping[int, bytes] | None = None,
     room_visual_resources: Mapping[int, bytes] | None = None,
     room_mask_resources: Mapping[int, bytes] | None = None,
+    room_object_resources: Mapping[int, tuple[bytes, dict]] | None = None,
     visual_reserved_bottom: int = 0,
     visual_projection: str = "aspect-fit",
     rom_bank: int | None = None,
@@ -964,6 +965,34 @@ def build_program_storage(
         mask_file.write_bytes(mask_payload)
         package_sections.append(dict(name='SC5MASK',kind='SCVZ',path=mask_file.name,
                                      alignment=1,flags=['streamable','read_only']))
+    from .object_image_storage import ObjectStrip, native_object_directory
+    import copy
+    object_rows = []
+    object_payload = bytearray()
+    if room_object_resources:
+        if 'SC5OBJ' in used_section_names:
+            raise ValueError('SC5OBJ section already owned by prefix')
+        for room_id, (payload_bytes, metadata) in sorted(room_object_resources.items()):
+            row = copy.deepcopy(metadata)
+            if (row['room'] != room_id or row['payload_bytes'] != len(payload_bytes)
+                    or row['payload_sha256'] != hashlib.sha256(payload_bytes).hexdigest()):
+                raise ValueError('object resource identity/length mismatch')
+            cursor = 0
+            for block in row['blocks']:
+                checked = ObjectStrip(**block)
+                if checked.offset != cursor:
+                    raise ValueError('object resource block offsets are not canonical')
+                checked.decode(payload_bytes[cursor:cursor + checked.length])
+                cursor += checked.length
+            if cursor != len(payload_bytes):
+                raise ValueError('object resource has unaccounted payload bytes')
+            row['section_relative_offset'] = len(object_payload)
+            object_payload.extend(payload_bytes)
+            object_rows.append(row)
+        object_file = output_dir / 'scumm-object-images.bin'
+        object_file.write_bytes(object_payload)
+        package_sections.append(dict(name='SC5OBJ', kind='SCVO', path=object_file.name,
+                                     alignment=1, flags=['streamable', 'read_only']))
     room_directory_count = max(
         max(room_by_id, default=-1), max(source_room_by_id, default=-1),
         max(live_by_id, default=-1),
@@ -1034,6 +1063,14 @@ def build_program_storage(
         for block in row['blocks']:
             block['package_offset'] = row['package_offset'] + block['offset'] if block['length'] else 0
     mask_include = mask_native_directory(mask_rows)
+    object_section = next((row for row in package_info.sections if row.name == 'SC5OBJ'), None)
+    for row in object_rows:
+        row['package_offset'] = object_section.offset + row['section_relative_offset']
+    object_first_bank = 97 + (sum(len(row['blocks']) for row in mask_rows) + 2047) // 2048
+    if object_rows:
+        object_include, object_banks = native_object_directory(object_rows, first_bank=object_first_bank)
+    else:
+        object_include, object_banks = 'SCUMM_MSU1_OBJECT_ROOM_COUNT = $0000\n', ()
     directory_bytes = _canonical_json(directory)
     result: dict[str, object] = {
         "schema": "same_scumm_v5_msu1_program_storage_v5" if pack_small else PROGRAM_STORAGE_SCHEMA,
@@ -1045,6 +1082,9 @@ def build_program_storage(
         "source_directory_sha256": hashlib.sha256(directory_bytes).hexdigest(),
         "package_section": section.to_dict(),
         "prefix_sections": prefix_descriptors,
+        "object_image_records": object_rows,
+        "object_image_payload_bytes": len(object_payload),
+        "object_image_directory_banks": list(object_banks),
         "program_count": len(rows),
         "program_body_bytes": len(payload),
         "page_size_bytes": max_cached_body_bytes,
@@ -1099,6 +1139,6 @@ def build_program_storage(
             rows, room_rows, room_directory_count, rom_bank,
             live_room_rows, live_route_rows, live_room_chunks, visual_rows,
             page_indices, page_records, page_directory_bank, projection_directory_bank,
-        ) + mask_include, encoding="ascii",
+        ) + mask_include + object_include, encoding="ascii",
     )
     return result

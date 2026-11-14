@@ -635,6 +635,7 @@ Same_Tad_BlankSong:
 .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
 .if SCUMM_V5_ACTOR_CEL_FORMAT
 .include "engines/scumm_v5_actor_cels.inc.pasm"
+.include "engines/scumm_v5_actor_animation.inc.pasm"
 .endif
 .endif
 .if SAME_BUILD_SCUMM_CONTROLLER
@@ -645,6 +646,9 @@ Same_Tad_BlankSong:
 ; Cutscene lifecycle callbacks are not a controller build dependency.
 .if SAME_BUILD_SCUMM_ROOM_SERVICE
 .include "engines/scumm_v5_cutscene_callbacks.inc.pasm"
+.if SAME_BUILD_SCUMM_ROOM_SERVICE_FAR
+.include "engines/scumm_v5_room_hooks.inc.pasm"
+.endif
 .endif
 .if SAME_VIDEO_BACKEND_LEGACY
 .include "services/video_k1_far.pasm"
@@ -697,4 +701,9 @@ ScummV5_M24RB_FarCodeEnd:
 ; Scene code owns a separate bank; do not relocate preceding far closures.
 .if SAME_SCUMM_SCENE_ENABLED
 .include "engines/scumm_v5_actor_scene.inc.pasm"
+ .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+  .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+.include "engines/scumm_v5_object_images.inc.pasm"
+  .endif
+ .endif
 .endif

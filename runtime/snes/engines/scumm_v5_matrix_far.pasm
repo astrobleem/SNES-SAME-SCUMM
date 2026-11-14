@@ -117,6 +117,7 @@ ScummV5_M23A_NormalizeEntryLifecycle_Far:
 ScummV5_M23A_NormalizeEntryLifecycle_Far__done16:
     sep #$20
     .a8
+    bra ScummV5_M23A_NormalizeEntryLifecycle_Far__done
 ScummV5_M23A_NormalizeEntryLifecycle_Far__complete:
     .a8
     lda.l SAME_SCUMM_M25_PHASE_NORMALIZE_COMMITS
@@ -4361,6 +4362,15 @@ ScummV5_SetState_FarEntry__value_fetched:
     sep #$20
     .a8
     lda.l SAME_SCUMM_SETSTATE_VALUE
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && SAME_SCUMM_SCENE_ENABLED
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    cmp.l SAME_SCUMM_OBJECT_STATES,x
+    beq ObjectSetState_unchanged
+    jsl ScummV5_ObjectImages_Changed_Far
+ObjectSetState_unchanged:
+    .a8
+    .endif
+    .endif
     sta.l SAME_SCUMM_OBJECT_STATES,x
     lda #$00
     sta.l SAME_SCUMM_SETSTATE_LOCAL_FOUND

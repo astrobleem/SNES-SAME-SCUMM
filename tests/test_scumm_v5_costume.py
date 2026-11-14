@@ -25,9 +25,9 @@ from same.package import inspect_package
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def synthetic_costume(*, color_count: int = 16) -> bytes:
+def synthetic_costume(*, color_count: int = 16, frame: int = 1) -> bytes:
     costume_format = 0x58 if color_count == 16 else 0x59
-    animation_count = 6
+    animation_count = frame * 4 + 2
     table = 2 + color_count
     data_offsets = table + 34
     record = data_offsets + (animation_count + 1) * 2
@@ -39,7 +39,7 @@ def synthetic_costume(*, color_count: int = 16) -> bytes:
     data[2 : 2 + color_count] = bytes(range(color_count))
     struct.pack_into("<H", data, table, commands + 6)
     struct.pack_into("<H", data, table + 2, frame_table + 6)
-    struct.pack_into("<H", data, data_offsets + 6 * 2, record + 6)
+    struct.pack_into("<H", data, data_offsets + animation_count * 2, record + 6)
     struct.pack_into("<HHB", data, record, 0x8000, 0, 0)
     data[commands] = 0
     struct.pack_into("<H", data, frame_table, cel + 6)

@@ -955,10 +955,11 @@ class ScummV5RawRoomTests(unittest.TestCase):
         def start(number: int) -> bytes:
             return bytes((0x0A, number, 0xFF))
 
+        # VAR28 is the entry hook; use an ordinary variable for this witness.
         locals_one = tuple(
             (number, set_var(variable, value))
             for number, variable, value in (
-                (200, 20, 1), (201, 21, 2), (202, 22, 3), (208, 28, 8)
+                (200, 20, 1), (201, 21, 2), (202, 22, 3), (208, 80, 8)
             )
         )
         room_one = raw_room(strip, local_scripts=locals_one)
@@ -992,8 +993,8 @@ class ScummV5RawRoomTests(unittest.TestCase):
         state = host.engine.inspect_state()
         self.assertEqual(state["room"], 2)
         self.assertEqual(
-            {key: state["variables"][str(key)] for key in (10, 20, 21, 22, 28)},
-            {10: 10, 20: 1, 21: 2, 22: 9, 28: 8},
+            {key: state["variables"][str(key)] for key in (10, 20, 21, 22, 80)},
+            {10: 10, 20: 1, 21: 2, 22: 9, 80: 8},
         )
         self.assertFalse(any(
             item["active"] and item["room"] == 1 for item in state["scripts"]

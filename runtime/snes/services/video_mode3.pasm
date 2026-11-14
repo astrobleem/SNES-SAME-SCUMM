@@ -662,6 +662,24 @@ Same_Mode3_HandlePresent__cold_candidate:
     .a16
     lda #$0380 ; cold visible tile count
     sta.l SAME_MODE3_CONTROL_CANDIDATE_COUNT
+    ; After scrolling, the guard character column can be on screen. A full
+    ; refresh cannot use the cold 896-character set: that omits 24 visible
+    ; characters. Encode the retained allocation, with hidden edge pixels
+    ; protected by the normal viewport encoder and coverage invalidation.
+    lda.l MODE3_R_ACTIVE
+    and #$00FF
+    cmp #$0001
+    bne Same_Mode3_HandlePresent__tile_candidates_ready
+    lda #$0398
+    sta.l SAME_MODE3_CONTROL_CANDIDATE_COUNT
+    sep #$20
+    .a8
+    lda #$FF
+    sta.l SAME_MODE3_CANDIDATE_TILES+$70
+    sta.l SAME_MODE3_CANDIDATE_TILES+$71
+    sta.l SAME_MODE3_CANDIDATE_TILES+$72
+    rep #$20
+    .a16
     bra Same_Mode3_HandlePresent__tile_candidates_ready
 Same_Mode3_HandlePresent__tile_shadow_valid:
     rep #$20

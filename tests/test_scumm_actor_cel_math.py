@@ -66,6 +66,30 @@ class CelMath(unittest.TestCase):
             self.assertEqual('ScummV5_Camera_ServicePending_Far' in m.calls,not incomplete)
             self.assertEqual(m.mem['SAME_SCUMM_VIEWPORT_ACTOR_SERVED'],2 if incomplete else 1)
 
+    def test_object_refresh_drains_actor_scratch_before_camera_ownership(self):
+        from test_scumm_v5_actor_damage_boundaries import camera_source
+        text=(ROOT/'runtime/snes/engines/scumm_v5_camera_stream.inc.pasm').read_text()
+        text=text.split('ScummV5_Camera_ServiceForeground_Far:',1)[1].split('ScummV5_Camera_ServicePending__retained_commit:',1)[0]
+        text=camera_source(text,True,True,objects=True)
+        class ForegroundMachine(CelMachine):
+            def service(self,name):
+                self.calls.append(name);self.c=False
+        for writing in (0,1):
+            m=ForegroundMachine();m.code=[];m.labels={'entry':0};m.calls=[]
+            for raw in text.splitlines():
+                line=raw.split(';',1)[0].strip()
+                if not line or line.startswith('.'):continue
+                if line.endswith(':'):m.labels[line[:-1]]=len(m.code)
+                else:m.code.append(line)
+            m.mem.update({'SAME_SCUMM_VIEWPORT_ACTOR_SERVED':2,
+                          'SAME_SCUMM_OBJECT_IMAGE_REFRESH':1,
+                          'SAME_SCUMM_ACTOR_POSE_STATE':writing})
+            m.run('entry',preserve_a=False)
+            self.assertIn('ScummV5_ActorPose_Cancel_Far',m.calls)
+            self.assertNotIn('ScummV5_Controller_RenderActor_Far',m.calls)
+            self.assertEqual('ScummV5_Camera_ServicePending_Far' in m.calls,not writing)
+            self.assertEqual(m.mem['SAME_SCUMM_VIEWPORT_ACTOR_SERVED'],2 if writing else 1)
+
     def test_phase_table_matches_source_reference(self):
         s=(ROOT/'runtime/snes/engines/scumm_v5_actor_cels.inc.pasm').read_text()
         rows=s.split('ScummV5_Cel_ScaleTable:\n')[1].split('; Read')[0]

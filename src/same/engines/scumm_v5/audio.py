@@ -222,11 +222,18 @@ class ScummV5AudioAdapter:
         )
 
     def stop_sfx(self, logical_id: int) -> None:
+        if self.music_id == int(logical_id):
+            self.stop_music()
+            return
         self.active_sfx.pop(int(logical_id), None)
         self.context.services.audio.stop_sfx(logical_id)
 
     def is_running(self, logical_id: int) -> bool:
         return int(logical_id) == self.music_id or int(logical_id) in self.active_sfx
+
+    def sound_status(self, logical_id: int) -> int:
+        """iMUSE query result for this adapter's non-deferred logical owners."""
+        return int(self.is_running(logical_id))
 
     def play_speech(self, logical_id: int) -> None:
         try:

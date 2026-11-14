@@ -63,6 +63,27 @@ def observer(session, directory):
 
 
 class CommittedPoseObserverTests(unittest.TestCase):
+    def test_live_capture_rejects_pending_scene_even_with_idle_backend(self):
+        address = 0x3700
+        session = Session()
+        with tempfile.TemporaryDirectory() as directory:
+            for phase, dirty in ((0, 1), (1, 0), (2, 0), (3, 0), (4, 0)):
+                with self.subTest(phase=phase, dirty=dirty):
+                    session.put(address, phase)
+                    session.put(address + 4, dirty)
+                    self.assertTrue(probe.committed_surface_is_presented(
+                        probe.read_committed_pose(session, cursor_base=CURSOR)))
+                    with self.assertRaisesRegex(RuntimeError, "scene redraw"):
+                        probe.capture_committed_surface(session, Path(directory), 'pending',
+                            cursor_base=CURSOR, scene_control_address=address)
+            session.put(address, 0)
+            session.put(address + 4, 0)
+            result = probe.capture_committed_surface(session, Path(directory), 'settled',
+                cursor_base=CURSOR, scene_control_address=address)
+            self.assertEqual(result['ppu_indexed_differences'], 0)
+            self.assertEqual(result['scene_control'], bytes(26).hex())
+        self.assertFalse(probe.scene_control_is_settled(bytes(25)))
+
     def test_hidden_actor_room_capture_does_not_certify_actor(self):
         s = Session()
         s.put(0x7E5E51, 0, 1)
@@ -99,6 +120,17 @@ class CommittedPoseObserverTests(unittest.TestCase):
             with self.assertRaises(ValueError):probe.indexed_contrast_pixels(b'abc',bad)
         with self.assertRaises(ValueError):probe.indexed_contrast_pixels(b'abc',cgram,background_index=256)
 
+
+    def test_retained_visible_text_does_not_cross_room_lifetimes(self):
+        text = bytearray(128)
+        for offset, value in ((0x64, 7), (0x66, 8), (0x68, 1)):
+            text[offset:offset+2] = value.to_bytes(2, 'little')
+        for room, epoch, expected in ((7,8,True), (9,8,False),
+                                       (7,9,False), (9,9,False)):
+            self.assertEqual(probe.indexed_text_room_is_current(text, {
+                'room': room, 'surface_room_generation': epoch}), expected)
+        self.assertFalse(probe.indexed_text_room_is_current(text[:0x67], {
+            'room': 7, 'surface_room_generation': 8}))
 
     def test_requested_text_cannot_borrow_old_caption_pixels(self):
         text=bytearray(128);expected=b'Look at lamp';pose={'room':4,

@@ -142,8 +142,9 @@ class ActorAnimationBitsetTests(unittest.TestCase):
     def test_call_sites_and_reset_use_packed_contract(self):
         source = ENGINE.read_text()
         self.assertNotIn('AnimationIndexX', source)
-        for marker, value in [('ScummV5_Op_ActorOps__costume:', '00'),
-                              ('ScummV5_Op_AnimateActor__store:', '01'),
+        costume = source.split('ScummV5_Op_ActorOps__costume:',1)[1].split('jsr ScummV5_C14_SetExplicitAnimation',1)[0]
+        self.assertIn('lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_INIT_FRAME,x\n    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x\n    lda #$01\n    .else\n    lda #$00\n    .endif', costume)
+        for marker, value in [('ScummV5_Op_AnimateActor__store:', '01'),
                               ('ScummV5_C14_DefaultActor:', '00')]:
             block = source.split(marker, 1)[1].split('jsr ScummV5_C14_SetExplicitAnimation', 1)[0]
             self.assertTrue(block.rstrip().endswith('lda #$'+value))

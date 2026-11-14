@@ -1,3 +1,135 @@
+# Milestone E — continuous office gameplay accepted
+
+Branch: scumm-fate-barnett-exploration; draft PR17 on unchanged PR16.
+Native runtime: ed6d376b62b9f25e3839899e4696211687a02811.
+ROM c1a75bd77d0af4dd75460d9c75a232975499433e056e3f7f8ce71a7d39134372.
+Evidence root: /home/chad/SAME-private-evidence/milestone-e-exploration-20261114.
+
+`office-input-fenced` PASS: one uninterrupted matching-ROM Barnett continuation,
+frame19381→25681. Normal Open34/Walk34 enters office1; Pickup25 yields owner1,
+state0,classes26/32. Newspaper141 remains1/1. Readable coat/newspaper inventory,
+close and cursor135→137, final error0/RUNNING/ready, Ego104,130.
+Three complete source/INDEX8/PPU/CGRAM comparisons pass. Supervisor445.881s,
+normal exit, cleanup complete. No guest writes or intermediate restoration.
+Optional owned-coat Look is host-only and not part of the accepted route.
+
+Current observer correction excludes stale room2/epoch6 HUD bytes from the
+room1/epoch7 image; the failed capture passes exact offline re-evaluation.
+No runtime change/rebuild for that observer fix. Earlier failed controls and
+signal/timeout reports remain preserved. Do not replay setup to test reports.
+
+1737 tests run,12 skipped; validate and47-region ownership audit pass.
+Pinned assembly and4MiB ROM audit pass. Runtime ed6d376 hosted checks pass
+run43601748173. Final observer/evidence commit checks must finish before handoff.
+Completed PR14→15→16 history and progression recovery worktree untouched.
+No automatic merge. Whole-game NOT_READY. Details: BARNETT_EXPLORATION.md.
+
+Prior chronological checkpoint notes preserved in Git and the private copy
+session-checkpoint-before-milestone-e-acceptance.md. Stop gameplay here; finish
+publication/CI and return the bounded Milestone E result.
+
+## Preserved prior checkpoint history
+
+## Active office continuation
+
+`owned-map-scene-fence` PASS setup: map and complete Barnett matchsource/PPU,
+cleanup normal281.580s. Fresh Barnett checkpoint and variables/bits under that
+run's observations, exact ROM160bcc6a. Bit69=true,211=false,212=false.
+`entry-branch-oracle.json` corrects earlier private IR branch-label inversion:
+conditions true FALL THROUGH. ENCD1 path29→365,385→392,392→523→chain210.
+`route-oracle-look-after-coat.json` proves original pickup then Look25verb9
+prints "It's an expensive topcoat."; isolated host bodies, not hostplaythrough.
+`office-owned-continuation` currently running (tool session27416, port8014),
+from genuine Barnett checkpoint. Normal Open34/Walk34/Pickup25, then Look via
+owned inventory, original description ack and continued control. No guestwrites.
+Observer full1710 tests12skips/validate pass. No native runtime change since4356.
+
+## Latest native setup boundary
+
+Owned original pickup, inventory and closure now match source/INDEX8/PPU/CGRAM
+on ROM160bcc6a in `owned-object-room10-ready`, cleanup normal. `owned-object-barnett`
+reached room75 error0 but the legacy room-only observer captured a dirty scene
+(SCENE_PHASE0, DIRTY1) and compared two live cursor pixels against the old PPU.
+Captured record regression rejects this as incomplete scene evidence. No engine
+fix inferred. Added optional scene-control fence to committed surface capture
+with20 focused tests passing. No runtime change or rebuild.
+`owned-map-scene-fence` now continues the exact saved map state with the existing
+complete-scene observer before destination input; no repeated taxi/startup.
+Its successful fresh-barnett-checkpoint will feed `office-owned-continuation.py`.
+Published source4356c04 has both hosted checks green run43583336227.
+
+## Active correction checkpoint
+
+Ownership is not an object-image visibility predicate (pinned ScummVM
+object.cpp drawRoomObject; script_v5 pickup sets state1). Removed the shared
+host/native filter and owner-only image invalidation. Host20 focused/full1709
+tests pass12skips; assembly/validate/audit pass. Native owned fixture four
+complete comparisons pass including ownership transfer, then Codex-parent
+SIGTERM interrupted final hide capture at437s. Overall fixture incomplete,
+cleanup verified; no unchanged retry. Evidence `native-object-owned`.
+
+Fresh corrected authentic ROM is `auth-build-_g9bzdlp` under private E root,
+ROM160bcc6aa9e23511a6980c6f39841d1d840a87202c58e6e0fb082c0a4e89c41b,
+package unchanged b6afddbf486ee26f85bb444cb03060d9606864138e3d1b3ed282657f77a09111.
+`owned-object-startup` running supervised new exact-ROM setup, not E acceptance.
+Prepared private `owned-object-room10-message-fence.py` ends at pickup checkpoint
+before START; `owned-object-room10-ready.py` waits publication then inventory;
+`owned-object-barnett.py` taxi/map creates fresh Barnett checkpoint;
+`office-owned-continuation.py` normal Open34/Walk34/Pickup25 then inventory.
+No old ROM state may be restored. Current objective still office/coat gameplay.
+
+# Milestone E active — checked object imagery native controls pass
+
+Branch scumm-fate-barnett-exploration, draft PR17 on unchanged PR16.
+Milestone E gameplay NOT_COMPLETE. Recovery worktree untouched.
+Published3db908c C4 X16 correction and sound query remain accepted.
+Current source adds feature-gated checked state-selected OBIM pixels/masks.
+
+Private evidence: /home/chad/SAME-private-evidence/milestone-e-exploration-20261114.
+Native-object-idempotent passes four full source/INDEX8/PPU/CGRAM comparisons:
+show, replace, animation, hide/move/restore; repeated state writes do not
+advance generation. ROM30ea41b6, scene-build-e3npvczq;438.982sec,cleanup complete.
+Native-object-crc rejects corruption atframe752/error16/provider6, preserving
+the installed surface and presentation generation;60.441sec,clean cleanup.
+Earlier failed controls remain preserved and explained in BARNETT_EXPLORATION.
+Local fullsuite1707run/12skipPASS; additional focused descriptor/range tests
+PASS; validate45regionsPASS; pinned Poppy/4MiBROM auditPASS.
+
+Published object checkpoint213b1edd84f0142a5a8d4f33cb94fad4e2c06748 has both
+hosted jobs green/run43580619750. Final local suite1709run/12skipPASS.
+Independent authentic builds _hd3hqsk and wni8ddjt have identical ROM andMSU.
+ROMc199c9e7401878d336ef9e2225dc92fff75094d8bfd12156c6f773b43125abf5,
+MSUb6afddbf486ee26f85bb444cb03060d9606864138e3d1b3ed282657f77a09111.
+Full2203units/all96objectrecords; source-required costume21 included.
+Runtime source identical to published source; private build linkage JSON retained.
+
+Fresh-object-startup reached room10/error0 and saved exact-ROM setup state.
+Fresh-object-room10 stopped by explicit owned-supervisor SIGTERM after the
+observer waited for expired dialogue6 (source advanced to7). No engine-deadlock
+claim. Captured-record test proves the new message-generation observer fence.
+Fresh-object-room10-message-fence then captured both dialogue7 segments and
+verbs with exact source/PPU equality. Original newspaper pickup succeeded1/1.
+It sent inventory input too early: PENDING_VISUAL still1, controller withheld
+edge. Preserved persistent-pickup.state atframe8551; no repeated pickup.
+Current owned supervised run fresh-object-room10-ready restores only that
+matching-ROM state, waits for complete object/actor publication, then opens/
+closes inventory before saving room10-travel-checkpoint. Inspect process-result
+and action.json before launching another session. All prior owned trees clean.
+Private fresh-object-barnett.py now references this new ready-run checkpoint.
+Never restore old D/E states into this ROM. No historical seven-action replay.
+
+Next: finish fresh
+normal Barnett setup then Open34/verb3,Walk-to34/verb10 into room1,Pick up coat25/
+verb11. Isolated original-body oracle is not a native playthrough. Complete
+scene oracle must include captured object states/owners with source OBIM.
+Private fresh-object-room10/barnett scripts prepared; office-object-continuation
+prepared but not executed. No historical seven-action replay or guest writes.
+Production DrawObject relocation remains a separate unqualified frontier;
+implement only if the selected original route actually requires it.
+No automatic merge. Whole-game NOT_READY.
+
+--- Preserved Milestone D checkpoint ---
+
 # Milestone D qualified — final review checkpoint
 
 The multi-actor/mask Barnett objective is complete for its bounded native scope.
@@ -4656,3 +4788,152 @@ implemented VAR_SENTENCE_SCRIPT33/C20 semantic mailbox. Do not bypass it by
 calling the destination object or special-casing room75. See
 MULTIROOM_GAMEPLAY_FRONTIER.md for source evidence and exact next boundary.
 No complete destination gameplay or actor10/costume58 acceptance claimed.
+
+## Milestone E — scrolled object refresh correction (2026-11-14)
+
+Active branch scumm-fate-barnett-exploration, PR17 stacked on accepted PR16.
+Published f1666a4 has green hosted run43585680114. Door34 Open executes normally,
+but prior-ROM generation375 failed source/PPU verification. Exact failure:
+linear checked scene copied into circular INDEX8 and invalid-shadow candidates
+omit the visible retained guard column. Correction and six exact native backend
+captures are documented in BARNETT_EXPLORATION.md. No office acceptance yet.
+
+Private root /home/chad/SAME-private-evidence/milestone-e-exploration-20261114.
+Final authentic source auth-source-mnok1n17/build auth-build-m8dgk8fb, ROM4c12dd2f,
+runtime54de301; pinned assembly/4MiB audit pass. coherent-startup creates legitimate
+matching-ROM state via the recorded original input prefix; do not restore an old-ROM state.
+coherent-room10-pickup exits normally at350.2s with no owned survivors. Settled
+scene, Barnett setup, and office continuation remain separate acceptance boundaries.
+Final host suite1714 run/12skipped passes; both hosted jobs pass c61cd87 in
+run43588105126. c61cd87 changes only the scene-lease test extraction boundary.
+Then use the recorded pickup/ready/Barnett setup once and continue door34→room1,
+coat25 Pickup11 then Look9. Only normal input; preserve newspaper141. Recovery
+worktree untouched. Do not treat synthetic backend acceptance as Milestone E.
+
+Active correction: generic VAR30/31/28/29 room lifecycle hooks and VAR_ROOM4.
+Door-open from coherent-office-continuation PASSED full pixels; room1 entry
+failed because missing exit hook left prior-room predicate stale. No coat pass.
+Native room-hook fixture initially caught ENCD ordering, a newly allocated
+reset-diagnostic alias (fixed, audit now47regions), and existing normalizer
+fall-through (fixed). Latest fixture build scene-build-eswmbq8b; private
+native-room-hooks-entryfix running bounded. Production instructions have host
+ownership/status regressions. Full suite corrected rerun in progress; prior
+run1723/12skip had5 failures now fixed (save restore mutation and fixture
+variables now reserved for canonical room semantics). Do not claim E complete.
+
+Native hook fixture PASSED at928frames,39.676s/normal cleanup, noBRK/cachealias.
+Build scene-build-eswmbq8b, report native-room-hooks-entryfix/observations/report.json.
+Authentic rebuild auth-build-5te2p7a_ / auth-source-q30_1rmb is in progress.
+Use new hooks-* setup evidence, never restore4c12 states into this new ROM.
+
+Corrected full suite1726run/12skip PASS382.030s; makevalidate47regionsPASS.
+01641c3577f5997bfc344acc2ee6b1fb215311ee pushed; both jobsPASS43592376893.
+Authentic ROMb491c190, map15d47dd7, samepackageb6afddbf, buildidentity4ebc3884;
+67tracked runtime files matchpubliccommit (room-hooks-authentic-build-linkage.json).
+Fresh hooks-startupPASS154.071s; hooks-room10-pickupPASS187.055s (owner1/state1,
+presentationpending); hooks-room10-readyPASS63.409s (exactscene and matchingcheckpoint).
+hooks-barnett is nowrunning port8043/600s, normaltaxi/map creates newBarnettstate.
+Next hooks-office-continuation.py uses that exactROM state port8044 and continuous
+Open34→Walk34→room1→Pickup25→Look9ownedcoat; no guestwrites. No Epass yet.
+
+The hooks-barnett run failed normally after241.927s (not timeout), error16
+while actor10/costume58 requested frame6; no new Barnett checkpoint was made.
+Exact map source/INDEX8/PPU/CGRAM passed first. Existing controller-error capture
+and travel-map-complete-scene.state are preserved for ROMb491c190 only.
+Offline pinned ClassicCostumeLoader shows absent animation record is a no-op
+on live cels; current source lookup treated it as resource failure. In-progress
+fix admits requests through compiler-derived per-costume animation masks, keeps
+initialized/current chore on absent/direction-only requests, and mirrors the
+host raw-request/decoded-chore distinction. No extra WRAM/pixel cache allocated.
+New copyright-free --absent-animation-probe injects absent requests after valid
+chores before any presentation sample. Native build scene-build-sj9ay6is ROM
+189687ffcace00912fd58c27d0f7c5f0cb72788b17b1d6c2eabae674f9fb0ae6.
+native-absent-animation runs port8045 under600s supervisor; first two complete
+masked multi-actor captures exact. Not yet a completed test or authentic pass.
+Full suite and validation running separately. Recovery worktree untouched.
+
+Absent-animation native fixture PASSED four full images, frame2165,
+227.479s normal exit/cleanup; no survivors. NewauthROM59b8b3a3,
+map39a03551/packageb6afddbf/buildidentity63a87ee9 fromauth-build-1j0uxify
+and auth-source-wew_27bo;68 nongenerated runtimefiles byteequal.
+anim-startup PASS152.293s. anim-room10-pickup nowrunning port8047.
+Prepared anim-ready/Barnett/office files use onlynewmatching identities.
+Firstfullsuite1729/12skip failed obsoleteC28resource/scaling-empty/bitset
+expectations; fixed withactualfixturecostume andsource-no-op expectations.
+Focused13tests PASS; correctedfullsuite running (absent-animation-corrected-full-tests.log).
+E remains NOT_COMPLETE; do not publish a gameplay pass fromthese controls.
+
+Current correction: authentic ROM59b8b3a3 verb image differed65 masked pixels.
+Bounded matching-state trace proves native actor1 walkbox1 incorrectly selects
+plane3 (source1); wrong-plane host prediction exactly reproduces all native
+pixels. Poppy emitted direct-page D5/B5 for intended DBR reads. Two `.w` fixes
+assemble DD/BD, with compiled-byte validator and negative tests.
+Walkbox fixture first failed safely because FollowBoxes applied source scale255
+and overflowed existing underlay; source fixture corrected to231, unchanged
+production fix. Current native-walkbox-scaled-mask uses scene-build-b7cg2xb7,
+ROM56515ad1, running four source/PPU captures. Authentic build auth-build-adeba7mp
+ROMf341110e is assembled/audited, package unchangedb6afddbf; no native authentic
+run yet. Prepared mask-* setup scripts use this exact identity/new ports.
+Full suite for3d8dc12 passed1730/12skip; both CI jobs pass43595360909.
+Current mask correction full suite and native gate are pending. Do not reuse
+an old-ROM state or label these ongoing controls Milestone E acceptance.
+
+Native walkbox gate now PASSED four exact images, frame2146, cleanup complete.
+Fresh mask-startup uses ROMf341110e; next mask-room10-pickup/ready/barnett then
+mask-office-continuation, each bounded and identity-bound. No E gameplay pass yet.
+
+Current follow-up: mask-startup failed error16 frame7019. Read-only matching
+checkpoint trace found mask0 inherited clamp CMP flags and entered resource
+lookup. Added CMP #0 before mask bounds branch;16 focused tests pass.
+Native zero-mask fixture runs port8063 with scene-build-0o7fdh52.
+Fresh authentic build auth-build-o3u9luab / source auth-source-p5o2u0rp
+ROM443030d2, map a8638737, package unchangedb6afddbf, identityb2d7302b.
+68 runtime files match the build snapshot. No authentic native run yet.
+Prepared zero-startup/pickup/ready/barnett/office scripts ports8064..8068.
+Current full tests zero-mask-corrected-full-tests.log; first run stopped
+after fixing the bounded test runner's unsupported JML normalization.
+Milestone E NOT_COMPLETE. No old-ROM state may be loaded in this new build.
+
+Zero-mask native PASSED four exact source/INDEX8/PPU/CGRAM images,222.536s,
+normal exit, cleanup complete. zero-startup now running freshROM443030d2
+under600s supervisor; no acceptance yet. Validation/audit47regions pass.
+GitHub #14->#15->#16->#17 dependencies verified open/draft/mergeable unchanged.
+
+9012b24 pushed;1733tests/12skip; CI43598795963 bothPASS. Native zero-mask
+passes4images. zero-startup154.24sPASS; zero-pickup278.961sPASS, zero-ready
+63.956sPASS. zero-barnett stops at37 map-marker pixels49/56 vsraw1/8,
+error0. Snapshot source shape exact. Paused ROM palette read correct;
+trace160frames seesrawscratch butnoMapPalette. Ensure return restoredP
+beforebyteRESULT, A16readsadjacentnonzeroLOOP_START =>false-ready.
+Fixedbyte-test-beforePLP;64instructioncases +one-shot-limb sourcefixture.
+Native positive runs native-pose-ready/scene-build-fm2nhkcx, port8071,
+3of4exactimages sofar. Negativepackage pose-ready-corrupt-actor prepared,
+firstcheckedchunkCRC intentionallywrong, no native run yet.
+Auth buildauth-build-yhx79mbs/sourceauth-source-_s3xde1v assembled;notrun.
+Prepared ready-* scripts ports8072..8076. ready-room10-setup.py omits
+redundant menu captures during identity setup, retainsnormalcontroller
+sequence/state checks. Fulltests pose-ready-full-tests.log running.
+Milestone E remainsNOT_COMPLETE; recoveryuntouched.
+
+Current checked-pose correction: fatal actor CRC rejection now invokes the
+existing cancellation path; native negative control ends at frame626 with
+error16/provider6, generation0, phase0, no composition owner, cleanup complete.
+Positive final-runtime control is in native-pose-ready-cleanup. Full suite:
+1736 tests in380.526s,12 skipped; validate and47-region audit pass.
+Authentic build auth-build-s5sw4h85 is ROM c1a75bd7; fresh setup must use
+checked-startup/checked-room10-pickup/checked-room10-ready/checked-barnett
+then checked-office-continuation. No earlier ROM states are compatible.
+
+Final positive native control PASS4 exact images at frame2144;227.104s,
+cleanup complete. Fresh checked-startup now running on auth c1a75bd7.
+Milestone E remains NOT COMPLETE until the office/coat continuation passes.
+
+Latest boundary: checked-barnett passes full scene on c1a75bd7; matching
+checkpoint fresh-barnett-checkpoint is valid. checked-office-continuation
+opens door34 and enters room1 error0. Its75-pixel HUD failure was an oracle
+room-lifetime mismatch (text room2/epoch6 vs scene room1/epoch7); saved capture
+passes exact full-image comparison offline with stale overlay excluded.
+No native change. Generic observer predicate/test added. Final continuous
+run office-room-bound-continuation uses the same Barnett state and corrected
+font oracle, port8093. New full suite and validate running. No coat pass yet.
+Both hosted jobs passed ed6d376 in run43601748173.

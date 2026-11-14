@@ -5,7 +5,7 @@ This narrow instruction runner is host evidence, not emulator acceptance.
 import re
 import unittest
 from pathlib import Path
-from test_video_surface_sparse_underlay import ServiceMachine, ROOT
+from test_video_surface_sparse_underlay import ServiceMachine, ROOT, pixel_leaves
 from test_scumm_v5_room_visual import fixture
 from same.engines.scumm_v5.room_visual import camera_viewport, decode_room_visual, encode_camera_room_visual
 
@@ -15,7 +15,7 @@ def select_actor_path(text, enabled=False):
     active=[True];arms=[];result=[]
     for line in text.splitlines():
         directive=line.strip()
-        if directive == '.if SCUMM_V5_ACTOR_CEL_FORMAT':
+        if directive in ('.if SCUMM_V5_ACTOR_CEL_FORMAT', '.if SCUMM_MSU1_OBJECT_ROOM_COUNT', '.if SAME_VIDEO_OVERLAY_INDEXED'):
             arms.append(False);active.append(False)
         elif directive == '.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER':
             arms.append(enabled);active.append(active[-1] and enabled)
@@ -48,12 +48,18 @@ class StripMachine(ServiceMachine):
         self.ram[0x410000:0x41E000]=bytes(57344)
 
     def consume(self):
+        if 'Same_VideoSurface_WriteIndexedPair_Far' not in self.labels:
+            for raw in pixel_leaves().splitlines():
+                line=raw.split(';')[0].strip()
+                if not line or line.startswith('.'): continue
+                if line.endswith(':'): self.labels[line[:-1]]=len(self.code)
+                else: self.code.append(line)
         a=x=y=0;pc=getattr(self,"entry",0);p=0;stack=[];written=[];returns=[]
         cache={}
         def value(expr):
             if expr not in cache:cache[expr]=self.value(expr)
             return cache[expr]
-        for _ in range(400000):
+        for _ in range(4000000):
             op,_,arg=self.code[pc].partition(' ');pc+=1
             bits=8 if p&32 else 16;mask=(1<<bits)-1;v=addr=None;result=None
             if arg.startswith('#'):v=value(arg[1:])
@@ -76,6 +82,7 @@ class StripMachine(ServiceMachine):
                 pointer=self.get(value(arg[1:arg.index(']')]),3)
                 addr=pointer+y;self.put(addr,a&mask,bits//8);written.extend(range(addr,addr+bits//8))
             elif op=='clc':p&=~1
+            elif op=='cld':p&=~8
             elif op=='sec':p|=1
             elif op in ('adc','adc.l'):
                 result=(a&mask)+v+(p&1);p=(p&~1)|int(result>mask)
@@ -188,6 +195,24 @@ class CameraTransactionMachine(StripMachine):
 
 
 class CameraTransactionTests(unittest.TestCase):
+    def test_linear_replacement_maps_scrolled_surface_and_preserves_hud(self):
+        from same.snes_video_backend import linearize_retained_index8
+        for origin in (1, 232):
+            with self.subTest(origin=origin):
+                m=CameraTransactionMachine()
+                m.put('MODE3_R_ACTIVE',1,1)
+                m.put('MODE3_R_INDEX_ORIGIN',origin)
+                m.put('SAME_SCUMM_VIEWPORT_STATE',2,1)
+                m.put('SAME_SCUMM_VIEWPORT_MODE',1,1)
+                scene=bytes((x*13+y*7)&255 for y in range(192) for x in range(256))
+                m.ram[0x410000:0x41C000]=scene
+                hud=bytes(m.ram[0x40E000:0x410000])
+                failed,writes=m.consume()
+                self.assertFalse(failed)
+                actual=linearize_retained_index8(bytes(m.ram[0x402000:0x410000]),origin=origin)
+                self.assertEqual(actual,scene+hud)
+                self.assertFalse(any(0x40E000<=address<0x410000 for address in writes))
+
     def test_incoming_lifecycle_never_publishes_camera_pixels(self):
         for phase in range(1,7):
             for state in range(4):

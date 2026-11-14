@@ -1091,7 +1091,7 @@ class ScummV5Engine(Engine):
             self._presentation_dirty = False
             self._presentation_rebuild = False
             return
-        rebuild = self._actors_dirty or self._presentation_rebuild
+        rebuild = self._actors_dirty or self._presentation_rebuild or self._background_needs_redraw
         if rebuild and isinstance(self._video, ScummV5RoomAdapter):
             if not context.profile.options.get("headless_actor_presentation", False):
                 self._video.render_actors(
@@ -1099,6 +1099,8 @@ class ScummV5Engine(Engine):
                     current_room=self.state.current_room,
                     costume_key=lambda costume: self._resource_key("costume", costume),
                     object_classes=self.state.object_classes,
+                    object_states=self.state.object_states,
+                    object_owners=dict(enumerate(self._object_owners)),
                     project=False,
                 )
         elif rebuild and not context.profile.options.get("headless_actor_presentation", False):
@@ -1126,6 +1128,7 @@ class ScummV5Engine(Engine):
             self.state.room_hash = context.services.video.surface.hash()
         self._presentation_dirty = False
         self._presentation_rebuild = False
+        self._background_needs_redraw = False
 
     def _advance_actor_movement(self) -> None:
         if not isinstance(self._video, ScummV5RoomAdapter) or self._video.room is None:
@@ -2112,6 +2115,9 @@ class ScummV5Engine(Engine):
         self.state.sound_queue = []
         for command in queued:
             self._dispatch_sound_command(context, command)
+            # v5 Sound::processSoundQues publishes each command's signed
+            # return through VAR_SOUNDRESULT, including read-only queries.
+            self.state.variables[56] = self.state.sound_result
             self.state.sound_history.append(list(command))
             if len(self.state.sound_history) > _MAX_SOUND_HISTORY:
                 del self.state.sound_history[:-_MAX_SOUND_HISTORY]
@@ -2225,6 +2231,15 @@ class ScummV5Engine(Engine):
             else:
                 self._audio.stop_sfx(arguments[1])
             self.state.sound_result = 0
+        elif command == 13:
+            if len(arguments) != 2 or not 0 <= arguments[1] <= 0xFFFF:
+                raise EngineExecutionError("SCUMM soundKludge status operands are invalid")
+            sound = arguments[1]
+            if sound == 0xFFFF:
+                raise EngineExecutionError("SCUMM first-active iMUSE player ordering is not represented")
+            self.state.sound_result = (
+                self._audio.sound_status(sound) if sound and self._audio is not None else 0
+            )
         elif command in (2, 3):
             # iMUSE compatibility commands 2 and 3 are accepted no-ops in
             # the canonical v5 desktop driver.  They carry the command word
@@ -3433,7 +3448,6 @@ class ScummV5Engine(Engine):
 
     def _op_animate_actor(self, slot: ScriptSlot, context: EngineContext) -> bool:
         """Request one canonical v5 animation on a live actor."""
-        del context
         actor = self._actor(self._var_or_direct_byte(slot, 0x80))
         request = self._var_or_direct_byte(slot, 0x40)
         actor.animation = request
@@ -3448,8 +3462,19 @@ class ScummV5Engine(Engine):
         elif chore in (3, 4):  # Immediate/turn direction; walking is deferred.
             actor.facing = facing
         elif actor.room == self.state.current_room and actor.costume != 0:
-            actor.costume_frame = request
-            actor.costume_step = 0
+            # Classic costumeDecodeData leaves live limbs unchanged when the
+            # requested animation has no record. Keep the raw script request
+            # above, independently of the decoded chore consumed by video.
+            defined = True
+            if isinstance(self._video, ScummV5RoomAdapter):
+                key = self._resource_key("costume", actor.costume)
+                costume = ScummV5Costume(context.services.resource_read(key), key=key)
+                defined = costume.has_animation(request, facing=actor.facing)
+                if actor.costume_frame is None:
+                    actor.costume_frame = actor.init_frame
+            if defined:
+                actor.costume_frame = request
+                actor.costume_step = 0
             actor.animation_progress = 0
         self._actors_dirty = True
         return False
@@ -4361,6 +4386,28 @@ class ScummV5Engine(Engine):
         decoded = decode_room(context.services.resource_read(key), key=key)
         return dict(decoded.local_scripts)
 
+    def _run_room_hook(self, context: EngineContext, variable: int) -> None:
+        """Run v5's authored before/after room hook through ordinary runScript.
+
+        These globals are independent of the ROOM's ENCD/EXCD bodies. A source
+        yield returns to startScene; a surviving global resumes normally later.
+        Read each variable at its invocation, since earlier hooks may change it.
+        """
+        number = self.state.variables[variable]
+        if not number:
+            return
+        if not 0 < number < 256:
+            raise EngineExecutionError(f"SCUMM room hook {variable} has invalid script {number}")
+        child = self._allocate_script_slot(
+            context, number, [], freeze_resistant=False, recursive=False,
+        )
+        self._room_lifecycle_event(
+            "room_hook_scheduled", self.state.current_room,
+            variable=variable, script=child.resource_key,
+        )
+        if self._in_tick:
+            self._execute_slot(child, context)
+
     def _load_room(
         self,
         context: EngineContext,
@@ -4412,6 +4459,8 @@ class ScummV5Engine(Engine):
                 record_sha256=None if record is None else record.record_sha256,
             )
         old_room = self.state.current_room
+        if not preserve_local_scripts:
+            self._run_room_hook(context, 30)
         if not preserve_local_scripts and self._room_exit is not None:
             exit_slot = ScriptSlot(
                 self._room_exit.identity, self._room_exit.program,
@@ -4427,6 +4476,7 @@ class ScummV5Engine(Engine):
                     "old_exit_completed", old_room, script=self._room_exit.identity
                 )
         if not preserve_local_scripts:
+            self._run_room_hook(context, 31)
             for script in self.state.scripts:
                 if script.active and script.room is not None:
                     if script.cutscene_override:
@@ -4459,6 +4509,8 @@ class ScummV5Engine(Engine):
             self.state.room_objects.clear()
             self.state.object_draw_queue.clear()
             self.state.current_room = 0
+            if not preserve_local_scripts:
+                self.state.variables[4] = 0  # v5 VAR_ROOM, after outgoing hooks.
             self._room_scripts = {}
             self._room_script_descriptors = {}
             self._room_entry = None
@@ -4501,6 +4553,8 @@ class ScummV5Engine(Engine):
         }
         self.state.object_draw_queue.clear()
         self.state.current_room = room
+        if not preserve_local_scripts:
+            self.state.variables[4] = room
         self._room_lifecycle_event("new_room_activated", room)
         self.state.room_ops.room_width = adapter.room.width
         # Restore reconstructs resources without re-entering the scene.
@@ -4531,6 +4585,8 @@ class ScummV5Engine(Engine):
                 "exit_script_registered", room, script=self._room_exit.identity,
                 source_map=self._room_exit.runtime_map(0),
             )
+        if not preserve_local_scripts:
+            self._run_room_hook(context, 28)
         if self._room_entry is not None:
             entry_slot = ScriptSlot(
                 self._room_entry.identity, self._room_entry.program,
@@ -4551,6 +4607,8 @@ class ScummV5Engine(Engine):
                     source_map=self._room_entry.runtime_map(0),
                 )
                 self._execute_slot(entry_slot, context)
+        if not preserve_local_scripts:
+            self._run_room_hook(context, 29)
         context.services.debug.marker("scumm_v5.room", room)
 
     def save_state(self, context: EngineContext) -> bytes:

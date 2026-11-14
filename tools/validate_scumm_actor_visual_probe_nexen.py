@@ -243,6 +243,16 @@ def read_committed_pose(session, *, cursor_base: int) -> dict:
     }
 
 
+def scene_control_is_settled(control: bytes) -> bool:
+    """A live scene is not a completed-image oracle while redraw is pending.
+
+    Locked, immutable generation captures use their separate publication fence.
+    The caller supplies the matching map's scene-control record; legacy builds
+    without the scene compositor must not infer that allocation exists.
+    """
+    return len(control) >= 26 and read_u16(control, 0) == 0 and read_u16(control, 4) == 0
+
+
 def committed_surface_is_presented(state: dict, *, expected_room: int | None = None) -> bool:
     """Fence a settled room image, including rooms whose actor is hidden.
 
@@ -322,7 +332,8 @@ def capture_committed_surface(session, directory: Path, label: str, *,
                               expected_x: int | None = None,
                               expected_y: int | None = None,
                               expected_frame: int | None = None,
-                              require_visible_actor: bool = True) -> dict:
+                              require_visible_actor: bool = True,
+                              scene_control_address: int | None = None) -> dict:
     """Capture a paused committed surface without consulting pending pose data.
 
     Bounds are omitted. Optional source_foot must be supplied from independently
@@ -331,6 +342,10 @@ def capture_committed_surface(session, directory: Path, label: str, *,
     """
     require(bool(label) and Path(label).name == label and label not in ('.', '..'),
             "capture label must be a single filename component")
+    scene_control = (session.read_memory("snesMemory", scene_control_address, 26)
+                     if scene_control_address is not None else None)
+    if scene_control is not None:
+        require(scene_control_is_settled(scene_control), "scene redraw is not settled")
     state = read_committed_pose(session, cursor_base=cursor_base)
     if require_visible_actor:
         ready = committed_pose_is_presented(state, expected_room=expected_room,
@@ -357,6 +372,9 @@ def capture_committed_surface(session, directory: Path, label: str, *,
     # No execution/advance is permitted between these observations.
     after = read_committed_pose(session, cursor_base=cursor_base)
     require(after == state, "committed key/fence changed during capture")
+    if scene_control is not None:
+        require(session.read_memory("snesMemory", scene_control_address, 26) == scene_control,
+                "scene identity changed during capture")
     pose = dict(state, room_projection=projection,
                 accepted_frame=state["actor_render_pose_frame"],
                 accepted_step=state["actor_render_pose_step"],
@@ -390,6 +408,8 @@ def capture_committed_surface(session, directory: Path, label: str, *,
         "ppu_indexed_differences": sum(a != b for a,b in zip(ppu_pixels, pixels)),
         "cgram_difference_bytes": sum(a != b for a,b in zip(cgram, expected_cgram)),
     }
+    if scene_control is not None:
+        record["scene_control"] = scene_control.hex()
     directory.mkdir(parents=True, exist_ok=True)
     (directory / f'{label}.scroll-hdma.bin').write_bytes(session.read_memory('snesMemory',0x41e73a,10))
     for suffix, data in (("indexed.bin", pixels), ("palette-rgb.bin", palette),
@@ -402,6 +422,18 @@ def capture_committed_surface(session, directory: Path, label: str, *,
         json.dumps(ppu_state, indent=2, sort_keys=True) + "\n")
     (directory / f"{label}.committed.json").write_text(json.dumps(record, indent=2) + "\n")
     return record
+
+
+def indexed_text_room_is_current(text: bytes, pose: dict) -> bool:
+    """Associate retained text with its room lifetime, not just visible=1.
+
+    Room replacement can discard an overlay while retaining its old bytes.
+    This is only an identity check; matching text still needs the publication
+    fence and independent source-font/pixel comparison.
+    """
+    return (len(text) >= 0x68
+            and int.from_bytes(text[0x64:0x66], 'little') == pose['room']
+            and int.from_bytes(text[0x66:0x68], 'little') == pose['surface_room_generation'])
 
 
 def indexed_text_request_is_composed(text: bytes, raw: bytes, pose: dict,
@@ -422,7 +454,7 @@ def indexed_text_request_is_composed(text: bytes, raw: bytes, pose: dict,
     delta = (generation - after_generation) & 0xFFFF
     if phase != 1 or word(0x38) != 1 or not 0 < delta < 0x8000 or not word(0x68):
         return False
-    if word(0x64) != pose['room'] or word(0x66) != pose['surface_room_generation']:
+    if not indexed_text_room_is_current(text, pose):
         return False
     pending = pose['backend_pending_generation']
     if generation != pending:
@@ -463,7 +495,7 @@ def indexed_text_committed_candidate(text: bytes, raw: bytes, pose: dict,
         return False
     if not word(0x38) or not word(0x68):
         return False
-    if word(0x64) != pose['room'] or word(0x66) != pose['surface_room_generation']:
+    if not indexed_text_room_is_current(text, pose):
         return False
     length = word(0x24)
     return length == len(expected) and len(raw) >= length and raw[:length] == expected

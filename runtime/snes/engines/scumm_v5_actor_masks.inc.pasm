@@ -64,6 +64,20 @@ ScummV5_Mask_Ensure_Far:
  phb
  .if SCUMM_MSU1_MASK_COUNT
  lda.l SAME_SCUMM_MASK_STATE
+ .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+ cmp #$0004
+ bcc ObjectMaskEnsure_base
+ jsl ScummV5_ObjectImages_Masks_Far
+ bcc ObjectMaskEnsure_pending
+ jml ObjectMaskEnsure_complete
+ObjectMaskEnsure_pending:
+ .a16
+ .i16
+ jml MaskEnsure_pending
+ObjectMaskEnsure_base:
+ .a16
+ .i16
+ .endif
  cmp #$0003
  bne MaskEnsure_work
  jml MaskEnsure_ready
@@ -161,7 +175,9 @@ MaskEnsure_box_present:
  lda.l SCUMM_MSU1_MASK_ROOM_ADDRESS+$0E,x
  tax
  lda.l SAME_SCUMM_MASK_INDEX
- cmp $0000,x
+ ; X is a ROM pointer in DBR, not a direct-page displacement. Force
+ ; absolute addressing: Poppy otherwise emits D5/B5 for these low literals.
+ cmp.w $0000,x
  bcc MaskEnsure_box_in_range
  jml MaskEnsure_error
 MaskEnsure_box_in_range:
@@ -171,7 +187,7 @@ MaskEnsure_box_in_range:
  clc
  adc.l SAME_SCUMM_MASK_INDEX
  tax
- lda $0002,x
+ lda.w $0002,x
  and #$00FF
 MaskEnsure_plane:
     .a16
@@ -183,6 +199,9 @@ MaskEnsure_plane_bounded:
     .a16
     .i16
  sta.l SAME_SCUMM_MASK_PLANE
+ ; CMP used for clamping leaves Z clear even when a lower selector is zero.
+ ; Test the selected value itself: plane zero means no foreground mask.
+ cmp #$0000
  bne MaskEnsure_bounds
  jml MaskEnsure_ready
 MaskEnsure_bounds:
@@ -808,8 +827,21 @@ MaskEnsure_more_blocks:
 MaskEnsure_ready:
     .a16
     .i16
+ .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+ lda.l SAME_SCUMM_MASK_PLANE
+ beq ObjectMaskEnsure_no_plane
+ jsl ScummV5_ObjectImages_Masks_Far
+ bcs ObjectMaskEnsure_complete
+ jml MaskEnsure_pending
+ObjectMaskEnsure_no_plane:
+ .a16
+ .i16
+ .endif
  lda #$0003
  sta.l SAME_SCUMM_MASK_STATE
+ObjectMaskEnsure_complete:
+ .a16
+ .i16
  plb
  ply
  plx

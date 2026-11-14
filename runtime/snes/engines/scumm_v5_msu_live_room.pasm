@@ -2277,6 +2277,27 @@ ScummV5_LiveRoom_PublishVisual_Far:
     jmp ScummV5_LiveRoom_PublishVisual_Far__bad
 ScummV5_LiveRoom_PublishVisual_Far__valid:
     .a16
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION
+    cmp.l SAME_SCUMM_OBJECT_IMAGE_TICKET
+    bne ObjectRoomPublish_stale
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION+2
+    cmp.l SAME_SCUMM_OBJECT_IMAGE_TICKET+2
+    beq ObjectRoomPublish_current
+ObjectRoomPublish_stale:
+    .a16
+    .i16
+    jmp ScummV5_LiveRoom_PublishVisual_Far__bad
+ObjectRoomPublish_current:
+    .a16
+    .i16
+    lda #$0000
+    sta.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
+    lda.l SAME_SCUMM_OBJECT_IMAGE_TICKET
+    sta.l SAME_SCUMM_OBJECT_IMAGE_APPLIED
+    lda.l SAME_SCUMM_OBJECT_IMAGE_TICKET+2
+    sta.l SAME_SCUMM_OBJECT_IMAGE_APPLIED+2
+    .endif
     .if SCUMM_MSU1_CAMERA_VIEWPORT
     sep #$20
     .a8
