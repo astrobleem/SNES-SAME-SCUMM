@@ -61,4 +61,3 @@ ScummV5_C16_SourceEnsureRecord__ready:
 ScummV5_C16_SourceEnsureRecord__full:
     sec
     rtl
-
