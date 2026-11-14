@@ -4756,3 +4756,20 @@ implemented VAR_SENTENCE_SCRIPT33/C20 semantic mailbox. Do not bypass it by
 calling the destination object or special-casing room75. See
 MULTIROOM_GAMEPLAY_FRONTIER.md for source evidence and exact next boundary.
 No complete destination gameplay or actor10/costume58 acceptance claimed.
+
+## Milestone E — scrolled object refresh correction (2026-11-14)
+
+Active branch scumm-fate-barnett-exploration, PR17 stacked on accepted PR16.
+Published f1666a4 has green hosted run43585680114. Door34 Open executes normally,
+but prior-ROM generation375 failed source/PPU verification. Exact failure:
+linear checked scene copied into circular INDEX8 and invalid-shadow candidates
+omit the visible retained guard column. Correction and six exact native backend
+captures are documented in BARNETT_EXPLORATION.md. No office acceptance yet.
+
+Private root /home/chad/SAME-private-evidence/milestone-e-exploration-20261114.
+New authentic source auth-source-1ouur0uf/build auth-build-4ti711x_, ROMacf41f42,
+pinned assembly/4MiB audit pass. refresh-startup creates legitimate matching-ROM
+state via the recorded original input prefix; do not restore an old-ROM state.
+Then use the recorded pickup/ready/Barnett setup once and continue door34→room1,
+coat25 Pickup11 then Look9. Only normal input; preserve newspaper141. Recovery
+worktree untouched. Do not treat synthetic backend acceptance as Milestone E.

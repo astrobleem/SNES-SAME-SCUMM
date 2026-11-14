@@ -40,6 +40,37 @@ Same_Mode3_Retained_Reset_Far:
     plp
     rtl
 
+; A full scene replacement invalidates cached off-screen source coverage.
+; Keep the committed ring/map/origin, but trust only complete columns whose
+; INDEX8 pixels were replaced. Partial edge columns must be checked again
+; before exposing their previously hidden pixels, including on reversal.
+Same_Mode3_Retained_InvalidateCoverage_Far:
+    php
+    rep #$20
+    .a16
+    lda.l MODE3_R_ACTIVE
+    and #$00FF
+    cmp #$0001
+    bne Same_Mode3_Retained_InvalidateCoverage__done
+    lda.l MODE3_R_CURRENT
+    clc
+    adc #$0007
+    lsr
+    lsr
+    lsr
+    sta.l MODE3_R_FIRST
+    lda.l MODE3_R_CURRENT
+    clc
+    adc #$0100
+    lsr
+    lsr
+    lsr
+    dec
+    sta.l MODE3_R_LAST
+Same_Mode3_Retained_InvalidateCoverage__done:
+    plp
+    rtl
+
 ; Enable a cold, already-published 256x192 scene. A16 is the maximum relative
 ; horizontal origin; X16 is the tile-aligned cold source origin. INDEX8 is
 ; row-major; the generated cold map resolves column-contiguous scene characters.
@@ -1184,6 +1215,7 @@ MODE3_RF_VALUE = SAME_MODE3_FIXTURE+$0116
 MODE3_RF_LEFT = SAME_MODE3_FIXTURE+$0118
 MODE3_RF_RIGHT = SAME_MODE3_FIXTURE+$011A
 MODE3_RF_FOREGROUND = SAME_MODE3_FIXTURE+$011C
+MODE3_RF_REVISION = SAME_MODE3_FIXTURE+$011E
 
 Same_Mode3_Retained_Fixture:
     rep #$30
@@ -1223,6 +1255,11 @@ Same_Mode3_Retained_Fixture__not_stale:
     bne Same_Mode3_Retained_Fixture__not_recover
     jmp Same_Mode3_Retained_Fixture_Recover
 Same_Mode3_Retained_Fixture__not_recover:
+    .a16
+    cmp #$0009
+    bne Same_Mode3_Retained_Fixture__not_refresh
+    jmp Same_Mode3_Retained_Fixture_Refresh
+Same_Mode3_Retained_Fixture__not_refresh:
     .a16
     cmp #$0003
     beq Same_Mode3_Retained_Fixture__wait
@@ -1408,10 +1445,20 @@ Same_Mode3_Retained_Fixture_Pixel__toggle:
     .a16
     pla
     eor #$0001
-    rts
+    bra Same_Mode3_Retained_Fixture_Pixel__revision
 Same_Mode3_Retained_Fixture_Pixel__plain:
     .a16
     pla
+Same_Mode3_Retained_Fixture_Pixel__revision:
+    .a16
+    pha
+    lda.l MODE3_RF_Y
+    cmp #$00C0
+    pla
+    bcs Same_Mode3_Retained_Fixture_Pixel__done
+    eor.l MODE3_RF_REVISION
+Same_Mode3_Retained_Fixture_Pixel__done:
+    .a16
     rts
 
 ; Map a dirty screen-space tile through the current retained scene transform.
@@ -2468,6 +2515,7 @@ Same_Mode3_Retained_Fixture_Cold__ready:
     .a16
     lda #$0000
     sta.l MODE3_RF_FOREGROUND
+    sta.l MODE3_RF_REVISION
     sta.l MODE3_RF_Y
 Same_Mode3_Retained_Fixture_Cold__row:
     .a16
@@ -2499,6 +2547,89 @@ Same_Mode3_Retained_Fixture_Cold__pixel:
     sta.l MODE3_RF_Y
     cmp #$00E0
     bcc Same_Mode3_Retained_Fixture_Cold__row
+    lda #$0000
+    sta.l SAME_MODE3_WORK_X0
+    sta.l SAME_MODE3_WORK_Y0
+    lda #$0100
+    sta.l SAME_MODE3_WORK_X1
+    lda #$00E0
+    sta.l SAME_MODE3_WORK_Y1
+    jsr Same_Mode3_Fixture_PushDirty
+    lda.l SAME_BWRAM_CONTROL_COMMITTED_GENERATION
+    inc
+    sta.l MODE3_RF_GENERATION
+    jsr Same_Mode3_Fixture_PushPresent
+    lda #$0003
+    sta.l MODE3_RF_COMMAND
+    rts
+
+; Full source-image replacement at a scrolled origin, as used for changed
+; room objects. Stage linear pixels in the existing shadow alias, then use
+; the same backend pixel mapping as the checked room producer. No
+; renderer output or cache state is injected by the native observer.
+Same_Mode3_Retained_Fixture_Refresh:
+    .a16
+    lda.l SAME_FRAME_COUNTER
+    sta.l MODE3_RF_START_FRAME
+    lda.l MODE3_RF_REVISION
+    eor #$0040
+    sta.l MODE3_RF_REVISION
+    lda #$0000
+    sta.l MODE3_RF_Y
+Same_Mode3_Retained_Fixture_Refresh__row:
+    .a16
+    lda #$0000
+    sta.l MODE3_RF_X
+Same_Mode3_Retained_Fixture_Refresh__pixel:
+    .a16
+    lda.l MODE3_RF_X
+    clc
+    adc.l MODE3_R_CURRENT
+    jsr Same_Mode3_Retained_Fixture_Pixel
+    pha
+    lda.l MODE3_RF_Y
+    xba
+    clc
+    adc.l MODE3_RF_X
+    tax
+    pla
+    sep #$20
+    .a8
+    sta.l SAME_BWRAM_TILE_SHADOW_BASE,x
+    rep #$20
+    .a16
+    lda.l MODE3_RF_X
+    inc
+    sta.l MODE3_RF_X
+    cmp #$0100
+    bcc Same_Mode3_Retained_Fixture_Refresh__pixel
+    lda.l MODE3_RF_Y
+    inc
+    sta.l MODE3_RF_Y
+    cmp #$00C0
+    bcc Same_Mode3_Retained_Fixture_Refresh__row
+    ldx #$0000
+    sep #$20
+    .a8
+Same_Mode3_Retained_Fixture_Refresh__copy:
+    .a8
+    lda.l SAME_BWRAM_TILE_SHADOW_BASE,x
+    phx
+    jsl Same_Mode3_MapSurfaceX_Far
+    sta.l SAME_BWRAM_SURFACE_BASE,x
+    plx
+    inx
+    cpx #$C000
+    bcc Same_Mode3_Retained_Fixture_Refresh__copy
+    ; This backend-only fixture has no SCUMM room personality; exercise the
+    ; same invalidation leaves used by its surface replacement facade.
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_BWRAM_CONTROL_TILE_VALID
+    jsl Same_Mode3_Retained_InvalidateCoverage_Far
+    rep #$20
+    .a16
     lda #$0000
     sta.l SAME_MODE3_WORK_X0
     sta.l SAME_MODE3_WORK_Y0

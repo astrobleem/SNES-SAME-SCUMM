@@ -251,6 +251,16 @@ ScummV5_Camera_Prepare__height_small:
     lda.l SAME_SCUMM_VIEWPORT_MODE
     and #$00FF
     beq ScummV5_Camera_Prepare__initial_x
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    cmp #$0002
+    bne CameraObjectsPrepare_camera_target
+    ; Replace object imagery at the installed transform. Moving the target
+    ; while this full snapshot loads still belongs to retained scroll/NMI.
+    lda.l SAME_VIDEO_SURFACE_SOURCE_X
+    bra ScummV5_Camera_Prepare__x_clamped
+CameraObjectsPrepare_camera_target:
+    .a16
+    .endif
     lda.l SAME_VIDEO_SURFACE_PENDING_XSTART
     bra ScummV5_Camera_Prepare__x_inset
 ScummV5_Camera_Prepare__initial_x:
@@ -1016,7 +1026,9 @@ CameraObjectsCommit_current:
 ScummV5_Camera_ServicePending__copy:
     .a16
     lda.l SAME_SCUMM_LIVE_ROOM_PIXEL_STAGE_BASE,x
-    sta.l SAME_SCUMM_LIVE_ROOM_SURFACE_BASE,x
+    ; The checked stage is linear; the installed INDEX8 scene may have a
+    ; circular origin. The surface service also handles a pair crossing 255.
+    jsl Same_VideoSurface_WriteIndexedPair_Far
     inx
     inx
     cpx #(SAME_VIDEO_SCENE_BOTTOM*256)
@@ -1092,6 +1104,14 @@ ScummV5_Camera_ServicePending__published:
 ; the same checked-strip adapter. This never cancels an in-flight provider read.
 ScummV5_Camera_ServicePending__coalesce:
     .a8
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    lda.l SAME_SCUMM_VIEWPORT_MODE
+    cmp #$02
+    bne CameraObjectsCoalesce_camera
+    jmp ScummV5_Camera_ServicePending__commit
+CameraObjectsCoalesce_camera:
+    .a8
+    .endif
     rep #$20
     .a16
     lda.l SAME_VIDEO_SURFACE_PENDING_XSTART

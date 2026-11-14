@@ -983,6 +983,21 @@ ScummV5_Scene_Render__submitted:
     .a16
     .i16
     .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    lda.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
+    cmp #$0002
+    bne ObjectScenePresent_no_camera_recheck
+    ; Full object replacement kept the installed transform while source
+    ; reads were outstanding. Preserve a newer canonical camera target even
+    ; if it stopped moving before this complete scene was submitted.
+    sep #$20
+    .a8
+    lda #$01
+    sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+    rep #$20
+    .a16
+ObjectScenePresent_no_camera_recheck:
+    .a16
+    .i16
     lda #$0000
     sta.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
     .endif

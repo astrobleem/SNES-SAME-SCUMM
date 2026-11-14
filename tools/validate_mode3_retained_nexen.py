@@ -32,7 +32,11 @@ def main():
     ap.add_argument('--foreground',action='store_true')
     ap.add_argument('--faults-and-replacement',action='store_true')
     ap.add_argument('--targets',default='1,8,9,16,8,0')
-    a=ap.parse_args(); a.output.mkdir(parents=True,exist_ok=False)
+    ap.add_argument('--refresh-targets', default='', help='fixture origins at which to replace the full linear source scene')
+    a=ap.parse_args()
+    refresh_targets={int(v) for v in a.refresh_targets.split(',') if v}
+    if refresh_targets and a.foreground: ap.error('full-source refresh control uses background-only fixture')
+    a.output.mkdir(parents=True,exist_ok=False)
     mp,symbols=verified_symbol_map_for_rom(a.rom.resolve())
     for required in ('Same_Mode3_Retained_Nmi__map_row','Same_Mode3_Retained_Nmi__range_done','Same_Mode3_Boot_Realize__map_ready'):
         if required not in symbols: raise RuntimeError(f'missing native retained commit: {required}')
@@ -83,54 +87,61 @@ def main():
             if a.foreground:
                 wr(0x41e900,4);wait(lambda:word(0x41e900)==0,160)
                 assert word(0x41e904)==1,'foreground command rejected'
+            def capture_step(prior, *, refresh=False):
+                frames(2) # full raster after generation acknowledgment, never an in-flight screenshot
+                x=word(0x401084); gen=word(0x401010)
+                c=rd(0x401000,64)
+                step={'full_refresh':refresh,'previous_x':prior,'source_x':x,'generation':gen,
+                      'frames':(word(0x41e90a)-word(0x41e908))&65535,
+                      'converted_tiles':int.from_bytes(c[42:44],'little'),
+                      'character_bytes':int.from_bytes(c[46:48],'little'),
+                      'dma_budgets':int.from_bytes(c[50:52],'little')}
+                report['steps'].append(step); save()
+                revision=word(0x41e91e)
+                def visible(xx,y):
+                    wx=xx+(x if y<192 else 0)
+                    if a.foreground and 44<=xx<48 and 40<=y<46:return 240
+                    if a.foreground and 100<=wx<112 and 80<=y<96:return 177 if wx&1 else 0
+                    return pixel(wx,y) ^ (revision if y<192 else 0)
+                expected=bytes(visible(xx,y) for y in range(224) for xx in range(256))
+                physical=rd(0x402000,57344)
+                (a.output/f'{gen}-physical-index8.bin').write_bytes(physical)
+                live=linearize_retained_index8(physical,origin=word(0x40109c))
+                step['index_mismatches']=sum(p!=q for p,q in zip(live,expected))
+                v=s.read_memory('snesVideoRam',0,65536); cg=s.read_memory('snesCgRam',0,512)
+                tiles={t:decode_snes_8bpp_tile(v[t*64:t*64+64]) for t in range(920)}
+                decoded=bytearray()
+                for y in range(224):
+                    for xx in range(256):
+                        sx=xx+(x if y<192 else 0)
+                        off=0xf000+retained_map_offset(sx//8,y//8)
+                        t=int.from_bytes(v[off:off+2],'little')&1023
+                        decoded.append(tiles[t][y&7][sx&7])
+                step['vram_mismatches']=sum(p!=q for p,q in zip(decoded,expected))
+                shot=base64.b64decode(s.take_screenshot(format='base64')['base64'])
+                img=Image.open(io.BytesIO(shot)).convert('RGB').crop((0,0,256,224))
+                colors=decode_cgram(cg)
+                ref=Image.frombytes('RGB',(256,224),bytes(v for p in expected for v in colors[p]))
+                img.save(a.output/f'{gen}-native.png');ref.save(a.output/f'{gen}-reference.png')
+                step['ppu_equal']=ImageChops.difference(img,ref).getbbox() is None
+                step['ppu_state']=s.get_ppu_state()
+                step['cpu']=s.get_cpu_state()
+                save()
+                assert not step['index_mismatches'],'INDEX8 mismatch'
+                assert not step['vram_mismatches'],'VRAM mismatch'
+                assert step['ppu_equal'],'visible PPU mismatch'
+                assert refresh or step['converted_tiles']<= (30 if a.foreground else 24) and step['character_bytes']<= (30*64 if a.foreground else 1536),'full conversion regression'
             for target in map(int,a.targets.split(',')):
                 target=max(0,min(1024,target))
                 while word(0x401084)!=target:
                     prior=word(0x401084);wr(0x41e902,target);wr(0x41e900,2)
                     wait(lambda:word(0x41e900)==0,160)
                     assert word(0x41e904)==1,'fixture command rejected'
-                    frames(2) # full raster after generation acknowledgment, never an in-flight screenshot
-                    x=word(0x401084); gen=word(0x401010)
-                    c=rd(0x401000,64)
-                    step={'previous_x':prior,'source_x':x,'generation':gen,
-                          'frames':(word(0x41e90a)-word(0x41e908))&65535,
-                          'converted_tiles':int.from_bytes(c[42:44],'little'),
-                          'character_bytes':int.from_bytes(c[46:48],'little'),
-                          'dma_budgets':int.from_bytes(c[50:52],'little')}
-                    report['steps'].append(step); save()
-                    def visible(xx,y):
-                        wx=xx+(x if y<192 else 0)
-                        if a.foreground and 44<=xx<48 and 40<=y<46:return 240
-                        if a.foreground and 100<=wx<112 and 80<=y<96:return 177 if wx&1 else 0
-                        return pixel(wx,y)
-                    expected=bytes(visible(xx,y) for y in range(224) for xx in range(256))
-                    physical=rd(0x402000,57344)
-                    (a.output/f'{gen}-physical-index8.bin').write_bytes(physical)
-                    live=linearize_retained_index8(physical,origin=word(0x40109c))
-                    step['index_mismatches']=sum(p!=q for p,q in zip(live,expected))
-                    v=s.read_memory('snesVideoRam',0,65536); cg=s.read_memory('snesCgRam',0,512)
-                    tiles={t:decode_snes_8bpp_tile(v[t*64:t*64+64]) for t in range(920)}
-                    decoded=bytearray()
-                    for y in range(224):
-                        for xx in range(256):
-                            sx=xx+(x if y<192 else 0)
-                            off=0xf000+retained_map_offset(sx//8,y//8)
-                            t=int.from_bytes(v[off:off+2],'little')&1023
-                            decoded.append(tiles[t][y&7][sx&7])
-                    step['vram_mismatches']=sum(p!=q for p,q in zip(decoded,expected))
-                    shot=base64.b64decode(s.take_screenshot(format='base64')['base64'])
-                    img=Image.open(io.BytesIO(shot)).convert('RGB').crop((0,0,256,224))
-                    colors=decode_cgram(cg)
-                    ref=Image.frombytes('RGB',(256,224),bytes(v for p in expected for v in colors[p]))
-                    img.save(a.output/f'{gen}-native.png');ref.save(a.output/f'{gen}-reference.png')
-                    step['ppu_equal']=ImageChops.difference(img,ref).getbbox() is None
-                    step['ppu_state']=s.get_ppu_state()
-                    step['cpu']=s.get_cpu_state()
-                    save()
-                    assert not step['index_mismatches'],'INDEX8 mismatch'
-                    assert not step['vram_mismatches'],'VRAM mismatch'
-                    assert step['ppu_equal'],'visible PPU mismatch'
-                    assert step['converted_tiles']<= (30 if a.foreground else 24) and step['character_bytes']<= (30*64 if a.foreground else 1536),'full conversion regression'
+                    capture_step(prior)
+                if target in refresh_targets:
+                    wr(0x41e900,9);wait(lambda:word(0x41e900)==0,1600)
+                    assert word(0x41e904)==1,'source replacement rejected'
+                    capture_step(target,refresh=True)
             if a.faults_and_replacement:
                 current=word(0x401084);before=rd(0x402000,57344)
                 vram_before=s.read_memory('snesVideoRam',0,65536)

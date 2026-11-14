@@ -280,3 +280,36 @@ Native office/coat acceptance is still pending.
 Observer-change validation:1710 host tests run,12 skipped, no failures;
 `make validate` and45-region memory audit pass. Runtime binaries are unchanged
 by the observer correction; their exact-ROM checkpoints remain valid.
+
+## State-image refresh after camera scrolling
+
+The next normal Open-door input set object34 state1 and retired its script,
+with error0. Its completed generation375 failed visual acceptance:1092
+INDEX8/PPU differences in screen column24..31. Offline inspection also found
+that the full checked viewport had been copied linearly into circular INDEX8
+storage (origin232). The independent source oracle's inset was already correct.
+
+Full object-image refresh now preserves the installed transform and copies via
+surface pair writes, including wrap within a row. Camera target movement still
+uses the retained/NMI path; after the complete object/actor scene is submitted,
+the latest target is rechecked even if motion stopped during I/O. Invalid tile
+shadows include all920 retained
+characters when scrolling is active, rather than omitting the now-visible24
+guard characters. Cached source coverage is reduced to fully replaced columns;
+partial edges and old off-screen columns require checked source data before
+being exposed again. No allocation, DMA budget, or ordinary scroll policy changes.
+
+The existing copyright-free Mode-3 control now includes full source replacement
+at scrolled origins. Nexen ROM
+`95d182ebc82b30152de078671f9c20b34504a0c27d94399f89b7e79cbf7e8643`
+passes six full-raster comparisons: scroll8, replace8, reverse0, scroll1,
+replace1, reverse0. INDEX8 and decoded VRAM differences are zero; actual PPU
+screenshots match. Replacements encode920 characters and take548/555 frames;
+ordinary source-column updates still encode24 characters in15/16 frames.
+These conservative full state-image refreshes are correct but remain costly;
+they are not claimed as responsive incremental object redraws.
+
+Evidence: private `milestone-e-exploration-20261114/native-retained-object-refresh`.
+The supervisor exits normally after54.322 seconds with no owned survivors.
+This backend control does not qualify office gameplay. A rebuilt authentic ROM
+requires fresh matching state; the failed prior-ROM office capture is preserved.

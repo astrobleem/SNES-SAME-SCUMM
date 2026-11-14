@@ -167,6 +167,7 @@ Same_VideoSurface_InvalidateTileCache_Far:
     .a8
     lda #$00
     sta.l SAME_BWRAM_CONTROL_TILE_VALID
+    jsl Same_Mode3_Retained_InvalidateCoverage_Far
     .endif
     plp
     clc
