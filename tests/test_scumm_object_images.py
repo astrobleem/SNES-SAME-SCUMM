@@ -87,6 +87,16 @@ class ObjectImageTests(unittest.TestCase):
         self.assertEqual(masks[0][:2], b'\xff\x40')
         self.assertEqual(compose_objects(r, images, {8: 1, 9: 1}, owners={9: 1})[0], r.pixels)
 
+    def test_v5_object_height_discards_incomplete_strip_rows(self):
+        from same.engines.scumm_v5.object_images import ObjectImage
+        r=replace(room([obj(8)]),height=10,pixels=bytes([7])*160,zplanes=(bytes([255])*20,),
+                  objects=(replace(obj(8),height=10),))
+        source=ObjectImage(8,1,8,10,bytes(80),bytes([1])*80,(bytes(10),),'ab'*32)
+        pixels,masks=compose_objects(r,(source,),{8:1})
+        self.assertEqual(pixels[7*16:7*16+8],bytes(8))
+        self.assertEqual(pixels[8*16:],r.pixels[8*16:])
+        self.assertEqual(masks[0][16:],r.zplanes[0][16:])
+
     def test_malformed_identity_count_geometry_and_offsets_rejected(self):
         r = room([obj(8)])
         good = image(8, 0)

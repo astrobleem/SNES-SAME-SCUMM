@@ -7,6 +7,14 @@
 
 ScummV5_Camera_StartStrip_Far:
     .a8
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_OBJECT_IMAGE_STATE
+    beq CameraObjectsStart_background
+    jml ScummV5_MsuLiveRoom_Start_Far__read
+CameraObjectsStart_background:
+    .endif
     rep #$30
     .a16
     .i16
@@ -156,6 +164,16 @@ ScummV5_Camera_Prepare_Far:
     rtl
 ScummV5_Camera_Prepare__writable:
     .a8
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION
+    sta.l SAME_SCUMM_OBJECT_IMAGE_TICKET
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION+2
+    sta.l SAME_SCUMM_OBJECT_IMAGE_TICKET+2
+    sep #$20
+    .a8
+    .endif
     rep #$30
     .a16
     .i16
@@ -261,6 +279,10 @@ ScummV5_Camera_Prepare__x_clamped:
     .a8
     lda.l SAME_SCUMM_VIEWPORT_MODE
     beq ScummV5_Camera_Prepare__cold_grid
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    cmp #$02
+    beq ScummV5_Camera_Prepare__cold_grid
+    .endif
     rep #$30
     .a16
     .i16
@@ -340,7 +362,8 @@ ScummV5_Camera_Prepare__directory:
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     lda.l SAME_SCUMM_VIEWPORT_MODE
     and #$00FF
-    bne ScummV5_Camera_Prepare__staging_ready
+    cmp #$0001
+    beq ScummV5_Camera_Prepare__staging_ready
     .endif
     ; Zero only the staging alias after its former backend owner is idle.
     lda #$0000
@@ -364,6 +387,27 @@ ScummV5_Camera_Prepare__staging_ready:
 ; Only called after the existing provider has verified this entire strip.
 ScummV5_Camera_ConsumeStrip_Far:
     .a8
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_OBJECT_IMAGE_STATE
+    beq CameraObjectsConsume_background
+    jsl ScummV5_ObjectImages_Consume_Far
+    bcc CameraObjectsConsume_accepted
+    rtl
+CameraObjectsConsume_accepted:
+    lda.l SAME_SCUMM_OBJECT_IMAGE_STATE
+    beq CameraObjectsConsume_complete
+    clc
+    rtl
+CameraObjectsConsume_complete:
+    rep #$30
+    .a16
+    .i16
+    jml ScummV5_Camera_ConsumePreparedStrip_Far
+CameraObjectsConsume_background:
+    .a8
+    .endif
     rep #$30
     .a16
     .i16
@@ -376,10 +420,32 @@ ScummV5_Camera_ConsumeStrip_Far:
     rtl
 ScummV5_Camera_ConsumeStrip__length_ok:
     .a16
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    lda #$0000
+    sta.l SAME_SCUMM_OBJECT_IMAGE_MODE
+    jsl ScummV5_ObjectImages_Begin_Far
+    bcc CameraObjectsBegin_accepted
+    rtl
+CameraObjectsBegin_accepted:
+    lda.l SAME_SCUMM_OBJECT_IMAGE_STATE
+    beq CameraObjectsBegin_complete
+    clc
+    rtl
+CameraObjectsBegin_complete:
+    rep #$30
+    .a16
+    .i16
+    .endif
+ScummV5_Camera_ConsumePreparedStrip_Far:
+    .a16
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     lda.l SAME_SCUMM_VIEWPORT_MODE
     and #$00FF
     beq ScummV5_Camera_ConsumeStrip__cold
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    cmp #$0002
+    beq ScummV5_Camera_ConsumeStrip__cold
+    .endif
     lda #SAME_SCUMM_LIVE_ROOM_PENDING_BASE&$FFFF
     sta SAME_VIDEO_SURFACE_DP_SOURCE
     sep #$20
@@ -614,6 +680,13 @@ ScummV5_Camera_ServicePending__check_checked:
     rtl
 ScummV5_Camera_ServicePending__camera_owned:
     .a8
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    cmp #$02
+    bne CameraObjectsReady_retained
+    jmp ScummV5_Camera_ServicePending__coalesce
+CameraObjectsReady_retained:
+    .a8
+    .endif
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     jmp ScummV5_Camera_ServicePending__retained_commit
     .else
@@ -627,6 +700,29 @@ ScummV5_Camera_ServicePending__not_ready:
     rtl
 ScummV5_Camera_ServicePending__new:
     .a8
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    lda.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
+    cmp #$02
+    bne ObjectCameraPending_not_composing
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION
+    cmp.l SAME_SCUMM_OBJECT_IMAGE_APPLIED
+    bne ObjectCameraPending_replaced
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION+2
+    cmp.l SAME_SCUMM_OBJECT_IMAGE_APPLIED+2
+    bne ObjectCameraPending_replaced
+    sep #$20
+    .a8
+    clc
+    rtl
+ObjectCameraPending_replaced:
+    .a16
+    sep #$20
+    .a8
+ObjectCameraPending_not_composing:
+    .a8
+    .endif
     jsl Same_VideoSurface_CanWrite_Far
     bcc ScummV5_Camera_ServicePending__available
     clc
@@ -652,6 +748,28 @@ ScummV5_Camera_ServicePending__positive:
     lda.l SAME_SCUMM_VIEWPORT_TEMP
 ScummV5_Camera_ServicePending__bounded:
     .a16
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    pha
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION
+    cmp.l SAME_SCUMM_OBJECT_IMAGE_APPLIED
+    bne CameraObjectsPending_changed
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION+2
+    cmp.l SAME_SCUMM_OBJECT_IMAGE_APPLIED+2
+    beq CameraObjectsPending_unchanged
+CameraObjectsPending_changed:
+    .a16
+    .i16
+    lda #$0001
+    sta.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
+    pla
+    jmp ScummV5_Camera_ServicePending__changed
+CameraObjectsPending_unchanged:
+    .a16
+    .i16
+    lda #$0000
+    sta.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
+    pla
+    .endif
     cmp.l SAME_VIDEO_SURFACE_SOURCE_X
     bne ScummV5_Camera_ServicePending__changed
     sep #$20
@@ -705,6 +823,14 @@ ScummV5_Camera_ServicePending__read_reconciled:
     sta.l SAME_SCUMM_MSU_ROOM_ID
     lda #$01
     sta.l SAME_SCUMM_VIEWPORT_MODE
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    lda.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
+    beq CameraObjectsPending_mode_ready
+    lda #$02
+    sta.l SAME_SCUMM_VIEWPORT_MODE
+CameraObjectsPending_mode_ready:
+    .a8
+    .endif
     lda #SCUMM_LIVE_ROOM_STAGE_PIXELS
     sta.l SCUMM_LIVE_ROOM_STAGE
     lda #SCUMM_MSU_ROOM_REQUESTED
@@ -747,6 +873,21 @@ ScummV5_Camera_ServiceForeground_Far:
     jsl ScummV5_Cursor_Frame_Far
     bra ScummV5_Camera_ServiceForeground__done
 ScummV5_Camera_ServiceForeground__actor:
+    .a8
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    lda.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
+    beq ObjectCameraForeground_actor
+    jsl ScummV5_ActorPose_Cancel_Far
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_ACTOR_POSE_STATE
+    bne ScummV5_Camera_ServiceForeground__done
+    lda #$00
+    sta.l SAME_SCUMM_CONTROLLER_RENDER_RETRY
+    jmp ObjectCameraForeground_ready
+ObjectCameraForeground_actor:
+    .a8
+    .endif
     jsl ScummV5_Controller_RenderActor_Far
     sep #$20
     .a8
@@ -764,6 +905,8 @@ ScummV5_Camera_ServiceForeground__actor:
     lda.l SAME_SCUMM_CURSOR_PENDING
     ora.l SAME_SCUMM_CURSOR_PENDING+1
     bne ScummV5_Camera_ServiceForeground__done
+ObjectCameraForeground_ready:
+    .a8
     lda #$01
     sta.l SAME_SCUMM_VIEWPORT_ACTOR_SERVED
     ; Foreground work is complete in the only phase permitted to compose it.
@@ -839,6 +982,31 @@ ScummV5_Camera_ServicePending__retained_pending:
 
 ScummV5_Camera_ServicePending__commit:
     .a8
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION
+    cmp.l SAME_SCUMM_OBJECT_IMAGE_TICKET
+    bne CameraObjectsCommit_stale
+    lda.l SAME_SCUMM_OBJECT_IMAGE_GENERATION+2
+    cmp.l SAME_SCUMM_OBJECT_IMAGE_TICKET+2
+    beq CameraObjectsCommit_current
+CameraObjectsCommit_stale:
+    sep #$20
+    .a8
+    lda #$00
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    sta.l SAME_SCUMM_OBJECT_IMAGE_STATE
+    lda #$01
+    sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+    clc
+    rtl
+CameraObjectsCommit_current:
+    lda.l SAME_SCUMM_OBJECT_IMAGE_TICKET
+    sta.l SAME_SCUMM_OBJECT_IMAGE_APPLIED
+    lda.l SAME_SCUMM_OBJECT_IMAGE_TICKET+2
+    sta.l SAME_SCUMM_OBJECT_IMAGE_APPLIED+2
+    .endif
     ; Incoming staged pixels are complete. No producer can publish the aliased
     ; tile shadow until ownership is synchronously released below.
     rep #$30
@@ -863,6 +1031,28 @@ ScummV5_Camera_ServicePending__copy:
     sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
     sta.l SAME_SCUMM_CONTROLLER_CURSOR_RENDER_VALID
     sta.l SAME_VIDEO_CURSOR_UNDERLAY
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    ; The new room-object image and all actors/cursor form one presentation.
+    ; Hand the private surface to the existing scene transaction, not PRESENT.
+    lda #$00
+    sta.l SAME_SCUMM_VIEWPORT_STATE
+    sta.l SAME_SCUMM_VIEWPORT_MODE
+    sta.l SAME_VIDEO_SURFACE_PENDING_VISUAL
+    rep #$20
+    .a16
+    lda #$0002
+    sta.l SAME_SCUMM_OBJECT_IMAGE_REFRESH
+    lda #$0001
+    sta.l SAME_SCUMM_SCENE_DIRTY
+    sta.l SAME_SCUMM_CURSOR_COMPOSING
+    .if SAME_VIDEO_OVERLAY_INDEXED
+    sta.l SAME_VIDEO_SURFACE_COMPOSITION_OWNER
+    .endif
+    sep #$20
+    .a8
+    clc
+    rtl
+    .endif
     lda #$03
     sta.l SAME_SCUMM_VIEWPORT_STATE
 ScummV5_Camera_ServicePending__publish:

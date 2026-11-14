@@ -118,10 +118,9 @@ composes in reverse local-object order with parent-state/owner filtering.
 Classic v5 object mask strips replace the corresponding background masks.
 State-only invalidations are consumed by the normal host composition tick.
 
-The original room2 door's IM01 changes77 background pixels. The current
-native renderer still has **no state-selected room-object image consumer**.
-That is an explicit scene-fidelity gap, not permission to compare only the
-base background. Object relocation and broader image families also require
+The original room2 door's IM01 changes77 background pixels. The feature-gated native state-selected object consumer now passes its
+synthetic complete object/actor/mask comparison. Authentic office gameplay
+remains **NOT_VERIFIED**; a base-background comparison is insufficient. Object relocation and broader image families also require
 coverage before general support can be claimed. All proprietary image bytes
 and rendered comparisons remain private.
 
@@ -138,3 +137,84 @@ A changed ROM requires fresh ordinary-game setup. Old D savestates are never
 restored into E builds. The progression recovery worktree is untouched.
 PR14→PR15→PR16 ancestry remains intact. E is a successor, not an amendment to
 accepted D. No automatic merge. Whole-game readiness remains **NOT_READY**.
+
+## Checked object-image integration (in progress)
+
+`SAME_SCUMM_OBJECT_IMAGES=1` extends the existing room-strip preparation path.
+The compiler uses the shared source OBIM/SMAP/ZP decoder and stores coverage,
+eight palette indexes and foreground-plane bytes per source strip row in
+SAMEPKG `SC5OBJ`. Blocks are at most1024 bytes, each with an independent CRC.
+ROM contains identity, geometry, parent-state and checked-address descriptors,
+not image pixels. All source image states remain represented. Native selection
+uses mutable object state and ownership, source parent chains and reverse
+local-object painter order. V5 clips object height to complete eight-row units;
+the source-faithful host compositor and cooker now agree on that boundary.
+
+The camera retains its checked source strip in the first2048 bytes of the
+existing3132-byte pending window. The object read leases a disjoint1024-byte
+tail. Actor-mask composition instead leases the same scratch base sequentially
+through the existing actor ticket. No executable page or additional framebuffer
+holds object imagery. Eighty control bytes fit after the mask controls inside
+the audited256-byte scene-control allocation. The checked provider now accepts
+bounded subranges of the pending allocation, rejecting overflow and any extent
+outside it. Its active-metadata extent comparison also rejects limit+1.
+
+Original-source preflight decoded all96 rooms:1372 local object records,
+1329 images,10673 checked blocks and5463776 payload bytes. This is compiler
+coverage, **not native gameplay certification**. State/ownership changes
+invalidate a32-bit object generation; staged background installation checks its
+ticket before publication, and actor composition waits for the matching image.
+The current conservative object-state refresh rebuilds the viewport; ordinary
+unchanged-object camera movement retains the existing incremental path.
+
+Public focused tests cover deterministic package construction, per-block CRC,
+malformed coverage and lengths, multiblock images, opaque zero, parent states,
+mask replacement and show/replace/hide behavior. The source-script scene fixture
+uses `--object-images-probe --masks`, cooked with `--executable`. Its existing
+native validator adds `--object-images` and refuses registration-only room
+inputs before launching Nexen. Synthetic acknowledgements are diagnostic input,
+never authentic gameplay acceptance.
+
+Private failed controls remain preserved: the first found short-address ROM
+descriptor loads; the second used registration-only input; the executable
+control exposed the provider's previous exact-base destination restriction.
+The first subrange control found stale letterbox pixels during state refresh.
+Mode2 now clears its private stage and hands the complete background to the
+existing actor/cursor scene transaction before requesting presentation. It does
+not expose a background-only intermediate frame. Repeated writes of an unchanged
+state or owner do not advance the image generation.
+
+`native-object-idempotent` passes four complete native captures: show, replace,
+a second animation step with overlapping scaled actors, and hide/move/restore.
+Each has zero source/INDEX8, INDEX8/PPU and original-palette/CGRAM differences.
+Repeated identical source state writes produce exactly generations2,3,4.
+The final capture reaches frame4068; the438.982-second supervised run exits
+normally with complete cleanup and no owned survivors. This is copyright-free
+native graphics acceptance, **not authentic office gameplay**.
+
+- ROM: `30ea41b624a2a28d1b0e164b706c6ba5048862d8c6bb17e42946c353cb7dfe07`
+- Map: `944e4572b12d576928f3e9c4a294f44d7380d6326701e42e0b56b8f7443ba377`
+- Package: `e759118e00c403fda3cd36dd8b9f545971ce6e0135765edd03693608a91b0610`
+- Build identity: `000240c9ecde1d2f054d278d47bf0c541cd0a29b7d392807591cc28bc55e26f8`
+
+The private assembly snapshot contains the same runtime source as this change.
+Subsequent compiler descriptor-linkage validation and host boundary regressions
+add rejection checks; they do not change the accepted emitted bytes. All96
+original room descriptors pass that linkage check. The source snapshot's
+private Git SHA is not represented as the later public commit SHA.
+
+Local host suite:1707 run, including12 skipped, no failures. Additional focused
+range/index rejection tests pass. `make validate`, pinned Poppy assembly,
+4MiB ROM audit and45-region memory audit pass. Hosted native emulation is not
+claimed. No timeout is classified as an engine deadlock, and no draw counter
+substitutes for complete image equality.
+
+Native corruption control `native-object-crc` flips one selected checked object
+block in the copyright-free package. At frame752 it rejects the transfer with
+SCUMM error16/provider error6, before any actor scene or replacement publication.
+The installed surface captured at frame616 remains byte-identical and its
+presentation generation is unchanged. The60.441-second supervised run exits
+normally with no surviving owned processes. The faulty package SHA-256 is
+`ed59955ca1886b6eaa4952852589610457327311ef9ca646263d36dd24908491`;
+the ROM/map are the positive control's identities above. This is deliberately
+corrupt test input, not an identity-valid release package.

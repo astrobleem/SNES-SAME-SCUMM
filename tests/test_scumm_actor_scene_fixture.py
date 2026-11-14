@@ -46,6 +46,36 @@ class ActorSceneFixture(unittest.TestCase):
             self.assertEqual([h.engine.state.actors[a].room for a in (1,2)],[room,room])
             slots[0].locals[0]=stage
 
+    def test_object_states_drive_source_images_and_parent_masks(self):
+        from same.engines.scumm_v5.room import decode_room
+        from same.engines.scumm_v5.object_images import decode_object_images, compose_objects
+        root=Path(__file__).resolve().parents[1]
+        p=load_profile(root/'examples/profiles/scumm_v5_game_analysis_fixture.json',verify_resources=False)
+        p=replace(p,options={**p.options,'headless_presentation':True})
+        files=source_files(masks=True,object_images_probe=True)
+        provider=LucasartsScummV5ResourceProvider(MemoryResourceProvider({
+            'game.index':files['ATLANTIS/ATLANTIS.000'],'game.data':files['ATLANTIS/ATLANTIS.001']}),parse_game_policy(p))
+        room=decode_room(provider.read('room.1'),key='room.1')
+        images=decode_object_images(provider.read('room.1'),room)
+        self.assertEqual(len(images),4)
+        h=EngineHost(p,default_registry(),services=HostServices.create(p,resources=provider));h.boot()
+        rendered=[]
+        for stage, state in enumerate((1,2,0),1):
+            for _ in range(40):
+                h.tick();slots=[slot for slot in h.engine.state.scripts if slot.number==1]
+                if slots and slots[0].locals[1]==stage:break
+            self.assertEqual(slots[0].locals[1],stage)
+            self.assertEqual({i:h.engine.state.object_states[i] for i in (8,9)},{8:state,9:1})
+            pixels,masks=compose_objects(room,images,h.engine.state.object_states)
+            rendered.append(pixels)
+            if state:
+                self.assertEqual(pixels[104*room.width+128],0) # covered source zero
+                self.assertEqual(masks[0][104*80+16],0xf0 if state==1 else 0)
+            else:
+                self.assertEqual((pixels,masks),(room.pixels,room.zplanes))
+            slots[0].locals[0]=stage
+        self.assertEqual(len(set(rendered)),3)
+
     def test_two_original_costumes_and_source_script_stages(self):
         root=Path(__file__).resolve().parents[1]
         p=load_profile(root/'examples/profiles/scumm_v5_game_analysis_fixture.json',verify_resources=False)

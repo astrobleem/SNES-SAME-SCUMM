@@ -64,6 +64,20 @@ ScummV5_Mask_Ensure_Far:
  phb
  .if SCUMM_MSU1_MASK_COUNT
  lda.l SAME_SCUMM_MASK_STATE
+ .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+ cmp #$0004
+ bcc ObjectMaskEnsure_base
+ jsl ScummV5_ObjectImages_Masks_Far
+ bcc ObjectMaskEnsure_pending
+ jml ObjectMaskEnsure_complete
+ObjectMaskEnsure_pending:
+ .a16
+ .i16
+ jml MaskEnsure_pending
+ObjectMaskEnsure_base:
+ .a16
+ .i16
+ .endif
  cmp #$0003
  bne MaskEnsure_work
  jml MaskEnsure_ready
@@ -808,8 +822,21 @@ MaskEnsure_more_blocks:
 MaskEnsure_ready:
     .a16
     .i16
+ .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+ lda.l SAME_SCUMM_MASK_PLANE
+ beq ObjectMaskEnsure_no_plane
+ jsl ScummV5_ObjectImages_Masks_Far
+ bcs ObjectMaskEnsure_complete
+ jml MaskEnsure_pending
+ObjectMaskEnsure_no_plane:
+ .a16
+ .i16
+ .endif
  lda #$0003
  sta.l SAME_SCUMM_MASK_STATE
+ObjectMaskEnsure_complete:
+ .a16
+ .i16
  plb
  ply
  plx

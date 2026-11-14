@@ -15,7 +15,7 @@ def select_actor_path(text, enabled=False):
     active=[True];arms=[];result=[]
     for line in text.splitlines():
         directive=line.strip()
-        if directive == '.if SCUMM_V5_ACTOR_CEL_FORMAT':
+        if directive in ('.if SCUMM_V5_ACTOR_CEL_FORMAT', '.if SCUMM_MSU1_OBJECT_ROOM_COUNT', '.if SAME_VIDEO_OVERLAY_INDEXED'):
             arms.append(False);active.append(False)
         elif directive == '.if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER':
             arms.append(enabled);active.append(active[-1] and enabled)

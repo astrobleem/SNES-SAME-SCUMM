@@ -1077,6 +1077,9 @@ else
         done < <("$PYTHON" -c 'import re,sys; print("\n".join(re.findall(r"^\.bank (\d+)$",open(sys.argv[1]).read(),re.M)))' "$ACTOR_POSE_INCLUDE")
         if [[ "${SAME_SCUMM_ACTOR_SCENE:-0}" == "1" ]]; then
             ROOM_GENERATOR_ARGS+=(--reserved-bank 85)
+            if [[ "${SAME_SCUMM_OBJECT_IMAGES:-0}" == "1" ]]; then
+                ROOM_GENERATOR_ARGS+=(--reserved-bank 86)
+            fi
         fi
     fi
     if [[ "${SAME_BUILD_M24RB:-0}" == "1" || "${SAME_BUILD_SCUMM_ROOM_SERVICE_FAR:-0}" == "1" || "${SAME_BUILD_SCUMM_CONTROLLER_CONFORMANCE:-0}" == "1" ]]; then
@@ -1138,6 +1141,13 @@ else
         fi
         if [[ "${SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES:-0}" == "1" ]]; then
             ROOM_GENERATOR_ARGS+=(--msu1-live-room-resources)
+            if [[ "${SAME_SCUMM_OBJECT_IMAGES:-0}" == "1" ]]; then
+                if [[ "${SAME_SCUMM_ACTOR_SCENE:-0}" != "1" ]]; then
+                    echo 'checked object images require the existing actor scene owner' >&2
+                    exit 1
+                fi
+                ROOM_GENERATOR_ARGS+=(--msu1-object-images)
+            fi
             if [[ -n "${SAME_SCUMM_WHOLE_SOURCE_MANIFEST:-}" ]]; then
                 ROOM_GENERATOR_ARGS+=(--msu1-include-source-room-records)
             fi

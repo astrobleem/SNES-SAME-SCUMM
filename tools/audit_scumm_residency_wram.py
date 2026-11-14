@@ -91,17 +91,17 @@ REGIONS = (
 
 def symbols() -> dict[str, int]:
     result: dict[str, int] = {}
-    aliases: dict[str, str] = {}
+    aliases: dict[str, tuple[str, int]] = {}
     for line in MEMORY.read_text(encoding="utf-8").splitlines():
         match = re.match(r"\s*([A-Z][A-Z0-9_]*)\s*=\s*\$([0-9A-Fa-f]+)(?:\s|$)", line)
         if match:
             result[match.group(1)] = int(match.group(2), 16)
         else:
-            alias = re.match(r"\s*([A-Z][A-Z0-9_]*)\s*=\s*([A-Z][A-Z0-9_]*)(?:\s*(?:;.*)?)$", line)
+            alias = re.match(r"\s*([A-Z][A-Z0-9_]*)\s*=\s*([A-Z][A-Z0-9_]*)(?:\s*\+\s*\$([0-9A-Fa-f]+))?(?:\s*(?:;.*)?)$", line)
             if alias:
-                aliases[alias.group(1)] = alias.group(2)
+                aliases[alias.group(1)] = (alias.group(2), int(alias.group(3) or '0', 16))
     for _ in range(len(aliases)):
-        added = {name: result[target] for name, target in aliases.items()
+        added = {name: result[target] + offset for name, (target, offset) in aliases.items()
                  if name not in result and target in result}
         if not added:
             break
@@ -123,6 +123,11 @@ def audit() -> dict[str, Any]:
         if values.get(symbol) != 0x3000 + iram["allocations"][name]["offset"]:
             raise ValueError(f"scene I-RAM symbol escaped audited owner: {symbol}")
     intervals: list[dict[str, Any]] = []
+    object_begin = values['SAME_SCUMM_OBJECT_IMAGE_CONTROL']
+    object_end = values['SAME_SCUMM_OBJECT_IMAGE_CONTROL_END']
+    if (object_begin < values['SAME_SCUMM_MASK_END'] + 2
+            or object_end > values['SAME_SCUMM_SCENE_CONTROL'] + 256):
+        raise ValueError('object-image metadata overlaps actor mask work or escapes scene control')
     for owner, first, after in REGIONS:
         if first not in values or after not in values:
             raise ValueError(f"WRAM ownership boundary is missing: {first} / {after}")
@@ -173,6 +178,10 @@ def audit() -> dict[str, Any]:
             or values["SAME_SCUMM_TEXT_STORAGE_END"] > values["SAME_SCUMM_PUT_ACTOR_WALKBOX"]):
         raise ValueError("retained text overlaps active geometry or actor walkbox state")
     bwram = json.loads((ROOT / "runtime/snes/carriers/sa1_bwram_layout.json").read_text())
+    if ('SAME_SCUMM_OBJECT_IMAGE_SCRATCH = SAME_SCUMM_LIVE_ROOM_PENDING_BASE+$0800' not in MEMORY.read_text()
+            or 2048 + values['SAME_SCUMM_OBJECT_IMAGE_SCRATCH_BYTES'] >
+            bwram['backend_reserved']['allocations']['live_room_pending']['bytes']):
+        raise ValueError('object-image checked tail overlaps background strip or escapes staging')
     # Share the carrier's exact nested ownership contract; do not audit only
     # the old 2-KiB parent reservation and overlook its palette residents.
     _validate_layout(bwram)

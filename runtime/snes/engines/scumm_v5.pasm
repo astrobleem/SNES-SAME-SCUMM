@@ -282,6 +282,11 @@ ScummV5_Engine_Boot__scenario_root_latch_ready:
     jsr ScummV5_C25_ResetState
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_SetState_Reset_Far
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && SAME_SCUMM_SCENE_ENABLED
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    jsl ScummV5_ObjectImages_Reset_Far
+    .endif
+    .endif
     .endif
     .if SAME_BUILD_SCUMM_M23B
     .if SAME_BUILD_SCUMM_M25A_VALIDATOR || SAME_BUILD_SCUMM_CONTROLLER_FIXTURE
@@ -10883,6 +10888,15 @@ ScummV5_Op_SetOwnerOf:
     .a16
     sep #$20
     .a8
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && SAME_SCUMM_SCENE_ENABLED
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    cmp.l SAME_SCUMM_OBJECT_OWNERS,x
+    beq ObjectSetOwner_unchanged
+    jsl ScummV5_ObjectImages_Changed_Far
+ObjectSetOwner_unchanged:
+    .a8
+    .endif
+    .endif
     sta.l SAME_SCUMM_OBJECT_OWNERS,x
     jmp ScummV5_Engine_Frame__next
 ScummV5_Op_SetOwnerOf__owner_error:
@@ -10936,6 +10950,11 @@ ScummV5_Op_PickupObject:
     sep #$20
     .a8
     sta.l SAME_SCUMM_OBJECT_OWNERS,x
+    .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES && SAME_SCUMM_SCENE_ENABLED
+    .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+    jsl ScummV5_ObjectImages_Changed_Far
+    .endif
+    .endif
     lda #$01
     sta.l SAME_SCUMM_OBJECT_STATES,x
     jmp ScummV5_Engine_Frame__next

@@ -16,7 +16,8 @@ STAGES = (
 )
 
 def source_files(*, masks: bool = False, transitions: bool = False,
-                 sound_status_probe: bool = False, cutscene_callback_probe: bool = False) -> dict[str, bytes]:
+                 sound_status_probe: bool = False, cutscene_callback_probe: bool = False,
+                 object_images_probe: bool = False) -> dict[str, bytes]:
     base = camera_files()
     decoded = bytes(b ^ 0x69 for b in base['ATLANTIS/ATLANTIS.001'])
     size = int.from_bytes(decoded[34:38], 'big')
@@ -41,6 +42,35 @@ def source_files(*, masks: bool = False, transitions: bool = False,
                 payload=ch(b'RMIH',struct.pack('<H',2))+ch(b'IM00',smap+b''.join(planes))
             chunks.append(ch(tag,payload));pos+=length
         room=b''.join(chunks)
+    if object_images_probe:
+        room = room.replace(ch(b'RMHD', struct.pack('<HHH', 640, 144, 0)),
+                            ch(b'RMHD', struct.pack('<HHH', 640, 144, 2)), 1)
+        for identity, parent in ((8, 0), (9, 1)):
+            header = struct.pack('<HBBBBBBhhB', identity, 16, 13, 3, 4,
+                                 0x80 if parent else 0, parent, 140, 130, 0)
+            room += ch(b'OBCD', ch(b'CDHD', header) + ch(b'OBNA', f'original fixture {identity}'.encode()+b'\0'))
+            states = bytearray()
+            for state in (1, 2):
+                strips = []
+                for col in range(3):
+                    pixels = bytes(255 if identity == 9 and (x+y)%3 == 0 else
+                                   0 if identity == 8 and (x+y)%4 == 0 else
+                                   (identity*17+state*9+col)%255 for y in range(32) for x in range(8))
+                    if identity == 9:
+                        bits=[]
+                        for color in pixels[1:]:bits.extend((1,0,*((color>>b)&1 for b in range(8))))
+                        packed=bytearray((len(bits)+7)//8)
+                        for index,bit in enumerate(bits):packed[index//8] |= bit << (index%8)
+                        strips.append(bytes((48,pixels[0]))+packed)
+                    else:strips.append(b'\x01'+pixels)
+                offset=20;directory_bytes=bytearray()
+                for strip in strips:directory_bytes.extend(struct.pack('<I',offset));offset+=len(strip)
+                content=ch(b'SMAP',directory_bytes+b''.join(strips))
+                if masks:
+                    for plane in (1,2):
+                        content+=ch(f'ZP{plane:02d}'.encode(),struct.pack('<HHH',14,16,18)+bytes((0xA0,0xF0 if state==1 else 0))*3)
+                states+=ch(f'IM{state:02X}'.encode(),content)
+            room+=ch(b'OBIM',ch(b'IMHD',struct.pack('<8H',identity,2,2 if masks else 0,0,0,0,24,32))+states)
     p = Program()
     if cutscene_callback_probe:
         p.move(35, 2)
@@ -71,11 +101,17 @@ def source_files(*, masks: bool = False, transitions: bool = False,
         p.emit('probe complete', b'\0')
     p.move(0x4000,0);p.move(0x4001,0)
     p.emit('load room',b'\x72\x01')
+    if object_images_probe:
+        for identity in (8,9):
+            for _ in range(2):p.emit('idempotent source object state',bytes((0x07,identity,0,1)))
     for actor in (1,2):
         p.emit('defaults costume ignoreBoxes animation speed',bytes((0x13,actor,8,1,actor,20,22,8,255)))
         if masks:p.emit('foreground plane',bytes((0x13,actor,19,actor,255)))
         p.emit('actor room',bytes((0x2d,actor,1)))
     for n, actors in enumerate(STAGES,1):
+        if object_images_probe and n > 1:
+            for _ in range(2):
+                p.emit('idempotent replace or hide source object', bytes((0x07,8,0,2 if n==2 else 0)))
         for actor, (x,y,sx,sy,facing,frame) in enumerate(actors,1):
             p.emit('scale',bytes((0x13,actor,17,sx,sy,255)))
             p.emit('position',bytes((1,actor))+struct.pack('<hh',x,y))
@@ -117,10 +153,12 @@ def source_files(*, masks: bool = False, transitions: bool = False,
     return {f'ATLANTIS/ATLANTIS.{n:03}':bytes(b^0x69 for b in raw) for n,raw in enumerate((index,data))}
 
 def write_archive(path: Path, *, masks: bool = False, transitions: bool = False,
-                  sound_status_probe: bool = False, cutscene_callback_probe: bool = False) -> None:
+                  sound_status_probe: bool = False, cutscene_callback_probe: bool = False,
+                  object_images_probe: bool = False) -> None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as archive:
         for name,data in source_files(masks=masks,transitions=transitions,
-                                      sound_status_probe=sound_status_probe, cutscene_callback_probe=cutscene_callback_probe).items():
+                                      sound_status_probe=sound_status_probe, cutscene_callback_probe=cutscene_callback_probe,
+                                      object_images_probe=object_images_probe).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             archive.writestr(info,data)
 
@@ -128,5 +166,7 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('output',type=Path);parser.add_argument('--masks',action='store_true');parser.add_argument('--transitions',action='store_true')
     parser.add_argument('--sound-status-probe', action='store_true')
     parser.add_argument('--cutscene-callback-probe', action='store_true')
+    parser.add_argument('--object-images-probe', action='store_true')
     args=parser.parse_args();write_archive(args.output,masks=args.masks,transitions=args.transitions,
-                                         sound_status_probe=args.sound_status_probe, cutscene_callback_probe=args.cutscene_callback_probe)
+                                         sound_status_probe=args.sound_status_probe, cutscene_callback_probe=args.cutscene_callback_probe,
+                                         object_images_probe=args.object_images_probe)

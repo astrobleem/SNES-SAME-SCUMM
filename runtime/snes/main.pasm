@@ -697,4 +697,9 @@ ScummV5_M24RB_FarCodeEnd:
 ; Scene code owns a separate bank; do not relocate preceding far closures.
 .if SAME_SCUMM_SCENE_ENABLED
 .include "engines/scumm_v5_actor_scene.inc.pasm"
+ .if SAME_BUILD_SCUMM_MSU1_LIVE_ROOM_RESOURCES
+  .if SCUMM_MSU1_OBJECT_ROOM_COUNT
+.include "engines/scumm_v5_object_images.inc.pasm"
+  .endif
+ .endif
 .endif

@@ -1,26 +1,37 @@
-# Milestone E active — cutscene corruption corrected
+# Milestone E active — checked object imagery native controls pass
 
-Branch scumm-fate-barnett-exploration, successor draft PR17 on PR16.
-Published d6dbe7a has both hosted checks green (run43572075403). Current
-additive fix establishes X16 at C4_StopNumber entry after C19 callback dispatch.
-Native positive/negative controls prove it prevents BRK and executable-WRAM
-alias corruption; both previously reached the same sentinel/error0, so the
-validator now monitors actual BRK execution and alias writes as well.
-See BARNETT_EXPLORATION.md for identities and exact evidence.
+Branch scumm-fate-barnett-exploration, draft PR17 on unchanged PR16.
+Milestone E gameplay NOT_COMPLETE. Recovery worktree untouched.
+Published3db908c C4 X16 correction and sound query remain accepted.
+Current source adds feature-gated checked state-selected OBIM pixels/masks.
 
 Private evidence: /home/chad/SAME-private-evidence/milestone-e-exploration-20261114.
-No E emulator session active. Recovery worktree untouched.
-Sound-status final guard native control passes; host object-image oracle exists.
-Native state-selected OBIM consumption is still absent. E NOT COMPLETE.
-Selected route remains Open office door34/verb3, Walk-to34/verb10 into room1,
-Pick up coat25/verb11. Host original-body oracle is not a playthrough.
-Fresh experimental E setup reached room75 but failed from the now-proven C4
-width bug. That ROM predates the corrections; never restore its state into a
-new build. D acceptance and checkpoints remain intact. No historical replay.
+Native-object-idempotent passes four full source/INDEX8/PPU/CGRAM comparisons:
+show, replace, animation, hide/move/restore; repeated state writes do not
+advance generation. ROM30ea41b6, scene-build-e3npvczq;438.982sec,cleanup complete.
+Native-object-crc rejects corruption atframe752/error16/provider6, preserving
+the installed surface and presentation generation;60.441sec,clean cleanup.
+Earlier failed controls remain preserved and explained in BARNETT_EXPLORATION.
+Local fullsuite1707run/12skipPASS; additional focused descriptor/range tests
+PASS; validate45regionsPASS; pinned Poppy/4MiBROM auditPASS.
 
-Next: finish correction publication, then implement checked state-selected
-object imagery before claiming complete office-scene fidelity or coat acceptance.
-No automatic merge, no proprietary payloads in Git, whole-game NOT_READY.
+New authentic build auth-build-_hd3hqsk from private auth-source-nd8v6d6t:
+ROMc199c9e7401878d336ef9e2225dc92fff75094d8bfd12156c6f773b43125abf5.
+Includes all96 original object-image records and source-required costume21.
+Runtime source matches current checkout. Current supervised fresh-object-startup
+uses cold original source and recorded normal cutscene input to establish a
+matching-ROM setup checkpoint. Check process-result and action.json before
+launching another session. Never restore old D/E states into this ROM.
+
+Next: commit/push this coherent source checkpoint, observe CI, finish fresh
+normal Barnett setup then Open34/verb3,Walk-to34/verb10 into room1,Pick up coat25/
+verb11. Isolated original-body oracle is not a native playthrough. Complete
+scene oracle must include captured object states/owners with source OBIM.
+Private fresh-object-room10/barnett scripts prepared; office-object-continuation
+prepared but not executed. No historical seven-action replay or guest writes.
+Production DrawObject relocation remains a separate unqualified frontier;
+implement only if the selected original route actually requires it.
+No automatic merge. Whole-game NOT_READY.
 
 --- Preserved Milestone D checkpoint ---
 

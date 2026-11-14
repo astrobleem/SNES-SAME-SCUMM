@@ -132,7 +132,7 @@ do not use the later HE transparent-mask OR flag.
         image = lookup.get((obj.object_id, state))
         if image is None:  # Source getObjectImage permits a state without IMxx.
             continue
-        for y in range(image.height):
+        for y in range(min(image.height, obj.height & ~7)):
             ry = obj.y + y
             if not 0 <= ry < room.height:
                 continue
