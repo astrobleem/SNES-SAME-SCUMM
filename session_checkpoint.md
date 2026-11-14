@@ -4976,3 +4976,22 @@ new full-cooked manifest retaining all1395 class masks. Never reuse old ROM
 states. Next: fresh source-correct setup, then office Open21/Pickup22 under
 normal input with scene click Y strictly below virtual-screen bottom144.
 No old seven-action replay; recovery worktree untouched. New jar NOT_ACCEPTED.
+
+
+2026-11-14 continuing office progression, NOT blocked/NOT complete:
+HEAD before next commit f74a037 (PR18); progression recovery untouched.
+Qualify prior coat acceptance: initial DOBJ classes were absent; corrected
+ROM33e69ca3 preserves coat25 owner15/state0/class32. Do not force coat pickup.
+Fresh setup in private office-progression-20261114/class-defaults passes
+startup/pickup/ready/barnett/office-ready. Open21 succeeds; jar pickup transfers
+owner/state1/1 but crashes at native SetObjectName (VMopcode54 PC275). Fixed
+JSR/RTL mismatch plus cached-name count. Native synthetic name-length control
+passes frame376, ROM3c0bdfe5, all names/classes, noBRK/alias, cleanup complete.
+Observer segment-lifetime guard added; no rendering pass inferred from expiry.
+New authentic build auth-build-r6vyzz2l/source auth-source-_7_ngtoc in progress.
+Do not restore old33e69 states into it. Next: new matching-ROM setup via saved
+startup/pickup/ready/barnett procedures, then continuous Barnett->office->
+Open21/Pickup22/inventory/control. No historical seven-action route.
+Full tests/name-full-tests.log running; name-validate.log passed47regions.
+Native exact-exec-stop tool unsupported; asynchronous trace records preserved.
+Camera hypothesis was removed before publication; no renderer changes.

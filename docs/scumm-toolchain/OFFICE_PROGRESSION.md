@@ -1,7 +1,8 @@
 # Office inventory continuation
 
-This work continues from Milestone E in PR17. The accepted office/coat
-checkpoint is preserved; it is not the whole-game completion boundary.
+This work continues from Milestone E in PR17. The historical office/coat
+checkpoint is preserved, but its coat reachability is qualified below after
+restoring omitted source classes; it is not a whole-game completion boundary.
 PR18 is additive on `scumm-fate-barnett-exploration`.
 
 ## Original source route
@@ -97,3 +98,64 @@ This qualifies the generic class correction, not the authentic jar action.
 Fresh source-default ROM setup and office continuation remain in progress;
 previous-ROM states will not be reused. Evidence is under the private
 `office-progression-20261114/class-defaults` directory.
+
+## Qualification of earlier coat evidence
+
+Fresh original startup and taxi/map/office entry on ROM `33e69ca3` now preserve
+all source classes. The completed office capture matches source/PPU output,
+error0, with newspaper1/1. Coat25 remains owner15/state0/class32. Its source
+untouchable bit was never cleared during this continuation. The old coat
+pickup on a ROM missing initial classes therefore does **not** establish a
+source-faithful reachable interaction. Those captures remain preserved as
+historical observations, not promoted to acceptance under the corrected source
+contract. No class or ownership is injected to reproduce that result.
+
+The next original action is Open21, whose authored script explicitly clears
+jar22's untouchable bit before Pickup22. The updated isolated host body oracle
+preserves classes2/16 on exposure and2/16/32 after pickup, including an explicit
+zero/source-default distinction. The fresh native jar continuation is pending.
+
+At commit `f74a037`, local tests run1,751 with12 skips; validation and the
+47-region audit pass. Both hosted jobs pass in
+[run43625823355](https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43625823355).
+The prior run's only remaining failure was a trailing blank line, corrected
+additively. Hosted assembly is not Nexen execution.
+
+## Original rename failure and correction
+
+On source-default ROM `33e69ca3`, normal Open21 opens the ice box and exposes
+jar22. Normal Pickup22 then transfers owner/state to1/1 and emits the original
+mayonnaise description. The native CPU subsequently stops; error0 alone is
+not acceptance. The preserved first-fault observation has VM opcode54 and
+PC275, the first inline-byte store in original SetObjectName atPC271.
+
+The dynamic-residency name writer called a bank-local helper with JSR, but
+that helper returned RTL. Correcting it to RTS retains the caller's bank and
+return frame. Focused native testing then exposed a separate one-byte excess
+in cached name length. The bounded writer now counts retained encoded bytes
+including the terminator, saturates at32, and overwrites only the final byte
+when consuming longer source names. Control parameters containing zero remain
+encoded bytes, not premature string terminators. Names outside the1024-entry
+native cache are consumed without aliasing a neighboring record.
+
+Copyright-free native ROM
+`3c0bdfe58f2f475933e055c818bfe1c92315560e77f7c408a5224fd15a5d61ce`
+reaches its sentinel atframe376, error0, with class/hit results unchanged and
+exact cached-name lengths17,32,1,31,32. No BRK or executable-WRAM alias write
+is observed. The supervisor completes cleanup. Source-instruction tests cover
+all1024-cache boundary cases and adjacent guard bytes; actual native assembly
+checks the RTS opcode using the bank derived from the interpreter's JSL,
+because Poppy's text symbol map reports only label offsets.
+
+The authentic corrected-ROM continuation is still pending. No prior-ROM
+savestate is reused. Its package remains original source, without replacement
+scripts. Private failure and proof records are in `class-defaults/jar-after-open`,
+`trace-jar-first-brk`, and `native-name-length` under the evidence root above.
+
+The dialogue observer also now distinguishes segment replacement/expiry from a
+still-pending capture. Recorded second-segment candidates are not pixel proof
+of the missed first segment. A successor must receive its own comparison;
+no ACK is sent on behalf of an expired segment. The first BRK hook was
+asynchronous; the installed MCP server does not provide the separately
+documented exact-execution-stop tool. Neither record is described as an exact
+callee-return capture. No camera correction was made from the timeout.

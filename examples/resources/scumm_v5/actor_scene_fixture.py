@@ -128,6 +128,17 @@ def source_files(*, masks: bool = False, transitions: bool = False,
         p.emit('change owner without class mutation', bytes((0x29, 8, 0, 1)))
         find(155)
         touchable(8, False); touchable(9, False); find(156)
+        # Exercise the real far inline-name parser after class/hit operations.
+        # Its bank-local byte writer must return through RTS, including the
+        # bounded-cache discard path. Encoded control parameters include zero.
+        p.emit('rename with original encoded controls',
+               b'\x54\x08\x00Fixture\xff\x04\x00\x01 lamp\x00')
+        p.emit('bounded long name', b'\x54\x09\x00'+b'x'*40+b'\x00')
+        p.emit('empty name', b'\x54\x0a\x00\x00')
+        p.emit('31 byte name', b'\x54\x0b\x00'+b'y'*30+b'\x00')
+        p.emit('32 byte name', b'\x54\x0c\x00'+b'z'*31+b'\x00')
+        p.emit('consume uncached name without alias',
+               b'\x54'+struct.pack('<H',1500)+b'Uncached\x00')
         p.move(154, 0x1357); p.emit('probe complete', b'\0')
     if room_hook_probe:
         p.emit('initial room without hooks', b'\x72\x01')

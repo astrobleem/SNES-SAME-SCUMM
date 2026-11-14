@@ -51,6 +51,11 @@ if a.case == 'object-hit-test':
  source_query=rom_at(target,32)
  load=b'\xbf'+constant('ScummV5_ObjectClass_Initial_Address').to_bytes(3,'little')
  assert source_query.count(load)==2, 'both class words must load from the source ROM bank'
+ name_call=rom_at(symbols['ScummV5_Op_SetObjectName'],4)
+ assert name_call[0]==0x22, 'dynamic rename must use its far adapter'
+ name_bank=int.from_bytes(name_call[1:4],'little') & 0xff0000
+ # Poppy's human-readable map reports label offsets, not their ROM bank.
+ assert rom_at(name_bank | symbols['ScummV5_ObjectNameCache_StoreByte_Far__done'],1)==b'\x60', 'bank-local JSR name writer must return with RTS'
  report['assembled_class_query']={'address':target,'bytes':source_query.hex(),'mask_query':query.hex()}
 if a.case == 'room-hooks':
  report.update(hypothesis='Before/after global room hooks run in source order around EXCD/ENCD through checked C4 activations', expected=[6,1,2,3,0x1357,4,1,5], case=a.case, exit_condition='sentinel, first error, 4096frames or180seconds')
@@ -83,6 +88,15 @@ try:
      report['mutable_class_records']=sum(bool(classes[i]) for i in range(0,4096,8))
      assert report['mutable_class_records']==0, 'restored source defaults must reclaim overrides'
      report['source_class_count']=constant('ScummV5_ObjectClass_InitialCount')
+     names=constant('SAME_SCUMM_OBJECT_NAMES');lengths=constant('SAME_SCUMM_OBJECT_NAME_LENGTH')
+     expected_names={8:b'Fixture\xff\x04\x00\x01 lamp\x00',9:b'x'*31+b'\x00',
+                     10:b'\x00',11:b'y'*30+b'\x00',12:b'z'*31+b'\x00'}
+     report['encoded_names']={}
+     for identity,expected_name in expected_names.items():
+      length=s.read_u8(lengths+identity)
+      actual=s.read_memory('snesMemory',names+identity*32,length)
+      report['encoded_names'][str(identity)]={'length':length,'hex':actual.hex()}
+      assert actual==expected_name,(identity,actual,expected_name)
     assert not report['invalid_execution_events'], 'native BRK or executable WRAM alias write'
     report['result']='NATIVE_OBJECT_HIT_TEST_MATCH' if a.case == 'object-hit-test' else 'NATIVE_ROOM_HOOK_ORDER_MATCH' if a.case == 'room-hooks' else 'NATIVE_CUTSCENE_CALLBACK_MATCH' if a.case == 'cutscene-callback' else 'NATIVE_SOUND_STATUS_QUERY_MATCH';save();break
    if time.monotonic()-begin>(180 if a.case in ('room-hooks', 'object-hit-test') else 90):raise TimeoutError('native observation wall budget')

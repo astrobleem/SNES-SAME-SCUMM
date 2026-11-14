@@ -28,6 +28,10 @@ class ActorSceneFixture(unittest.TestCase):
         self.assertEqual(host.engine.state.variables[150:158], [0, 8, 9, 8, 0x1357, 8, 0, 7])
         self.assertEqual(len(host.engine._default_object_classes), 1000)
         self.assertEqual(host.engine.state.object_classes, {})
+        self.assertEqual(bytes(host.engine.state.object_names[8]),
+                         b'Fixture\xff\x04\x00\x01 lamp\x00')
+        self.assertEqual(bytes(host.engine.state.object_names[9]), b'x'*40+b'\x00')
+        self.assertEqual(bytes(host.engine.state.object_names[1500]), b'Uncached\x00')
 
     def test_cutscene_callbacks_use_normal_nested_global_arguments(self):
         root = Path(__file__).resolve().parents[1]

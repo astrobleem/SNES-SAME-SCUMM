@@ -713,6 +713,10 @@ class NativeResidencyLayoutTests(unittest.TestCase):
         self.assertIn("sta.l SAME_SCUMM_OBJECT_NAMES,x", far_source)
         self.assertIn("sta.l SAME_SCUMM_OBJECT_NAME_LENGTH,x", far_source)
         self.assertIn("ScummV5_ObjectNameCache_StoreByte_Far__advance:", far_source)
+        store = far_source.split("ScummV5_ObjectNameCache_StoreByte_Far:", 1)[1]
+        self.assertIn("jsr ScummV5_ObjectNameCache_StoreByte_Far", far_source)
+        self.assertNotIn("    rtl", store)  # includes the out-of-cache discard path
+        self.assertIn("    rts", store)
         self.assertIn("ScummV5_ObjectNameCache_FarCall_FetchWordParam:\n    jsr ScummV5_C23_FetchWordParam\n    rtl", source)
         main = (ROOT / "runtime/snes/main.pasm").read_text()
         self.assertIn('.include "engines/scumm_v5_object_name_cache_far.pasm"', main)

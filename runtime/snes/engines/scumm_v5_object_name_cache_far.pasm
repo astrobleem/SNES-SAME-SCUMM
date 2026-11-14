@@ -56,7 +56,6 @@ ScummV5_ObjectNameCache_SetName_Far__done:
     sep #$20
     .a8
     lda.l SAME_SCUMM_OBJECT_NAME_INDEX
-    inc
     sta.l SAME_SCUMM_OBJECT_NAME_LENGTH,x
 ScummV5_ObjectNameCache_SetName_Far__done_no_cache:
     clc
@@ -90,6 +89,12 @@ ScummV5_ObjectNameCache_StoreByte_Far:
     rep #$20
     .a16
     and #$00FF
+    cmp #$001F
+    bcc ScummV5_ObjectNameCache_StoreByte_Far__offset
+    lda #$001F
+ScummV5_ObjectNameCache_StoreByte_Far__offset:
+    .a16
+    clc
     adc.l SAME_SCUMM_C17_PARAM0
     tax
     sep #$20
@@ -100,12 +105,15 @@ ScummV5_ObjectNameCache_StoreByte_Far__advance:
     sep #$20
     .a8
     lda.l SAME_SCUMM_OBJECT_NAME_INDEX
-    cmp #$1F
+    ; Count retained bytes including the terminator. Overflow continues to
+    ; consume the source string while replacing only its final cache byte.
+    cmp #$20
     bcs ScummV5_ObjectNameCache_StoreByte_Far__done
     inc
     sta.l SAME_SCUMM_OBJECT_NAME_INDEX
 ScummV5_ObjectNameCache_StoreByte_Far__done:
-    rtl
+    ; Bank-local helper: all callers use JSR, including the discard path.
+    rts
 ScummV5_ObjectNameCache_StoreByte_Far__discard:
     sep #$20
     .a8

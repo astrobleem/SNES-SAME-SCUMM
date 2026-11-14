@@ -184,6 +184,22 @@ class CommittedPoseObserverTests(unittest.TestCase):
             self.assertFalse(check()); text[offset:offset+2] = old
         pose['mode3_inflight_count'] = 1; self.assertFalse(check())
 
+    def test_expired_dialogue_cannot_hold_observer_or_ack_successor(self):
+        # Original synthetic sequencer observations, no native acceptance:
+        # first segment, continuation, replacement, expiry, room transition.
+        expected = dict(expected_room=4, expected_generation=7,
+                        expected_segment=0)
+        state = dict(room=4, talk_active=1, talk_generation=7)
+        self.assertTrue(probe.dialogue_segment_is_current(state, 0, **expected))
+        for change, segment in (({}, 1), ({'talk_generation': 8}, 0),
+                                ({'talk_active': 0}, 0), ({'room': 5}, 0)):
+            with self.subTest(change=change, segment=segment):
+                self.assertFalse(probe.dialogue_segment_is_current(
+                    state | change, segment, **expected))
+        # The next segment requires its own observation and pixel comparison.
+        self.assertTrue(probe.dialogue_segment_is_current(
+            state, 1, **(expected | {'expected_segment': 1})))
+
     def test_immutable_generation_survives_new_cursor_composition(self):
         s = Session()
         s.put(probe.MODE3_COMMITTED_GENERATION,64)
