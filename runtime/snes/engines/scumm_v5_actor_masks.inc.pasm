@@ -199,6 +199,9 @@ MaskEnsure_plane_bounded:
     .a16
     .i16
  sta.l SAME_SCUMM_MASK_PLANE
+ ; CMP used for clamping leaves Z clear even when a lower selector is zero.
+ ; Test the selected value itself: plane zero means no foreground mask.
+ cmp #$0000
  bne MaskEnsure_bounds
  jml MaskEnsure_ready
 MaskEnsure_bounds:

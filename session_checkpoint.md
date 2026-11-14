@@ -4849,3 +4849,20 @@ an old-ROM state or label these ongoing controls Milestone E acceptance.
 Native walkbox gate now PASSED four exact images, frame2146, cleanup complete.
 Fresh mask-startup uses ROMf341110e; next mask-room10-pickup/ready/barnett then
 mask-office-continuation, each bounded and identity-bound. No E gameplay pass yet.
+
+Current follow-up: mask-startup failed error16 frame7019. Read-only matching
+checkpoint trace found mask0 inherited clamp CMP flags and entered resource
+lookup. Added CMP #0 before mask bounds branch;16 focused tests pass.
+Native zero-mask fixture runs port8063 with scene-build-0o7fdh52.
+Fresh authentic build auth-build-o3u9luab / source auth-source-p5o2u0rp
+ROM443030d2, map a8638737, package unchangedb6afddbf, identityb2d7302b.
+68 runtime files match the build snapshot. No authentic native run yet.
+Prepared zero-startup/pickup/ready/barnett/office scripts ports8064..8068.
+Current full tests zero-mask-corrected-full-tests.log; first run stopped
+after fixing the bounded test runner's unsupported JML normalization.
+Milestone E NOT_COMPLETE. No old-ROM state may be loaded in this new build.
+
+Zero-mask native PASSED four exact source/INDEX8/PPU/CGRAM images,222.536s,
+normal exit, cleanup complete. zero-startup now running freshROM443030d2
+under600s supervisor; no acceptance yet. Validation/audit47regions pass.
+GitHub #14->#15->#16->#17 dependencies verified open/draft/mergeable unchanged.

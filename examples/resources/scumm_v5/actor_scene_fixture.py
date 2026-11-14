@@ -47,12 +47,18 @@ def source_files(*, masks: bool = False, transitions: bool = False,
     if walkbox_mask_probe:
         if not masks:
             raise ValueError('walkbox mask probe requires original source masks')
-        # Box zero stays inaccessible; box one covers the room and selects
-        # plane one and scale231. Actor two still uses explicit force_clip=2.
-        old = struct.pack('<hhhhhhhhBBH',0,0,639,0,639,143,0,143,0,0,255)
-        new = struct.pack('<hhhhhhhhBBH',0,0,639,0,639,143,0,143,1,0,231)
-        assert room.count(old) == 1
-        room = room.replace(old, new, 1)
+        # PutActor follows source box scale231. The final pose crosses from
+        # masked box1 into unmasked box2; actor2 retains explicit plane2.
+        dummy=struct.pack('<hhhhhhhhBBH',*([-32000]*8),0,0,255)
+        old=ch(b'BOXD',struct.pack('<H',2)+dummy+
+               struct.pack('<hhhhhhhhBBH',0,0,639,0,639,143,0,143,0,0,255))
+        new=ch(b'BOXD',struct.pack('<H',3)+dummy+
+               struct.pack('<hhhhhhhhBBH',0,0,199,0,199,143,0,143,1,0,231)+
+               struct.pack('<hhhhhhhhBBH',200,0,639,0,639,143,200,143,0,0,231))
+        assert room.count(old)==1
+        room=room.replace(old,new,1)
+        room=room.replace(ch(b'BOXM',b'\0\0\0\xff\1\1\1\xff'),
+                          ch(b'BOXM',b'\0\0\0\xff\1\1\1\2\2\2\xff\1\1\1\2\2\2\xff'),1)
     if object_images_probe:
         room = room.replace(ch(b'RMHD', struct.pack('<HHH', 640, 144, 0)),
                             ch(b'RMHD', struct.pack('<HHH', 640, 144, 2)), 1)

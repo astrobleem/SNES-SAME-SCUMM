@@ -460,3 +460,31 @@ final frame2146, cleanup complete, zero survivors. Pinned assembly, ROM audit,
 ROM `f341110e4e8ec67b0bce6c2fa1da0398f77a91db8c616252d522732ec525f31b`
 retains the identical full-source package; its fresh gameplay qualification is
 ongoing. Milestone E is still **NOT_COMPLETE**.
+
+## Zero foreground-mask admission
+
+Fresh ROM `f341110e` stopped with error16 at frame7019. A matching-state
+read-only trace identified `MaskEnsure_error`, reached after walkbox5 selected
+mask0. The earlier clamp comparison left Z clear; storing the selected zero
+did not refresh flags. The branch therefore attempted a nonexistent plane
+and rejected its directory index. This was an explicit resource error, not
+an observer timeout or an inferred engine deadlock.
+
+The admission path now compares the selected value against zero before
+branching. Nonzero clamping and checked-resource validation are unchanged.
+The focused instruction test covers zero/nonzero selectors across four plane
+counts. The copyright-free walkbox fixture now crosses from plane1 into a
+second box with mask0, retaining scale231 and another actor's explicit plane2.
+Native qualification and fresh authentic continuation are recorded below when
+completed; the correction alone is not Milestone E gameplay acceptance.
+
+Native `native-zero-mask` passes four complete source/INDEX8/PPU/CGRAM images,
+including the mask1→0 walkbox change. It exits normally in222.536s with complete
+cleanup and zero survivors. Synthetic ROM `0617b5546ad7ae640b8961faca016735ec1abf31cb9c5fc48fcbe4830f11d5c2`;
+map `5b67d452ea3789ecbecd6092b69154862e8653a9cc374c8d0d44267b8bb844a0`;
+package `f46e3f70409b17dff300391c5ae2c8d3d260e5aac7c910f80c1b7aeef233ee09`.
+Fresh authentic ROM `443030d2c3bae43ee17d6bce8303c086f73fd69434449a59d9a9d6df25546eb2`
+passes pinned assembly and ROM audit; its package remains byte-identical.
+
+The corrected full host suite passes1733 tests with12 skips. `make validate`,
+Poppy lint,47-region ownership audit and diff whitespace checks pass.

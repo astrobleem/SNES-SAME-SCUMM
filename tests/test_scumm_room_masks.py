@@ -129,3 +129,17 @@ class RoomMaskTests(unittest.TestCase):
         for bad in (good.replace(b'\xdd\x00\x00',b'\xd5\x00'),
                     good.replace(b'\xbd\x02\x00',b'\xb5\x02')):
             with self.assertRaises(AssertionError):verify_mask_box_addressing(bad,symbols)
+
+    def test_native_zero_selector_does_not_inherit_clamp_condition_flags(self):
+        import test_scumm_cutscene_callback_native as blocks
+        source=(Path(__file__).resolve().parents[1]/'runtime/snes/engines/scumm_v5_actor_masks.inc.pasm').read_text()
+        clamp=source.split('MaskEnsure_plane:',1)[1].split('MaskEnsure_bounds:',1)[0]
+        for planes in (1,2,3,255):
+            for selector in (0,1,2,3,255):
+                with self.subTest(planes=planes,selector=selector):
+                    code=(f'lda #${planes:04x}\nsta.l SAME_SCUMM_MASK_TEMP\nlda #${selector:04x}\n'+clamp+
+                          'MaskEnsure_bounds:\nsec\nrtl\nMaskEnsure_ready:\nclc\nrtl\n')
+                    m=blocks.CutsceneCallbackNative.machine(self,code.replace('jml ','jmp '))
+                    carry,_=m.consume()
+                    self.assertEqual(m.get('SAME_SCUMM_MASK_PLANE'),min(selector,planes))
+                    self.assertEqual(carry,bool(selector))

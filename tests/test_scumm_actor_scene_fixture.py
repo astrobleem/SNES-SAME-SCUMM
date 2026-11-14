@@ -148,3 +148,15 @@ class ActorSceneFixture(unittest.TestCase):
         self.assertEqual(h.engine.state.actors[2].force_clip,2)
         self.assertEqual(a.costume_frame,1)
         self.assertEqual(a.scale,(231,231))
+
+        # Final source pose changes box without changing force_clip or mask data.
+        for stage in (2,3):
+            slots[0].locals[0]=stage-1
+            for _ in range(30):
+                h.tick();slots=[slot for slot in h.engine.state.scripts if slot.number==1]
+                if slots and slots[0].locals[1]==stage:break
+            self.assertEqual(slots[0].locals[1],stage)
+        a=h.engine.state.actors[1]
+        box=h.engine._video.walkbox_at(*a.position)
+        self.assertEqual((box.index,box.mask),(2,0))
+        self.assertEqual(a.scale,(231,231))
