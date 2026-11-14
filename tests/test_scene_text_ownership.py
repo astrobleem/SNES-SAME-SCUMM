@@ -42,7 +42,12 @@ class SceneTextOwnershipTests(unittest.TestCase):
         scene=(ROOT/'runtime/snes/engines/scumm_v5_actor_scene.inc.pasm').read_text()
         self.assertEqual(scene.count('sta.l SAME_VIDEO_SURFACE_COMPOSITION_OWNER'),3)
         for label in ('ScummV5_Scene_Render__begun:', 'ScummV5_Scene_Render__submitted:', 'ScummV5_Scene_Abort__clear:'):
-            block=scene.split(label,1)[1].split('    sep #$20',1)[0]
+            # Submission can perform a byte-wide camera notification before
+            # releasing its scene lease. Bound by the actual pose retirement,
+            # not by the first accumulator-width change in the transaction.
+            end=('    sta.l SAME_SCUMM_CEL_VALID' if label.endswith('__submitted:')
+                 else '    sep #$20')
+            block=scene.split(label,1)[1].split(end,1)[0]
             self.assertIn('sta.l SAME_VIDEO_SURFACE_COMPOSITION_OWNER',block)
         self.assertIn('SAME_VIDEO_SURFACE_COMPOSITION_OWNER = SAME_VIDEO_TEXT_STATE+$6C', TEXT)
         self.assertIn('cpx #$0080',TEXT.split('Same_VideoOverlay_Reset_Far:',1)[1].split('Same_VideoOverlay_Frame_Far:',1)[0])
