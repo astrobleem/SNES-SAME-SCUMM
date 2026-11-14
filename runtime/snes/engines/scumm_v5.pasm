@@ -4826,6 +4826,11 @@ ScummV5_C4_RunAllocatedNoParent_FarEntry:
 ; Stop every live global/local script with the requested number. A8 holds the
 ; number on entry. Script zero is handled by the opcode as self-stop.
 ScummV5_C4_StopNumber:
+    ; Cutscene callbacks tail-enter StartScript after C19's byte-indexed
+    ; bookkeeping. Establish the scanner's width before its first immediate:
+    ; an assembler .i16 declaration alone cannot clear the CPU's X flag.
+    rep #$10
+    .i16
     sep #$20
     .a8
     sta.l SAME_SCUMM_CONDITION

@@ -11,6 +11,23 @@ from same.resources import MemoryResourceProvider
 from same.services import HostServices
 
 class ActorSceneFixture(unittest.TestCase):
+    def test_cutscene_callbacks_use_normal_nested_global_arguments(self):
+        root = Path(__file__).resolve().parents[1]
+        profile = load_profile(root/'examples/profiles/scumm_v5_game_analysis_fixture.json', verify_resources=False)
+        profile = replace(profile, options={**profile.options, 'headless_presentation': True})
+        files = source_files(cutscene_callback_probe=True)
+        provider = LucasartsScummV5ResourceProvider(MemoryResourceProvider({
+            'game.index': files['ATLANTIS/ATLANTIS.000'],
+            'game.data': files['ATLANTIS/ATLANTIS.001']}), parse_game_policy(profile))
+        host = EngineHost(profile, default_registry(), services=HostServices.create(profile, resources=provider))
+        host.boot()
+        for _ in range(8):
+            host.tick()
+            if host.engine.state.variables[154] == 0x1357:
+                break
+        self.assertEqual(host.engine.state.variables[150:155], [2, 0x1234, 0, 0, 0x1357])
+        self.assertEqual(host.engine.state.cutscenes, [])
+
     def test_original_masked_room_transition_and_revisit(self):
         root=Path(__file__).resolve().parents[1]
         p=load_profile(root/'examples/profiles/scumm_v5_game_analysis_fixture.json',verify_resources=False)

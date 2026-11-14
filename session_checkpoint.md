@@ -1,39 +1,26 @@
-# Milestone E active — office exit correction
+# Milestone E active — cutscene corruption corrected
 
-Branch scumm-fate-barnett-exploration, based on accepted D 0740cbca.
-D acceptance remains unchanged. Recovery worktree untouched. E NOT COMPLETE.
-
-Source-selected route: room2 Open office door34/verb3, Walk-to34/verb10 ->
-room1, then Pick-up coat25/verb11. Isolated host original-body oracle verifies
-state34 0->1 and coat owner15->1/classes26,32. Native reachability/office scene
-and coat action are NOT_VERIFIED. No story replacement or guest writes.
-
-Exact D-ROM continuation opened the door and retired its original object
-script. Walking through it reached original RoomExitProgram(2), then error25:
-soundKludge(13,64), flush. This is iMUSE logical sound-status query, not music
-conversion. Generic host/native implementation now exists. A copyright-free
-native control initially exposed ownership being M23C-fixture-only; normal
-runtime now uses that existing 32-byte table, with an audited lifetime.
-Corrected extended control observes [0,1,0,0,0x1357,1,0,0] at frame24, error0. No gameplay or
-acoustic acceptance follows from this control.
+Branch scumm-fate-barnett-exploration, successor draft PR17 on PR16.
+Published d6dbe7a has both hosted checks green (run43572075403). Current
+additive fix establishes X16 at C4_StopNumber entry after C19 callback dispatch.
+Native positive/negative controls prove it prevents BRK and executable-WRAM
+alias corruption; both previously reached the same sentinel/error0, so the
+validator now monitors actual BRK execution and alias writes as well.
+See BARNETT_EXPLORATION.md for identities and exact evidence.
 
 Private evidence: /home/chad/SAME-private-evidence/milestone-e-exploration-20261114.
-Native query: native-sound-status-extended; exact identities in report.json.
-Failed boundary: office-retirement (error25); prior input-observer boundary:
-office-boundary. Both have complete supervised cleanup. Existing D checkpoints
-must NEVER be restored into the rebuilt E ROM. Fresh matching-ROM setup is
-required after runtime correction. No historical seven-action route.
+No E emulator session active. Recovery worktree untouched.
+Sound-status final guard native control passes; host object-image oracle exists.
+Native state-selected OBIM consumption is still absent. E NOT COMPLETE.
+Selected route remains Open office door34/verb3, Walk-to34/verb10 into room1,
+Pick up coat25/verb11. Host original-body oracle is not a playthrough.
+Fresh experimental E setup reached room75 but failed from the now-proven C4
+width bug. That ROM predates the corrections; never restore its state into a
+new build. D acceptance and checkpoints remain intact. No historical replay.
 
-Host state-selected OBIM image/mask decoder is in progress: source IMHD IDs,
-reverse local order, parent-state chain, codec transparency and opaque zero.
-Native dynamic object image consumption remains absent; no background-only
-capture may claim complete office-scene fidelity. Full regression rerun active after correcting two obsolete assertions: SEP
-before the diagnostic, and invalidation consumed after host composition.
-Fresh authentic ROM auth-build-m1ya30q9 preserves the exact D package hash.
-Fresh-query-startup and fresh-query-room10 passed normal setup and pickup.
-Fresh-query-barnett is active on port8003; no old-ROM state is loaded. This
-authentic ROM precedes the final accumulator-width/result-clear refinements;
-it is boundary investigation, not final-head E acceptance.
+Next: finish correction publication, then implement checked state-selected
+object imagery before claiming complete office-scene fidelity or coat acceptance.
+No automatic merge, no proprietary payloads in Git, whole-game NOT_READY.
 
 --- Preserved Milestone D checkpoint ---
 

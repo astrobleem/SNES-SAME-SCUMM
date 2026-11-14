@@ -16,7 +16,7 @@ STAGES = (
 )
 
 def source_files(*, masks: bool = False, transitions: bool = False,
-                 sound_status_probe: bool = False) -> dict[str, bytes]:
+                 sound_status_probe: bool = False, cutscene_callback_probe: bool = False) -> dict[str, bytes]:
     base = camera_files()
     decoded = bytes(b ^ 0x69 for b in base['ATLANTIS/ATLANTIS.001'])
     size = int.from_bytes(decoded[34:38], 'big')
@@ -42,6 +42,13 @@ def source_files(*, masks: bool = False, transitions: bool = False,
             chunks.append(ch(tag,payload));pos+=length
         room=b''.join(chunks)
     p = Program()
+    if cutscene_callback_probe:
+        p.move(35, 2)
+        p.move(36, 2)
+        p.emit('cutscene argument', bytes.fromhex('40003412ff'))
+        p.emit('end cutscene', b'\xc0')
+        p.move(154, 0x1357)
+        p.emit('probe complete', b'\0')
     if sound_status_probe:
         def query(sound, result):
             p.emit('queued status', bytes((0x4c, 0, 13, 0, 0, sound, 0, 255)))
@@ -87,6 +94,12 @@ def source_files(*, masks: bool = False, transitions: bool = False,
             p.wait_ack(n,f'room transition {n}')
     p.move(0x4001,6 if transitions else len(STAGES)+1);p.emit('stop',b'\0')
     container=bytearray(ch(b'ROOM',room));script=len(container);container+=ch(b'SCRP',bytes(p.data))
+    scripts = [0, script]
+    if cutscene_callback_probe:
+        scripts.append(len(container))
+        # Each callback executes through the ordinary nested global resolver.
+        # Increment a count and copy the inherited local0 argument.
+        container += ch(b'SCRP', bytes.fromhex('4696009a97000040a0'))
     costs=[]
     for actor in (1,2):
         raw=bytearray(costume())
@@ -99,20 +112,21 @@ def source_files(*, masks: bool = False, transitions: bool = False,
     else:
         data=ch(b'LECF',ch(b'LOFF',bytes((1,1))+struct.pack('<I',30))+ch(b'LFLF',container))
     index=(ch(b'DOBJ',struct.pack('<H',256)+bytes(1280))
-           +ch(b'DSCR',directory(bytes((0,1)),(0,script)))
+           +ch(b'DSCR',directory(bytes((0,)+(1,)*(len(scripts)-1)),scripts))
            +ch(b'DCOS',directory(bytes((0,1,1)),(0,*costs)))+ch(b'DSOU',directory(b'',[])))
     return {f'ATLANTIS/ATLANTIS.{n:03}':bytes(b^0x69 for b in raw) for n,raw in enumerate((index,data))}
 
 def write_archive(path: Path, *, masks: bool = False, transitions: bool = False,
-                  sound_status_probe: bool = False) -> None:
+                  sound_status_probe: bool = False, cutscene_callback_probe: bool = False) -> None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as archive:
         for name,data in source_files(masks=masks,transitions=transitions,
-                                      sound_status_probe=sound_status_probe).items():
+                                      sound_status_probe=sound_status_probe, cutscene_callback_probe=cutscene_callback_probe).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             archive.writestr(info,data)
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('output',type=Path);parser.add_argument('--masks',action='store_true');parser.add_argument('--transitions',action='store_true')
     parser.add_argument('--sound-status-probe', action='store_true')
+    parser.add_argument('--cutscene-callback-probe', action='store_true')
     args=parser.parse_args();write_archive(args.output,masks=args.masks,transitions=args.transitions,
-                                         sound_status_probe=args.sound_status_probe)
+                                         sound_status_probe=args.sound_status_probe, cutscene_callback_probe=args.cutscene_callback_probe)

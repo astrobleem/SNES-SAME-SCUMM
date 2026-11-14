@@ -49,8 +49,11 @@ not enabled; the corrected initial control observed `[0,1,0,0,0x1357]` at
 frame24 with error0. The extended control observes `[0,1,0,0,0x1357,1,0,0]` at frame24,
 error0. Supervisor completion: 5.582 seconds, normal exit,
 cleanup complete and no owned survivors. This control precedes the additional guard preventing a wider SFX service ID
-from aliasing the 256-bit ownership table. That guard is assembled in a new
-snapshot and awaits its own native run. No final-head native claim is made.
+from aliasing the 256-bit ownership table. The final guarded build also passes at frame24, error0, in 5.576 seconds,
+with complete cleanup. Its ROM is `b88edd64c35760c836fe11914477fa66af6f7246afc3c83f809e3f5a0686d286`,
+map `4dbaa3b85d55a3ffdacd2b151876e4b1cde5c57fd5b7155a9951b79be90ce140`,
+and build identity `eb2e4581da89d4a33b72cac09329f28d560f3465cec179256427e476a61d0405`.
+Package identity is unchanged. This is synthetic logical-query acceptance.
 
 - Native fixture ROM: `7a0d2150a5d8cb60c5ba775ad482afdf1d3fc8944c55201365fb961794833fe5`
 - Map: `0a93ec461e262183a88407a8de04b247e8fd09a0739bf95eacd53926a3aacbc3`
@@ -65,6 +68,46 @@ the normal streamed actor build with synthetic MAXS and no story overlay.
 Run `tools/validate_scumm_sound_status_nexen.py` only through
 `tools/run_visual_once.py`; its explicit ROM, output, Nexen/core, MCP-library
 and port arguments keep this local native test separate from hosted CI.
+
+## Cutscene callback retirement corruption
+
+Fresh normal-game setup on the experimental E ROM reached the original map,
+then failed with variable error2 in LSCR201. The package was intact. Native
+write/execute journals isolated a CPU-width defect: the start-cutscene callback
+enters the ordinary nonrecursive StartScript retirement scanner with X8.
+`ScummV5_C4_StopNumber` declared `.i16` but did not clear the runtime X flag
+before its immediate LDX. The CPU decoded the high immediate byte as BRK and
+later executed a branch displacement as `STA long,X`. That wrote through bus
+address `$001861` into executable WRAM, changing logical PC56 from `$40` to
+`$20`. The subsequent variable error was a consequence, not a drawBox defect.
+The write preceded the SFX ownership operation; it was not caused by that table.
+
+The scanner now establishes X16 with `REP #$10` before its first indexed
+instruction. This changes no C4 scheduling or script-number semantics and
+requires no additional memory. A copyright-free fixture installs both original
+cutscene callback variables, passes local0=`$1234`, and runs both callbacks
+through the normal nested global resolver.
+
+Native positive control `native-cutscene-width` finishes at frame24 with
+variables `[2,4660,0,0,4951,0,0,0]`, error0, no BRK execution and no writes through
+the executable WRAM mirror. A private negative build removing only this width
+correction reaches the **same semantic sentinel and error0**, but produces
+three BRKs and a cache-alias write. The validator correctly rejects it. Thus
+checking only the sentinel or error counter would have missed the corruption.
+Both runs clean up their owned processes; neither is authentic gameplay proof.
+
+Positive identities:
+
+- ROM: `6a88bfaed541ccf64586bf6a15cb2a112c265e4307924d7d206ee638efd5051e`
+- Map: `0be2739b8e9661477f793b23269a2a0535bc30702c6bbb30651fb0e2c1f42e03`
+- Package: `8da0272e59e7a630ec9f7761bbce207835683c1cca32d6f64bac0218fb6ebf0b`
+- Build identity: `9fc054871556d61f0a7b1d103403e4ed00bf108ccad9d40aeb32465dd5722717`
+
+Generate with `actor_scene_fixture --cutscene-callback-probe`; run the existing
+supervised validator with `--case cutscene-callback`. Private journals include
+`trace-operand-journal`, `trace-cache-mutation`, and `trace-cache-writer`.
+Earlier observer limitations remain recorded; an asynchronous hook name is
+not a claim of stopped CPU state at that instruction.
 
 ## State-selected object presentation
 
