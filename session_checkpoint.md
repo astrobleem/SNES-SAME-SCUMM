@@ -1,33 +1,43 @@
-# Active continuation — multi-actor and foreground masks
+# Active continuation — Milestone D multi-actor/masks
 
-PR16 `scumm-fate-input-callback`, published3e373989; PR14/15 unchanged.
-Two-actor and masked native fixtures each passed4 complete source/INDEX8/PPU/CGRAM captures.
-Exact identities and limitations: `docs/scumm-toolchain/ACTOR_SCENE_COMPOSITION.md`.
-Hosted run43552900279: both required checks PASS for3e373989.
+Branch scumm-fate-input-callback / draft PR16, stacked on unchanged PR15.
+Published b01e26c9865e00e52dce9e0f43ab9d60d9764609. Milestone D NOT COMPLETE.
+Private evidence root: /home/chad/SAME-private-evidence/milestone-d-scene-20261113.
+Recovery worktree /tmp/same-msu1-fate-room4.hqQ8VD untouched.
 
-Private root `/home/chad/SAME-private-evidence/milestone-d-scene-20261113`.
-First cold-scene stopped on unconfigured original costume209 in room10.
-Corrected resource build `auth-build-n4lg_t3e` includes1,2,26,58,78,209 and
-completed original startup to room10/error0. Its next observer sent input
-before RoomEntryProgram(10) retired;90-frame edge bound failed. Both sessions
-cleaned up normally after validator failure; no signal/deadlock claim.
-`room10-entry-retirement` resumes that exact-ROM active-interface.state,
-waits for actual entry retirement (observed frame7120), then checks original
-pickup/inventory. No old-ROM state loading or guest gameplay writes.
-Barnett scene and interaction remain NOT_VERIFIED.
+Generic native acceptance: masked two-actor fixture passes six exact complete
+source/INDEX8/VRAM/CGRAM captures, including room1→2→1. Runtime cfcc07e,
+ROM e448fa318851623190fd2f10c153dd64de1b36a3c4535865a696eb523a62b909,
+run native-mask-transitions-executable,369.559sec, normal cleanup. Native mask
+CRC rejection error16/provider6 passes through completed rollback, scenes0.
+Exact identities and previous failed experiments: ACTOR_SCENE_COMPOSITION.md.
 
-Follow-up5376dce fixes cancellation of completed video-owned scenes and mask
-bounds. Local suite1,673 run/12 skipped passes; latest compiler closure tests
-and full suite are running separately. Compiler ActorOps dependency adapter
-now reads normalized commands; static room2/10/75 costume coverage is measured
-in private room-costume-dependencies.json. Eleven costumes/1,097 poses need
-chunk/palette metadata in a separate existing long-addressed ROM bank.
-Fresh ROM `auth-build-fvo9hep_` SHAe9042479207e2dfd80e36941625227d78278dad063e85db5e04e6de129e9bae9
-assembles/audits. `cold-room-costume-closure` currently runs under the600sec
-supervisor/port7961. No old state is loaded. Earlier room10 menu source/PPU
-matches remain valid; subsequent failure was missing authored costume208.
-All2,203 ProgramUnit IDs, body hashes and dispatch records remain identical.
-Recovery worktree `/tmp/same-msu1-fate-room4.hqQ8VD` remains untouched.
+Corrections after expanded costume closure: full32-bit scene successor fence;
+retire scene ownership before preflight and post-EXCD active metadata reuse;
+now a neutral overlay composition lease prevents asynchronous text from replacing
+actor damage. The last failure cold-room-owner had source=INDEX8 but PPU lacked
+1994 clipped actor11 pixels. It is preserved, not relabeled a pass.
+
+Current authentic ROM f17b4a8278536f94a459dc937ce9375de15de0f59fec0fb3017400a4ddc38a45
+in auth-build-qaod54z8; private source auth-source-lu0kpoly matches all65 tracked
+nongenerated runtime files at b01e26c. Map c14aa6ff570d2d6b87547f55fa36fa29211682251763e8d4b0417c434019ee63.
+Package6c89fe42ca36707391e0aa59524d67c124bda8dc65a7b0b8f3c737895c9dd237,
+14933323bytes,2203canonical IDs unchanged,11costumes/1097poses. Independent
+expanded package builds match. Identity19248c1b4bbaf85eef51c4abb60db319ef348ae80176e56b26926cd795d15ff5.
+
+cold-scene-text-lease PASSED five exact scene/text captures,590.929sec,cleanup complete.
+First two original dialogue captures and verb menu pass source/INDEX8/PPU/CGRAM.
+Second dialogue includes the clipped actor11 pose; queued text remains pending
+while scene owns damage. Normal pickup/inventory close checkpoint frame8769, newspaper1/1,error0.
+travel-text-lease.py is now running from that exact-ROM room10-travel-checkpoint;
+port7976 under600sec canonical supervisor. Never restore older ROM states. Its goal is continuous original taxi,
+map callback, room2 complete scene, normal walk and automobile Look-at response.
+Previous session cleanup verified; unrelated Nexen port7381 remains untouched.
+
+Full suite text-lease:1684run/12skips,OK,344.609sec.
+make validate/44regions, pinned full assembly and4MiB ROM audit pass.
+Hosted b01e26c run43560251770 both required jobs PASS; hosted does not run Nexen.
+Latest runtime feature changes already pushed. No automatic merge.
 
 # Active continuation — scaled camera exposure
 

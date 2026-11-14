@@ -267,4 +267,29 @@ no new framebuffer, cache allocation, DMA budget or script timing change.
 `test_scene_text_ownership` executes the production fence and checks writable,
 backend-busy and owned states, all three text entry paths, and scene lifetime
 release. These are host source-execution tests, not native acceptance. The
-corrected authentic build is recorded separately; its native result is pending.
+corrected authentic build is recorded separately below.
+
+
+The corrected full-source ROM passes five authentic complete captures in
+`cold-scene-text-lease`: two original introduction segments, the verb menu,
+pickup menu and newspaper inventory. Every source/INDEX8/PPU comparison and
+CGRAM comparison has zero differences. The second introduction capture includes
+the previously missing clipped actor11 pose; the first contains Indy alone.
+The original newspaper action sets ownership/state1/1, inventory opens/closes
+through normal controller input, and error remains0. The run exits normally
+in590.929sec with no owned survivors. This establishes a legitimate room10
+checkpoint atframe8769; it does not establish Barnett gameplay.
+
+- Runtime: `b01e26c9865e00e52dce9e0f43ab9d60d9764609` (all65 nongenerated runtime files match the private assembly snapshot).
+- ROM: `f17b4a8278536f94a459dc937ce9375de15de0f59fec0fb3017400a4ddc38a45`
+- Map: `c14aa6ff570d2d6b87547f55fa36fa29211682251763e8d4b0417c434019ee63`
+- Package: `6c89fe42ca36707391e0aa59524d67c124bda8dc65a7b0b8f3c737895c9dd237`
+- Build identity: `19248c1b4bbaf85eef51c4abb60db319ef348ae80176e56b26926cd795d15ff5`
+- Checkpoint: `4316644516e612b6e3a701bba6c8006d2b43e054c59c3374cc588700b5d0561b`
+
+Full local suite:1,684run/12skipped,OK (1,672 executed),344.609sec. Validation,
+44-region ownership, pinned Poppy and4MiB ROM audits pass. Both independent
+hosted jobs pass on b01e26c in [run43560251770](https://github.com/astrobleem/SNES-SAME-SCUMM/actions/runs/43560251770).
+Hosted checks do not execute Nexen. The authentic taxi/map/college continuation
+uses this exact-ROM checkpoint and is reported independently; no old-ROM state
+is substituted and the checkpoint prefix is not claimed as one cold session.
