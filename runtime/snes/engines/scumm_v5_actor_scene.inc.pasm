@@ -900,6 +900,16 @@ ScummV5_Scene_Render__mask_ready:
     .i16
     jsl ScummV5_ActorPose_Ensure_Far
     bcs ScummV5_Scene_Render__checked
+    ; Pending I/O keeps the scene transaction; a fatal checked read must
+    ; unwind its underlay/composition owner before the VM stops on the error.
+    lda.l SAME_SCUMM_ERROR
+    and #$00FF
+    bne ScummV5_Scene_Render__checked_error
+    jml ScummV5_Scene_Render__done
+ScummV5_Scene_Render__checked_error:
+    .a16
+    .i16
+    jsl ScummV5_ActorPose_Cancel_Far
     jml ScummV5_Scene_Render__done
 ScummV5_Scene_Render__checked:
     .a16

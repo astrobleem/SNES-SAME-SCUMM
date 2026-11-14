@@ -59,11 +59,15 @@ def main():
     ap.add_argument('--object-images',action='store_true')
     ap.add_argument('--absent-animation',action='store_true')
     ap.add_argument('--walkbox-mask',action='store_true')
+    ap.add_argument('--one-shot-limb',action='store_true')
+    ap.add_argument('--expect-actor-crc-error',type=Path,metavar='FAULT_MANIFEST')
     ap.add_argument('--expect-object-crc-error',type=Path,metavar='FAULT_MANIFEST')
     ap.add_argument('--expect-mask-crc-error',type=Path,metavar='FAULT_MANIFEST',
                     help='negative control: isolated package with one intentionally corrupt checked mask block')
 
     args=ap.parse_args()
+    if sum(bool(x) for x in (args.expect_actor_crc_error,args.expect_mask_crc_error,args.expect_object_crc_error))>1:
+        ap.error('only one checked resource fault per run')
     if args.expect_object_crc_error and (not args.object_images or args.expect_mask_crc_error):
         ap.error('object CRC control requires the object fixture and no other fault')
     if args.expect_mask_crc_error and not args.masks:
@@ -107,7 +111,7 @@ def main():
     if not expected_lifecycle <= {e['identity'] for e in native['entries']}:
         raise RuntimeError('scene fixture requires executable room entry/exit; cook with --executable')
     source=source_bytes(args.archive)
-    fixture=source_files(masks=args.masks,transitions=args.transitions,object_images_probe=args.object_images,absent_animation_probe=args.absent_animation,walkbox_mask_probe=args.walkbox_mask)
+    fixture=source_files(masks=args.masks,transitions=args.transitions,object_images_probe=args.object_images,absent_animation_probe=args.absent_animation,walkbox_mask_probe=args.walkbox_mask,one_shot_limb_probe=args.one_shot_limb)
     assert source=={'game.index':fixture['ATLANTIS/ATLANTIS.000'],'game.data':fixture['ATLANTIS/ATLANTIS.001']},'diagnostic acknowledges only its exact public synthetic source'
     provider=LucasartsScummV5ResourceProvider(MemoryResourceProvider(source),parse_game_policy(load_profile(args.profile,verify_resources=False)))
     assert hashlib.sha256(provider.read('script.1')).hexdigest()==boot['sha256']
@@ -124,17 +128,17 @@ def main():
     report.update(hypothesis='Two independently scaled/animated source actors compose in source Y/ID order and restore their overlapping old coverage.',expected='3 staged scene captures plus a second animated scene; complete source/INDEX8/PPU/CGRAM equality',kind='COPYRIGHT_FREE_NATIVE_ACTOR_SCENE')
     if args.object_images:
         report.update(hypothesis='Checked state-selected source objects compose before actors, replace foreground masks and restore when hidden; parent visibility follows original state.',expected='All staged object/actor states match complete source INDEX8/PPU/CGRAM output',kind='COPYRIGHT_FREE_NATIVE_OBJECT_SCENE')
-    if args.expect_mask_crc_error:
+    if args.expect_mask_crc_error or args.expect_actor_crc_error:
         import zlib
-        fault=json.loads(args.expect_mask_crc_error.read_text())
+        fault=json.loads((args.expect_mask_crc_error or args.expect_actor_crc_error).read_text())
         package=args.rom.with_suffix('.msu').read_bytes()
         block=fault['block'];offset=int(block['package_offset']);length=int(block['length'])
         assert sha(args.rom.with_suffix('.msu'))==fault['fault_package_sha256']
         assert fault['source_package_sha256']!=fault['fault_package_sha256']
-        assert 0<=offset<=len(package)-length and 0<length<=256
+        assert 0<=offset<=len(package)-length and 0<length<=(2048 if args.expect_actor_crc_error else 256)
         assert zlib.crc32(package[offset:offset+length])&0xffffffff != int(block['crc32'],16)
-        report.update(kind='COPYRIGHT_FREE_NATIVE_MASK_CRC_REJECTION',fault_manifest=fault,
-                      hypothesis='A corrupt checked mask block cannot publish any part of the first actor scene',
+        report.update(kind='COPYRIGHT_FREE_NATIVE_ACTOR_CRC_REJECTION' if args.expect_actor_crc_error else 'COPYRIGHT_FREE_NATIVE_MASK_CRC_REJECTION',fault_manifest=fault,
+                      hypothesis='A corrupt checked actor/mask block cannot publish any part of the first actor scene',
                       expected='SCUMM resource error16 and provider CRC error6; zero completed actor scenes')
     if args.expect_object_crc_error:
         import zlib
@@ -181,7 +185,7 @@ def main():
             if row['scene_phase'] in (1,2) and previous['scene_phase'] in (1,2):
                 assert pose['surface_next_generation']==previous['pose']['surface_next_generation'], 'partial scene publication'
                 assert pose['composition_active'], 'incomplete scene lost owner'
-        if row['frame']>100 and pose['error'] and not (args.expect_mask_crc_error or args.expect_object_crc_error):raise RuntimeError(f"SCUMM error{pose['error']} stage{stage}")
+        if row['frame']>100 and pose['error'] and not (args.expect_mask_crc_error or args.expect_object_crc_error or args.expect_actor_crc_error):raise RuntimeError(f"SCUMM error{pose['error']} stage{stage}")
         if time.monotonic()-started>540 or row['frame']>12000:raise TimeoutError('bounded native control deadline')
         return r,row
     def compare(session,r,row,expected,label):
@@ -258,7 +262,7 @@ def main():
                         report['baseline_frame']=row['frame'];save()
                     advance_bounded(session,8)
                 raise TimeoutError('expected checked object rejection not observed')
-            if args.expect_mask_crc_error:
+            if args.expect_mask_crc_error or args.expect_actor_crc_error:
                 first_error_frame = None
                 for _ in range(500):
                     r,row=sample(session)
@@ -273,7 +277,7 @@ def main():
                             first_error_frame = row['frame']
                             report['first_error_frame'] = first_error_frame
                         if row['scene_phase']==0 and not row['pose']['composition_active']:
-                            report['result']='NATIVE_MASK_CRC_REJECTED_BEFORE_SCENE_PUBLICATION';save()
+                            report['result']='NATIVE_ACTOR_CRC_REJECTED_BEFORE_SCENE_PUBLICATION' if args.expect_actor_crc_error else 'NATIVE_MASK_CRC_REJECTED_BEFORE_SCENE_PUBLICATION';save()
                             return 0
                         assert row['frame'] - first_error_frame < 32, 'mask failure cleanup did not finish'
                     advance_bounded(session,8)

@@ -27,14 +27,14 @@ STAGES = (
 CAMERA_STAGES = tuple(dict(scale=(231,231), facing=180, frame=1, x=330, y=125,
                           camera=camera) for camera in (160,224,160,216,224,200,224))
 
-def costume() -> bytes:
+def costume(*, one_shot_limb: bool = False) -> bytes:
     # Two independently anchored limbs, transparent holes and color slot 1
     # mapping to opaque screen zero. >2 KiB opaque pixels at full size.
     animations=11; table=18; data_offsets=52
     data=bytearray(data_offsets+(animations+1)*2)
     data[:2]=bytes((animations,0x58));data[2:18]=bytes((0,0,80,240,*range(4,16)))
-    static=len(data);data+=struct.pack('<HHBHB',0xc000,0,0,0,0)
-    animated=len(data);data+=struct.pack('<HHBHB',0xc000,0,1,0,1)
+    static=len(data);data+=struct.pack('<HHBHB',0xc000,0,0,0,0x81 if one_shot_limb else 0)
+    animated=len(data);data+=struct.pack('<HHBHB',0xc000,0,1,0,0x81 if one_shot_limb else 1)
     for animation in range(4,12):struct.pack_into('<H',data,data_offsets+animation*2,(static if animation<8 else animated)+6)
     commands=len(data);data+=bytes((0,1));struct.pack_into('<H',data,table,commands+6)
     frames=[]

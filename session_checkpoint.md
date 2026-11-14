@@ -4866,3 +4866,32 @@ Zero-mask native PASSED four exact source/INDEX8/PPU/CGRAM images,222.536s,
 normal exit, cleanup complete. zero-startup now running freshROM443030d2
 under600s supervisor; no acceptance yet. Validation/audit47regions pass.
 GitHub #14->#15->#16->#17 dependencies verified open/draft/mergeable unchanged.
+
+9012b24 pushed;1733tests/12skip; CI43598795963 bothPASS. Native zero-mask
+passes4images. zero-startup154.24sPASS; zero-pickup278.961sPASS, zero-ready
+63.956sPASS. zero-barnett stops at37 map-marker pixels49/56 vsraw1/8,
+error0. Snapshot source shape exact. Paused ROM palette read correct;
+trace160frames seesrawscratch butnoMapPalette. Ensure return restoredP
+beforebyteRESULT, A16readsadjacentnonzeroLOOP_START =>false-ready.
+Fixedbyte-test-beforePLP;64instructioncases +one-shot-limb sourcefixture.
+Native positive runs native-pose-ready/scene-build-fm2nhkcx, port8071,
+3of4exactimages sofar. Negativepackage pose-ready-corrupt-actor prepared,
+firstcheckedchunkCRC intentionallywrong, no native run yet.
+Auth buildauth-build-yhx79mbs/sourceauth-source-_s3xde1v assembled;notrun.
+Prepared ready-* scripts ports8072..8076. ready-room10-setup.py omits
+redundant menu captures during identity setup, retainsnormalcontroller
+sequence/state checks. Fulltests pose-ready-full-tests.log running.
+Milestone E remainsNOT_COMPLETE; recoveryuntouched.
+
+Current checked-pose correction: fatal actor CRC rejection now invokes the
+existing cancellation path; native negative control ends at frame626 with
+error16/provider6, generation0, phase0, no composition owner, cleanup complete.
+Positive final-runtime control is in native-pose-ready-cleanup. Full suite:
+1736 tests in380.526s,12 skipped; validate and47-region audit pass.
+Authentic build auth-build-s5sw4h85 is ROM c1a75bd7; fresh setup must use
+checked-startup/checked-room10-pickup/checked-room10-ready/checked-barnett
+then checked-office-continuation. No earlier ROM states are compatible.
+
+Final positive native control PASS4 exact images at frame2144;227.104s,
+cleanup complete. Fresh checked-startup now running on auth c1a75bd7.
+Milestone E remains NOT COMPLETE until the office/coat continuation passes.

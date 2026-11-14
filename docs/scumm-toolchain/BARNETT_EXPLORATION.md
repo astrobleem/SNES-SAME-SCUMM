@@ -488,3 +488,66 @@ passes pinned assembly and ROM audit; its package remains byte-identical.
 
 The corrected full host suite passes1733 tests with12 skips. `make validate`,
 Poppy lint,47-region ownership audit and diff whitespace checks pass.
+
+## Checked actor readiness and nonzero animation loops
+
+The corrected mask build443030d2 completes original startup and newspaper
+pickup, with exact scene images. The subsequent map comparison stops at37
+marker pixels: geometry is exact, but native bytes1/8 remain source palette
+slots rather than the original costume's mapped colors49/56. Error remains0.
+The matching checkpoint and failed comparison are retained.
+
+A paused read verifies the native ROM palette table is correct. A160-frame
+neutral trace observes raw scratch writes but no palette-mapping call. The
+checked-pose return restores caller P before loading its one-byte RESULT.
+An A16 scene caller therefore reads adjacent LOOP_START as its high byte.
+A nonzero loop offset falsely reports a pending read as ready. This is a
+checked-resource admission defect, not a palette substitution or source fix.
+
+The return now selects A8 for the result test before restoring caller P on
+both carry outcomes. The production-instruction regression covers64 caller
+width/ready/loop combinations and stack restoration. An original fixture
+adds a one-shot limb, producing a nonzero repeat origin through the ordinary
+compiler. The native validator retains complete multichunk/scaled/masked
+scene comparisons and adds a corrupt-actor-chunk rejection mode.
+Native and authentic results remain separate from these host checks.
+
+The nonzero-loop native control passes four complete source/INDEX8/PPU/CGRAM
+images in225.774s, normal exit and complete cleanup. ROM
+`4a8d9b38c9e0ef8289cb524f6c9bc257a195d365cad3a78af92e9e884d005a7f`; map
+`1a31be6afcc2c354a1097801c50b5d2a9820df69db188a7818436be787b26946`; package
+`6d7fe7f74249579abb0ffb77285929d253a5b839fc15f582ec9d6fdb6465e924`.
+The fresh authentic build99c17c35 retains the identical complete package.
+Its gameplay qualification remains pending; prior states are not reused.
+
+The first actor-CRC control rejects corrupt bytes with resource error16 and
+provider CRC error6, with scene generation0, but does not release phase1.
+That failed control remains recorded. The scene service now distinguishes
+fatal checked-read failure from ordinary pending I/O and calls its existing
+actor cancellation/underlay rollback path for the fatal case. A focused
+production-instruction test checks pending, ready and error outcomes without
+clearing the original error. Corrected native cleanup is qualified separately.
+
+The corrected actor-CRC control rejects at frame626 with error16/provider6,
+scene generation0, scene phase0 and composition owner released. It exits
+normally in45.843s with no surviving test process. This proves rejection and
+transaction cleanup, not a rendered scene. Its ROM is
+`77300af2309144ad8eef3dd0a1dd6f5388b45be4e4794dce3953e0fd633964d5`.
+The fault is one changed byte in a2048-byte source costume chunk with its
+original CRC retained; no guest state is injected.
+
+Final-runtime positive control `native-pose-ready-cleanup` passes four complete
+source/INDEX8/PPU/CGRAM images at frame2144 in227.104s, normal exit with no
+survivors. It includes nonzero animation repeat origins, multiple checked
+chunks, overlapping scaled actors, absent animation, masks and movement
+restoration. ROM77300af2 above; unchanged synthetic package6d7fe7f7.
+The host suite runs1736 tests with12 skips in380.526s. Validation,47-region
+ownership audit, pinned assembly and4MiB ROM audit pass.
+
+Fresh authentic ROM
+`c1a75bd77d0af4dd75460d9c75a232975499433e056e3f7f8ce71a7d39134372`
+uses map `d2285ea2c3835ee3735d5d0b8fcaff055737d0ce6ac4e9c04fffc2e9c0b4b42f`,
+unchanged package `b6afddbf486ee26f85bb444cb03060d9606864138e3d1b3ed282657f77a09111`,
+and build identity `f80e47e0539a2ffc85dcccae4a12729171214b2b043ecf17bdab4c926df08215`.
+All68 nongenerated runtime files match its private build snapshot. Gameplay
+qualification is pending; synthetic controls do not certify the office route.

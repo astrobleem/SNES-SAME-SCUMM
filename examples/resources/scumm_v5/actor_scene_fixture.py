@@ -19,7 +19,7 @@ OBJECT_STAGES = (*STAGES, STAGES[-1])
 
 def source_files(*, masks: bool = False, transitions: bool = False,
                  sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
-                 object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False) -> dict[str, bytes]:
+                 object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False, one_shot_limb_probe: bool = False) -> dict[str, bytes]:
     base = camera_files()
     decoded = bytes(b ^ 0x69 for b in base['ATLANTIS/ATLANTIS.001'])
     size = int.from_bytes(decoded[34:38], 'big')
@@ -186,7 +186,7 @@ def source_files(*, masks: bool = False, transitions: bool = False,
             scripts.append(len(container));container+=ch(b'SCRP',body)
     costs=[]
     for actor in (1,2):
-        raw=bytearray(costume())
+        raw=bytearray(costume(one_shot_limb=one_shot_limb_probe))
         if actor==2:raw[3:6]=bytes((0,120,200))
         costs.append(len(container));container+=ch(b'COST',raw)
     if transitions:
@@ -202,11 +202,11 @@ def source_files(*, masks: bool = False, transitions: bool = False,
 
 def write_archive(path: Path, *, masks: bool = False, transitions: bool = False,
                   sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
-                  object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False) -> None:
+                  object_images_probe: bool = False, absent_animation_probe: bool = False, walkbox_mask_probe: bool = False, one_shot_limb_probe: bool = False) -> None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as archive:
         for name,data in source_files(masks=masks,transitions=transitions,
                                       sound_status_probe=sound_status_probe, cutscene_callback_probe=cutscene_callback_probe, room_hook_probe=room_hook_probe,
-                                      object_images_probe=object_images_probe, absent_animation_probe=absent_animation_probe, walkbox_mask_probe=walkbox_mask_probe).items():
+                                      object_images_probe=object_images_probe, absent_animation_probe=absent_animation_probe, walkbox_mask_probe=walkbox_mask_probe, one_shot_limb_probe=one_shot_limb_probe).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             archive.writestr(info,data)
 
@@ -218,6 +218,7 @@ if __name__=='__main__':
     parser.add_argument('--object-images-probe', action='store_true')
     parser.add_argument('--absent-animation-probe', action='store_true')
     parser.add_argument('--walkbox-mask-probe', action='store_true')
+    parser.add_argument('--one-shot-limb-probe', action='store_true')
     args=parser.parse_args();write_archive(args.output,masks=args.masks,transitions=args.transitions,
                                          sound_status_probe=args.sound_status_probe, cutscene_callback_probe=args.cutscene_callback_probe, room_hook_probe=args.room_hook_probe,
-                                         object_images_probe=args.object_images_probe, absent_animation_probe=args.absent_animation_probe, walkbox_mask_probe=args.walkbox_mask_probe)
+                                         object_images_probe=args.object_images_probe, absent_animation_probe=args.absent_animation_probe, walkbox_mask_probe=args.walkbox_mask_probe, one_shot_limb_probe=args.one_shot_limb_probe)
