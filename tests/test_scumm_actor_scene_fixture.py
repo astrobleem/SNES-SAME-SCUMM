@@ -11,6 +11,24 @@ from same.resources import MemoryResourceProvider
 from same.services import HostServices
 
 class ActorSceneFixture(unittest.TestCase):
+    def test_original_masked_room_transition_and_revisit(self):
+        root=Path(__file__).resolve().parents[1]
+        p=load_profile(root/'examples/profiles/scumm_v5_game_analysis_fixture.json',verify_resources=False)
+        p=replace(p,options={**p.options,'headless_presentation':True})
+        files=source_files(masks=True,transitions=True)
+        provider=LucasartsScummV5ResourceProvider(MemoryResourceProvider({
+            'game.index':files['ATLANTIS/ATLANTIS.000'],'game.data':files['ATLANTIS/ATLANTIS.001']}),parse_game_policy(p))
+        self.assertEqual(provider.read('room.1'),provider.read('room.2'))
+        h=EngineHost(p,default_registry(),services=HostServices.create(p,resources=provider));h.boot()
+        for stage, room in enumerate((1,1,1,2,1),1):
+            for _ in range(40):
+                h.tick();slots=[s for s in h.engine.state.scripts if s.number==1]
+                if slots and slots[0].locals[1]==stage:break
+            self.assertEqual(slots[0].locals[1],stage)
+            self.assertEqual(h.engine.state.current_room,room)
+            self.assertEqual([h.engine.state.actors[a].room for a in (1,2)],[room,room])
+            slots[0].locals[0]=stage
+
     def test_two_original_costumes_and_source_script_stages(self):
         root=Path(__file__).resolve().parents[1]
         p=load_profile(root/'examples/profiles/scumm_v5_game_analysis_fixture.json',verify_resources=False)

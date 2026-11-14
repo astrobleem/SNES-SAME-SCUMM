@@ -15,7 +15,7 @@ STAGES = (
     ((220,130,231,231,90,1),(160,124,128,200,270,1)),
 )
 
-def source_files(*, masks: bool = False) -> dict[str, bytes]:
+def source_files(*, masks: bool = False, transitions: bool = False) -> dict[str, bytes]:
     base = camera_files()
     decoded = bytes(b ^ 0x69 for b in base['ATLANTIS/ATLANTIS.001'])
     size = int.from_bytes(decoded[34:38], 'big')
@@ -54,25 +54,40 @@ def source_files(*, masks: bool = False) -> dict[str, bytes]:
             p.emit('facing',bytes((0x11,actor,{180:250,90:249,270:248}[facing])))
             p.emit('chore',bytes((0x11,actor,frame)))
         p.wait_ack(n,f'scene {n}')
-    p.move(0x4001,len(STAGES)+1);p.emit('stop',b'\0')
+    if transitions:
+        for n, target in ((4, 2), (5, 1)):
+            # Start another animated pose before the original room request.
+            # This exercises whole-scene ownership, including scratch-free
+            # intervals; no engine diagnostic code or resource writes.
+            for actor in (1,2):p.emit('chore',bytes((0x11,actor,2)))
+            p.emit('yield',b'\x80')
+            p.emit('load room',bytes((0x72,target)))
+            for actor in (1,2):p.emit('actor room',bytes((0x2d,actor,target)))
+            p.wait_ack(n,f'room transition {n}')
+    p.move(0x4001,6 if transitions else len(STAGES)+1);p.emit('stop',b'\0')
     container=bytearray(ch(b'ROOM',room));script=len(container);container+=ch(b'SCRP',bytes(p.data))
     costs=[]
     for actor in (1,2):
         raw=bytearray(costume())
         if actor==2:raw[3:6]=bytes((0,120,200))
         costs.append(len(container));container+=ch(b'COST',raw)
-    data=ch(b'LECF',ch(b'LOFF',bytes((1,1))+struct.pack('<I',30))+ch(b'LFLF',container))
+    if transitions:
+        first=ch(b'LFLF',container);second=ch(b'LFLF',ch(b'ROOM',room))
+        loff=bytes((2,1))+struct.pack('<I',35)+bytes((2,))+struct.pack('<I',35+len(first))
+        data=ch(b'LECF',ch(b'LOFF',loff)+first+second)
+    else:
+        data=ch(b'LECF',ch(b'LOFF',bytes((1,1))+struct.pack('<I',30))+ch(b'LFLF',container))
     index=(ch(b'DOBJ',struct.pack('<H',256)+bytes(1280))
            +ch(b'DSCR',directory(bytes((0,1)),(0,script)))
            +ch(b'DCOS',directory(bytes((0,1,1)),(0,*costs)))+ch(b'DSOU',directory(b'',[])))
     return {f'ATLANTIS/ATLANTIS.{n:03}':bytes(b^0x69 for b in raw) for n,raw in enumerate((index,data))}
 
-def write_archive(path: Path, *, masks: bool = False) -> None:
+def write_archive(path: Path, *, masks: bool = False, transitions: bool = False) -> None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as archive:
-        for name,data in source_files(masks=masks).items():
+        for name,data in source_files(masks=masks,transitions=transitions).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             archive.writestr(info,data)
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('output',type=Path);parser.add_argument('--masks',action='store_true')
-    args=parser.parse_args();write_archive(args.output,masks=args.masks)
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('output',type=Path);parser.add_argument('--masks',action='store_true');parser.add_argument('--transitions',action='store_true')
+    args=parser.parse_args();write_archive(args.output,masks=args.masks,transitions=args.transitions)

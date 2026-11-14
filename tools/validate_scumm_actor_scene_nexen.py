@@ -35,6 +35,7 @@ def main():
     for key in ('rom','directory','archive','profile','nexen','native-core','mcp-python','output'):ap.add_argument('--'+key,type=Path,required=True)
     ap.add_argument('--port',type=int,required=True)
     ap.add_argument('--masks',action='store_true')
+    ap.add_argument('--transitions',action='store_true')
     ap.add_argument('--expect-mask-crc-error',type=Path,metavar='FAULT_MANIFEST',
                     help='negative control: isolated package with one intentionally corrupt checked mask block')
 
@@ -50,6 +51,9 @@ def main():
     from validate_scumm_actor_visual_probe_nexen import read_committed_pose,committed_pose_is_presented,capture_committed_surface,selector_index
     from examples.resources.scumm_v5.actor_scene_fixture import source_files, STAGES
     stages = STAGES
+    if args.transitions:
+        moved_animated=tuple((*pose[:-1],2) for pose in STAGES[-1])
+        stages=(*STAGES,moved_animated,moved_animated)
     from tools.generate_snes_scumm_actor_sprite import source_bytes
     from same.engines.scumm_v5.resources import LucasartsScummV5ResourceProvider
     from same.engines.scumm_v5.policy import parse_game_policy
@@ -73,7 +77,7 @@ def main():
     assert symbols['SAME_SCUMM_C4_STATE_END'] >= symbols['SAME_SCUMM_C4_SLOT_LOCALS']+25*64
     native=json.loads(args.directory.read_text());boot=next(e for e in native['entries'] if e['identity']=='GlobalProgram(1)')
     source=source_bytes(args.archive)
-    fixture=source_files(masks=args.masks)
+    fixture=source_files(masks=args.masks,transitions=args.transitions)
     assert source=={'game.index':fixture['ATLANTIS/ATLANTIS.000'],'game.data':fixture['ATLANTIS/ATLANTIS.001']},'diagnostic acknowledges only its exact public synthetic source'
     provider=LucasartsScummV5ResourceProvider(MemoryResourceProvider(source),parse_game_policy(load_profile(args.profile,verify_resources=False)))
     assert hashlib.sha256(provider.read('script.1')).hexdigest()==boot['sha256']
@@ -127,7 +131,8 @@ def main():
         if time.monotonic()-started>540 or row['frame']>12000:raise TimeoutError('bounded native control deadline')
         return r,row
     def compare(session,r,row,expected,label):
-        pose=row['pose'];rec=capture_committed_surface(r,args.output,label,cursor_base=sym('SAME_SCUMM_CURSOR_VALID'),expected_room=1)
+        pose=row['pose'];expected_room=2 if args.transitions and row['stage']==4 else 1
+        rec=capture_committed_surface(r,args.output,label,cursor_base=sym('SAME_SCUMM_CURSOR_VALID'),expected_room=expected_room)
         rec['scene_generation']=row['scene_generation']
         actors={}
         raw=bytes.fromhex(row['snapshots'])
@@ -192,7 +197,7 @@ def main():
                     if first is None:first=row['frame']
                     raw=bytes.fromhex(row['snapshots']);key=tuple(raw[i*32+12] for i in (1,2))
                     ready=(row['stage']==stage and row['scene_phase']==0 and row['scene_generation']>previous_generation and not row['scene_dirty']
-                           and committed_pose_is_presented(pose,expected_room=1))
+                           and committed_pose_is_presented(pose,expected_room=2 if args.transitions and stage==4 else 1))
                     if ready and key not in seen:
                         compare(session,r,row,expected,f'stage-{stage}-steps-{key[0]}-{key[1]}')
                         seen.add(key)

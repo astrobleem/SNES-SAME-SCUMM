@@ -192,3 +192,32 @@ Fault package SHA-256:
 `14c4c951cc2fefe06202686790008385b7f473135511db56217235b74548d119`.
 The private fault manifest retains the original package hash, exact block
 identity, package offset, size and expected CRC. Original package is intact.
+
+### Room handoff owns the whole scene, not just scratch
+
+The corrected-fence ROM `6d9fc5d5a8e19fd342fab8b2cb29d1a8ecf88c1ed9dd57efe383d78f0584d3c2`
+passed original room-10 menu, pickup menu, inventory and taxi-dialogue complete
+source/INDEX8/PPU/CGRAM comparisons. Inventory includes source-scaled Indy and
+an authored actor whose 74 covered pixels are all hidden by plane 2. Newspaper
+owner/state is 1/1. These captures are not Barnett acceptance.
+
+The subsequent original taxi transition raised resource error16. Its preserved
+write-hook continuation observes error writes at frame10852; the returned CPU
+snapshot is later, not the exact offending instruction. Incoming active-room
+installation was running while the old multi-actor scene could start again.
+The scratch-only cancellation check missed scene ownership between transfers.
+
+Incoming phases4/5 now prohibit scene snapshots and composition. The checked
+room loader retires a non-idle scene even when its transfer scratch is NONE.
+After outgoing EXCD, installation also cancels any newer outgoing scene before
+revoking active metadata validity. Existing provider cancellation still drains
+owned writes before scratch reuse. No new buffer or scheduler is introduced.
+Focused tests execute both lifecycle admission guards; installation ordering
+is checked, and an original-script copyright-free fixture adds room1→2→1
+with two scaled/masked actors. Native acceptance of this correction is pending.
+
+The first transition-fixture cook accidentally omitted `--executable` and
+produced registration-only records. It timed out before stage1 with no SCUMM
+error; it is not an actor/transition pass. The executable manifest is checked
+before the corrected build. Failed evidence is retained, without a watchdog
+increase. The authentic runtime build remains separate.

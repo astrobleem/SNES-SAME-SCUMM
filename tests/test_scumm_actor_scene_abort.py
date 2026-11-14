@@ -38,6 +38,39 @@ class SceneAbortMachine(ControllerMachine):
 
 
 class SceneAbortTests(unittest.TestCase):
+    def test_incoming_room_phases_cannot_snapshot_or_restart_composition(self):
+        text = (Path(__file__).resolve().parents[1] /
+                'runtime/snes/engines/scumm_v5_actor_scene.inc.pasm').read_text()
+        for operation in ('Tick', 'Render'):
+            label = f'ScummV5_Scene_{operation}'
+            code = text[text.index(label+'_Far:'):]
+            code = code[:code.index('    lda.l SAME_SCUMM_SCENE_PHASE')]
+            for phase in range(6):
+                m = SceneAbortMachine(0, 0)
+                m.code, m.labels = [], {}
+                for raw in code.splitlines():
+                    line=raw.split(';',1)[0].strip()
+                    if not line or line.startswith('.'):continue
+                    if line.endswith(':'):m.labels[line[:-1]]=len(m.code)
+                    else:m.code.append(line)
+                m.code.extend(('lda #$0001','sta.l admitted'))
+                m.labels[label+'__done']=len(m.code)
+                m.code.extend(('ply','plx','pla','plp','rtl'))
+                m.mem['SAME_SCUMM_M23A_PHASE']=phase
+                m.run(label+'_Far')
+                self.assertEqual(m.mem.get('admitted',0),int(phase<4))
+
+    def test_install_retires_scene_before_revoking_active_metadata(self):
+        root=Path(__file__).resolve().parents[1]
+        text=(root/'runtime/snes/engines/scumm_v5_m24rb_far.pasm').read_text()
+        block=text.split('ScummV5_M24RB_Far_CommitRoom__begin_live_install:',1)[1]
+        self.assertLess(block.index('jsl ScummV5_ActorPose_Cancel_Far'),
+                        block.index('sta.l SCUMM_LIVE_ROOM_VALID'))
+        text=(root/'runtime/snes/engines/scumm_v5_msu_live_room.pasm').read_text()
+        block=text.split('ScummV5_MsuLiveRoom_Start_Far:',1)[1]
+        self.assertLess(block.index('lda.l SAME_SCUMM_SCENE_PHASE'),
+                        block.index('lda.l SAME_SCUMM_ACTOR_SCRATCH_OWNER'))
+
     def test_completed_dma_owned_scene_is_not_rolled_back(self):
         for locked in (False, True):
             m = SceneAbortMachine(4, 1, locked)

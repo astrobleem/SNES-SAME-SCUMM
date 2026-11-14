@@ -52,6 +52,16 @@ ScummV5_MsuLiveRoom_Start_Far:
     sep #$20
     .a8
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SAME_SCUMM_SCENE_ENABLED
+    ; A scene owns its underlay between transfers too, when scratch is NONE.
+    ; Retire it before incoming resources can reuse either metadata alias.
+    lda.l SAME_SCUMM_SCENE_PHASE
+    beq ScummV5_MsuLiveRoom_Start_Far__scene_retired
+    jsl ScummV5_ActorPose_Cancel_Far
+    jmp ScummV5_MsuLiveRoom_Start_Far__wait
+ScummV5_MsuLiveRoom_Start_Far__scene_retired:
+    .a8
+    .endif
     ; Room lifecycle has priority over transient costume transfers. Mark the
     ; actor ticket stale and let the provider drain before this service claims
     ; the shared pending bytes.

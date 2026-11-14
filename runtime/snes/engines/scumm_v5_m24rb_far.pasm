@@ -928,6 +928,12 @@ ScummV5_M24RB_Far_CommitRoom__old_bundle_released:
 ScummV5_M24RB_Far_CommitRoom__begin_live_install:
     .a8
     .if SCUMM_MSU1_LIVE_ROOM_RECORD_SIZE == $000D
+    .if SAME_SCUMM_SCENE_ENABLED
+    ; EXCD may have animated the outgoing room after preflight. Restore any
+    ; unpublished scene while its metadata/journal are still valid, before
+    ; revoking that allocation. The read owner drains separately below.
+    jsl ScummV5_ActorPose_Cancel_Far
+    .endif
     ; Re-fetch every independently CRC'd chunk only after EXCD and outgoing
     ; activation retirement. The active record is not valid until all chunks,
     ; structural tables, and external routes pass validation.

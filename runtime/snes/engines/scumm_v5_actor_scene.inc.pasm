@@ -13,6 +13,14 @@ ScummV5_Scene_Tick_Far:
     pha
     phx
     phy
+    lda.l SAME_SCUMM_M23A_PHASE
+    and #$00FF
+    cmp #$0004
+    bcc ScummV5_Scene_Tick__lifecycle_ready
+    jml ScummV5_Scene_Tick__done
+ScummV5_Scene_Tick__lifecycle_ready:
+    .a16
+    .i16
     lda.l SAME_SCUMM_SCENE_PHASE
     beq ScummV5_Scene_Tick__idle
     jml ScummV5_Scene_Tick__done
@@ -746,6 +754,16 @@ ScummV5_Scene_Render_Far:
     pha
     phx
     phy
+    ; Incoming room reads/installation own the active metadata alias. Even
+    ; between actor chunks (scratch NONE), an old scene must not restart.
+    lda.l SAME_SCUMM_M23A_PHASE
+    and #$00FF
+    cmp #$0004
+    bcc ScummV5_Scene_Render__lifecycle_ready
+    jml ScummV5_Scene_Render__done
+ScummV5_Scene_Render__lifecycle_ready:
+    .a16
+    .i16
     lda.l SAME_SCUMM_SCENE_PHASE
     cmp #$0004
     bne ScummV5_Scene_Render__not_wait
