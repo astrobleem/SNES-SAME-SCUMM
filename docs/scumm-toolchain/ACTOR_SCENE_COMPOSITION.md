@@ -95,3 +95,56 @@ Current local suite:1,668 run,12 skipped,OK; make validate and44-region ownershi
 audit PASS. The published pre-mask checkpoint0536e4b has both hosted checks green
 in run43552305237. Hosted CI does not execute Nexen. Later source changes need
 their own hosted check results.
+
+## Integration boundaries found after the fixture
+
+The first fresh authentic build reached room10 with error16 when visible
+actor11 requested costume209, absent from the earlier five-costume build.
+The local source-resource configuration now includes that original costume;
+no actor is hidden and no engine branch recognizes its number. The corrected
+build reaches the authored room10 interface with error0. This is not yet
+Barnett acceptance.
+
+A subsequent controller observation tried to send input before the original
+room-entry activation finished its matrixOps work. Its90-frame edge bound
+expired while the engine remained busy; the supervisor reported validator
+failure, no signal/deadline, and complete cleanup. A matching-ROM checkpoint
+permits a targeted continuation that waits for entry retirement. No timeout
+increase or cold replay is needed for this observer correction.
+
+Cancellation now distinguishes an incomplete scene from a complete image
+already handed to NMI. The latter retains its underlay until normal retirement
+instead of trying to write a DMA-locked surface. Source-execution regressions
+cover both phases. They are host evidence, not an extra native capture.
+Original byte-valued walkbox mask selectors remain intact for the host/native
+clamp rule. Advancing past source block255 cannot wrap through16-bit XBA.
+
+The completed room10 verb/menu captures on ROM
+`d16154335b375bc6fdbbd7442b4ebdacb441d6ef07146a1a358b61c9d7d69574`
+match the complete source scene and decoded PPU, including source font HUD.
+Their pose metadata is captured, not inferred. Subsequent input exposes
+actor12/costume208, another missing configured resource; that session is not
+pickup or Barnett acceptance. The first-error record is preserved privately.
+
+Compiler resource dependency analysis still read legacy ActorOps `selectors`
+after normalization had changed to `commands`. Room reports, whole-game graph
+edges and costume census now share the normalized resource-operand adapter.
+Focused actual-bytecode tests preserve both direct costume/sound references
+and variable-indirect uncertainty. No runtime semantics are replaced.
+
+The bounded rooms2/10/75 resource preflight supplies their static costume IDs;
+explicit startup/dynamic seeds remain separate. Dynamic edges are not claimed
+resolved. Eleven source costumes produce1,097 poses. Combined pose/chunk/
+palette metadata no longer fits one ROM bank, so the cooker retains the old
+layout when it fits and otherwise places chunk/palette tables in an independent
+bank after cel metadata. Existing long-addressed accessors need no change.
+SC5ACT layout, checked bytes and logical indices remain unchanged; oversized
+individual tables still fail explicitly. Generated bank reservations and ROM
+audit cover the actual emitted placement.
+
+Fresh full build ROM
+`e9042479207e2dfd80e36941625227d78278dad063e85db5e04e6de129e9bae9`
+passes pinned assembly and ROM audit. All2,203 canonical IDs, semantic names,
+body hashes, dispatch and source provenance compare equal against the prior
+full build. Its cold bounded control is a new resource configuration; no old
+checkpoint is loaded into it. Destination acceptance is still pending.

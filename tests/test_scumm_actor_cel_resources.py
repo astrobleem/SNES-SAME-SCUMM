@@ -13,6 +13,23 @@ from test_scumm_v5_costume import rectangular_costume
 
 
 class CelResources(unittest.TestCase):
+    def test_chunk_metadata_can_use_independent_long_addressed_bank(self):
+        _, rows = compile_pose_set({1: ('synthetic', rectangular_costume())}, preserve_cels=True)
+        row = copy.deepcopy(next(r for r in rows if r['source_slot_bytes']))
+        # One tiny checked cel repeated across many logical pose descriptors.
+        row.update(source_slot_bytes=1, cels=[dict(width=1, height=1,
+                   relative_x=0, relative_y=0, move_x=0, move_y=0,
+                   spans=[dict(x=0, y=0, offset=0, length=1)])])
+        row['chunks']=[dict(length=1, relative_offset=0, pose_offset=0,
+                            crc32='a505df1b', spans=[])]
+        records=[row for _ in range(820)]
+        text=pose_directory_include(records, bank=13)
+        prefix=text.split('ScummV5_ActorPoseChunkDirectory:')[0]
+        self.assertEqual(prefix.rsplit('.bank ',1)[1].splitlines()[0], '27')
+        self.assertIn('ScummV5_ActorPaletteDirectory:', text)
+        self.assertIn('.bank 26\n.org $8000\nScummV5_ActorCelDirectory0:',text)
+        self.assertEqual(text,pose_directory_include(records,bank=13))
+
     def test_directory_rejects_invalid_cel_and_checked_chunk_boundaries(self):
         _, rows = compile_pose_set({1: ('synthetic', rectangular_costume())}, preserve_cels=True)
         index = next(i for i, r in enumerate(rows) if r['source_slot_bytes'])

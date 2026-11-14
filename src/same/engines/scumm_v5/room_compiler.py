@@ -703,6 +703,19 @@ def _object_ownership_semantic_ir(
     raise ValueError(f"unsupported object ownership IR family {family}")
 
 
+def actor_resource_references(operands: dict[str, Any]):
+    """Resource operands from normalized actor commands (or legacy IR)."""
+    if "commands" in operands:
+        commands = ((int(c["subopcode"]) & 0x1F, c.get("arguments", []))
+                    for c in operands["commands"])
+    else:
+        commands = ((int(c["subop"]), c.get("values", []))
+                    for c in operands.get("selectors", []))
+    for subop, values in commands:
+        if subop in (1, 3):
+            yield subop, values[0] if values else None
+
+
 def _actor_ops_semantic_ir(operands: dict[str, Any]) -> dict[str, Any]:
     """Normalize v5 actor configuration commands while retaining operand modes."""
     names = {
@@ -1914,17 +1927,14 @@ def analyze_room(room_ir: RoomIR, *, global_script_count: int) -> CapabilityRepo
                     script.identity, instruction.pc,
                 ))
             elif operation == "actor_ops":
-                for selector in operands.get("selectors", []):
-                    subop = int(selector["subop"])
-                    kind = "costume" if subop == 1 else "sound" if subop == 3 else None
-                    if kind is not None:
-                        value = selector["values"][0] if selector["values"] else None
-                        target = _static_value(value)
-                        (dependencies if target is not None else dynamic).append(Dependency(
-                            kind, target, "static" if target is not None else "dynamic",
-                            script.identity, instruction.pc,
-                            expression=None if target is not None else "actorOps resource operand is variable-indirect",
-                        ))
+                for subop, value in actor_resource_references(operands):
+                    kind = "costume" if subop == 1 else "sound"
+                    target = _static_value(value)
+                    (dependencies if target is not None else dynamic).append(Dependency(
+                        kind, target, "static" if target is not None else "dynamic",
+                        script.identity, instruction.pc,
+                        expression=None if target is not None else "actorOps resource operand is variable-indirect",
+                    ))
             elif operation == "resource_routines":
                 subop = int(operands.get("subop", 0))
                 if subop == 17:

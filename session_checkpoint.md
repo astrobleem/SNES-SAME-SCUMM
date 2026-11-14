@@ -1,25 +1,33 @@
 # Active continuation — multi-actor and foreground masks
 
-PR16 `scumm-fate-input-callback`, latest published0536e4b; no PR14/15 changes.
-Two-actor native fixture passed4 complete source/INDEX8/PPU/CGRAM captures.
-Checked z-mask fixture also passed4 complete captures. See
-`docs/scumm-toolchain/ACTOR_SCENE_COMPOSITION.md` for exact ROM/package linkage.
-Follow-up fixes preserve published primary coordinates during sampling and
-capture class/walkbox mask policy in the immutable scene key.
+PR16 `scumm-fate-input-callback`, published3e373989; PR14/15 unchanged.
+Two-actor and masked native fixtures each passed4 complete source/INDEX8/PPU/CGRAM captures.
+Exact identities and limitations: `docs/scumm-toolchain/ACTOR_SCENE_COMPOSITION.md`.
+Hosted run43552900279: both required checks PASS for3e373989.
 
-Private evidence root: `/home/chad/SAME-private-evidence/milestone-d-scene-20261113`.
-Fresh authentic ROM `auth-build-iuvn5vwr`, SHA18745e8e9f1b26dad619ff5d714aa528ad1413bbf4807a1dd610f10f575d1e69.
-`cold-scene` is currently running under600sec private supervisor, port7955,
-using genuine original startup/pickup to obtain a new exact-ROM room10 state.
-No old-ROM state was restored. Do not launch a duplicate. No Barnett scene or
-interaction acceptance yet. Inspect process-result and observations before
-continuing. Recovery worktree and baseline tag remain untouched.
+Private root `/home/chad/SAME-private-evidence/milestone-d-scene-20261113`.
+First cold-scene stopped on unconfigured original costume209 in room10.
+Corrected resource build `auth-build-n4lg_t3e` includes1,2,26,58,78,209 and
+completed original startup to room10/error0. Its next observer sent input
+before RoomEntryProgram(10) retired;90-frame edge bound failed. Both sessions
+cleaned up normally after validator failure; no signal/deadlock claim.
+`room10-entry-retirement` resumes that exact-ROM active-interface.state,
+waits for actual entry retirement (observed frame7120), then checks original
+pickup/inventory. No old-ROM state loading or guest gameplay writes.
+Barnett scene and interaction remain NOT_VERIFIED.
 
-Full local suite1668run/12skipped PASS; validate/memory PASS. Hosted checks
-for0536e4b PASS. New mask code needs its own final-head hosted checks.
-All commercial assets/captures stay outside Git. No automatic merge.
-
---- Prior checkpoint ---
+Follow-up5376dce fixes cancellation of completed video-owned scenes and mask
+bounds. Local suite1,673 run/12 skipped passes; latest compiler closure tests
+and full suite are running separately. Compiler ActorOps dependency adapter
+now reads normalized commands; static room2/10/75 costume coverage is measured
+in private room-costume-dependencies.json. Eleven costumes/1,097 poses need
+chunk/palette metadata in a separate existing long-addressed ROM bank.
+Fresh ROM `auth-build-fvo9hep_` SHAe9042479207e2dfd80e36941625227d78278dad063e85db5e04e6de129e9bae9
+assembles/audits. `cold-room-costume-closure` currently runs under the600sec
+supervisor/port7961. No old state is loaded. Earlier room10 menu source/PPU
+matches remain valid; subsequent failure was missing authored costume208.
+All2,203 ProgramUnit IDs, body hashes and dispatch records remain identical.
+Recovery worktree `/tmp/same-msu1-fate-room4.hqQ8VD` remains untouched.
 
 # Active continuation — scaled camera exposure
 

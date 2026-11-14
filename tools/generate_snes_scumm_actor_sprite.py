@@ -363,9 +363,20 @@ def pose_directory_include(
         raise ValueError("actor span directories exceed mapped LoROM banks")
     if bank in range(span_first_bank, span_first_bank + len(span_pages)):
         raise ValueError("actor span pages overlap the pose/chunk/palette directory bank")
-    if (len(records) * POSE_RECORD_SIZE + len(chunk_rows) * CHUNK_RECORD_SIZE
-            + len(palettes) * PALETTE_RECORD_SIZE > 0x8000):
+    auxiliary_bytes = len(chunk_rows) * CHUNK_RECORD_SIZE + len(palettes) * PALETTE_RECORD_SIZE
+    if auxiliary_bytes > 0x8000:
         raise ValueError("actor chunk/palette directories exceed their ROM bank")
+    # The native accessors already use independent long-addressed labels for
+    # poses and chunks/palettes. Preserve the old layout when it fits; spill
+    # the latter tables after cel metadata when their combined bank is full.
+    # This changes ROM placement only, not SC5ACT bytes or logical indices.
+    auxiliary_bank = bank
+    if len(records) * POSE_RECORD_SIZE + auxiliary_bytes > 0x8000:
+        auxiliary_bank = span_first_bank + len(span_pages) + (len(cel_rows) + 1023) // 1024
+        if auxiliary_bank == bank:
+            auxiliary_bank += 1
+        if auxiliary_bank > 0x7f:
+            raise ValueError("actor auxiliary metadata exceeds mapped ROM")
     lines = [
         "; Generated lossless source-backed pose/chunk/palette directories.",
         "; Pixel slots remain in checked SC5ACT payloads in SAMEPKG.",
@@ -388,6 +399,8 @@ def pose_directory_include(
         lines.extend(rows(raw, POSE_RECORD_SIZE).splitlines())
     if not records:
         lines.append("    .byte $00")
+    if auxiliary_bank != bank:
+        lines.extend((f".bank {auxiliary_bank}", ".org $8000"))
     lines.append("ScummV5_ActorPoseChunkDirectory:")
     for chunk in chunk_rows:
         raw = (chunk["offset"].to_bytes(4, "little")
