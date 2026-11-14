@@ -11357,7 +11357,15 @@ ScummV5_Op_ActorOps__costume:
     lda.l SAME_SCUMM_CONDITION
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_COSTUME,x
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    ; A new classic costume starts with its source init chore, never an old
+    ; costume's explicit request. Missing later records preserve this chore.
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_INIT_FRAME,x
+    sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
+    lda #$01
+    .else
     lda #$00
+    .endif
     jsr ScummV5_C14_SetExplicitAnimation
     .endif
     brl ScummV5_Op_ActorOps__loop
@@ -11730,11 +11738,19 @@ ScummV5_Op_AnimateActor__store:
     .a8
     jsr ScummV5_C14_BaseX
     lda.l SAME_SCUMM_FETCH_BYTE
+    .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SCUMM_V5_ACTOR_CEL_FORMAT
+    jsl ScummV5_ActorAnimation_Admission_Far
+    bcs ScummV5_Op_AnimateActor__observe_direction
+    .endif
+    .endif
     sta.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     lda #$01
     jsr ScummV5_C14_SetExplicitAnimation
     .endif
+ScummV5_Op_AnimateActor__observe_direction:
+    .a8
     .if SAME_BUILD_SCUMM_ROOM_SERVICE
     jsl ScummV5_ActorFacing_ObserveAnimate_Far
     .endif

@@ -3084,8 +3084,9 @@ class ScummV5EngineTests(unittest.TestCase):
         self.assertFalse(host.engine.inspect_state()["scripts"][0]["active"])
 
     def test_c28_direction_preserves_chore_then_raw_request_selects_frame(self) -> None:
+        from test_scumm_v5_costume import synthetic_costume
         fixture = (ROOT / "examples/resources/scumm_v5/c28_animate_actor.scrp").read_bytes()
-        host = self._host(fixture)
+        host = self._host(fixture, resources={"costume.1": synthetic_costume(frame=6)})
         host.engine.state.actors[10] = ActorState(
             costume=1, room=0, visible=False, costume_frame=7, costume_step=3
         )

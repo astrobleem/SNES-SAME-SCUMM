@@ -18,7 +18,9 @@ STAGES = (
     dict(scale=(128,200), facing=90, frame=1, x=130,y=125),
     dict(scale=(231,231), facing=270, frame=1, x=130,y=125),
     dict(scale=(255,255), facing=180, frame=1, x=2,y=20),
-    dict(scale=(231,231), facing=180, frame=0, x=130,y=125),
+    # Frame0 has no decode record: retain the prior live chore, not a blank
+    # image. requested_frame keeps the original fixture bytecode unchanged.
+    dict(scale=(231,231), facing=180, frame=1, requested_frame=0, x=130,y=125),
     dict(scale=(231,231), facing=180, frame=2, x=130,y=125),
     dict(scale=(231,231), facing=180, frame=1, x=190,y=120),
 )
@@ -68,7 +70,7 @@ def source_files(scenario: str = 'scaling') -> dict[str,bytes]:
             p.emit('actor scale',bytes((0x13,1,0x11,*stage['scale'],0xff)))
             p.emit('putActor',b'\x01\x01'+struct.pack('<hh',stage['x'],stage['y']))
             p.emit('face',bytes((0x11,1,{180:250,90:249,270:248}[stage['facing']])))
-            p.emit('animate',bytes((0x11,1,stage['frame'])))
+            p.emit('animate',bytes((0x11,1,stage.get('requested_frame',stage['frame']))))
         if 'camera' in stage:
             p.emit('setCameraAt', b'\x32'+struct.pack('<H',stage['camera']))
         p.wait_ack(n,f'scaled pose {n}')

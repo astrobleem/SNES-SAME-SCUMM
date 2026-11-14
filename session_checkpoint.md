@@ -4793,3 +4793,40 @@ Native hook fixture PASSED at928frames,39.676s/normal cleanup, noBRK/cachealias.
 Build scene-build-eswmbq8b, report native-room-hooks-entryfix/observations/report.json.
 Authentic rebuild auth-build-5te2p7a_ / auth-source-q30_1rmb is in progress.
 Use new hooks-* setup evidence, never restore4c12 states into this new ROM.
+
+Corrected full suite1726run/12skip PASS382.030s; makevalidate47regionsPASS.
+01641c3577f5997bfc344acc2ee6b1fb215311ee pushed; both jobsPASS43592376893.
+Authentic ROMb491c190, map15d47dd7, samepackageb6afddbf, buildidentity4ebc3884;
+67tracked runtime files matchpubliccommit (room-hooks-authentic-build-linkage.json).
+Fresh hooks-startupPASS154.071s; hooks-room10-pickupPASS187.055s (owner1/state1,
+presentationpending); hooks-room10-readyPASS63.409s (exactscene and matchingcheckpoint).
+hooks-barnett is nowrunning port8043/600s, normaltaxi/map creates newBarnettstate.
+Next hooks-office-continuation.py uses that exactROM state port8044 and continuous
+Open34→Walk34→room1→Pickup25→Look9ownedcoat; no guestwrites. No Epass yet.
+
+The hooks-barnett run failed normally after241.927s (not timeout), error16
+while actor10/costume58 requested frame6; no new Barnett checkpoint was made.
+Exact map source/INDEX8/PPU/CGRAM passed first. Existing controller-error capture
+and travel-map-complete-scene.state are preserved for ROMb491c190 only.
+Offline pinned ClassicCostumeLoader shows absent animation record is a no-op
+on live cels; current source lookup treated it as resource failure. In-progress
+fix admits requests through compiler-derived per-costume animation masks, keeps
+initialized/current chore on absent/direction-only requests, and mirrors the
+host raw-request/decoded-chore distinction. No extra WRAM/pixel cache allocated.
+New copyright-free --absent-animation-probe injects absent requests after valid
+chores before any presentation sample. Native build scene-build-sj9ay6is ROM
+189687ffcace00912fd58c27d0f7c5f0cb72788b17b1d6c2eabae674f9fb0ae6.
+native-absent-animation runs port8045 under600s supervisor; first two complete
+masked multi-actor captures exact. Not yet a completed test or authentic pass.
+Full suite and validation running separately. Recovery worktree untouched.
+
+Absent-animation native fixture PASSED four full images, frame2165,
+227.479s normal exit/cleanup; no survivors. NewauthROM59b8b3a3,
+map39a03551/packageb6afddbf/buildidentity63a87ee9 fromauth-build-1j0uxify
+and auth-source-wew_27bo;68 nongenerated runtimefiles byteequal.
+anim-startup PASS152.293s. anim-room10-pickup nowrunning port8047.
+Prepared anim-ready/Barnett/office files use onlynewmatching identities.
+Firstfullsuite1729/12skip failed obsoleteC28resource/scaling-empty/bitset
+expectations; fixed withactualfixturecostume andsource-no-op expectations.
+Focused13tests PASS; correctedfullsuite running (absent-animation-corrected-full-tests.log).
+E remains NOT_COMPLETE; do not publish a gameplay pass fromthese controls.

@@ -635,6 +635,7 @@ Same_Tad_BlankSong:
 .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
 .if SCUMM_V5_ACTOR_CEL_FORMAT
 .include "engines/scumm_v5_actor_cels.inc.pasm"
+.include "engines/scumm_v5_actor_animation.inc.pasm"
 .endif
 .endif
 .if SAME_BUILD_SCUMM_CONTROLLER

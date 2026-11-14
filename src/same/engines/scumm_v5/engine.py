@@ -3448,7 +3448,6 @@ class ScummV5Engine(Engine):
 
     def _op_animate_actor(self, slot: ScriptSlot, context: EngineContext) -> bool:
         """Request one canonical v5 animation on a live actor."""
-        del context
         actor = self._actor(self._var_or_direct_byte(slot, 0x80))
         request = self._var_or_direct_byte(slot, 0x40)
         actor.animation = request
@@ -3463,8 +3462,19 @@ class ScummV5Engine(Engine):
         elif chore in (3, 4):  # Immediate/turn direction; walking is deferred.
             actor.facing = facing
         elif actor.room == self.state.current_room and actor.costume != 0:
-            actor.costume_frame = request
-            actor.costume_step = 0
+            # Classic costumeDecodeData leaves live limbs unchanged when the
+            # requested animation has no record. Keep the raw script request
+            # above, independently of the decoded chore consumed by video.
+            defined = True
+            if isinstance(self._video, ScummV5RoomAdapter):
+                key = self._resource_key("costume", actor.costume)
+                costume = ScummV5Costume(context.services.resource_read(key), key=key)
+                defined = costume.has_animation(request, facing=actor.facing)
+                if actor.costume_frame is None:
+                    actor.costume_frame = actor.init_frame
+            if defined:
+                actor.costume_frame = request
+                actor.costume_step = 0
             actor.animation_progress = 0
         self._actors_dirty = True
         return False

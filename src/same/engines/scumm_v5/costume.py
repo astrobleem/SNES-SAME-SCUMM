@@ -176,6 +176,20 @@ class ScummV5Costume:
             advanced += 1
         return self.data[self._animation_commands + current] & 0x7F
 
+    def has_animation(self, frame: int, *, facing: int = 180) -> bool:
+        """Whether costumeDecodeData would apply an animation record.
+
+        An absent record is a no-op on existing limb state, not an instruction
+        to erase the actor. This is distinct from a present, empty record.
+        """
+        if not 0 <= frame <= 255:
+            raise ResourceError(f"SCUMM costume frame {frame} must fit u8")
+        animation = frame * 4 + self.direction_index(facing)
+        return animation <= self.animation_count and _u16(
+            self.data, self._data_offsets + animation * 2,
+            key=self.key, label=f"animation {animation}",
+        ) != 0
+
     def decode_pose(self, frame: int, *, facing: int = 180, step: int = 0) -> CostumePose:
         if not 0 <= frame <= 255:
             raise ResourceError(f"SCUMM costume frame {frame} must fit u8")

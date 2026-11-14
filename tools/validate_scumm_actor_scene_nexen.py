@@ -37,6 +37,7 @@ def main():
     ap.add_argument('--masks',action='store_true')
     ap.add_argument('--transitions',action='store_true')
     ap.add_argument('--object-images',action='store_true')
+    ap.add_argument('--absent-animation',action='store_true')
     ap.add_argument('--expect-object-crc-error',type=Path,metavar='FAULT_MANIFEST')
     ap.add_argument('--expect-mask-crc-error',type=Path,metavar='FAULT_MANIFEST',
                     help='negative control: isolated package with one intentionally corrupt checked mask block')
@@ -84,7 +85,7 @@ def main():
     if not expected_lifecycle <= {e['identity'] for e in native['entries']}:
         raise RuntimeError('scene fixture requires executable room entry/exit; cook with --executable')
     source=source_bytes(args.archive)
-    fixture=source_files(masks=args.masks,transitions=args.transitions,object_images_probe=args.object_images)
+    fixture=source_files(masks=args.masks,transitions=args.transitions,object_images_probe=args.object_images,absent_animation_probe=args.absent_animation)
     assert source=={'game.index':fixture['ATLANTIS/ATLANTIS.000'],'game.data':fixture['ATLANTIS/ATLANTIS.001']},'diagnostic acknowledges only its exact public synthetic source'
     provider=LucasartsScummV5ResourceProvider(MemoryResourceProvider(source),parse_game_policy(load_profile(args.profile,verify_resources=False)))
     assert hashlib.sha256(provider.read('script.1')).hexdigest()==boot['sha256']

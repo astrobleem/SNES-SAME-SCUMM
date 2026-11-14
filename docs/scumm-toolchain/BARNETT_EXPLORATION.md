@@ -363,3 +363,61 @@ package `c04c57cccc3123ca9608945ca1569e4d94df8bf4c4004d6718e85328ba3eb070`.
 The fixture deliberately disables small-program grouping to exercise checked
 code waits between callbacks. This is lifecycle conformance, not FATE gameplay.
 Authentic office/coat acceptance remains outstanding on the corrected runtime.
+
+
+## Absent classic animation records
+
+The first room-hook-corrected authentic continuation (`hooks-barnett`, ROM
+`b491c1909f64b37a6c0f3ffd75f2bb6a534f41e6d80ae7ce76a0c25943100ca2`)
+passed the complete map image, then rejected actor10/costume58/frame6 with
+resource error16. It exited normally after241.927seconds; no Barnett checkpoint
+or office acceptance was produced. Its matching state and first-error capture
+remain private and intact.
+
+Original room75 local200 requests direction250, yields, then animation6. The
+costume's largest animation index is14; the requested frame/direction indexes
+outside it. Pinned ScummVM `ClassicCostumeLoader::costumeDecodeData` returns
+without changing live limbs for an absent animation. Treating this as an absent
+checked resource, or clearing the actor, would be wrong.
+
+The cooker now emits one33-byte ROM presence descriptor per compiled costume:
+identity and256 source-animation bits. No pixel format, checked payload,
+selector, staging buffer or framebuffer changes. Metadata placement counts the
+new bytes before assembly. Native animateActor admission preserves the current
+initialized chore for absent records and direction-only requests; the existing
+facing bridge still handles the latter. Missing costumes remain explicit checked
+resource failures. A costume replacement initializes its own chore instead of
+retaining another costume's old request. The native C14 animation byte is the
+admitted presentation chore; the host retains the raw request separately from
+`costume_frame`. This is narrow absent-record coverage, not certification of
+all partial-limb animation commands.
+
+The copyright-free `--absent-animation-probe --masks` scene requests frame63
+immediately after each valid chore, before a renderer sample. Four complete
+Nexen captures pass exact source/INDEX8/PPU/CGRAM equality: two actors with
+independent scales, overlapping footprints, foreground masks, a second animation
+step and changed position/restoration. Final frame2165;227.479seconds; normal
+supervisor exit, cleanup complete, zero survivors. This is synthetic native
+acceptance, not Milestone E gameplay.
+
+- ROM: `189687ffcace00912fd58c27d0f7c5f0cb72788b17b1d6c2eabae674f9fb0ae6`
+- Map: `e59bea94e5861f0b808ee8efa74ba917b179952d9ca64e1bf64540b32fca4ba1`
+- Package: `9e40b5e7720b600213c1d2544ecaaa3b1c20a5f279bcb28f4cbcb1876696a168`
+- Build identity: `c4e24a42b53816de2b9c2586cd0528cc9659d5c828387da64ddbe1f2b8011f68`
+
+The authentic rebuilt ROM is
+`59b8b3a3b3a5ec59e8195a118c1f9b1fa3e1390d99203a7ac7c52cb3eb6ef4cb`.
+Its full-source package remains byte-identical:
+`b6afddbf486ee26f85bb444cb03060d9606864138e3d1b3ed282657f77a09111`.
+Fresh matching-ROM setup and the office continuation remain to be qualified.
+No old-ROM savestate is reused. Milestone E remains **NOT_COMPLETE**.
+
+
+The full-suite first pass exposed obsolete fixture expectations, not a native
+image mismatch. C28's frame-selection test now supplies an actual original
+fixture costume containing frame6. The scaling fixture still emits the same
+frame0 request, but its expected decoded chore remains frame1: frame0's source
+record is absent. Its prior blank-image stage was not valid evidence of a
+source-authored clear. Explicit limb-clear records remain distinct and tested.
+The focused corrected regressions pass; full-suite requalification is recorded
+separately rather than relabeling the first failed run.

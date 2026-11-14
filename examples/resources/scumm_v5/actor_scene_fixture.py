@@ -19,7 +19,7 @@ OBJECT_STAGES = (*STAGES, STAGES[-1])
 
 def source_files(*, masks: bool = False, transitions: bool = False,
                  sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
-                 object_images_probe: bool = False) -> dict[str, bytes]:
+                 object_images_probe: bool = False, absent_animation_probe: bool = False) -> dict[str, bytes]:
     base = camera_files()
     decoded = bytes(b ^ 0x69 for b in base['ATLANTIS/ATLANTIS.001'])
     size = int.from_bytes(decoded[34:38], 'big')
@@ -136,6 +136,10 @@ def source_files(*, masks: bool = False, transitions: bool = False,
             p.emit('position',bytes((1,actor))+struct.pack('<hh',x,y))
             p.emit('facing',bytes((0x11,actor,{180:250,90:249,270:248}[facing])))
             p.emit('chore',bytes((0x11,actor,frame)))
+            if absent_animation_probe:
+                # Undefined source records must preserve each actor's live
+                # chore, including one not yet sampled by presentation.
+                p.emit('absent animation preserves live cels',bytes((0x11,actor,63)))
         p.wait_ack(n,f'scene {n}')
     if transitions:
         for n, target in ((4, 2), (5, 1)):
@@ -181,11 +185,11 @@ def source_files(*, masks: bool = False, transitions: bool = False,
 
 def write_archive(path: Path, *, masks: bool = False, transitions: bool = False,
                   sound_status_probe: bool = False, cutscene_callback_probe: bool = False, room_hook_probe: bool = False,
-                  object_images_probe: bool = False) -> None:
+                  object_images_probe: bool = False, absent_animation_probe: bool = False) -> None:
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_STORED) as archive:
         for name,data in source_files(masks=masks,transitions=transitions,
                                       sound_status_probe=sound_status_probe, cutscene_callback_probe=cutscene_callback_probe, room_hook_probe=room_hook_probe,
-                                      object_images_probe=object_images_probe).items():
+                                      object_images_probe=object_images_probe, absent_animation_probe=absent_animation_probe).items():
             info=zipfile.ZipInfo(name,date_time=(1980,1,1,0,0,0));info.external_attr=0o100644<<16
             archive.writestr(info,data)
 
@@ -195,6 +199,7 @@ if __name__=='__main__':
     parser.add_argument('--cutscene-callback-probe', action='store_true')
     parser.add_argument('--room-hook-probe', action='store_true')
     parser.add_argument('--object-images-probe', action='store_true')
+    parser.add_argument('--absent-animation-probe', action='store_true')
     args=parser.parse_args();write_archive(args.output,masks=args.masks,transitions=args.transitions,
                                          sound_status_probe=args.sound_status_probe, cutscene_callback_probe=args.cutscene_callback_probe, room_hook_probe=args.room_hook_probe,
-                                         object_images_probe=args.object_images_probe)
+                                         object_images_probe=args.object_images_probe, absent_animation_probe=args.absent_animation_probe)

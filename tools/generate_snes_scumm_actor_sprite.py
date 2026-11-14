@@ -179,6 +179,7 @@ def compile_pose_set(
                         "direction": direction,
                         "step": step,
                         "facing_degrees": facing,
+                        "animation_defined": costume.has_animation(frame, facing=facing),
                         "palette_index": palette_indices[costume_id],
                         "palette_size": len(plan.palette),
                         "palette_values": list(plan.palette),
@@ -363,7 +364,20 @@ def pose_directory_include(
         raise ValueError("actor span directories exceed mapped LoROM banks")
     if bank in range(span_first_bank, span_first_bank + len(span_pages)):
         raise ValueError("actor span pages overlap the pose/chunk/palette directory bank")
-    auxiliary_bytes = len(chunk_rows) * CHUNK_RECORD_SIZE + len(palettes) * PALETTE_RECORD_SIZE
+    # Immutable decode-presence metadata. Missing animation records preserve
+    # existing limb state; they must not be confused with empty decoded poses.
+    animation_masks: dict[int, int] = {}
+    for row in records:
+        costume_id = int(row["costume"])
+        animation = int(row["frame"]) * 4 + int(row["direction"])
+        if animation > 255:
+            raise ValueError("classic costume animation index exceeds u8")
+        animation_masks.setdefault(costume_id, 0)
+        if row.get("animation_defined", True):
+            animation_masks[costume_id] |= 1 << animation
+    auxiliary_bytes = (len(chunk_rows) * CHUNK_RECORD_SIZE
+                       + len(palettes) * PALETTE_RECORD_SIZE
+                       + len(animation_masks) * 33)
     if auxiliary_bytes > 0x8000:
         raise ValueError("actor chunk/palette directories exceed their ROM bank")
     # The native accessors already use independent long-addressed labels for
@@ -384,6 +398,7 @@ def pose_directory_include(
         f"SCUMM_V5_ACTOR_CEL_FIRST_BANK = ${span_first_bank + len(span_pages):02X}",
         f"SCUMM_V5_ACTOR_CEL_COUNT = ${len(cel_rows):04X}",
         f"SCUMM_V5_ACTOR_POSE_COUNT = ${len(records):04X}",
+        f"SCUMM_V5_ACTOR_ANIMATION_MASK_COUNT = ${len(animation_masks):04X}",
         f"SCUMM_V5_ACTOR_POSE_RECORD_SIZE = ${POSE_RECORD_SIZE:04X}",
         f"SCUMM_V5_ACTOR_CHUNK_RECORD_SIZE = ${CHUNK_RECORD_SIZE:04X}",
         f"SCUMM_V5_ACTOR_SPAN_RECORD_SIZE = ${SPAN_RECORD_SIZE:04X}",
@@ -414,6 +429,9 @@ def pose_directory_include(
     for _palette_index, palette in sorted(palettes.items()):
         raw = len(palette).to_bytes(2, "little") + bytes(palette).ljust(32, b"\x00")
         lines.extend(rows(raw, PALETTE_RECORD_SIZE).splitlines())
+    lines.append("ScummV5_ActorAnimationMasks:")
+    for costume_id, mask in sorted(animation_masks.items()):
+        lines.extend(rows(bytes((costume_id,)) + mask.to_bytes(32, "little"), 33).splitlines())
     for page, payload in enumerate(span_pages):
         lines.extend((f".bank {span_first_bank + page}", ".org $8000",
                       f"ScummV5_ActorPoseSpanDirectory{page}:"))
