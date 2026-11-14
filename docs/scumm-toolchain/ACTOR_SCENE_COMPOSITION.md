@@ -148,3 +148,26 @@ passes pinned assembly and ROM audit. All2,203 canonical IDs, semantic names,
 body hashes, dispatch and source provenance compare equal against the prior
 full build. Its cold bounded control is a new resource configuration; no old
 checkpoint is loaded into it. Destination acceptance is still pending.
+
+### Overlay successor publication fence
+
+The fresh eleven-costume authentic build accepted original newspaper pickup
+(owner/state 1/1), then exposed a scene completion defect while inventory was
+open. The captured actor-scene ticket was generation 46; text/cursor had
+already completed generation 153. Equality with `NEXT_GENERATION` prevented
+scene retirement even though the scene's complete image had been published.
+This was an engine fence defect, not evidence of an emulator deadlock.
+
+The scene now requires the existing unlocked, fully committed surface fence,
+the same room epoch, and a nonnegative full 32-bit serial delta from its ticket.
+Later ordered overlay publications can acknowledge the earlier scene; older,
+half-range-ambiguous, or replaced-room generations cannot. Focused production
+source execution covers exact/successor acknowledgements, low-word carry,
+32-bit rollover, stale generations and room replacement. This host evidence
+is separate from native acceptance of the changed runtime.
+
+Private failing evidence: `milestone-d-scene-20261113/cold-room-costume-closure`.
+ROM SHA-256: `e9042479207e2dfd80e36941625227d78278dad063e85db5e04e6de129e9bae9`.
+The supervisor recorded validator failure after 568.281 seconds, no deadline
+or external signal, complete cleanup and no survivors. The captured state is
+preserved; it must not be restored into the corrected ROM.

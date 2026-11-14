@@ -997,12 +997,23 @@ ScummV5_Scene_Render__ack_ready:
 ScummV5_Scene_Render__ack_generation:
     .a16
     .i16
+    lda.l SAME_VIDEO_SURFACE_ROOM_GENERATION
+    cmp.l SAME_SCUMM_SCENE_ROOM_EPOCH
+    beq ScummV5_Scene_Render__ack_room
+    jml ScummV5_Scene_Render__stale
+ScummV5_Scene_Render__ack_room:
+    .a16
+    .i16
+    ; ScrollPresented proved the entire current generation is committed and
+    ; unlocked. Text/cursor producers may already have committed a successor
+    ; containing this scene. Compare the full serial, not equality alone.
+    ; A negative half-range delta is older (or ambiguous), never completion.
     lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION
-    cmp.l SAME_SCUMM_SCENE_PRESENT
-    bne ScummV5_Scene_Render__done
+    sec
+    sbc.l SAME_SCUMM_SCENE_PRESENT
     lda.l SAME_VIDEO_SURFACE_NEXT_GENERATION+2
-    cmp.l SAME_SCUMM_SCENE_PRESENT+2
-    bne ScummV5_Scene_Render__done
+    sbc.l SAME_SCUMM_SCENE_PRESENT+2
+    bmi ScummV5_Scene_Render__done
     lda #$0000
     sta.l SAME_SCUMM_SCENE_PHASE
     sta.l SAME_SCUMM_SCENE_DIRTY
