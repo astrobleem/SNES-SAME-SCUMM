@@ -221,3 +221,26 @@ produced registration-only records. It timed out before stage1 with no SCUMM
 error; it is not an actor/transition pass. The executable manifest is checked
 before the corrected build. Failed evidence is retained, without a watchdog
 increase. The authentic runtime build remains separate.
+
+### Native masked room transition and revisit accepted
+
+`native-mask-transitions-executable` passes six complete images: initial
+scaled overlap, two animation steps, moved/restored actors, room2, and room1
+revisit. Source scripts perform both room requests, with a yielded animated
+pose before each request. Native room identities are 1→2→1; completed scene
+generations are 1–6. Every capture has zero source/INDEX8, decoded PPU, and
+source/CGRAM differences. Frame3989 finishes the control; 369.559 seconds,
+normal exit, cleanup complete, no surviving owned processes. The two fixture
+rooms deliberately contain identical original test artwork; this proves
+resource identity/lifecycle/revisit handling, not different-room artwork.
+
+| Artifact | SHA-256 |
+|---|---|
+| ROM | `e448fa318851623190fd2f10c153dd64de1b36a3c4535865a696eb523a62b909` |
+| Map | `112e800167172ad750649724f34ee2e2e094aa0de7bd7c3d77473860be836fcd` |
+| SAMEPKG | `4d2c9d1922761b93013a1b2e6a4b8780e5853ce4343c7411447c4d9685f96787` |
+| Build identity | `f4d12ffaebce44fc4d681b1774fcdbe59efd4967828412b50a4cb3cd823aaf67` |
+
+Runtime source matches `cfcc07e`; build snapshot is separately recorded.
+Full local suite: 1,681 run, 12 skipped, OK. Validation and 44-region ownership
+audit pass. Authentic Barnett acceptance remains separate and pending.
