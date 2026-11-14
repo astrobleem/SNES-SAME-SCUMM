@@ -243,6 +243,16 @@ def read_committed_pose(session, *, cursor_base: int) -> dict:
     }
 
 
+def scene_control_is_settled(control: bytes) -> bool:
+    """A live scene is not a completed-image oracle while redraw is pending.
+
+    Locked, immutable generation captures use their separate publication fence.
+    The caller supplies the matching map's scene-control record; legacy builds
+    without the scene compositor must not infer that allocation exists.
+    """
+    return len(control) >= 26 and read_u16(control, 0) == 0 and read_u16(control, 4) == 0
+
+
 def committed_surface_is_presented(state: dict, *, expected_room: int | None = None) -> bool:
     """Fence a settled room image, including rooms whose actor is hidden.
 
@@ -322,7 +332,8 @@ def capture_committed_surface(session, directory: Path, label: str, *,
                               expected_x: int | None = None,
                               expected_y: int | None = None,
                               expected_frame: int | None = None,
-                              require_visible_actor: bool = True) -> dict:
+                              require_visible_actor: bool = True,
+                              scene_control_address: int | None = None) -> dict:
     """Capture a paused committed surface without consulting pending pose data.
 
     Bounds are omitted. Optional source_foot must be supplied from independently
@@ -331,6 +342,10 @@ def capture_committed_surface(session, directory: Path, label: str, *,
     """
     require(bool(label) and Path(label).name == label and label not in ('.', '..'),
             "capture label must be a single filename component")
+    scene_control = (session.read_memory("snesMemory", scene_control_address, 26)
+                     if scene_control_address is not None else None)
+    if scene_control is not None:
+        require(scene_control_is_settled(scene_control), "scene redraw is not settled")
     state = read_committed_pose(session, cursor_base=cursor_base)
     if require_visible_actor:
         ready = committed_pose_is_presented(state, expected_room=expected_room,
@@ -357,6 +372,9 @@ def capture_committed_surface(session, directory: Path, label: str, *,
     # No execution/advance is permitted between these observations.
     after = read_committed_pose(session, cursor_base=cursor_base)
     require(after == state, "committed key/fence changed during capture")
+    if scene_control is not None:
+        require(session.read_memory("snesMemory", scene_control_address, 26) == scene_control,
+                "scene identity changed during capture")
     pose = dict(state, room_projection=projection,
                 accepted_frame=state["actor_render_pose_frame"],
                 accepted_step=state["actor_render_pose_step"],
@@ -390,6 +408,8 @@ def capture_committed_surface(session, directory: Path, label: str, *,
         "ppu_indexed_differences": sum(a != b for a,b in zip(ppu_pixels, pixels)),
         "cgram_difference_bytes": sum(a != b for a,b in zip(cgram, expected_cgram)),
     }
+    if scene_control is not None:
+        record["scene_control"] = scene_control.hex()
     directory.mkdir(parents=True, exist_ok=True)
     (directory / f'{label}.scroll-hdma.bin').write_bytes(session.read_memory('snesMemory',0x41e73a,10))
     for suffix, data in (("indexed.bin", pixels), ("palette-rgb.bin", palette),

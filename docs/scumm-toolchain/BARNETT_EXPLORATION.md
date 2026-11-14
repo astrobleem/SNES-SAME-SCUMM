@@ -251,3 +251,32 @@ Local full suite:1709 tests run,12 skipped, no failures (352.233 seconds).
 - Owned fixture .map: `65e3a5a54b9d969add2df7b45e0d196b817cd6208036a78c44121b5a3fac9127`
 - Owned fixture .msu: `3d72ec97452f1481b6314ac5e38d5adb3d0310c50916635631e02154dc332f76`
 - Owned fixture .build_identity.json: `5fc2d523831e23c88110037c92687f3733505996ed3f27076e2b8d29f4a74d13`
+
+## Complete-scene observer fence
+
+The corrected authentic ROM160bcc6a now matches the original owned newspaper
+state1 patch, inventory and closure exactly (`owned-object-room10-ready`).
+A subsequent map observer compared live INDEX8 while SCENE_DIRTY=1 despite an
+idle video backend: two cursor pixels differed from the already committed PPU.
+The captured record is rejected by the new optional, map-bound scene-control
+fence in `capture_committed_surface`. Busy/dirty scenes and changes during
+capture cannot qualify as completed live scenes; immutable queued-generation
+captures retain their separate fence. Legacy non-scene controls remain valid.
+
+`owned-map-scene-fence` resumes that exact-ROM map checkpoint, with no repeated
+taxi input, and obtains complete source/INDEX8/PPU/CGRAM equality for the map
+and Barnett. It exits normally after281.580 seconds with complete cleanup.
+This is setup continuation, not one uninterrupted taxi trip or office acceptance.
+
+The original entry branch oracle uses the captured bits69=1 and211=0. SCUMM
+conditions fall through when true and take the encoded displacement when false:
+room1 ENCD PC29 jumps365, the incoming-from-room2 case falls through385→392,
+and PC392 jumps523, leading to local210. An earlier private entry note had
+interpreted predicate names as taken-branch names; it is explicitly superseded.
+The original isolated door/coat behavior remains verified independently. After
+pickup sets classes26/32, original coat verb9 prints “It's an expensive topcoat.”
+Native office/coat acceptance is still pending.
+
+Observer-change validation:1710 host tests run,12 skipped, no failures;
+`make validate` and45-region memory audit pass. Runtime binaries are unchanged
+by the observer correction; their exact-ROM checkpoints remain valid.

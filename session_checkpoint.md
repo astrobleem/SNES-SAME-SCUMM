@@ -1,3 +1,31 @@
+## Active office continuation
+
+`owned-map-scene-fence` PASS setup: map and complete Barnett matchsource/PPU,
+cleanup normal281.580s. Fresh Barnett checkpoint and variables/bits under that
+run's observations, exact ROM160bcc6a. Bit69=true,211=false,212=false.
+`entry-branch-oracle.json` corrects earlier private IR branch-label inversion:
+conditions true FALL THROUGH. ENCD1 path29→365,385→392,392→523→chain210.
+`route-oracle-look-after-coat.json` proves original pickup then Look25verb9
+prints "It's an expensive topcoat."; isolated host bodies, not hostplaythrough.
+`office-owned-continuation` currently running (tool session27416, port8014),
+from genuine Barnett checkpoint. Normal Open34/Walk34/Pickup25, then Look via
+owned inventory, original description ack and continued control. No guestwrites.
+Observer full1710 tests12skips/validate pass. No native runtime change since4356.
+
+## Latest native setup boundary
+
+Owned original pickup, inventory and closure now match source/INDEX8/PPU/CGRAM
+on ROM160bcc6a in `owned-object-room10-ready`, cleanup normal. `owned-object-barnett`
+reached room75 error0 but the legacy room-only observer captured a dirty scene
+(SCENE_PHASE0, DIRTY1) and compared two live cursor pixels against the old PPU.
+Captured record regression rejects this as incomplete scene evidence. No engine
+fix inferred. Added optional scene-control fence to committed surface capture
+with20 focused tests passing. No runtime change or rebuild.
+`owned-map-scene-fence` now continues the exact saved map state with the existing
+complete-scene observer before destination input; no repeated taxi/startup.
+Its successful fresh-barnett-checkpoint will feed `office-owned-continuation.py`.
+Published source4356c04 has both hosted checks green run43583336227.
+
 ## Active correction checkpoint
 
 Ownership is not an object-image visibility predicate (pinned ScummVM

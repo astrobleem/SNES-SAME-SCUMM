@@ -63,6 +63,27 @@ def observer(session, directory):
 
 
 class CommittedPoseObserverTests(unittest.TestCase):
+    def test_live_capture_rejects_pending_scene_even_with_idle_backend(self):
+        address = 0x3700
+        session = Session()
+        with tempfile.TemporaryDirectory() as directory:
+            for phase, dirty in ((0, 1), (1, 0), (2, 0), (3, 0), (4, 0)):
+                with self.subTest(phase=phase, dirty=dirty):
+                    session.put(address, phase)
+                    session.put(address + 4, dirty)
+                    self.assertTrue(probe.committed_surface_is_presented(
+                        probe.read_committed_pose(session, cursor_base=CURSOR)))
+                    with self.assertRaisesRegex(RuntimeError, "scene redraw"):
+                        probe.capture_committed_surface(session, Path(directory), 'pending',
+                            cursor_base=CURSOR, scene_control_address=address)
+            session.put(address, 0)
+            session.put(address + 4, 0)
+            result = probe.capture_committed_surface(session, Path(directory), 'settled',
+                cursor_base=CURSOR, scene_control_address=address)
+            self.assertEqual(result['ppu_indexed_differences'], 0)
+            self.assertEqual(result['scene_control'], bytes(26).hex())
+        self.assertFalse(probe.scene_control_is_settled(bytes(25)))
+
     def test_hidden_actor_room_capture_does_not_certify_actor(self):
         s = Session()
         s.put(0x7E5E51, 0, 1)
