@@ -85,7 +85,7 @@ def encode_room_masks(*, room: int, width: int, height: int,
         raise ResourceError('mask source geometry invalid')
     if not 0 < len(planes) <= 255:
         raise ResourceError('mask record requires 1..255 original planes')
-    if len(walkbox_masks) > 256 or any(v > len(planes)+1 for v in walkbox_masks):
+    if len(walkbox_masks) > 256:
         raise ResourceError('mask walkbox directory invalid')
     strips = width//8
     if any(len(p) != strips*height for p in planes):
@@ -142,8 +142,8 @@ def decode_room_masks(data: bytes, *, expected_room: int | None = None) -> RoomM
     if box_count > 256 or cursor+box_count > len(data):
         raise ResourceError('mask walkbox directory truncated')
     walkbox_masks = data[cursor:cursor+box_count]
-    if any(v > planes+1 for v in walkbox_masks):
-        raise ResourceError('mask walkbox plane invalid')
+    # The source renderer clamps a walkbox's byte-valued mask selector to
+    # available planes. Preserve the selector, including values above N+1.
     cursor += box_count
     # Size is bounded by the canonical directory before allocating output.
     decoded = [bytearray(strips*height) for _ in range(planes)]
@@ -204,7 +204,7 @@ def native_directory(records: list[dict], *, bank: int = 96) -> str:
         if r is None:
             directory.extend(bytes(16));continue
         masks = bytes(r.get('walkbox_masks', []))
-        if len(masks) > 256 or any(m > r['planes']+1 for m in masks) or len(box_data)+2+len(masks) > 0x7000:
+        if len(masks) > 256 or len(box_data)+2+len(masks) > 0x7000:
             raise ResourceError('native mask walkbox metadata exceeds bank bounds')
         box_offset = 0x9000+len(box_data)
         box_data.extend(struct.pack('<H', len(masks))+masks)

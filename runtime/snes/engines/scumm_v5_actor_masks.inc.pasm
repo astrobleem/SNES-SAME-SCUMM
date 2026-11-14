@@ -779,9 +779,16 @@ MaskEnsure_block_released:
  lda.l SAME_SCUMM_MASK_BLOCK
  inc
  sta.l SAME_SCUMM_MASK_BLOCK
+ ; A 65535-row source has block255. Its next row is65536, which must
+ ; advance the strip rather than wrap to row1 through XBA.
+ cmp #$0100
+ bcs MaskEnsure_next_column
  xba
  cmp.l SAME_SCUMM_MASK_BOTTOM
  bcc MaskEnsure_more_blocks
+MaskEnsure_next_column:
+    .a16
+    .i16
  lda.l SAME_SCUMM_MASK_COLUMN
  inc
  sta.l SAME_SCUMM_MASK_COLUMN

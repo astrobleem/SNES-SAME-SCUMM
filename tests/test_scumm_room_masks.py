@@ -101,10 +101,20 @@ class RoomMaskTests(unittest.TestCase):
         with self.assertRaises(ResourceError): native_directory([bad])
 
     def test_walkbox_plane_bounds_and_native_metadata_capacity(self):
-        for masks in (bytes((4,)),bytes(257)):
+        for masks in (bytes(257),):
             with self.assertRaises(ResourceError):
                 encode_room_masks(room=1,width=8,height=1,planes=(b'0',b'1'),source_room_sha256='00'*32,walkbox_masks=masks)
         raw, _=self.fixture();mask=decode_room_masks(raw)
         row=dict(room=7,width=mask.width,height=mask.height,planes=len(mask.planes),walkbox_masks=list(mask.walkbox_masks),blocks=[dict(b,package_offset=b['offset']) for b in mask.blocks])
         text=native_directory([row])
         self.assertIn('$03,$00,$00,$01,$03',text)
+
+    def test_original_walkbox_selector_is_preserved_for_runtime_clamping(self):
+        masks = bytes((0, 1, 2, 4, 255))
+        raw = encode_room_masks(room=1, width=8, height=1, planes=(b'\x80',),
+                                source_room_sha256='00'*32, walkbox_masks=masks)
+        decoded = decode_room_masks(raw)
+        self.assertEqual(decoded.walkbox_masks, masks)
+        row = dict(room=1, width=8, height=1, planes=1, walkbox_masks=list(masks),
+                   blocks=[dict(b, package_offset=b['offset']) for b in decoded.blocks])
+        self.assertIn('$05,$00,$00,$01,$02,$04,$FF', native_directory([row]))

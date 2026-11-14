@@ -1053,6 +1053,11 @@ ScummV5_Scene_Abort_Far:
     pha
     lda.l SAME_SCUMM_SCENE_PHASE
     beq ScummV5_Scene_Abort__done
+    ; Phase 4 owns a complete image already handed to the video service. It
+    ; has no partial actor to roll back; publication may still lock it. Leave the
+    ; journal intact for normal restoration after that publication retires.
+    cmp #$0004
+    beq ScummV5_Scene_Abort__clear
     lda.l SAME_SCUMM_SCENE_JOURNAL_READY
     beq ScummV5_Scene_Abort__clear
     jsl Same_VideoSurface_RestoreActorUnderlay_Far
