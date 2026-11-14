@@ -1,0 +1,14 @@
+{
+  "format": "same-scpu-actor-scene-iram",
+  "version": 1,
+  "address": "00:3000",
+  "bytes": 2048,
+  "scpu_write_enable": 254,
+  "sa1_execution": false,
+  "allocations": {
+    "mailbox_reserved": {"offset": 0, "bytes": 256},
+    "actor_animation": {"offset": 256, "bytes": 512},
+    "actor_scene_snapshot": {"offset": 768, "bytes": 1024},
+    "actor_scene_control": {"offset": 1792, "bytes": 256}
+  }
+}

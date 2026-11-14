@@ -969,6 +969,10 @@ ScummV5_Controller_InvalidateSelectionOnCursorMove__done:
 ; Publish semantic actor state after movement has committed its complete
 ; record. A non-room-42 frame is intentionally inert.
 ScummV5_Controller_PublishActorVisual_Far:
+    .if SAME_SCUMM_SCENE_ENABLED
+    jml ScummV5_Scene_Tick_Far
+    .endif
+ScummV5_Controller_PublishActorVisualSingle_Far:
     php
     rep #$30
     .a16
@@ -1000,12 +1004,22 @@ ScummV5_Controller_PublishActorVisual__c14_ready:
 ScummV5_Controller_PublishActorVisual__cel_unlocked:
     rep #$20
     .a16
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_ACTOR_BASE
+    tax
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_SCALE_X,x
+    .else
     lda.l SAME_SCUMM_C14_ACTORS+(SCUMM_V5_ACTOR_RENDER_ID*$40)+SAME_SCUMM_C14_A_SCALE_X
+    .endif
     sta.l SAME_SCUMM_CEL_DESIRED_SCALE
     .endif
     rep #$20
     .a16
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_ACTOR
+    .else
     lda #SCUMM_V5_ACTOR_RENDER_ID
+    .endif
     and #$00FF
     asl
     asl
@@ -1030,7 +1044,11 @@ ScummV5_Controller_PublishActorVisual__room_ok:
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     rep #$20
     .a16
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_ACTOR
+    .else
     lda #SCUMM_V5_ACTOR_RENDER_ID
+    .endif
     and #$00FF
     asl
     tax
@@ -1054,7 +1072,16 @@ ScummV5_Controller_PublishActorVisual__room_ok:
     sep #$20
     .a8
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SAME_SCUMM_SCENE_ENABLED
+    rep #$20
+    .a16
+    lda.l SAME_SCUMM_SCENE_ACTOR
+    tax
+    sep #$20
+    .a8
+    .else
     ldx #SCUMM_V5_ACTOR_RENDER_ID
+    .endif
     lda.l SAME_SCUMM_C31_MOVING,x
     .else
     lda.l SAME_SCUMM_C31_MOVING+1
@@ -1067,26 +1094,10 @@ ScummV5_Controller_PublishActorVisual__check_destination:
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_DEST
     cmp #$FFFF
     bne ScummV5_Controller_PublishActorVisual__destination_valid
-    ; Movement update publishes position before destination on one ordinary
-    ; scheduler path.  Once a visible snapshot exists, a changed position
-    ; paired with the no-destination sentinel is an incomplete record, not a
-    ; coherent teleport/standing state.  Retain the last desired snapshot so
-    ; the next frame can publish the position and destination together.
-    lda.l SAME_SCUMM_CONTROLLER_DESIRED_VISIBLE
-    beq ScummV5_Controller_PublishActorVisual__standing
-    lda.l SAME_SCUMM_CONTROLLER_DESIRED_X
-    cmp.l SAME_SCUMM_CONTROLLER_RENDER_X
-    beq ScummV5_Controller_PublishActorVisual__same_x
-    jml ScummV5_Controller_PublishActorVisual__done
-ScummV5_Controller_PublishActorVisual__same_x:
-    .a16
-    lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
-    cmp.l SAME_SCUMM_CONTROLLER_RENDER_Y
-    beq ScummV5_Controller_PublishActorVisual__same_y
-    jml ScummV5_Controller_PublishActorVisual__done
-ScummV5_Controller_PublishActorVisual__same_y:
-    .a16
-    bra ScummV5_Controller_PublishActorVisual__standing
+    ; This publisher runs after Movement_UpdateAll has returned. FFFF is a
+    ; legitimate idle destination after putActor, not a partial actor record.
+    ; Accept the new position and continue sampling its own costume/chore.
+    jmp ScummV5_Controller_PublishActorVisual__standing
 ScummV5_Controller_PublishActorVisual__destination_valid:
     cmp.l SAME_SCUMM_CONTROLLER_DESIRED_X
     beq ScummV5_Controller_PublishActorVisual__compare_destination_y
@@ -1115,12 +1126,20 @@ ScummV5_Controller_PublishActorVisual__pose_done:
     ; the time-driven step selected below rather than being reset here.
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
     bne ScummV5_Controller_PublishActorVisual__movement_step_active
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_EXPLICIT
+    .else
     lda.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_ANIMATION_BYTE
     and #SCUMM_V5_ACTOR_ANIMATION_MASK
+    .endif
     beq ScummV5_Controller_PublishActorVisual__reset_step
     rep #$20
     .a16
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_ACTOR
+    .else
     lda #SCUMM_V5_ACTOR_RENDER_ID
+    .endif
     and #$00FF
     asl
     asl
@@ -1208,7 +1227,11 @@ ScummV5_Controller_PublishActorVisual__store_sample:
     rep #$20
     .a16
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_ACTOR
+    .else
     lda #SCUMM_V5_ACTOR_RENDER_ID
+    .endif
     and #$00FF
     asl
     asl
@@ -1226,7 +1249,11 @@ ScummV5_Controller_PublishActorVisual__store_sample:
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
     rep #$20
     .a16
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_ACTOR
+    .else
     lda #SCUMM_V5_ACTOR_RENDER_ID
+    .endif
     and #$00FF
     asl
     tax
@@ -1268,8 +1295,12 @@ ScummV5_Controller_PublishActorVisual__visible_ready:
     .a8
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_SELECT
     bne ScummV5_Controller_PublishActorVisual__walk_frame
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_EXPLICIT
+    .else
     lda.l SAME_SCUMM_ACTOR_EXPLICIT_ANIMATION+SCUMM_V5_ACTOR_ANIMATION_BYTE
     and #SCUMM_V5_ACTOR_ANIMATION_MASK
+    .endif
     beq ScummV5_Controller_PublishActorVisual__stand_frame
     lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_ANIMATION,x
     cmp #$F4
@@ -1500,6 +1531,9 @@ ScummV5_Controller_ResetVisualCache_Far:
 ; pixels from the previous pose are restored by the normal room compositor.
 .if SAME_VIDEO_SURFACE_AVAILABLE
 ScummV5_Controller_RenderActor_Far:
+    .if SAME_SCUMM_SCENE_ENABLED
+    jml ScummV5_Scene_Render_Far
+    .endif
     php
     rep #$30
     .a16
@@ -2511,7 +2545,11 @@ ScummV5_ActorPose_Ensure__provider_room_not_reading:
 ScummV5_ActorPose_Ensure__provider_page_unpinned:
     .a8
     .if SCUMM_V5_ACTOR_CEL_FORMAT
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_STARTED
+    .else
     lda.l SAME_SCUMM_CEL_VALID
+    .endif
     beq ScummV5_ActorPose_Ensure__cel_new_pose
     rep #$20
     .a16
@@ -3077,7 +3115,19 @@ ScummV5_ActorPose_MapPalette__slot_representable:
     tax
     sep #$20
     .a8
+    .if SAME_SCUMM_SCENE_ENABLED
+    rep #$20
+    .a16
+    txa
+    clc
+    adc.l SAME_SCUMM_SCENE_ACTOR_BASE
+    tax
+    sep #$20
+    .a8
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_PALETTE,x
+    .else
     lda.l SAME_SCUMM_C14_ACTORS+(SCUMM_V5_ACTOR_RENDER_ID*$40)+SAME_SCUMM_C14_A_PALETTE,x
+    .endif
     bra ScummV5_ActorPose_MapPalette__store_color
 ScummV5_ActorPose_MapPalette__costume_color:
     .a8
@@ -3266,7 +3316,13 @@ ScummV5_ActorPose_Compose__owner_ok:
     rep #$20
     .a16
     ; Explicit admitted actor scale. Room aspect fit is not actor scaling.
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_ACTOR_BASE
+    tax
+    lda.l SAME_SCUMM_C14_ACTORS+SAME_SCUMM_C14_A_SCALE_X,x
+    .else
     lda.l SAME_SCUMM_C14_ACTORS+(SCUMM_V5_ACTOR_RENDER_ID*$40)+SAME_SCUMM_C14_A_SCALE_X
+    .endif
     cmp #$FFFF
     beq ScummV5_ActorPose_Compose__scale_ok
     jml ScummV5_ActorPose_Compose__invalid

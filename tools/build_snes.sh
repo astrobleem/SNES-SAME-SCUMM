@@ -1396,6 +1396,13 @@ fi
 if [[ "${SAME_BUILD_SCUMM_M20:-0}" == "1" ]]; then
     CARRIER_ARGS+=(--save-enabled)
 fi
+if [[ "${SAME_SCUMM_ACTOR_SCENE:-0}" == "1" ]]; then
+    if [[ "${SAME_SCUMM_ACTOR_CELS:-0}" != "1" || "${SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER:-0}" != "1" ]]; then
+        echo "Actor scene requires checked source cels and the ordinary actor renderer" >&2
+        exit 1
+    fi
+    CARRIER_ARGS+=(--scene-iram)
+fi
 "$PYTHON" tools/generate_snes_carrier.py "${CARRIER_ARGS[@]}"
 "$PYTHON" tools/generate_snes_video_backend.py \
     --backend "$SAME_SNES_VIDEO_BACKEND" --carrier "$SAME_SNES_CARRIER" \

@@ -238,6 +238,28 @@ class SnesCarrierTests(unittest.TestCase):
         self.assertNotIn("$700000", storage)
         self.assertNotIn("$400800", storage)
 
+    def test_opt_in_scene_iram_preserves_reset_and_protects_first_page(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for enabled in (False, True):
+                result = self.generator.generate(carrier_name="sa1_bwram", save_enabled=True,
+                    rom_size_code=12, output_dir=root, manifest_path=root/"manifest.json",
+                    scene_iram=enabled)
+                code = (root/"carrier_code.inc.pasm").read_text()
+                self.assertIn("sta $2200 ; CCNT: keep SA-1 reset asserted", code)
+                self.assertEqual("sta $2229" in code, enabled)
+                self.assertEqual(result["scene_iram"] is not None, enabled)
+                if enabled:
+                    self.assertIn("lda #$FE\n    sta $2229", code)
+                    self.assertIn("sta.l $003100,x", code)
+                    self.assertIn("cpx #$0700", code)
+                    allocations = result["scene_iram"]["allocations"]
+                    intervals = sorted((v["offset"],v["offset"]+v["bytes"]) for v in allocations.values())
+                    self.assertEqual(intervals, [(0,256),(256,768),(768,1792),(1792,2048)])
+            with self.assertRaisesRegex(ValueError, "reset-held"):
+                self.generator.generate(carrier_name="lorom", save_enabled=True,
+                    rom_size_code=12, output_dir=root, manifest_path=root/"manifest.json", scene_iram=True)
+
     def test_engines_are_carrier_blind_and_video_abi_remains_unwired(self) -> None:
         engine_sources = list((ROOT / "runtime/snes/engines").glob("*.pasm"))
         for path in engine_sources:

@@ -2145,6 +2145,10 @@ ScummV5_LiveRoom_Validate_Far__names_order_ok:
     .a16
     cmp.l SCUMM_LIVE_ROOM_VALIDATION_BASE+$30
     bcc ScummV5_LiveRoom_Validate_Far__names_bound_ok
+    ; A room with no objects/locals/bundle payload has empty trailing tables
+    ; exactly at total_size. Nonempty rows still require their length byte
+    ; and payload within object-walk below; equality does not permit a read.
+    beq ScummV5_LiveRoom_Validate_Far__names_bound_ok
     jmp ScummV5_LiveRoom_Validate_Far__bad
 ScummV5_LiveRoom_Validate_Far__names_bound_ok:
     .a16

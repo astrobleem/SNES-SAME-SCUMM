@@ -279,3 +279,20 @@ def default_carrier(root: Path) -> str:
 
 def layout_regions(layout: dict[str, Any]) -> tuple[MemoryRegion, ...]:
     return _validate_layout(layout)
+
+
+def actor_scene_iram(root: Path) -> dict[str, Any]:
+    """S-CPU storage only; SA-1 stays reset and its mailbox page is untouched."""
+    path = root / "runtime/snes/carriers/actor_scene_iram.json"
+    raw = path.read_bytes()
+    layout = json.loads(raw)
+    expected = {"mailbox_reserved": (0, 256), "actor_animation": (256, 512),
+                "actor_scene_snapshot": (768, 1024), "actor_scene_control": (1792, 256)}
+    if (layout.get("format") != "same-scpu-actor-scene-iram"
+            or layout.get("version") != 1 or layout.get("address") != "00:3000"
+            or layout.get("bytes") != 2048 or layout.get("scpu_write_enable") != 254
+            or layout.get("sa1_execution") is not False
+            or layout.get("allocations") != {k: {"offset": v[0], "bytes": v[1]}
+                                              for k, v in expected.items()}):
+        raise ValueError("actor scene I-RAM ownership changed or overlaps mailbox")
+    return dict(layout, sha256=hashlib.sha256(raw).hexdigest())

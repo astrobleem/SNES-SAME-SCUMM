@@ -693,3 +693,8 @@ ScummV5_M24RB_FarCodeEnd:
 .include "generated/msu1_package.inc.pasm"
 .include "services/storage_msu1_crc_table.inc.pasm"
 .endif
+
+; Scene code owns a separate bank; do not relocate preceding far closures.
+.if SAME_SCUMM_SCENE_ENABLED
+.include "engines/scumm_v5_actor_scene.inc.pasm"
+.endif

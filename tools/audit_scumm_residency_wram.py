@@ -14,7 +14,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from same.snes_carrier import _validate_layout
+from same.snes_carrier import _validate_layout, actor_scene_iram
 from same.snes_video_backend import validate_mode3_layout
 
 MEMORY = ROOT / "runtime/snes/kernel/memory.pasm"
@@ -115,6 +115,12 @@ def parse_address(value: str) -> int:
 
 def audit() -> dict[str, Any]:
     values = symbols()
+    iram = actor_scene_iram(ROOT)
+    for symbol, name in (("SAME_SCUMM_SCENE_ANIMATION", "actor_animation"),
+                         ("SAME_SCUMM_SCENE_SNAPSHOTS", "actor_scene_snapshot"),
+                         ("SAME_SCUMM_SCENE_CONTROL", "actor_scene_control")):
+        if values.get(symbol) != 0x3000 + iram["allocations"][name]["offset"]:
+            raise ValueError(f"scene I-RAM symbol escaped audited owner: {symbol}")
     intervals: list[dict[str, Any]] = []
     for owner, first, after in REGIONS:
         if first not in values or after not in values:
@@ -393,6 +399,7 @@ def audit() -> dict[str, Any]:
             "actor_underlay_uses_only_unreferenced_tail": True,
         },
         "regions": intervals,
+        "actor_scene_iram": actor_scene_iram(ROOT),
         "overlaps": [],
     }
 

@@ -630,8 +630,12 @@ ScummV5_Cel_Compose__pose_ok:
 ScummV5_Cel_Compose__writable:
     .a16
     .i16
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_STARTED
+    .else
     lda.l SAME_SCUMM_CEL_VALID
     and #$00FF
+    .endif
     beq ScummV5_Cel_Compose__first
     lda #$0002
     sta.l SAME_SCUMM_CEL_PASS
@@ -663,7 +667,11 @@ ScummV5_Cel_Compose__foot_x_ok:
     sta.l SAME_SCUMM_ACTOR_FOOT_SCREEN_X
     lda.l SAME_SCUMM_CONTROLLER_DESIRED_Y
     sec
+    .if SAME_SCUMM_SCENE_ENABLED
+    sbc.l SAME_SCUMM_SCENE_ELEVATION
+    .else
     sbc.l SAME_SCUMM_C14_ACTORS+(SCUMM_V5_ACTOR_RENDER_ID*$40)+SAME_SCUMM_C14_A_ELEVATION
+    .endif
     bvc ScummV5_Cel_Compose__elevation_ok
     jml ScummV5_Cel_Compose__invalid
 ScummV5_Cel_Compose__elevation_ok:
@@ -1125,7 +1133,21 @@ ScummV5_Cel_Compose__validated:
 ScummV5_Cel_Compose__coverage_ok:
     .a16
     .i16
+    .if SAME_SCUMM_SCENE_ENABLED
+    lda.l SAME_SCUMM_SCENE_PHASE
+    cmp #$0002
+    bne ScummV5_Cel_Compose__scene_capture
+    lda #$0001
+    sta.l SAME_SCUMM_SCENE_STARTED
+    lda #$0002
+    sta.l SAME_SCUMM_CEL_PASS
+    jml ScummV5_Cel_Compose__pass
+ScummV5_Cel_Compose__scene_capture:
+    .a16
+    clc
+    .else
     jsl Same_VideoSurface_BeginActorUnderlay_Far
+    .endif
     bcc ScummV5_Cel_Compose__begin_ok
     jml ScummV5_Cel_Compose__invalid
 ScummV5_Cel_Compose__begin_ok:
@@ -1137,7 +1159,12 @@ ScummV5_Cel_Compose__begin_ok:
 ScummV5_Cel_Compose__captured:
     .a16
     .i16
+    .if SAME_SCUMM_SCENE_ENABLED
+    jsl ScummV5_ActorPose_ReleaseBuffer_Far
+    jml ScummV5_Cel_Compose__complete
+    .else
     jsl Same_VideoSurface_CommitActorUnderlay_Far
+    .endif
     bcc ScummV5_Cel_Compose__committed
     jml ScummV5_Cel_Compose__invalid
 ScummV5_Cel_Compose__committed:
@@ -1155,10 +1182,18 @@ ScummV5_Cel_Compose__committed:
 ScummV5_Cel_Compose__complete:
     .a16
     .i16
+    .if SAME_SCUMM_SCENE_ENABLED
+    rep #$20
+    .a16
+    lda #$0001
+    sta.l SAME_SCUMM_SCENE_ACTOR_DONE
+    .endif
     sep #$20
     .a8
     lda #$00
+    .if !SAME_SCUMM_SCENE_ENABLED
     sta.l SAME_SCUMM_CEL_VALID
+    .endif
     lda #$01
     sta.l SAME_SCUMM_ACTOR_POSE_COMPOSED
     rep #$30
@@ -1392,6 +1427,10 @@ ScummV5_Cel_Abort_Far:
     .a16
     .i16
     pha
+    .if SAME_SCUMM_SCENE_ENABLED
+    jsl ScummV5_Scene_Abort_Far
+    jml ScummV5_Cel_Abort__done
+    .endif
     lda.l SAME_SCUMM_CEL_VALID
     and #$00FF
     beq ScummV5_Cel_Abort__done

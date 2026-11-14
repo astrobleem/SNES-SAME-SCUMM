@@ -11494,6 +11494,9 @@ ScummV5_Op_ActorOps__palette:
     lda.l SAME_SCUMM_FETCH_BYTE
     sta.l SAME_SCUMM_C14_ACTORS,x
     .if SAME_BUILD_SCUMM_MSU1_ACTOR_RENDERER
+    .if SAME_SCUMM_SCENE_ENABLED
+    jsl ScummV5_Scene_PaletteChanged_Far
+    .else
     ; The renderer's override-valid bits are separate from color values so
     ; palette index zero (and output color $FF) remain representable.
     lda.l SAME_SCUMM_C14_ACTOR
@@ -11540,6 +11543,7 @@ ScummV5_Op_ActorOps__palette_generation_ready:
     .a8
     lda #$00
     sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    .endif
 ScummV5_Op_ActorOps__palette_done:
     .a8
     .endif
@@ -12791,6 +12795,9 @@ ScummV5_C14_DefaultActor:
     lda #$00
     jsr ScummV5_C14_SetExplicitAnimation
     jsr ScummV5_C14_BaseX
+    .if SAME_SCUMM_SCENE_ENABLED
+    jsl ScummV5_Scene_DefaultActor_Far
+    .else
     lda.l SAME_SCUMM_C14_ACTOR
     cmp #SCUMM_V5_ACTOR_RENDER_ID
     bne ScummV5_C14_DefaultActor__palette_mask_done
@@ -12811,6 +12818,7 @@ ScummV5_C14_DefaultActor__palette_generation_ready:
     .a8
     lda #$00
     sta.l SAME_SCUMM_CONTROLLER_RENDER_VALID
+    .endif
 ScummV5_C14_DefaultActor__palette_mask_done:
     .a8
     .endif
