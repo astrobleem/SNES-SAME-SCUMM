@@ -34,7 +34,7 @@ def main():
     ap=argparse.ArgumentParser(description=__doc__)
     for key in ('rom','directory','archive','profile','nexen','native-core','mcp-python','output'):ap.add_argument('--'+key,type=Path,required=True)
     ap.add_argument('--port',type=int,required=True)
-    
+
     args=ap.parse_args()
     if not re.fullmatch(r':\d+',os.environ.get('DISPLAY','')) or not Path(os.environ.get('XAUTHORITY','/missing')).is_file():
         ap.error('canonical private Xvfb supervisor required')
